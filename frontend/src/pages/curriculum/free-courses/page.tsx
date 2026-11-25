@@ -1902,18 +1902,15 @@ export function FreeCoursesWorkspace({ embedded = false, addRequest = 0, search 
 }
 
 function groupSavedFreeCourses(modules: FreeProgrammeModule[], documents: Record<string, FreeCourseAuthoringDocument>): SavedFreeCourseCard[] {
-  const groups = new Map<string, SavedFreeCourseCard>();
-  // A saved course can exist before its first week. Keep its canonical card
-  // editable instead of losing it when the document is flattened into weeks.
-  Object.values(documents).filter(document => document.weeks.length === 0).forEach(document => {
-    const course = document.course;
-    groups.set(course.courseId, {
-      key: course.courseId, courseId: course.courseId, title: course.courseName,
-      description: course.description, coverImageUrl: course.coverImageUrl,
-      isForSale: course.isForSale, price: course.price ?? '', weeks: [],
-      componentCount: 0, totalOtjh: 0, revision: document.revision,
-    });
-  });
+  // A saved course exists independently of its weeks. Seed from the canonical
+  // documents so an empty course remains visible and editable without fake rows.
+  const groups = new Map<string, SavedFreeCourseCard>(Object.values(documents).map(document => [document.course.courseId, {
+    key: document.course.courseId, courseId: document.course.courseId,
+    title: document.course.courseName, description: document.course.description,
+    coverImageUrl: document.course.coverImageUrl, isForSale: document.course.isForSale,
+    price: document.course.price ?? '', weeks: [], componentCount: 0, totalOtjh: 0,
+    revision: document.revision,
+  }]));
   modules.forEach(module => {
     const title = module.courseName || module.title || 'Untitled free course';
     const description = module.description || '';
@@ -1986,8 +1983,10 @@ function SavedFreeCourseCardView({ card, onEdit, onDelete, onConvert }: { card: 
       <div className="flex flex-1 flex-col p-5">
         <div className="min-h-[96px]">
           <h3 className="line-clamp-2 font-heading text-base font-bold leading-6 text-foreground-950">{card.title}</h3>
+          {card.isForSale && <p className="mt-1 text-xs font-semibold text-primary-700">
+            For sale · {new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format(Number(card.price))}
+          </p>}
           <p className="mt-1.5 line-clamp-2 text-xs leading-5 text-foreground-500">{card.description || 'No description added yet.'}</p>
-          {card.isForSale && <p className="mt-2 text-xs font-semibold text-primary-700">For sale · {new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format(Number(card.price))}</p>}
         </div>
 
         <div className="mt-4 grid grid-cols-3 overflow-hidden rounded-lg border border-background-200 bg-background-50">

@@ -1,0 +1,298 @@
+{
+  "staff_user_archived": {
+    "source": "def staff_user_archived(row):\n    status = clean_str((row or {}).get(' Status') or (row or {}).get('status')).lower()\n    return status in {'archived', 'inactive', 'disabled'}",
+    "module": "curriculum_api.catalogue.domain.staff_identity",
+    "decorators": [],
+    "bindings": {
+      "clean_str": "clean_str"
+    }
+  },
+  "is_blank_staff_text": {
+    "source": "def is_blank_staff_text(value):\n    value = clean_str(value)\n    return not value or normalise(value) in {'emptystring', 'unassigned'}",
+    "module": "curriculum_api.catalogue.domain.staff_identity",
+    "decorators": [],
+    "bindings": {
+      "clean_str": "clean_str",
+      "normalise": "normalise"
+    }
+  },
+  "staff_profile_name": {
+    "source": "def staff_profile_name(profile):\n    if not profile:\n        return ''\n    for value in (\n        profile.get('name'),\n        profile.get('Tutor_name'),\n        profile.get('Coach_name'),\n        profile.get('email'),\n    ):\n        text = clean_str(value)\n        if not is_blank_staff_text(text):\n            return text\n    return ''",
+    "module": "curriculum_api.catalogue.domain.staff_identity",
+    "decorators": [],
+    "bindings": {
+      "clean_str": "clean_str",
+      "is_blank_staff_text": "is_blank_staff_text"
+    }
+  },
+  "staff_profile_email": {
+    "source": "def staff_profile_email(profile):\n    email = clean_str((profile or {}).get('email'))\n    return '' if is_blank_staff_text(email) else email",
+    "module": "curriculum_api.catalogue.domain.staff_identity",
+    "decorators": [],
+    "bindings": {
+      "clean_str": "clean_str",
+      "is_blank_staff_text": "is_blank_staff_text"
+    }
+  },
+  "is_blank_staff_assignment": {
+    "source": "def is_blank_staff_assignment(value):\n    return is_blank_staff_text(value)",
+    "module": "curriculum_api.catalogue.domain.staff_identity",
+    "decorators": [],
+    "bindings": {
+      "is_blank_staff_text": "is_blank_staff_text"
+    }
+  },
+  "staff_assignment_key": {
+    "source": "def staff_assignment_key(value):\n    if is_blank_staff_assignment(value):\n        return ''\n    return normalise(value)",
+    "module": "curriculum_api.catalogue.domain.staff_identity",
+    "decorators": [],
+    "bindings": {
+      "is_blank_staff_assignment": "is_blank_staff_assignment",
+      "normalise": "normalise"
+    }
+  },
+  "staff_profile_identity_key": {
+    "source": "def staff_profile_identity_key(name='', email=''):\n    email_key = '' if is_blank_staff_text(email) else normalise(email)\n    if email_key:\n        return f'email:{email_key}'\n    name_key = staff_assignment_key(name)\n    if name_key and name_key != 'unassigned':\n        return f'name:{name_key}'\n    return ''",
+    "module": "curriculum_api.catalogue.domain.staff_identity",
+    "decorators": [],
+    "bindings": {
+      "is_blank_staff_text": "is_blank_staff_text",
+      "normalise": "normalise",
+      "staff_assignment_key": "staff_assignment_key"
+    }
+  },
+  "staff_profile_is_archived": {
+    "source": "def staff_profile_is_archived(row):\n    row = row or {}\n    return truthy(row.get('is_archived')) or clean_str(row.get('status')).lower() == 'archived'",
+    "module": "curriculum_api.catalogue.domain.staff_identity",
+    "decorators": [],
+    "bindings": {
+      "clean_str": "clean_str",
+      "truthy": "truthy"
+    }
+  },
+  "module_assignment_ids": {
+    "source": "def module_assignment_ids(module):\n    \"\"\"Every identifier one module answers to.\n\n    A module is named differently by each screen that holds it -- catalogue id,\n    delivery row, source id -- so anything matching a module against an\n    identifier somebody typed or stored has to compare against all of them.\n    \"\"\"\n    values = [\n        module.get('id'),\n        module.get('moduleId'),\n        module.get('moduleCatalogueId'),\n        module.get('module_catalogue_id'),\n        module.get('deliveryRowId'),\n        module.get('delivery_row_id'),\n        module.get('deliveryModuleId'),\n        module.get('delivery_module_id'),\n        module.get('catalogueId'),\n        module.get('catalogue_id'),\n        module.get('sourceId'),\n        module.get('source_id'),\n    ]\n    ids = set()\n    for value in values:\n        text = clean_str(value)\n        if not text:\n            continue\n        ids.add(text)\n        canonical_match = re.search(r'(MOD-[A-Z0-9][A-Z0-9_-]*)', text, re.IGNORECASE)\n        if canonical_match:\n            ids.add(canonical_match.group(1))\n    return ids",
+    "module": "curriculum_api.catalogue.domain.staff_identity",
+    "decorators": [],
+    "bindings": {
+      "clean_str": "clean_str"
+    }
+  },
+  "module_matches_staff_assignment": {
+    "source": "def module_matches_staff_assignment(module, assignment_id):\n    requested = clean_str(assignment_id)\n    if not requested:\n        return False\n    candidates = {requested}\n    canonical_match = re.search(r'(MOD-[A-Z0-9][A-Z0-9_-]*)', requested, re.IGNORECASE)\n    if canonical_match:\n        candidates.add(canonical_match.group(1))\n    return bool(candidates.intersection(module_assignment_ids(module)))",
+    "module": "curriculum_api.catalogue.domain.staff_identity",
+    "decorators": [],
+    "bindings": {
+      "clean_str": "clean_str",
+      "module_assignment_ids": "module_assignment_ids"
+    }
+  },
+  "clean_assignment_ids": {
+    "source": "def clean_assignment_ids(values):\n    seen = set()\n    result = []\n    for value in values or []:\n        text = clean_str(value)\n        if not text:\n            continue\n        expanded = [text]\n        canonical_match = re.search(r'(MOD-[A-Z0-9][A-Z0-9_-]*)', text, re.IGNORECASE)\n        if canonical_match:\n            expanded.append(canonical_match.group(1))\n        for item in expanded:\n            if item in seen:\n                continue\n            seen.add(item)\n            result.append(item)\n    return result",
+    "module": "curriculum_api.catalogue.domain.staff_identity",
+    "decorators": [],
+    "bindings": {
+      "clean_str": "clean_str"
+    }
+  },
+  "staff_user_profile_source": {
+    "source": "def staff_user_profile_source(row, role):\n    row = row or {}\n    public_id = clean_str(row.get('uuid')) or clean_str(row.get('id'))\n    return {\n        'id': public_id or f'{role}-{slugify(row.get(\"Username\"))}',\n        'staffUserId': clean_str(row.get('id')),\n        'uuid': clean_str(row.get('uuid')),\n        'role': role,\n        'name': clean_str(row.get('Username')),\n        'email': clean_str(row.get('Email')),\n        'phone': clean_str(row.get('Phone_number')),\n        'job_title': clean_str(row.get('Position')),\n        'status': 'archived' if staff_user_archived(row) else 'active',\n        'access': clean_str(row.get('Access')).lower(),\n        'is_archived': staff_user_archived(row),\n        'created_at': row.get('Created_at'),\n        'updated_at': row.get('Updated_at'),\n    }",
+    "module": "curriculum_api.catalogue.application.staff_profiles",
+    "decorators": [],
+    "bindings": {
+      "clean_str": "clean_str",
+      "slugify": "slugify",
+      "staff_user_archived": "staff_user_archived"
+    }
+  },
+  "module_in_progress": {
+    "source": "def module_in_progress(module):\n    status = clean_str(module.get('deliveryStatus') or module.get('status')).lower()\n    if status in {'active', 'in_progress', 'in-progress'}:\n        return True\n    today = date.today()\n    start = parse_date(module.get('startDate'))\n    end = parse_date(module.get('endDate'))\n    return bool(start and end and start <= today <= end)",
+    "module": "curriculum_api.catalogue.application.staff_profiles",
+    "decorators": [],
+    "bindings": {
+      "clean_str": "clean_str",
+      "parse_date": "parse_date"
+    }
+  },
+  "profile_module_summary": {
+    "source": "def profile_module_summary(module):\n    return {\n        'id': module.get('id'),\n        'moduleId': module.get('moduleId'),\n        'moduleCatalogueId': module.get('moduleCatalogueId'),\n        'deliveryRowId': module.get('deliveryRowId'),\n        'name': module.get('name') or '',\n        'programmeId': module.get('programmeId') or '',\n        'programme': module.get('programme') or '',\n        'cohortId': module.get('cohortId') or '',\n        'cohort': module.get('cohort') or '',\n        'groupId': module.get('groupId') or '',\n        'group': module.get('group') or '',\n        'startDate': module.get('startDate') or '',\n        'endDate': module.get('endDate') or '',\n        'status': 'in_progress' if module_in_progress(module) else (module.get('deliveryStatus') or module.get('status') or 'unknown'),\n    }",
+    "module": "curriculum_api.catalogue.application.staff_profiles",
+    "decorators": [],
+    "bindings": {
+      "module_in_progress": "module_in_progress"
+    }
+  },
+  "assigned_modules_for_staff": {
+    "source": "def assigned_modules_for_staff(name, role, modules, stored_ids=None, stored_group_ids=None):\n    key = staff_assignment_key(name)\n    stored_ids = [clean_str(item) for item in (stored_ids or []) if clean_str(item)]\n    stored_group_ids = {clean_str(item) for item in (stored_group_ids or []) if clean_str(item)}\n    assigned = []\n    for module in modules:\n        module_staff = module.get('coach') if role == 'coach' else module.get('tutor')\n        matched_by_staff = key and staff_assignment_key(module_staff) == key\n        matched_by_stored_id = any(module_matches_staff_assignment(module, item) for item in stored_ids)\n        matched_by_group_id = clean_str(module.get('groupId')) in stored_group_ids\n        if matched_by_staff or matched_by_stored_id or matched_by_group_id:\n            assigned.append(profile_module_summary(module))\n    assigned.sort(key=lambda item: (item.get('startDate') or '', item.get('programme') or '', item.get('name') or ''))\n    return assigned",
+    "module": "curriculum_api.catalogue.application.staff_profiles",
+    "decorators": [],
+    "bindings": {
+      "clean_str": "clean_str",
+      "module_matches_staff_assignment": "module_matches_staff_assignment",
+      "profile_module_summary": "profile_module_summary",
+      "staff_assignment_key": "staff_assignment_key"
+    }
+  },
+  "serialize_staff_profile": {
+    "source": "def serialize_staff_profile(row, role, modules=None, groups=None):\n    \"\"\"One staff member, with the curriculum they hold.\n\n    Who holds what is read off the curriculum by name: a tutor's modules are the\n    modules naming them, a coach's groups are the groups naming them. The staff\n    row itself carries no assignment -- it is the person, not the posting -- so\n    ``stored*Ids`` only ever carry what a legacy row still happens to hold.\n    \"\"\"\n    row = row or {}\n    name = staff_profile_name(row)\n    name_key = staff_assignment_key(name)\n    stored_ids = as_json_value(row.get('assigned_module_ids') or row.get('assignedModuleIds'), []) if role == 'tutor' else []\n    stored_group_ids = as_json_value(row.get('assigned_group_ids') or row.get('assignedGroupIds'), []) if role == 'coach' else []\n    valid_group_ids = {\n        clean_str(group.get('id') or group.get('groupId'))\n        for group in groups or []\n        if clean_str(group.get('id') or group.get('groupId'))\n    }\n    named_group_ids = [\n        clean_str(group.get('id') or group.get('groupId'))\n        for group in groups or []\n        if role == 'coach' and name_key and name_key in {\n            staff_assignment_key(coach)\n            for coach in group_coaches.split_names(group.get('coaches') or group.get('coach'))\n        }\n        and clean_str(group.get('id') or group.get('groupId'))\n    ]\n    assigned_group_ids = unique([\n        *named_group_ids,\n        *[clean_str(item) for item in stored_group_ids if clean_str(item)],\n    ])\n    if groups is not None:\n        assigned_group_ids = [item for item in assigned_group_ids if item in valid_group_ids]\n    assigned_modules = assigned_modules_for_staff(name, role, modules or [], stored_ids, assigned_group_ids) if role == 'tutor' else []\n    active_modules = [module for module in assigned_modules if module.get('status') == 'in_progress']\n    profile = {\n        'id': row.get('id') or f'{role}-{slugify(name)}',\n        'role': role,\n        'name': name,\n        'email': row.get('email') or '',\n        'phone': row.get('phone') or '',\n        'jobTitle': row.get('job_title') or row.get('jobTitle') or row.get('role') or '',\n        'status': row.get('status') or ('archived' if truthy(row.get('is_archived')) else 'active'),\n        'specialisms': as_json_value(row.get('specialisms'), []),\n        'notes': row.get('notes') or '',\n        'isArchived': truthy(row.get('is_archived')),\n        'updatedAt': format_date(row.get('updated_at')),\n    }\n    if clean_str(row.get('access')):\n        profile['access'] = clean_str(row.get('access')).lower()\n    if clean_str(row.get('staffUserId')):\n        profile['staffUserId'] = clean_str(row.get('staffUserId'))\n    if clean_str(row.get('uuid')):\n        profile['uuid'] = clean_str(row.get('uuid'))\n    if role == 'coach':\n        profile.update({\n            'assignedGroupIds': assigned_group_ids,\n            'groupCount': len(assigned_group_ids),\n        })\n    else:\n        profile.update({\n            'assignedModuleIds': [module.get('id') for module in assigned_modules if module.get('id')],\n            'storedAssignedModuleIds': stored_ids,\n            'assignedModules': assigned_modules,\n            'inProgressModules': active_modules,\n            'moduleCount': len(assigned_modules),\n            'inProgressCount': len(active_modules),\n        })\n    return profile",
+    "module": "curriculum_api.catalogue.application.staff_profiles",
+    "decorators": [],
+    "bindings": {
+      "as_json_value": "as_json_value",
+      "assigned_modules_for_staff": "assigned_modules_for_staff",
+      "clean_str": "clean_str",
+      "format_date": "format_date",
+      "group_coaches": "group_coaches",
+      "slugify": "slugify",
+      "staff_assignment_key": "staff_assignment_key",
+      "staff_profile_name": "staff_profile_name",
+      "truthy": "truthy",
+      "unique": "unique"
+    }
+  },
+  "build_staff_profiles": {
+    "source": "def build_staff_profiles(profile_rows, role, modules=None, groups=None):\n    \"\"\"Staff of one role, each carrying the curriculum they hold.\n\n    Only the people in ``profile_rows`` -- the staff directory's own answer for\n    this role -- are ever returned. A name typed onto a delivery row used to be\n    merged in here as a stand-in profile, which meant curriculum could invent a\n    tutor nobody had given tutor access to, and deleting the person in Users\n    left the invented copy behind. Assignments are still read off the curriculum\n    by name, so the list cannot disagree with what a module or group says.\n    \"\"\"\n    if modules is None:\n        modules = enrich_modules_with_authoring(build_modules(get_module_rows(), get_training_rows(), get_program_config_rows()))\n    merged = {}\n    for row in profile_rows or []:\n        serialized = serialize_staff_profile(row, role, modules, groups)\n        if is_blank_staff_assignment(serialized.get('name')) and is_blank_staff_assignment(serialized.get('email')):\n            continue\n        key = staff_profile_identity_key(serialized.get('name'), serialized.get('email')) or clean_str(serialized['id'])\n        if key in merged:\n            continue\n        merged[key] = serialized\n\n    return sorted(\n        merged.values(),\n        key=lambda item: (item.get('status') == 'archived', item.get('name', '').lower()),\n    )",
+    "module": "curriculum_api.catalogue.application.staff_profiles",
+    "decorators": [],
+    "bindings": {
+      "build_modules": "build_modules",
+      "clean_str": "clean_str",
+      "enrich_modules_with_authoring": "enrich_modules_with_authoring",
+      "get_module_rows": "get_module_rows",
+      "get_program_config_rows": "get_program_config_rows",
+      "get_training_rows": "get_training_rows",
+      "is_blank_staff_assignment": "is_blank_staff_assignment",
+      "serialize_staff_profile": "serialize_staff_profile",
+      "staff_profile_identity_key": "staff_profile_identity_key"
+    }
+  },
+  "build_staff_user_profile_collection": {
+    "source": "def build_staff_user_profile_collection(role, visibility='operational'):\n    \"\"\"The staff of one role, each with the curriculum they hold.\n\n    The people come from the staff directory; the assignments are read off the\n    curriculum itself, by name, so this cannot disagree with what a module or a\n    group says its tutor and coach are.\n    \"\"\"\n    profile_rows = get_staff_profile_rows(role, include_archived=visibility == 'all')\n    if not profile_rows:\n        return []\n\n    training_rows = get_training_rows()\n    if visibility != 'all':\n        training_rows = [row for row in training_rows if is_operational_training_row(row)]\n    if role != 'tutor':\n        # A coach profile carries the groups that name the coach and nothing\n        # module-shaped (see serialize_staff_profile), so building the module\n        # catalogue here only cost round trips. [] rather than None: None\n        # makes build_staff_profiles build the catalogue itself.\n        _, groups = build_cohorts_and_groups(\n            training_rows,\n            get_program_config_rows(),\n            include_archived=visibility == 'all',\n        )\n        return build_staff_profiles(profile_rows, role, [], groups)\n    # Tutor profiles only expose module identities/dates/status. Week titles\n    # and group statistics cannot affect those fields.\n    catalogue = authoring_modules_as_catalogue_rows(week_rows=[])\n    modules = build_modules(\n        catalogue,\n        training_rows,\n        get_program_config_rows(),\n        include_unused=visibility == 'all',\n    )\n    return build_staff_profiles(profile_rows, role, modules, [])",
+    "module": "curriculum_api.catalogue.application.staff_profiles",
+    "decorators": [],
+    "bindings": {
+      "authoring_modules_as_catalogue_rows": "authoring_modules_as_catalogue_rows",
+      "build_cohorts_and_groups": "build_cohorts_and_groups",
+      "build_modules": "build_modules",
+      "build_staff_profiles": "build_staff_profiles",
+      "get_program_config_rows": "get_program_config_rows",
+      "get_staff_profile_rows": "get_staff_profile_rows",
+      "get_training_rows": "get_training_rows",
+      "is_operational_training_row": "is_operational_training_row"
+    }
+  },
+  "build_curriculum_tutor_profile_collection": {
+    "source": "def build_curriculum_tutor_profile_collection(visibility='operational'):\n    \"\"\"Read the tutor picker from the curriculum tutor catalogue.\n\n    The Module Builder's tutor filter is intentionally scoped to the rows in\n    ``curriculum.tutors``. Assignments are still enriched from the canonical\n    curriculum module rows so the picker only changes the identity source.\n    \"\"\"\n    if connection.vendor != 'postgresql' or not table_exists('tutors'):\n        return []\n    rows = fetch_all(\n        f'''select id, name, email, phone, status\n            from {table_name('tutors')}\n            order by lower(trim(coalesce(name, ''))), id'''\n    )\n    profiles = []\n    for row in rows:\n        status = clean_str(row.get('status')).lower() or 'active'\n        archived = status in {'archived', 'inactive', 'disabled'}\n        if archived and visibility != 'all':\n            continue\n        profiles.append({\n            'id': clean_str(row.get('id')),\n            'staffUserId': '',\n            'uuid': '',\n            'role': 'tutor',\n            'name': clean_str(row.get('name')),\n            'email': clean_str(row.get('email')),\n            'phone': clean_str(row.get('phone')),\n            'job_title': 'Tutor',\n            'status': 'archived' if archived else 'active',\n            'access': 'tutor',\n            'is_archived': archived,\n        })\n    if not profiles:\n        return []\n    training_rows = get_training_rows()\n    if visibility != 'all':\n        training_rows = [row for row in training_rows if is_operational_training_row(row)]\n    catalogue = authoring_modules_as_catalogue_rows(week_rows=[])\n    modules = build_modules(\n        catalogue,\n        training_rows,\n        get_program_config_rows(),\n        include_unused=visibility == 'all',\n    )\n    return build_staff_profiles(profiles, 'tutor', modules, [])",
+    "module": "curriculum_api.catalogue.application.staff_profiles",
+    "decorators": [],
+    "bindings": {
+      "authoring_modules_as_catalogue_rows": "authoring_modules_as_catalogue_rows",
+      "build_modules": "build_modules",
+      "build_staff_profiles": "build_staff_profiles",
+      "clean_str": "clean_str",
+      "get_program_config_rows": "get_program_config_rows",
+      "get_training_rows": "get_training_rows",
+      "is_operational_training_row": "is_operational_training_row",
+      "read_curriculum_tutor_rows": "read_curriculum_tutor_rows"
+    }
+  },
+  "find_staff_profile_row": {
+    "source": "def find_staff_profile_row(role, identifier, include_archived=True):\n    ident = clean_str(identifier)\n    if not ident:\n        return None\n    rows = get_staff_profile_rows(role, include_archived=include_archived)\n    for row in rows:\n        if clean_str(row.get('id')) == ident:\n            return row\n    searchable_rows = [row for row in rows if not staff_profile_is_archived(row)] + [row for row in rows if staff_profile_is_archived(row)]\n    email_key = normalise(ident)\n    if email_key:\n        for row in searchable_rows:\n            if normalise(staff_profile_email(row)) == email_key:\n                return row\n    slug = slugify(ident)\n    ident_key = staff_assignment_key(ident)\n    for row in searchable_rows:\n        name = staff_profile_name(row)\n        if slugify(name) == slug or staff_assignment_key(name) == ident_key:\n            return row\n    return None",
+    "module": "curriculum_api.catalogue.application.staff_profiles",
+    "decorators": [],
+    "bindings": {
+      "clean_str": "clean_str",
+      "get_staff_profile_rows": "get_staff_profile_rows",
+      "normalise": "normalise",
+      "slugify": "slugify",
+      "staff_assignment_key": "staff_assignment_key",
+      "staff_profile_email": "staff_profile_email",
+      "staff_profile_is_archived": "staff_profile_is_archived",
+      "staff_profile_name": "staff_profile_name"
+    }
+  },
+  "find_staff_user_profile": {
+    "source": "def find_staff_user_profile(role, identifier):\n    \"\"\"One tutor or coach, by whichever identifier a caller has for them.\n\n    An id, the staff user's uuid or row id, an email, or the name a module or\n    group holds them under: a curriculum screen has only ever had one of those,\n    and they all name the same person in the staff directory.\n    \"\"\"\n    ident = clean_str(identifier)\n    if not ident:\n        return None\n    profiles = build_staff_user_profile_collection(role, 'all')\n    for profile in profiles:\n        candidates = [\n            clean_str(profile.get('id')),\n            clean_str(profile.get('uuid')),\n            clean_str(profile.get('staffUserId')),\n        ]\n        if ident in [value for value in candidates if value]:\n            return profile\n    email_key = normalise(ident)\n    if email_key:\n        for profile in profiles:\n            if normalise(profile.get('email')) == email_key:\n                return profile\n    name_key = staff_assignment_key(ident)\n    if name_key:\n        for profile in profiles:\n            if staff_assignment_key(profile.get('name')) == name_key:\n                return profile\n    return None",
+    "module": "curriculum_api.catalogue.application.staff_profiles",
+    "decorators": [],
+    "bindings": {
+      "build_staff_user_profile_collection": "build_staff_user_profile_collection",
+      "clean_str": "clean_str",
+      "normalise": "normalise",
+      "staff_assignment_key": "staff_assignment_key"
+    }
+  },
+  "staff_profile_assignment_ids": {
+    "source": "def staff_profile_assignment_ids(role, row):\n    \"\"\"Return the canonical module IDs assigned to a tutor profile.\n\n    Older staff-profile rows may still carry an explicit JSON assignment list.\n    Current staff profiles come from the enrolment directory, so their\n    curriculum assignment is represented by the tutor name/email stored on\n    authoring modules. Supporting both shapes keeps the workspace compatible\n    with existing data while the directory remains the identity source.\n    \"\"\"\n    if role != 'tutor' or not row:\n        return []\n\n    stored_ids = clean_assignment_ids(as_json_value(\n        row.get('assigned_module_ids') or row.get('assignedModuleIds'),\n        [],\n    ))\n\n    profile_name = staff_profile_name(row)\n    profile_email = staff_profile_email(row)\n    if not profile_name and not profile_email:\n        return stored_ids\n\n    name_key = staff_assignment_key(profile_name)\n    email_key = normalise(profile_email) if profile_email else ''\n    assigned_ids = list(stored_ids)\n    for module in safe_authoring_module_rows():\n        module_id = clean_str(module.get('module_catalogue_id'))\n        tutor_name_key = staff_assignment_key(module.get('tutor_name'))\n        tutor_email_key = normalise(clean_str(module.get('tutor_email'))) if profile_email else ''\n        if module_id and ((name_key and tutor_name_key == name_key) or (email_key and tutor_email_key == email_key)):\n            assigned_ids.append(module_id)\n    return clean_assignment_ids(assigned_ids)",
+    "module": "curriculum_api.catalogue.application.staff_profiles",
+    "decorators": [],
+    "bindings": {
+      "as_json_value": "as_json_value",
+      "clean_assignment_ids": "clean_assignment_ids",
+      "clean_str": "clean_str",
+      "normalise": "normalise",
+      "safe_authoring_module_rows": "safe_authoring_module_rows",
+      "staff_assignment_key": "staff_assignment_key",
+      "staff_profile_email": "staff_profile_email",
+      "staff_profile_name": "staff_profile_name"
+    }
+  },
+  "staff_users_table_reference": {
+    "source": "def staff_users_table_reference(connection_alias='enrolment'):\n    db = connections[connection_alias]\n    if db.vendor != 'postgresql':\n        return quote_ident('Staff_users')\n    return 'enrolment.\"Staff_users\"'",
+    "module": "curriculum_api.catalogue.infrastructure.staff_directory",
+    "decorators": [],
+    "bindings": {
+      "connections": "connections",
+      "quote_ident": "quote_ident"
+    }
+  },
+  "fetch_staff_users_by_access": {
+    "source": "def fetch_staff_users_by_access(access):\n    access = clean_str(access).lower()\n    if access not in STAFF_ACCESS_ROLES:\n        raise ValueError('Unsupported staff access role.')\n    if 'enrolment' not in connections:\n        return []\n    table = staff_users_table_reference('enrolment')\n    columns_sql = ', '.join(quote_ident(column) for column in STAFF_USER_ACCESS_COLUMNS)\n    query = f'''\n        select {columns_sql}\n        from {table}\n        where lower(trim(coalesce(\"Access\", ''))) = %s\n        order by lower(trim(coalesce(\"Username\", ''))), id\n    '''\n    with connections['enrolment'].cursor() as cursor:\n        cursor.execute(query, [access])\n        return rows_as_dicts(cursor)",
+    "module": "curriculum_api.catalogue.infrastructure.staff_directory",
+    "decorators": [],
+    "bindings": {
+      "STAFF_ACCESS_ROLES": "STAFF_ACCESS_ROLES",
+      "STAFF_USER_ACCESS_COLUMNS": "STAFF_USER_ACCESS_COLUMNS",
+      "clean_str": "clean_str",
+      "connections": "connections",
+      "quote_ident": "quote_ident",
+      "rows_as_dicts": "rows_as_dicts",
+      "staff_users_table_reference": "staff_users_table_reference"
+    }
+  },
+  "curriculum_staff_profile_collection": {
+    "source": "def curriculum_staff_profile_collection(request, role):\n    if request.method != 'GET':\n        return json_error(STAFF_PROFILE_READ_ONLY_MESSAGE, status=405)\n    visibility = curriculum_visibility(request)\n    # A staff profile carries what the person teaches, so building the list walks\n    # the modules, cohorts and groups -- and it read every one of those tables\n    # more than once: the programme config twice, the modules table three times.\n    # The scope memoises them for the request, which is the difference between\n    # ~13 round trips and ~8 on an endpoint the UI asks for twice per page (once\n    # for tutors, once for coaches).\n    with curriculum_read_scope():\n        profiles = build_staff_user_profile_collection(role, visibility)\n    return curriculum_results_response(profiles)",
+    "decorators": [
+      "csrf_exempt"
+    ],
+    "kind": "adapter"
+  },
+  "curriculum_staff_profile_detail": {
+    "source": "def curriculum_staff_profile_detail(request, role, identifier):\n    if request.method != 'GET':\n        return json_error(STAFF_PROFILE_READ_ONLY_MESSAGE, status=405)\n    # Same build as the collection above, for one person. See the note there.\n    with curriculum_read_scope():\n        profile = find_staff_user_profile(role, identifier)\n    if not profile:\n        return json_error(f'{role.title()} profile not found.', status=404)\n    return JsonResponse({'schema': CURRICULUM_SCHEMA, 'profile': profile})",
+    "decorators": [
+      "csrf_exempt"
+    ],
+    "kind": "adapter"
+  },
+  "curriculum_tutors": {
+    "source": "def curriculum_tutors(request):\n    if request.method != 'GET':\n        return json_error(STAFF_PROFILE_READ_ONLY_MESSAGE, status=405)\n    visibility = curriculum_visibility(request)\n    with curriculum_read_scope():\n        profiles = build_curriculum_tutor_profile_collection(visibility)\n    return curriculum_results_response(profiles)",
+    "decorators": [
+      "csrf_exempt"
+    ],
+    "kind": "adapter"
+  },
+  "curriculum_staffing_collection": {
+    "source": "def curriculum_staffing_collection(request):\n    if request.method == 'GET':\n        payload = get_cached_payload(request)\n        assignments = [\n            {\n                'id': group['id'],\n                'groupId': group['id'],\n                'group': group['name'],\n                'cohort': group['cohort'],\n                'programme': group['programme'],\n                'tutor': group['tutor'],\n                'coach': group['coach'],\n                'status': 'unassigned' if group['tutor'] == 'Unassigned' and group['coach'] == 'Unassigned' else 'assigned',\n            }\n            for group in payload['groups']\n        ]\n        return JsonResponse({'schema': payload['schema'], 'count': len(assignments), 'results': assignments})\n    if request.method != 'POST':\n        return json_error('Method not allowed.', status=405)\n    payload = json_body(request)\n    if payload is None:\n        return json_error('Invalid JSON body.')\n    missing = require_fields(payload, ['groupId'])\n    if missing:\n        return json_error('Missing required fields.', fields=missing)\n    return update_staffing_assignment(payload.get('groupId'), payload)",
+    "decorators": [
+      "csrf_exempt"
+    ],
+    "kind": "adapter"
+  },
+  "get_staff_profile_rows": {
+    "source": "def get_staff_profile_rows(role, include_archived=False):\n    \"\"\"Every tutor / coach the curriculum knows of, from the one place they live.\n\n    A tutor or a coach is a staff *user*: somebody an administrator invited and\n    gave that access to (``enrolment.Staff_users.Access``). Curriculum owns the\n    assignment -- which modules a tutor holds, which groups a coach holds, on\n    ``curriculum.modules.tutor_name`` / ``curriculum.groups.coach_name`` -- and\n    nothing about the person, so it keeps no second copy of them to drift out of\n    step with the account they sign in with.\n\n    Read failures are logged and answered with an empty list: a curriculum page\n    has to render when the staff directory is unreachable, showing nobody rather\n    than nothing.\n    \"\"\"\n    try:\n        rows = fetch_staff_users_by_access(role)\n    except (Exception, AssertionError):\n        logger.warning(\n            'Could not read %s options from enrolment.Staff_users.', role, exc_info=True,\n        )\n        return []\n    profiles = [staff_user_profile_source(row, role) for row in rows]\n    if not include_archived:\n        profiles = [row for row in profiles if not staff_profile_is_archived(row)]\n    return profiles",
+    "decorators": [
+      "scoped_curriculum_read"
+    ],
+    "kind": "adapter"
+  }
+}

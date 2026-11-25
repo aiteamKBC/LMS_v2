@@ -37,7 +37,8 @@ def _interval(programme_id: Optional[str] = None) -> timedelta:
     """
     from coach_api.views import TIMETABLE_PROGRESS_REVIEW_INTERVAL, REVIEW_TYPE_CODE_PROGRESS_REVIEW
     if programme_id:
-        from curriculum_api.review_instances import get_review_type_template, template_recurrence_config
+        from curriculum_api.review_management.application.learner_occurrences import get_review_type_template
+        from curriculum_api.review_management.domain.instance_rules import template_recurrence_config
         template_row = get_review_type_template(programme_id, REVIEW_TYPE_CODE_PROGRESS_REVIEW)
         if template_row:
             recurrence = template_recurrence_config(template_row)

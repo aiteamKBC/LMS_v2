@@ -1,7 +1,7 @@
 """Narrow, read-only KSB point facts for the My Learning subject cards."""
 from django.db import connections
 from curriculum_api.canonical_read_sql import component_ksb_codes_sql
-from curriculum_api.learning_storage import read_sql
+from curriculum_api.catalogue.infrastructure.course_storage_reads import read_sql
 from curriculum_api.week_visibility import visible_child_sql
 
 from . import canonical_learning as canonical

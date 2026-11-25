@@ -48,7 +48,7 @@ from django.core.exceptions import ObjectDoesNotExist  # noqa: E402
 def assigned_standard_title(source_id, profile_version=None):
     """Return only title metadata confirmed by the assigned source."""
     if source_id.lower().startswith('standard:'):
-        from curriculum_api.views import find_skills_england_standard
+        from curriculum_api.reporting.infrastructure.source_catalogue_runtime import find_skills_england_standard
 
         standard = find_skills_england_standard(source_id.split(':', 1)[1])
         if standard:

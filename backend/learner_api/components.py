@@ -18,7 +18,7 @@ from django.db import DatabaseError, IntegrityError, connections
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
-from curriculum_api.learning_storage import read_table
+from curriculum_api.catalogue.infrastructure.learning_read_routes import read_table
 
 from curriculum_api.canonical_read_sql import current_status_sql, standard_ksb_join_sql
 

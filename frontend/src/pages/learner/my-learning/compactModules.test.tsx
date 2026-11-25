@@ -38,6 +38,11 @@ const canonicalFreeCourse = {
       contentHtml: '<p>Canonical free content</p>', is_completed: true, activity_state: 'completed', completed_at: null }] }],
 };
 const urls = () => vi.mocked(fetch).mock.calls.map(([url]) => String(url));
+const requestDiagnostics = () => JSON.stringify(vi.mocked(fetch).mock.calls.map(([url, options], index, calls) => ({
+  url: String(url),
+  sameTransportAs: calls.findIndex(([, earlier]) => earlier?.signal === options?.signal),
+  index,
+})));
 const reply = (data: unknown) => new Response(JSON.stringify(data));
 function ActivityDestination() {
   const location = useLocation();
@@ -81,10 +86,22 @@ beforeEach(() => {
     throw new Error(`Unexpected API request: ${url}`);
   }));
 });
-afterEach(() => { cleanup(); clearAllCachedResources(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(async () => {
+  // Unmount and flush pending effects while this case's fetch mock is still
+  // installed. Restoring globals first lets a certificate read fail between
+  // cases and retry against the next learner's mock 600 ms later.
+  cleanup();
+  await act(async () => {});
+  clearAllCachedResources();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 describe('compact My Learning route', () => {
   it('opens Free Courses from a saved quiz-tab URL without loading programme details', async () => {
+    // Load the real lazy renderer before mounting: cold Vitest transformation
+    // must not consume the UI assertion's timeout. Keep all request assertions.
+    await import('./FreeCourseMaterial');
     vi.mocked(fetch).mockImplementation(async input => {
       const url = String(input);
       if (url.includes('/certificates/')) return reply({ template: null, csrfToken: '' });
@@ -110,7 +127,7 @@ describe('compact My Learning route', () => {
     expect(await current.findByRole('button', { name: 'View certificate' })).toBeVisible();
     const other = within(screen.getByRole('heading', { name: 'Old' }).closest('article')!);
     expect(other.queryByRole('button', { name: /certificate/i })).not.toBeInTheDocument();
-    expect(urls().filter(url => url.includes('/certificates/'))).toHaveLength(1);
+    expect(urls().filter(url => url.includes('/certificates/')), requestDiagnostics()).toHaveLength(1);
   });
 
   it.each(['quizzes', 'assignments'])('loads the %s list without requesting dashboard hour totals', async tab => {
@@ -299,7 +316,7 @@ describe('compact My Learning route', () => {
     route(`/learner/my-learning/${kind}/7`);
     await screen.findByRole('heading', { name: 'One' });
     expect(urls().filter(url => url.includes('/my-learning/'))).toEqual([`/learner_api/my-learning/${kind}/7/`]);
-    expect(urls().filter(url => url.includes('/certificates/'))).toHaveLength(1);
+    expect(urls().filter(url => url.includes('/certificates/')), requestDiagnostics()).toHaveLength(1);
     expect(urls().some(url => /learner-detail|student-activity|subject-covers|metrics|training-plan-dashboard/.test(url))).toBe(false);
     expect(screen.getByText('1 of 2 activities completed')).toBeVisible();
     expect(screen.getByText(/1 of 3 previous activities completed/)).toBeVisible();
@@ -313,7 +330,7 @@ describe('compact My Learning route', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Grid' }));
     fireEvent.change(screen.getByRole('combobox', { name: 'Sort by' }), { target: { value: 'progress' } });
     fireEvent.change(screen.getByRole('combobox', { name: 'Status' }), { target: { value: 'started' } });
-    expect(urls()).toHaveLength(requests + 1);
+    expect(urls(), `Unexpected request set: ${requestDiagnostics()}`).toHaveLength(requests + 1);
     expect(urls().filter(url => url.includes('/search/'))).toHaveLength(1);
   });
 
@@ -453,16 +470,23 @@ describe('module state isolation', () => {
 
 describe('compact activity search', () => {
   it('debounces typing, aborts superseded requests and ignores late results across learners', async () => {
-    const pending: { signal: AbortSignal; finish: (value: Response) => void }[] = [];
-    vi.mocked(fetch).mockImplementation((_input,init) => new Promise(resolve => pending.push({ signal: init!.signal!, finish: resolve })));
+    const pending: { url: string; signal: AbortSignal; finish: (value: Response) => void }[] = [];
+    const otherReads = vi.mocked(fetch).getMockImplementation()!;
+    // Shared catalogue reads may finish/retry after a previous caller unmounts.
+    // Observe this hook's search transport, independently of those reads.
+    vi.mocked(fetch).mockImplementation((input, init) => String(input).includes('/search/')
+      ? new Promise(resolve => pending.push({ url: String(input), signal: init!.signal!, finish: resolve }))
+      : otherReads(input, init));
     const hook=renderHook(({ id,query }) => useMyLearningSearch('commercial',id,query,true),{ initialProps:{ id:'7',query:'q' } });
     hook.rerender({id:'7',query:'quiet'});
-    expect(fetch).not.toHaveBeenCalled();
-    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+    expect(pending).toHaveLength(0);
+    await waitFor(() => expect(pending).toHaveLength(1));
+    expect(pending[0].url).toContain('/commercial/7/search/?q=quiet');
     hook.rerender({id:'8',query:'quiet'});
     expect(pending[0].signal.aborted).toBe(true);
     expect(hook.result.current.ids).toEqual([]);
-    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(pending).toHaveLength(2));
+    expect(pending[1].url).toContain('/commercial/8/search/?q=quiet');
     await act(async () => pending[0].finish(reply({matches:[{id:'current:FOREIGN'}],nextOffset:null})));
     expect(hook.result.current.ids).toEqual([]);
     await act(async () => pending[1].finish(reply({matches:[{id:'current:OWN'}],nextOffset:null})));

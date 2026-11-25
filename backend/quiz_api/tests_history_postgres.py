@@ -514,7 +514,7 @@ class QuizHistoryPostgresTests(unittest.TestCase):
                               .values_list('verified_seconds',flat=True)), [300,300])
 
     def test_free_course_shared_editor_handles_real_fk_conflict(self):
-        from curriculum_api import free_course_quiz_views as free
+        from curriculum_api.catalogue.api import free_course_quiz_views as free
         self.save()
         before = self.snapshot()
         self.quiz.free_course_week_id = 'FREEWEEK-TEST'

@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from django.test import SimpleTestCase
 
-from . import learning_plan as plans
+from .learning_plans.infrastructure import assignment_reads as plans
 
 
 class GroupPresetRelationsTests(SimpleTestCase):
@@ -34,7 +34,7 @@ class GroupPresetRelationsTests(SimpleTestCase):
         ''')
         self.calls = []
         self.enterContext(patch.object(plans, '_rows', side_effect=self.rows))
-        self.enterContext(patch.object(plans.connection, 'vendor', 'postgresql'))
+        self.enterContext(patch.object(plans, 'connection', SimpleNamespace(vendor='postgresql')))
 
     def rows(self, sql, params):
         self.calls.append((sql, params))
@@ -50,6 +50,15 @@ class GroupPresetRelationsTests(SimpleTestCase):
                    'ROW_NUMBER() OVER (PARTITION BY p.programme, p.grp ORDER BY ' + order +
                    ') AS choice FROM requested p ' + joins + ') WHERE choice = 1')
             params = []
+        # SQLite builds before 3.44 need ordering inside a subquery rather than
+        # inside the aggregate call. Keep the production ordering intact.
+        sql = sql.replace(
+            'jsonb_agg(m.module_catalogue_id ORDER BY m.module_catalogue_id)\n'
+            '                     FROM curriculum.modules m WHERE m.group_id = g.group_id',
+            'json_group_array(ordered.module_catalogue_id) FROM '
+            '(SELECT m.module_catalogue_id FROM curriculum.modules m '
+            'WHERE m.group_id = g.group_id ORDER BY m.module_catalogue_id) ordered',
+        )
         sql = (sql.replace('::jsonb', '').replace('jsonb_agg', 'json_group_array')
                .replace('jsonb_array_length', 'json_array_length')
                .replace('jsonb_typeof', 'json_type').replace('%s', '?'))

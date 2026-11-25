@@ -3,7 +3,8 @@ from unittest.mock import patch
 
 from coach_api import views as coach_views
 from coach_api.models import CoachCalendarEvent
-from curriculum_api import review_instances, reviews
+import curriculum_api.review_management.api.commands as review_api_commands
+import curriculum_api.review_management.application.learner_occurrences as review_application_learner_occurrences
 from curriculum_api import views as curriculum_views
 
 from .tests_review_scheduling_sync import ReviewSchedulingSyncTestCase, bookable_day
@@ -19,7 +20,7 @@ class ReviewApplicabilityTests(ReviewSchedulingSyncTestCase):
         with patch.object(curriculum_views, 'authoring_fetch_all', return_value=[
             {f'{scope}_id': identifier} for identifier in identifiers
         ]):
-            _, errors = reviews.update_review(template['id'], {
+            _, errors = review_api_commands.update_review(template['id'], {
                 'applicability': {'scope': scope, 'ids': identifiers},
             })
         self.assertIsNone(errors)
@@ -38,10 +39,10 @@ class ReviewApplicabilityTests(ReviewSchedulingSyncTestCase):
         template = self.template(name='Cohort progress', type_code='progress_review')
         self.restrict(template, 'cohort', ['COHORT-A'])
         self.mirror.cohort_id = 'COHORT-A'
-        reviews.update_review(template['id'], {'applicableStatuses': ['Completed']})
+        review_api_commands.update_review(template['id'], {'applicableStatuses': ['Completed']})
         self.assertEqual(self.coach_events(), {})
         self.assertEqual(self.learner_events(), {})
-        reviews.update_review(template['id'], {'applicableStatuses': ['Active']})
+        review_api_commands.update_review(template['id'], {'applicableStatuses': ['Active']})
         self.assertEqual(set(self.coach_events()), set(self.learner_events()))
         self.assertTrue(self.coach_events())
 
@@ -52,18 +53,18 @@ class ReviewApplicabilityTests(ReviewSchedulingSyncTestCase):
             {'group_id': 'G-B', 'group_name': 'Group 1', 'cohort_name': 'Cohort B'},
         ]
         with patch.object(curriculum_views, 'authoring_fetch_all', return_value=rows):
-            self.assertTrue(review_instances.review_applies_to_placement(template, {'cohort': 'Cohort A', 'group': 'Group 1'}))
-            self.assertFalse(review_instances.review_applies_to_placement(template, {'cohort': 'Cohort B', 'group': 'Group 1'}))
-            self.assertFalse(review_instances.review_applies_to_placement(template, {'group': 'Group 1'}))
-            self.assertFalse(review_instances.review_applies_to_placement(template, {'group_id': 'G-B', 'cohort': 'Cohort A', 'group': 'Group 1'}))
+            self.assertTrue(review_application_learner_occurrences.review_applies_to_placement(template, {'cohort': 'Cohort A', 'group': 'Group 1'}))
+            self.assertFalse(review_application_learner_occurrences.review_applies_to_placement(template, {'cohort': 'Cohort B', 'group': 'Group 1'}))
+            self.assertFalse(review_application_learner_occurrences.review_applies_to_placement(template, {'group': 'Group 1'}))
+            self.assertFalse(review_application_learner_occurrences.review_applies_to_placement(template, {'group_id': 'G-B', 'cohort': 'Cohort A', 'group': 'Group 1'}))
 
     def test_foreign_placement_and_empty_selection_are_rejected(self):
         template = self.template(name='Coaching', type_code='mcm')
         with patch.object(curriculum_views, 'authoring_fetch_all', return_value=[{'group_id': 'G-OWN'}]) as fetch:
-            _, errors = reviews.update_review(template['id'], {'applicability': {'scope': 'group', 'ids': ['G-FOREIGN']}})
+            _, errors = review_api_commands.update_review(template['id'], {'applicability': {'scope': 'group', 'ids': ['G-FOREIGN']}})
             self.assertIn('applicability', errors)
             self.assertEqual(fetch.call_args.args[2], [template['programme_id']])
-        _, errors = reviews.update_review(template['id'], {'applicability': {'scope': 'group', 'ids': []}})
+        _, errors = review_api_commands.update_review(template['id'], {'applicability': {'scope': 'group', 'ids': []}})
         self.assertIn('applicability', errors)
 
     def test_two_reviews_with_identical_type_and_dates_remain_distinct(self):
@@ -82,10 +83,10 @@ class ReviewApplicabilityTests(ReviewSchedulingSyncTestCase):
         self.learner_schedules(event['eventKey'], 'mcr', bookable_day(20))
         record = CoachCalendarEvent.objects.get(event_key=event['eventKey'])
         instance_id = record.review_instance_id
-        from curriculum_api import review_types
-        reviews.update_review(template['id'], {
+        import curriculum_api.review_management.infrastructure.type_rows as review_infrastructure_type_rows
+        review_api_commands.update_review(template['id'], {
             'name': 'Renamed', 'recurrence': {'interval': 6, 'unit': 'weeks'},
-            'reviewTypeId': review_types.get_review_type_by_code('progress_review')['id'],
+            'reviewTypeId': review_infrastructure_type_rows.get_review_type_by_code('progress_review')['id'],
         })
         for events in (self.coach_events(), self.learner_events()):
             self.assertIn(event['eventKey'], events)
@@ -110,11 +111,11 @@ class ReviewApplicabilityTests(ReviewSchedulingSyncTestCase):
         template = self.template(name='Coaching', type_code='mcm')
         event = self.coach_occurrence('mcr')
         self.learner_schedules(event['eventKey'], 'mcr', bookable_day(20))
-        reviews.update_review(template['id'], {'enabled': False})
+        review_api_commands.update_review(template['id'], {'enabled': False})
         for events in (self.coach_events(), self.learner_events()):
             self.assertEqual(list(events), [event['eventKey']])
             self.assertEqual(events[event['eventKey']]['status'], 'scheduled')
-        reviews.archive_review(template['id'])
+        review_api_commands.archive_review(template['id'])
         for events in (self.coach_events(), self.learner_events()):
             self.assertEqual(list(events), [event['eventKey']])
             self.assertEqual(events[event['eventKey']]['title'], 'Coaching')
@@ -146,6 +147,6 @@ class ReviewApplicabilityTests(ReviewSchedulingSyncTestCase):
             learner_email=self.mirror.email, event_type='mcr', sequence=1,
             target_date=target, status='not-scheduled',
         )
-        reviews.update_review(template['id'], {'enabled': False})
+        review_api_commands.update_review(template['id'], {'enabled': False})
         self.assertEqual(self.coach_events(), {})
         self.assertEqual(self.learner_events(), {})

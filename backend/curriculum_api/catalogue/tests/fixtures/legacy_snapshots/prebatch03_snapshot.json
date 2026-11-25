@@ -1,0 +1,187 @@
+{
+  "views.py:authoring_module_content_counts": {
+    "source": "def authoring_module_content_counts():\n    \"\"\"``(lesson_counts, ksb_counts)`` per module catalogue id, without row reads.\n\n    The same two figures authoring_catalogue_summaries() derives from every\n    component and mapping row, grouped by the database instead: the live\n    components of each module (retired types and detached rows excluded, as\n    active_component_rows() excludes them) and the distinct KSB codes on its live\n    mappings. A few hundred grouped rows cross the network instead of ~90k.\n    \"\"\"\n    lesson_counts = Counter()\n    where_sql, params = live_authoring_rows_sql(AUTHORING_COMPONENTS_TABLE)\n    group_columns = [\n        quote_ident(column)\n        for column in ('module_catalogue_id', 'type')\n        if has_column(AUTHORING_COMPONENTS_TABLE, column)\n    ]\n    query = (\n        f'select {\", \".join(group_columns)}, count(*) as {quote_ident(\"row_count\")} '\n        f'from {learning_read_table(AUTHORING_COMPONENTS_TABLE)}'\n        + (f' where {where_sql}' if where_sql else '')\n        + f' group by {\", \".join(group_columns)}'\n    )\n    for row in fetch_all(query, params):\n        if is_retired_component_type(row.get('type')):\n            continue\n        lesson_counts[str(row.get('module_catalogue_id'))] += parse_int(row.get('row_count'), 0)\n\n    ksb_codes = defaultdict(set)\n    where_sql, params = live_authoring_rows_sql(AUTHORING_KSB_MAPPINGS_TABLE)\n    query = (\n        f'select {quote_ident(\"module_catalogue_id\")}, {quote_ident(\"ksb_code\")} '\n        f'from {ksb_mapping_placement.relation(include_description=False)}'\n        + (f' where {where_sql}' if where_sql else '')\n        + f' group by {quote_ident(\"module_catalogue_id\")}, {quote_ident(\"ksb_code\")}'\n    )\n    for row in fetch_all(query, params):\n        code = clean_str(row.get('ksb_code'))\n        if code:\n            ksb_codes[str(row.get('module_catalogue_id'))].add(code)\n    return dict(lesson_counts), {catalogue_id: len(codes) for catalogue_id, codes in ksb_codes.items()}",
+    "module": "curriculum_api.catalogue.infrastructure.content_counts",
+    "deps": [
+      "AUTHORING_COMPONENTS_TABLE",
+      "AUTHORING_KSB_MAPPINGS_TABLE",
+      "clean_str",
+      "fetch_all",
+      "has_column",
+      "is_retired_component_type",
+      "ksb_mapping_placement",
+      "learning_read_table",
+      "live_authoring_rows_sql",
+      "parse_int",
+      "quote_ident"
+    ],
+    "view_attrs": []
+  },
+  "views.py:resolve_stored_module_catalogue_id": {
+    "source": "def resolve_stored_module_catalogue_id(identifier):\n    \"\"\"Resolve any public module identifier to the stored MOD-* primary key.\n\n    The existence check first is what makes this cheap.\n    ``resolve_authoring_catalogue_id`` is the general answer, but it summarises\n    every module in the database to give it -- five round trips, four of them\n    whole-table reads and one of them every component row -- because it has to\n    search modules by source id, training id and delivery signature. That search\n    only means anything for an identifier that is *not* a stored module: a legacy\n    ``training-module-`` id, a ``catalogue-module-`` alias, a delivery source id.\n    An identifier that already names a stored module is its own answer, and one\n    indexed lookup settles it.\n\n    Named for what it returns rather than for a caller: reads want the same\n    resolution writes do, and the previous ``_for_write`` name had the module\n    structure endpoint reaching for the expensive resolver on every GET rather\n    than this one.\n    \"\"\"\n    ident = clean_str(identifier)\n    if not ident:\n        return ''\n    if ident.startswith('catalogue-module-'):\n        ident = ident.replace('catalogue-module-', '', 1)\n    if authoring_module_exists(ident):\n        return ident\n    return resolve_authoring_catalogue_id(ident) or ''",
+    "module": "curriculum_api.catalogue.application.resolution",
+    "deps": [
+      "authoring_module_exists",
+      "clean_str",
+      "resolve_authoring_catalogue_id"
+    ],
+    "view_attrs": []
+  },
+  "views.py:resolve_authoring_catalogue_id": {
+    "source": "def resolve_authoring_catalogue_id(identifier):\n    ident = clean_str(identifier)\n    if not ident:\n        return ''\n    # Resolution reads only ids, the delivery signature and the ranking figures\n    # (authoring_summary_score), all of which the content-free summaries carry.\n    # The full summaries read every component and KSB mapping in the catalogue\n    # (~10 s on the remote database) just to answer \"which module is this?\".\n    summaries = authoring_catalogue_summaries(include_programme_deleted=True, include_content=False)\n    if not summaries:\n        return ''\n\n    candidates = []\n\n    def add_candidate(summary):\n        if summary and summary not in candidates:\n            candidates.append(summary)\n\n    for summary in summaries.values():\n        summary_identifiers = {\n            clean_str(summary.get('catalogueId')),\n            clean_str(summary.get('sourceId')),\n        }\n        if summary.get('sourceId'):\n            summary_identifiers.add(training_module_identifier(summary.get('sourceId')))\n        if ident in summary_identifiers:\n            add_candidate(summary)\n\n    if ident.startswith('training-module-'):\n        training_id = ident.replace('training-module-', '', 1)\n        row = training_row_by_id(training_id)\n        if row:\n            meta = row.get('_meta') or extract_notes_meta(row.get('notes'))\n            legacy_ids = {\n                training_id,\n                training_module_identifier(training_id),\n                training_row_module_catalogue_id(row),\n            }\n            try:\n                programme_name = canonical_programme_name(row, program_config_by_id(get_program_config_rows()))\n            except Exception:\n                programme_name = row.get('Program') or 'Unassigned programme'\n            cohort_identity = actual_cohort_identity(row, programme_name)\n            group_identity = actual_group_identity(row, cohort_identity['id']) if cohort_identity else None\n            delivery_signature = '|'.join([\n                normalise(programme_name),\n                normalise(row.get('module_name')),\n                normalise((cohort_identity or {}).get('id') or (cohort_identity or {}).get('name')),\n                normalise((group_identity or {}).get('id') or (group_identity or {}).get('name')),\n            ])\n            for summary in summaries.values():\n                summary_identifiers = {\n                    clean_str(summary.get('catalogueId')),\n                    clean_str(summary.get('sourceId')),\n                }\n                if summary_identifiers.intersection(legacy_ids):\n                    add_candidate(summary)\n                    continue\n                if delivery_signature and authoring_summary_delivery_signature(summary) == delivery_signature:\n                    add_candidate(summary)\n\n    best = best_authoring_summary(candidates)\n    return clean_str(best.get('catalogueId')) if best else ''",
+    "module": "curriculum_api.catalogue.application.resolution",
+    "deps": [
+      "actual_cohort_identity",
+      "actual_group_identity",
+      "authoring_catalogue_summaries",
+      "authoring_summary_delivery_signature",
+      "best_authoring_summary",
+      "canonical_programme_name",
+      "clean_str",
+      "extract_notes_meta",
+      "get_program_config_rows",
+      "normalise",
+      "program_config_by_id",
+      "training_module_identifier",
+      "training_row_by_id",
+      "training_row_module_catalogue_id"
+    ],
+    "view_attrs": []
+  },
+  "views.py:authoring_summary_score": {
+    "source": "def authoring_summary_score(summary):\n    return (\n        parse_int(summary.get('ksbCount'), 0),\n        parse_int(summary.get('qualityScore'), 0),\n        parse_int(summary.get('lessonCount'), 0),\n        parse_int(summary.get('weeks'), 0),\n    )",
+    "module": "curriculum_api.catalogue.domain.ranking",
+    "deps": [
+      "parse_int"
+    ],
+    "view_attrs": []
+  },
+  "views.py:best_authoring_summary": {
+    "source": "def best_authoring_summary(candidates):\n    candidates = [candidate for candidate in candidates if candidate]\n    if not candidates:\n        return None\n    return max(candidates, key=authoring_summary_score)",
+    "module": "curriculum_api.catalogue.domain.ranking",
+    "deps": [
+      "authoring_summary_score"
+    ],
+    "view_attrs": []
+  },
+  "home_summary.py:home_relationship_rows": {
+    "source": "def home_relationship_rows(*, include_weeks=False):\n    sources = [\n        ('modules', views.AUTHORING_MODULES_TABLE, _HOME_MODULE_FIELDS, ''),\n        ('groups', views.GROUPS_TABLE, _HOME_GROUP_FIELDS, ''),\n        ('cohorts', views.COHORT_AUTHORING_DETAILS_TABLE, _HOME_COHORT_FIELDS, ''),\n    ]\n    if include_weeks:\n        sources.append(('weeks', views.AUTHORING_WEEKS_TABLE, _HOME_WEEK_FIELDS, ''))\n    if views.connection.vendor != 'postgresql':\n        # Test databases only. They carry no KSB mapping read view, so no\n        # module counts as mapped there.\n        return {\n            **{name: views.authoring_fetch_all(table, columns=fields) for name, table, fields, _ in sources},\n            'program_configs': views.get_program_config_rows(), 'ksb_profiles': views.get_ksb_profile_rows(),\n            'ksb_counts': {},\n        }\n    views.ensure_module_authoring_tables()\n    # Preserve the exact programme/profile order used by the ordinary readers.\n    sources.append(('program_configs', 'programmes', None,\n                    \"coalesce((to_jsonb(source_row)->>'display_order')::numeric, 0), name\"))\n    # KSB profiles were retired; Home reads standard-backed KSB counts only.\n    # Do not probe the removed table on every cold request.\n    # One database round trip, and one consistent statement snapshot. Selecting\n    # keys from JSON handles optional legacy columns without three schema probes.\n    # Table names and aliases are server constants; keys are bound parameters.\n    selections = []\n    params = []\n    for name, table, fields, ordering in sources:\n        expression = 'to_jsonb(source_row)'\n        if fields is not None:\n            expression = '(select jsonb_object_agg(key, value) from jsonb_each(to_jsonb(source_row)) where key = any(%s))'\n            params.append(list(fields))\n        order_sql = f' order by {ordering}' if ordering else ''\n        selections.append(\n            f'(select coalesce(jsonb_agg({expression}{order_sql}), \\'[]\\'::jsonb) '\n            f'from {views.authoring_table_name(table)} source_row) as {views.quote_ident(name)}'\n        )\n    # Distinct live KSB codes per module, in the same round trip. The delivery\n    # rows Home is built from carry no mappings of their own.\n    ksb_sql, ksb_params = ksb_counts_selection()\n    selections.append(f'{ksb_sql} as \"ksb_counts\"')\n    params.extend(ksb_params)\n    result = views.fetch_all('select ' + ', '.join(selections), params)[0]\n    # Django's PostgreSQL backend can return raw JSON strings for computed\n    # columns, while standalone psycopg configurations may decode them already.\n    decoded = {name: json.loads(value) if isinstance(value, str) else value for name, value in result.items()}\n    decoded['ksb_profiles'] = []\n    return decoded",
+    "module": "curriculum_api.catalogue.infrastructure.projection_sources",
+    "deps": [
+      "AUTHORING_MODULES_TABLE",
+      "AUTHORING_WEEKS_TABLE",
+      "COHORT_AUTHORING_DETAILS_TABLE",
+      "GROUPS_TABLE",
+      "_HOME_COHORT_FIELDS",
+      "_HOME_GROUP_FIELDS",
+      "_HOME_MODULE_FIELDS",
+      "_HOME_WEEK_FIELDS",
+      "authoring_fetch_all",
+      "authoring_table_name",
+      "connection",
+      "ensure_module_authoring_tables",
+      "fetch_all",
+      "get_ksb_profile_rows",
+      "get_program_config_rows",
+      "ksb_counts_selection",
+      "quote_ident"
+    ],
+    "view_attrs": [
+      "AUTHORING_MODULES_TABLE",
+      "AUTHORING_WEEKS_TABLE",
+      "COHORT_AUTHORING_DETAILS_TABLE",
+      "GROUPS_TABLE",
+      "authoring_fetch_all",
+      "authoring_table_name",
+      "connection",
+      "ensure_module_authoring_tables",
+      "fetch_all",
+      "get_ksb_profile_rows",
+      "get_program_config_rows",
+      "quote_ident"
+    ]
+  },
+  "home_summary.py:build_home_summary": {
+    "source": "def build_home_summary(visibility, *, force=False):\n    with views.curriculum_read_scope():\n        rows, delivery = home_source_rows(visibility)\n        overview = views.build_curriculum_payload_from_rows(\n            rows, visibility, compact=True, home_summary=True, delivery_source=delivery,\n        )\n        # Idempotent: the payload builder applies the same facts once views.py\n        # passes rows['ksb_counts'] through; until then this call does it.\n        apply_authoring_facts(overview['modules'], rows['authoring_modules'], rows.get('ksb_counts'))\n        if not home_programmes_need_enrichment(\n            overview, rows['authoring_modules'], rows['program_configs'], include_archived=visibility == 'all',\n        ):\n            return project_home(overview, overview['programmes'])\n        # Programme enrichment can introduce module-only programmes. Preserve\n        # those identities, but do not load component bodies or KSB mappings.\n        modules = views.enrich_modules_with_authoring(\n            overview['modules'], include_programme_deleted=visibility == 'all', include_content=False,\n        )\n        programmes = views.enrich_programmes_with_module_counts(\n            overview['programmes'], modules, modules_enriched=True, include_archived=visibility == 'all',\n            # Home derives its counts from overview and only needs programme\n            # identities/source metadata, including module-only programmes.\n            include_structure_counts=False,\n        )\n        return project_home(overview, programmes)",
+    "module": "curriculum_api.catalogue.application.projections",
+    "deps": [
+      "apply_authoring_facts",
+      "build_curriculum_payload_from_rows",
+      "curriculum_read_scope",
+      "enrich_modules_with_authoring",
+      "enrich_programmes_with_module_counts",
+      "home_programmes_need_enrichment",
+      "home_source_rows",
+      "project_home"
+    ],
+    "view_attrs": [
+      "build_curriculum_payload_from_rows",
+      "curriculum_read_scope",
+      "enrich_modules_with_authoring",
+      "enrich_programmes_with_module_counts"
+    ]
+  },
+  "programme_list.py:programme_list_sources": {
+    "source": "def programme_list_sources():\n    sources = [\n        ('modules', views.AUTHORING_MODULES_TABLE, _MODULE_FIELDS, ''),\n        ('groups', views.GROUPS_TABLE, _GROUP_FIELDS, ''),\n        ('cohorts', views.COHORT_AUTHORING_DETAILS_TABLE, _COHORT_FIELDS, ''),\n        ('weeks', views.AUTHORING_WEEKS_TABLE, _WEEK_FIELDS, ''),\n    ]\n    if views.connection.vendor != 'postgresql':\n        return {\n            **{name: views.authoring_fetch_all(table, columns=fields) for name, table, fields, _ in sources},\n            'program_configs': views.get_program_config_rows(),\n        }\n    views.ensure_module_authoring_tables()\n    sources.append(('program_configs', 'programmes', None,\n                    \"coalesce((to_jsonb(source_row)->>'display_order')::numeric, 0), name\"))\n    selections, params = [], []\n    for name, table, fields, ordering in sources:\n        expression = 'to_jsonb(source_row)'\n        if fields is not None:\n            expression = '(select jsonb_object_agg(key, value) from jsonb_each(to_jsonb(source_row)) where key = any(%s))'\n            params.append(list(fields))\n        order_sql = f' order by {ordering}' if ordering else ''\n        selections.append(\n            f'(select coalesce(jsonb_agg({expression}{order_sql}), \\'[]\\'::jsonb) '\n            f'from {views.authoring_table_name(table)} source_row) as {views.quote_ident(name)}'\n        )\n    selections.append('to_regclass(\\'\"Learner\".\"learners\"\\') is not null as \"has_learner_table\"')\n    # One round trip and statement snapshot; names are server constants, keys\n    # are parameters. JSON key selection tolerates optional legacy columns.\n    row = views.fetch_all('select ' + ', '.join(selections), params)[0]\n    result = {name: json.loads(value) if isinstance(value, str) else value for name, value in row.items()}\n    return result",
+    "module": "curriculum_api.catalogue.infrastructure.projection_sources",
+    "deps": [
+      "AUTHORING_MODULES_TABLE",
+      "AUTHORING_WEEKS_TABLE",
+      "COHORT_AUTHORING_DETAILS_TABLE",
+      "GROUPS_TABLE",
+      "_COHORT_FIELDS",
+      "_GROUP_FIELDS",
+      "_MODULE_FIELDS",
+      "_WEEK_FIELDS",
+      "authoring_fetch_all",
+      "authoring_table_name",
+      "connection",
+      "ensure_module_authoring_tables",
+      "fetch_all",
+      "get_program_config_rows",
+      "quote_ident"
+    ],
+    "view_attrs": [
+      "AUTHORING_MODULES_TABLE",
+      "AUTHORING_WEEKS_TABLE",
+      "COHORT_AUTHORING_DETAILS_TABLE",
+      "GROUPS_TABLE",
+      "authoring_fetch_all",
+      "authoring_table_name",
+      "connection",
+      "ensure_module_authoring_tables",
+      "fetch_all",
+      "get_program_config_rows",
+      "quote_ident"
+    ]
+  },
+  "programme_list.py:build_programme_list": {
+    "source": "def build_programme_list(visibility, *, force=False):\n    with views.curriculum_read_scope():\n        source = programme_list_sources()\n        training = views.authoring_modules_as_training_rows(\n            module_rows=source['modules'], group_rows=source['groups'], cohort_rows=source['cohorts'],\n        )\n        if visibility != 'all':\n            training = [row for row in training if views.is_operational_training_row(row)]\n        counts = views.authoring_programme_structure_counts(source=source)\n        programmes = views.build_programmes(\n            training, source['program_configs'], [], include_config_only=visibility == 'all',\n            only_stats_for_ids=frozenset(), structure_counts=counts,\n            learner_counts=programme_list_learner_counts(source),\n        )\n        if not programme_list_needs_module_enrichment(\n            programmes, source, counts, include_archived=visibility == 'all',\n        ):\n            return programmes\n        # Keep the established response for legacy and module-only programmes.\n        # This fallback is cached as the same list, never as a partial overview.\n        overview = views.build_curriculum_payload_from_rows(\n            views.get_curriculum_rows(compact=True), visibility, compact=True, programme_list=True,\n        )\n        modules = views.enrich_modules_with_authoring(\n            overview['modules'], include_programme_deleted=visibility == 'all', include_content=False,\n        )\n        return views.enrich_programmes_with_module_counts(\n            overview['programmes'], modules, modules_enriched=True, include_archived=visibility == 'all',\n        )",
+    "module": "curriculum_api.catalogue.application.projections",
+    "deps": [
+      "authoring_modules_as_training_rows",
+      "authoring_programme_structure_counts",
+      "build_curriculum_payload_from_rows",
+      "build_programmes",
+      "curriculum_read_scope",
+      "enrich_modules_with_authoring",
+      "enrich_programmes_with_module_counts",
+      "get_curriculum_rows",
+      "is_operational_training_row",
+      "programme_list_learner_counts",
+      "programme_list_needs_module_enrichment",
+      "programme_list_sources"
+    ],
+    "view_attrs": [
+      "authoring_modules_as_training_rows",
+      "authoring_programme_structure_counts",
+      "build_curriculum_payload_from_rows",
+      "build_programmes",
+      "curriculum_read_scope",
+      "enrich_modules_with_authoring",
+      "enrich_programmes_with_module_counts",
+      "get_curriculum_rows",
+      "is_operational_training_row"
+    ]
+  }
+}

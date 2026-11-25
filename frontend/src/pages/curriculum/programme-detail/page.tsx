@@ -1,4 +1,50 @@
-import { LoadingLabel, LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
+import {
+  type ComponentFiguresState,
+  type Week,
+  type Programme,
+  type KsbEvidenceItem,
+  type KsbHeatmapRow,
+  type Module,
+  type Cohort,
+  type Group,
+  type ProgrammeWeekComponent,
+} from '@/features/curriculum/programme-detail/model/types';
+import {
+  normalise,
+  clean,
+  uniqueCleanValues,
+  isStaffAssigned,
+  formatHours,
+} from '@/features/curriculum/programme-detail/model/presentation';
+import {
+  programmeReferenceMatches,
+  sessionStatus,
+  findProgramme,
+  belongsToProgramme,
+  isArchivedCurriculumModule,
+  isProgrammeMatch,
+  moduleStatus,
+  cohortStatus,
+  groupStatus,
+  type RecordStatusFilter,
+  matchesRecordStatus,
+  staffNameOptions,
+} from '@/features/curriculum/programme-detail/model/records';
+import {
+  moduleBuilderUrl,
+  moduleWorkspaceIdentity,
+  moduleBuilderIdentifier,
+  moduleWorkspaceUrl,
+} from '@/features/curriculum/programme-detail/model/navigation';
+import {
+  ReadinessBar,
+  AttentionRow,
+  RecordHomeLink,
+  ModulesLoadingPanel,
+  QualityCheckCard,
+} from '@/features/curriculum/programme-detail/components/OverviewPanels';
+import { EnrolledLearnersPanel } from '@/features/curriculum/programme-detail/components/EnrolledLearnersPanel';
+import { StaffSlot } from '@/features/curriculum/programme-detail/components/StaffSlot';
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -9,18 +55,14 @@ import type { LearnerAssignmentTarget } from '@/api/curriculumLearnerAssignments
 import { useRefreshOnRemoteWrite, useRefreshOnReturn } from '@/hooks/useRefreshOnReturn';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { showCurriculumAlert } from '@/components/feature/CurriculumSweetAlert';
-import { findByIdentifierThenName, findModule, formatProgrammeLevel, namedCurriculumWorkspacePath, programmeIdentity, visibleNotes } from '@/pages/curriculum/shared/entities/model';
+import { findModule, formatProgrammeLevel, namedCurriculumWorkspacePath, programmeIdentity, visibleNotes } from '@/pages/curriculum/shared/entities/model';
 // Editing the programme, or adding a cohort or group from this page,
 // opens the same drawer that record's own page opens. One form per record type in
 // the whole studio, so nothing behaves differently depending on the door taken.
 import { CohortFormDrawer, GroupFormDrawer, ProgrammeFormDrawer } from '@/pages/curriculum/shared/entities/forms';
 import { ModuleFormDrawer, type ModuleFormTarget } from '@/pages/curriculum/shared/entities/moduleForm';
 import { moduleFormTarget } from "@/pages/curriculum/shared/entities/moduleForm.helpers";
-import {
-  ScopeAchievementPanel,
-  ScopeLearnerAchievementDetail,
-  type KsbCredit,
-} from '@/pages/curriculum/shared/entities/scopeAchievement';
+import { ScopeLearnerAchievementDetail } from '@/pages/curriculum/shared/entities/scopeAchievement';
 import { KsbAchievementTab } from '@/pages/curriculum/shared/entities/KsbAchievementTab';
 // The same rule applies to reading: the record tables, filter bars and workspace
 // chrome here are the shared ones the Cohort, Group and Module workspaces use, so
@@ -35,7 +77,6 @@ import {
   EntityFilterBar,
   EntityTable,
   InlineError,
-  MultiSelectControl,
   NamedActions,
   PlainCell,
   RowActions,
@@ -43,12 +84,12 @@ import {
   StatusBadge,
   WorkspaceHeader,
   WorkspacePanel,
-  WorkspaceTabs,
+  WorkspaceTabs
 } from '@/pages/curriculum/shared/entities/ui';
 import { archiveCohortWithConfirm, archiveGroupWithConfirm, archiveModuleWithConfirm } from '@/pages/curriculum/shared/entities/archive';
-import { groupCoachNames, joinCoachNames } from '@/pages/curriculum/shared/entities/groupCoaches';
 import { curriculumNavItems } from '@/mocks/navigation';
-import { formatHoursMinutes, formatSystemTimestamp, hoursToRoundedMinutes, roundedMinutesToHours, systemTimeZoneName } from '@/lib/format';
+import { formatHoursMinutes, formatSystemTimestamp, hoursToRoundedMinutes, roundedMinutesToHours, systemTimeZoneName
+} from '@/lib/format';
 import type {
   CurriculumCohort,
   CurriculumComponent,
@@ -67,29 +108,9 @@ import type {
   CurriculumKsbCoverageResponse,
   CurriculumKsbCoverageSummaryResponse,
   CurriculumKsbSet,
-  CurriculumStandard,
+  CurriculumStandard
 } from '@/lib/curriculumApi';
-import {
-  fetchCurriculumComponents,
-  fetchCurriculumComponentSummary,
-  fetchCurriculumLiveSessionOccurrences,
-  type CurriculumLiveSessionOccurrence,
-  fetchCurriculumProgrammeDetailModules,
-  fetchCurriculumProgrammeDetailShell,
-  fetchProgrammeKsbStats,
-  fetchCurriculumProgrammeKsbCoverage,
-  fetchCurriculumProgrammeKsbCoverageSummary,
-  fetchCurriculumScopeLearnerRoster,
-  fetchCurriculumKsbSets,
-  fetchCurriculumKsbFrameworks,
-  fetchCurriculumCoaches,
-  fetchCurriculumHolidays,
-  fetchCurriculumStandards,
-  fetchCurriculumTutors,
-  curriculumErrorMessage,
-  tutorConflictMessage,
-  updateCurriculumGroup,
-} from '@/lib/curriculumApi';
+import { fetchCurriculumComponents, fetchCurriculumComponentSummary, fetchCurriculumLiveSessionOccurrences, type CurriculumLiveSessionOccurrence, fetchCurriculumProgrammeDetailModules, fetchCurriculumProgrammeDetailShell, fetchProgrammeKsbStats, fetchCurriculumProgrammeKsbCoverage, fetchCurriculumProgrammeKsbCoverageSummary, fetchCurriculumScopeLearnerRoster, fetchCurriculumKsbSets, fetchCurriculumKsbFrameworks, fetchCurriculumCoaches, fetchCurriculumHolidays, fetchCurriculumStandards, fetchCurriculumTutors, curriculumErrorMessage, tutorConflictMessage, updateCurriculumGroup } from '@/lib/curriculumApi';
 import { SlideDeckViewer } from '@/components/feature/SlideDeckViewer';
 import { VideoPlayer, parseVideoUrl } from '@/components/feature/VideoPlayer';
 import { resolveDocEmbed } from '@/lib/docEmbed';
@@ -97,43 +118,7 @@ import { type KsbMapping } from '../module-builder/moduleAuthoringData';
 import { SessionsTree } from './SessionsTree';
 import { useCompleteComponent } from './useCompleteComponent';
 import { ReviewsTab } from './reviews/ReviewsTab';
-
-// ============================================================
-// Types — Full Programme Hierarchy
-// ============================================================
-
-interface Session {
-  id: string;
-  title: string;
-  type: 'Live Session' | 'Workshop' | 'Self-study' | 'Assignment' | 'Quiz' | 'OTJH' | 'Collaboration' | 'Review';
-  day: string;
-  date: string;
-  startTime: string;
-  endTime: string;
-  duration: number;
-  tutor: string;
-  venue: string;
-  deliveryMode: string;
-  ksbRefs: string[];
-  skippedHolidays?: string[];
-  scheduleWarnings?: string[];
-  status: 'scheduled' | 'completed' | 'cancelled' | 'pending';
-}
-
-interface Week {
-  id: string;
-  number: number;
-  title: string;
-  startDate: string;
-  endDate: string;
-  otjh: number;
-  components?: ProgrammeWeekComponent[];
-  /** From the component summary while the full list is not loaded; read
-   *  through weekComponentCount / weekPublishedCount, never directly. */
-  componentCount?: number;
-  publishedComponentCount?: number;
-  sessions: Session[];
-}
+import { LoadingLabel, LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 
 /**
  * A summary bucket, with the distinct KSB codes mapped to its components when
@@ -141,14 +126,6 @@ interface Week {
  * it could not -- the page then reads the full component list for the count.
  */
 type ComponentSummaryRow = CurriculumComponentSummaryRow & { ksbCodes?: string[] };
-
-/**
- * Where the component figures (counts, OTJH, KSBs) stand: still loading,
- * built from the summary or the full list, or unavailable because both reads
- * failed. A figure is printed only once it is `ready`, so a loading or failed
- * read never shows as a real zero.
- */
-type ComponentFiguresState = 'pending' | 'ready' | 'failed';
 
 /** The detail document with the component list, or its summary until the list is loaded. */
 type ProgrammeDetailData = CurriculumOverview & {
@@ -163,218 +140,6 @@ function weekComponentCount(week: Pick<Week, 'components' | 'componentCount'>) {
 
 function weekPublishedCount(week: Pick<Week, 'components' | 'publishedComponentCount'>) {
   return week.publishedComponentCount ?? (week.components || []).filter(component => component.status === 'published').length;
-}
-
-type ProgrammeWeekComponent = Partial<CurriculumComponent> & {
-  id: string;
-  title: string;
-  type: string;
-  duration: number;
-  status: CurriculumComponent['status'];
-  contentSections: number;
-  quizQuestions?: number | null;
-  ksbRefs: string[];
-};
-
-type KsbEvidenceItem = {
-  module: string;
-  scope: 'module' | 'week' | 'component' | 'live';
-  week?: string;
-  component?: string;
-  componentType?: string;
-  classification?: string;
-  groups?: string[];
-  weight: number;
-};
-type ModuleKsbMappingSummary = { ksb: string; weight: number; count?: number; evidence?: KsbEvidenceItem[]; source?: 'authoring' | 'fallback'; sourceType?: string; sourceId?: string };
-type KsbHeatmapRow = {
-  id?: string;
-  ksb: string;
-  title: string;
-  description?: string;
-  coverage: Record<string, number | null>;
-  counts?: Record<string, number>;
-  evidence?: Record<string, KsbEvidenceItem[]>;
-  totalOccurrences?: number;
-  totalWeight?: number;
-  sourceType?: string;
-  sourceId?: string;
-  sourceName?: string;
-  sourceLabel?: string;
-  missing?: boolean;
-};
-
-interface Module {
-  id: string;
-  sourceId?: string | number;
-  moduleId?: string;
-  moduleCatalogueId?: string;
-  catalogueId?: string;
-  structureId?: string;
-  name: string;
-  description: string;
-  cohortId?: string;
-  cohort?: string;
-  groupId?: string;
-  group?: string;
-  coach?: string;
-  tutor?: string;
-  weeks: number;
-  /**
-   * The module's own placement dates, as the record holds them — including an end
-   * that holidays moved or a tutor set by hand. Kept apart from the week span in
-   * `weeksData`, which is where the authored sessions happen to fall: a module
-   * whose last week has one session on 5 Oct can still legitimately end on 15 Oct,
-   * and printing the week span as the module's dates contradicted its own record.
-   */
-  startDate?: string;
-  endDate?: string;
-  otjh: number;
-  status: 'published' | 'approved' | 'in-review' | 'draft' | 'archived';
-  archived: boolean;
-  ksbTags: string[];
-  ksbMapping: ModuleKsbMappingSummary[];
-  /** Whether the component counts, OTJH and KSB figures can be shown yet. */
-  componentFigures: ComponentFiguresState;
-  weeksData: Week[];
-}
-
-function isCanonicalModuleBuilderId(value: unknown) {
-  return /^MOD-[A-Z0-9][A-Z0-9_-]*$/i.test(clean(value));
-}
-
-function moduleBuilderIdentifier(module: Pick<Module, 'id' | 'sourceId' | 'moduleId' | 'moduleCatalogueId' | 'catalogueId' | 'structureId'>) {
-  const candidates = uniqueCleanValues([
-    module.moduleCatalogueId,
-    module.catalogueId,
-    module.structureId,
-    module.moduleId,
-    module.id,
-    module.sourceId,
-  ]);
-  return candidates.find(isCanonicalModuleBuilderId) || candidates[0] || '';
-}
-
-function moduleBuilderUrl(
-  module: Pick<Module, 'id' | 'sourceId' | 'moduleId' | 'moduleCatalogueId' | 'catalogueId' | 'structureId' | 'name'>,
-  programme?: Pick<Programme, 'id' | 'sourceId' | 'name'>,
-  /** Deep-links straight past the module's landing view into one week or
-   *  component's own editor — the same `week`/`component` params Module
-   *  Builder's own deep-link handler (`moduleBuilderDeepLinkTarget`) already
-   *  reads on load, so this is landing on a door it already opens for itself. */
-  target?: { weekId?: string; componentId?: string },
-) {
-  const params = new URLSearchParams();
-  const moduleId = moduleBuilderIdentifier(module);
-  if (moduleId) params.set('module', moduleId);
-  // A label, not a second lookup key. Module Builder opens the module the id
-  // names and nothing else; if that id matches nothing, this is the name it
-  // reports as missing. Resolving by title instead used to open a namesake from
-  // another programme -- same name, different weeks, different OTJH.
-  const moduleName = clean(module.name);
-  if (moduleName) params.set('moduleTitle', moduleName);
-  const programmeId = clean(programme?.sourceId || programme?.id || programme?.name);
-  if (programmeId) params.set('programme', programmeId);
-  const programmeName = clean(programme?.name);
-  if (programmeName) params.set('programmeName', programmeName);
-  const weekId = clean(target?.weekId);
-  if (weekId) params.set('week', weekId);
-  const componentId = clean(target?.componentId);
-  if (componentId) params.set('component', componentId);
-  const query = params.toString();
-  return `/curriculum/module-builder${query ? `?${query}` : ''}`;
-}
-
-/**
- * The module's own workspace — its schedule, components, KSB weights, Teams
- * series and sessions. The identity precedence matches `moduleIdentity` in the
- * shared model, which is what that page resolves the route param with.
- */
-function moduleWorkspaceUrl(module: Pick<Module, 'id' | 'moduleId' | 'moduleCatalogueId' | 'catalogueId' | 'name'>) {
-  const identity = clean(module.moduleCatalogueId)
-    || clean(module.catalogueId)
-    || clean(module.moduleId)
-    || clean(module.id);
-  return identity ? namedCurriculumWorkspacePath('modules', identity, module.name) : '';
-}
-
-interface Group {
-  id: string;
-  name: string;
-  learners: number;
-  coach: string;
-  tutor: string;
-  startDate: string;
-  endDate: string;
-  status: 'active' | 'planned' | 'completed' | 'archived';
-  archived: boolean;
-  modules: Module[];
-  schedule: string;
-  mode: string;
-}
-
-interface Cohort {
-  id: string;
-  name: string;
-  startDate: string;
-  /** End of the practical period. */
-  endDate: string;
-  /** When the apprenticeship ends: the authored date when there is one, otherwise the practical end date plus the EPA period. Blank when neither is recorded. */
-  apprenticeshipEndDate: string;
-  /** True when the date above was typed rather than calculated. */
-  apprenticeshipEndIsManual: boolean;
-  epaMonths: number | null;
-  status: 'active' | 'planned' | 'completed' | 'archived';
-  archived: boolean;
-  learners: number;
-  groups: Group[];
-  holidayIds?: string[];
-  holidays?: CurriculumHoliday[];
-}
-
-interface Programme {
-  id: string;
-  sourceId?: string;
-  ksbProfileSourceId?: string;
-  structureType?: 'scheduled' | 'free' | string;
-  name: string;
-  standard: string;
-  level: string;
-  owner: string;
-  color: string;
-  description: string;
-  duration: string;
-  /**
-   * The two windows the apprenticeship model distinguishes, read across every
-   * cohort on the programme. Both open on the earliest cohort start; the
-   * practical period closes on the latest practical end, and the apprenticeship
-   * runs on past it by the EPA window.
-   */
-  practicalWindow: string;
-  apprenticeshipWindow: string;
-  /** Earliest cohort start date across the programme, ISO 'YYYY-MM-DD'. Blank when no cohort has one. */
-  earliestCohortStartDate: string;
-  cohorts: Cohort[];
-  modules: Module[];
-  ksbHeatmap: KsbHeatmapRow[];
-  moduleNames: string[];
-  /**
-   * Off-the-job hours a learner must complete across the whole programme.
-   * null means no target has been set, which is not the same as a target of
-   * zero: without one there is nothing for authored OTJH to be a share of.
-   */
-  requiredOtjh: number | null;
-  /**
-   * What the learners have actually evidenced, from the Component Progress
-   * snapshot (`learner_progress_ksbs`) by way of programme_learner_ksb_progress.
-   * A different question from the coverage heatmap above, which measures how
-   * much of the standard the *design* touches, so the two never share a figure.
-   */
-  learnerKsbProgressPercentage: number;
-  learnerKsbCodesStarted: number;
-  learnerKsbCodesComplete: number;
-  learnerKsbCodesTotal: number;
-  learnerKsbLearnerCount: number;
 }
 
 // A delivery session shown on the Sessions tab, derived from real week-builder
@@ -494,15 +259,6 @@ const EMPTY_PROGRAMME: Programme = {
   learnerKsbLearnerCount: 0,
 };
 
-function clean(value: unknown, fallback = '') {
-  const text = String(value ?? '').trim();
-  return text || fallback;
-}
-
-function normalise(value: unknown) {
-  return clean(value).toLowerCase().replace(/[^a-z0-9]+/g, '');
-}
-
 /**
  * The address behind a session's Watch/Join link.
  *
@@ -522,10 +278,6 @@ function watchableUrl(value: unknown) {
   if (!source) return '';
   const absolute = source.startsWith('//') ? `https:${source}` : source;
   return /^https?:\/\//i.test(absolute) ? absolute : '';
-}
-
-function slugify(value: unknown) {
-  return clean(value).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'item';
 }
 
 type KsbKind = 'knowledge' | 'skill' | 'behaviour' | 'other';
@@ -582,16 +334,6 @@ type KsbRollupItem = {
   sourceType?: string;
   sourceId?: string;
 };
-
-function uniqueCleanValues(values: unknown[]) {
-  const seen = new Set<string>();
-  return values.map(value => clean(value)).filter(value => {
-    const key = normalise(value);
-    if (!key || seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-}
 
 function isInternalGroupIdentifier(value: string) {
   const cleaned = clean(value);
@@ -811,54 +553,6 @@ function collectComponentKsbRollup(components: CurriculumComponent[], moduleName
     .sort((left, right) => sortKsbCodes(left.ksb, right.ksb));
 }
 
-function cohortStatus(status: string): Cohort['status'] {
-  if (status === 'archived') return 'archived';
-  if (status === 'planned' || status === 'completed') return status;
-  return 'active';
-}
-
-function groupStatus(status: string): Group['status'] {
-  if (status === 'archived') return 'archived';
-  if (status === 'completed') return 'completed';
-  if (status === 'planned' || status === 'pending') return 'planned';
-  return 'active';
-}
-
-/**
- * An archived module, by any of the signals the payload carries.
- *
- * Archiving a module soft-deletes it (`isProgrammeDeleted`) and leaves `status`
- * alone, so the delivery status is where it usually shows. This page fetches
- * `visibility: 'all'` so the cohort status filter can reach archived cohorts,
- * which means archived modules arrive here too and have to be dropped: archive
- * takes a module off this list and keeps its content, and the programme card
- * counts only the live ones — so counting them here made the workspace disagree
- * with the card it was opened from.
- */
-function isArchivedCurriculumModule(module: Pick<CurriculumModule, 'status' | 'authoringStatus' | 'deliveryStatus' | 'isProgrammeDeleted'>): boolean {
-  if (module.isProgrammeDeleted) return true;
-  return [module.status, module.authoringStatus, module.deliveryStatus]
-    .some(value => normalise(value) === 'archived');
-}
-
-function moduleStatus(status: string): Module['status'] {
-  if (status === 'archived') return 'archived';
-  if (status === 'published' || status === 'approved' || status === 'in-review' || status === 'draft') return status;
-  return status === 'review' ? 'in-review' : 'published';
-}
-
-type RecordStatusFilter = 'active' | 'archived' | 'all';
-
-function matchesRecordStatus(archived: boolean, filter: RecordStatusFilter) {
-  if (filter === 'all') return true;
-  return filter === 'archived' ? archived : !archived;
-}
-
-function sessionStatus(status: string): Session['status'] {
-  if (status === 'completed' || status === 'cancelled' || status === 'pending') return status;
-  return 'scheduled';
-}
-
 // Some programme rows were saved with UTF-8 text that had been decoded as
 // cp1252 ("1 Sept 2026 \u00e2\u20ac\u201c 11 Nov 2027"), so the stored description
 // carries mojibake. Repair the known sequences at display time rather than
@@ -908,56 +602,6 @@ function durationMinutes(startTime: string, endTime: string) {
   const start = toMinutes(startTime);
   const end = toMinutes(endTime);
   return end > start ? end - start : 0;
-}
-
-function isProgrammeMatch(programme: CurriculumProgramme, value: string) {
-  const programmeNames = [programme.id, programme.sourceId, programme.name, programme.standard].map(normalise);
-  return programmeNames.includes(normalise(value));
-}
-
-function programmeReferenceMatches(programme: CurriculumProgramme, value: unknown) {
-  const key = normalise(value);
-  if (!key) return false;
-  return [
-    programme.id,
-    programme.sourceId,
-    programme.sourceId ? `program-${slugify(programme.sourceId)}` : '',
-    programme.name,
-    programme.standard,
-  ].some(candidate => normalise(candidate) === key);
-}
-
-function belongsToProgramme(programme: CurriculumProgramme, item: { programmeId?: string; programme?: string; programmeName?: string }) {
-  return (
-    (clean(item.programmeId) ? programmeReferenceMatches(programme, item.programmeId) : false) ||
-    isProgrammeMatch(programme, item.programme || item.programmeName || '')
-  );
-}
-
-function findProgramme(data: CurriculumOverview | null, routeId: string) {
-  if (!data) return null;
-  // Ids before names: a programme named the same as another programme's id used
-  // to win the route purely by sitting earlier in the list. See
-  // findByIdentifierThenName.
-  return findByIdentifierThenName(
-    data.programmes,
-    routeId,
-    programme => [programme.id, programme.sourceId],
-    programme => [programme.name],
-    normalise,
-  ) ?? null;
-}
-
-/** Staff roster plus anyone already named on a record, de-duplicated and sorted. */
-function staffNameOptions(profiles: CurriculumStaffProfile[] | undefined, assigned: Array<string | undefined>) {
-  const names = new Set<string>();
-  (profiles || []).forEach(profile => {
-    const name = clean(profile.name) || clean(profile.email);
-    if (name) names.add(name);
-  });
-  // A group's `coach` may name several coaches: each is its own option.
-  assigned.forEach(value => groupCoachNames(value).forEach(name => names.add(name)));
-  return Array.from(names).sort((a, b) => a.localeCompare(b));
 }
 
 function programmeDetailToOverview(
@@ -1758,636 +1402,6 @@ function buildLiveProgramme(data: ProgrammeDetailData | null, routeId: string): 
       learnerKsbLearnerCount: Number(source.learnerKsbLearnerCount || 0),
     },
   };
-}
-
-// ============================================================
-// Programme-level UI
-//
-// Only three things live here. Everything else this page draws — filter bars,
-// record tables, empty states, panels, the header — comes from
-// `shared/entities/ui`, which is what keeps the four Curriculum workspaces
-// looking like one product.
-// ============================================================
-
-// Curriculum treats 'Unassigned' as a sentinel rather than a real staff name, so
-// every staffing read goes through here instead of comparing strings ad hoc.
-const UNASSIGNED_STAFF = 'Unassigned';
-
-function isStaffAssigned(value?: string) {
-  const name = clean(value);
-  return Boolean(name) && normalise(name) !== normalise(UNASSIGNED_STAFF);
-}
-
-// A staffing slot that shows the assigned person, or an explicit "needs a coach"
-// affordance that assigns one in place. Reading 'Unassigned' as plain body text
-// was the main complaint: it looked like data rather than a gap to fix.
-//
-// Only ever used for a group's coach. A group has no tutor — that is assigned per
-// module, in the module form — so there is no tutor slot on a group anywhere.
-function StaffSlot({
-  role,
-  icon,
-  name,
-  options,
-  onAssign,
-  saving,
-  multiple = false,
-}: {
-  role: string;
-  icon: string;
-  name: string;
-  options: CurriculumStaffProfile[];
-  onAssign?: (value: string) => void | Promise<void>;
-  saving?: boolean;
-  /**
-   * Several may hold the slot (a group's coaches): `name` is the names joined,
-   * and `onAssign` is handed the chosen set joined the same way ('' = nobody).
-   */
-  multiple?: boolean;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState<string[]>([]);
-  const assigned = isStaffAssigned(name);
-  const canEdit = Boolean(onAssign);
-  const startEditing = () => {
-    setDraft(groupCoachNames(name));
-    setEditing(true);
-  };
-  // Several holders read "First" + a "+2" badge that never truncates: a cut-off
-  // "First, Sec..." hid that there were more. The full list is the hover title.
-  const holders = multiple ? groupCoachNames(name) : [];
-  const slotLabel = holders.length > 1 ? holders[0] : clean(name);
-
-  if (editing && canEdit && multiple) {
-    const choices = groupCoachNames([
-      ...options.map(option => clean(option.name) || clean(option.email) || String(option.id)),
-      ...groupCoachNames(name),
-    ]);
-    const unchanged = joinCoachNames(draft) === joinCoachNames(groupCoachNames(name));
-    return (
-      <div
-        // Wider than the Coach column so names are readable; it sits over the
-        // next cell only while open.
-        className="relative z-10 w-64 max-w-[calc(100vw-2rem)] space-y-2 self-center rounded-xl border border-primary-200 bg-background-50 p-2.5 shadow-lg"
-        onClick={event => event.stopPropagation()}
-        onKeyDown={event => { if (event.key === 'Escape' && !saving) setEditing(false); }}
-        role="group"
-        aria-label={`Choose the ${role.toLowerCase()}es`}
-      >
-        <MultiSelectControl
-          value={draft}
-          onChange={setDraft}
-          options={choices.map(choice => ({ value: choice, label: choice }))}
-          searchable={choices.length > 8}
-          searchPlaceholder={`Search ${role.toLowerCase()}es...`}
-          emptyMessage={`No ${role.toLowerCase()}es in the staff directory yet.`}
-        />
-        <div className="flex items-center justify-end gap-1.5">
-          <button
-            type="button"
-            onClick={() => setEditing(false)}
-            disabled={saving}
-            className="h-8 rounded-lg border border-background-200 px-2.5 text-[11px] font-bold text-foreground-600 transition-smooth hover:bg-background-100 disabled:opacity-40"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            disabled={saving || unchanged}
-            onClick={async () => {
-              await onAssign?.(joinCoachNames(draft));
-              setEditing(false);
-            }}
-            className="h-8 rounded-lg bg-primary-600 px-2.5 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700 disabled:opacity-40"
-          >
-            {saving ? 'Saving...' : 'Save'}
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  if (editing && canEdit) {
-    return (
-      <div className="flex min-w-0 items-center gap-1.5 self-center" onClick={event => event.stopPropagation()}>
-        <select
-          autoFocus
-          defaultValue=""
-          disabled={saving}
-          aria-label={`Assign ${role}`}
-          onChange={async event => {
-            const value = event.target.value;
-            if (!value) return;
-            await onAssign?.(value);
-            setEditing(false);
-          }}
-          className="h-8 min-w-0 flex-1 rounded-lg border border-primary-300 bg-background-50 px-2 text-[11px] font-semibold text-foreground-900 outline-none focus:ring-2 focus:ring-primary-100"
-        >
-          <option value="">{saving ? 'Saving...' : `Select ${role.toLowerCase()}...`}</option>
-          {options.map(option => {
-            const label = clean(option.name) || clean(option.email) || String(option.id);
-            return <option key={String(option.id)} value={label}>{label}</option>;
-          })}
-        </select>
-        <button
-          onClick={() => setEditing(false)}
-          disabled={saving}
-          aria-label="Cancel"
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-background-200 text-foreground-500 transition-smooth hover:bg-background-100 disabled:opacity-40"
-        >
-          <AppIcon className="ri-close-line text-[13px]"></AppIcon>
-        </button>
-      </div>
-    );
-  }
-
-  return (
-    <span className="group/staff flex min-w-0 items-center gap-2 self-center" onClick={event => event.stopPropagation()}>
-      <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-lg ${assigned ? 'bg-primary-50 text-primary-600' : 'bg-amber-50 text-amber-600'}`}>
-        <AppIcon className={`${icon} text-[11px]`}></AppIcon>
-      </span>
-      {assigned ? (
-        <span className="flex min-w-0 items-center gap-1" title={clean(name)}>
-          <span className="min-w-0 truncate text-[12px] font-semibold text-foreground-800">{slotLabel}</span>
-          {holders.length > 1 && (
-            <span className="shrink-0 rounded-full bg-primary-50 px-1.5 text-[10px] font-bold text-primary-700">
-              +{holders.length - 1}
-            </span>
-          )}
-        </span>
-      ) : canEdit ? (
-        <button
-          onClick={startEditing}
-          className="inline-flex items-center gap-1 text-[12px] font-bold text-amber-700 transition-smooth hover:text-amber-800 hover:underline"
-        >
-          <AppIcon className="ri-add-circle-line text-[11px]"></AppIcon> Assign {role.toLowerCase()}
-        </button>
-      ) : (
-        <span className="text-[12px] font-semibold text-amber-700">Not assigned</span>
-      )}
-      {assigned && canEdit && (
-        <button
-          onClick={startEditing}
-          aria-label={multiple ? `Change ${role.toLowerCase()}es` : `Change ${role}`}
-          title={multiple ? `Change ${role.toLowerCase()}es` : `Change ${role.toLowerCase()}`}
-          className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-foreground-400 opacity-0 transition-smooth hover:bg-background-100 hover:text-foreground-700 focus:opacity-100 group-hover/staff:opacity-100"
-        >
-          <AppIcon className="ri-pencil-line text-[11px]"></AppIcon>
-        </button>
-      )}
-    </span>
-  );
-}
-
-/**
- * One readiness measure on the Overview tab. Deliberately a proportion of
- * something countable — mapped KSBs, published components — rather than a score,
- * so the number always has a definition the reader can check.
- */
-/**
- * `valueText` replaces the percentage while the figure cannot be known yet
- * (still loading, or the read failed), so an empty bar never reads as 0%.
- */
-function ReadinessBar({ label, value, detail, color, valueText }: { label: string; value: number; detail: React.ReactNode; color: string; valueText?: string }) {
-  return (
-    <div>
-      <div className="mb-1.5 flex items-baseline justify-between gap-2">
-        <span className="text-[12px] font-semibold text-foreground-700">{label}</span>
-        <span className="text-[13px] font-heading font-bold text-foreground-950">{valueText ?? `${value}%`}</span>
-      </div>
-      <div className="h-2 overflow-hidden rounded-full bg-background-200">
-        <div className={`h-full rounded-full ${color}`} style={{ width: `${Math.min(100, Math.max(0, value))}%` }} />
-      </div>
-      <p className="mt-1 text-[11px] text-foreground-400"><LoadingLabel>{detail}</LoadingLabel></p>
-    </div>
-  );
-}
-
-/**
- * One gap worth acting on, with the action attached. This is what the Overview
- * tab exists for: the programme-level questions ("is anything unstaffed, is
- * anything unmapped") that no single-record page can answer, each pointing at
- * the one place the gap is actually fixed.
- */
-function AttentionRow({ icon, tone, title, detail, action }: {
-  icon: string;
-  tone: 'amber' | 'rose' | 'sky';
-  title: string;
-  detail: string;
-  action: { label: string; onClick: () => void };
-}) {
-  const tones = {
-    amber: 'border-amber-200 bg-amber-50/70 text-amber-700',
-    rose: 'border-rose-200 bg-rose-50/70 text-rose-700',
-    sky: 'border-sky-200 bg-sky-50/70 text-sky-700',
-  } as const;
-  return (
-    <li className={`flex flex-col gap-2 rounded-xl border px-4 py-3 sm:flex-row sm:items-center sm:justify-between ${tones[tone]}`}>
-      <span className="flex min-w-0 items-start gap-2.5">
-        <AppIcon className={`${icon} mt-0.5 shrink-0 text-base`}></AppIcon>
-        <span className="min-w-0">
-          <span className="block text-[13px] font-bold"><LoadingLabel>{title}</LoadingLabel></span>
-          <span className="block text-[11px] font-semibold opacity-80"><LoadingLabel>{detail}</LoadingLabel></span>
-        </span>
-      </span>
-      <button
-        type="button"
-        onClick={action.onClick}
-        className="inline-flex h-9 shrink-0 items-center gap-1.5 self-start rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-bold transition-smooth hover:bg-background-100 sm:self-center"
-      >
-        {action.label}
-        <AppIcon className="ri-arrow-right-line text-xs"></AppIcon>
-      </button>
-    </li>
-  );
-}
-
-/**
- * A pointer to the page that owns a record type, carrying this programme's count
- * of it. The Cohorts, Groups and Module Builder pages are where those records are
- * managed across the whole curriculum; this workspace scopes them to one
- * programme, and says so rather than pretending to be a separate catalogue.
- */
-/** Stands in for a view built from the programme's modules until they arrive. */
-function ModulesLoadingPanel() {
-  return (
-    <div  className="flex items-center gap-3 rounded-2xl border border-foreground-200/70 bg-background-50 p-5 text-[12px] font-semibold text-foreground-600"><LoadingSkeleton label="Loading this programme's modules..." variant="rows" /></div>
-  );
-}
-
-function RecordHomeLink({ icon, label, count, hint, to }: {
-  icon: string;
-  label: string;
-  count: number | string;
-  hint: string;
-  to: string;
-}) {
-  return (
-    <Link
-      to={to}
-      className="flex items-center gap-3 rounded-xl border border-background-200 bg-background-100/60 p-3 transition-smooth hover:border-primary-200 hover:bg-primary-50/40"
-    >
-      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-background-50 text-primary-600">
-        <AppIcon className={`${icon} text-base`}></AppIcon>
-      </span>
-      <span className="min-w-0 flex-1">
-        {/* One text node between the two, so the accessible name reads
-            "3 cohorts" rather than "3cohorts". */}
-        <span className="flex items-baseline gap-1.5">
-          <span className="text-[15px] font-heading font-bold text-foreground-950">{count}</span>
-          {' '}
-          <span className="text-[12px] font-bold text-foreground-700">{label}</span>
-        </span>
-        <span className="block truncate text-[11px] text-foreground-400">{hint}</span>
-      </span>
-      <AppIcon className="ri-arrow-right-line shrink-0 text-sm text-foreground-300"></AppIcon>
-    </Link>
-  );
-}
-
-/** Two letters for the roster avatar; a person with one name keeps one letter. */
-function learnerInitials(value: string) {
-  const parts = clean(value).split(/\s+/).filter(Boolean);
-  if (!parts.length) return '--';
-  return ((parts[0]?.[0] || '') + (parts.length > 1 ? parts[parts.length - 1]?.[0] || '' : '')).toUpperCase();
-}
-
-// Avatar tints, drawn from the brand scales rather than a rainbow: the roster is
-// a list of people, and the colour is only there to make one row findable again
-// after scrolling. Assigned by hashing the learner's id so it is stable across
-// reloads and re-sorts -- a colour that moved would be worse than no colour.
-const LEARNER_TINTS = [
-  'bg-primary-100 text-primary-800',
-  'bg-secondary-100 text-secondary-800',
-  'bg-accent-100 text-accent-800',
-  'bg-emerald-100 text-emerald-800',
-  'bg-sky-100 text-sky-800',
-  'bg-rose-100 text-rose-800',
-];
-
-function learnerTint(key: string) {
-  let hash = 0;
-  for (let index = 0; index < key.length; index += 1) hash = (hash * 31 + key.charCodeAt(index)) >>> 0;
-  return LEARNER_TINTS[hash % LEARNER_TINTS.length];
-}
-
-type RosterStatusFilter = 'all' | 'active' | 'inactive';
-type RosterSort = 'name' | 'group' | 'progress';
-
-/** Fraction of the learner's off-the-job target that is done, or null when no target is recorded. */
-function learnerOtjhProgress(learner: CurriculumProgrammeAssignedLearner) {
-  const target = Number(learner.targetHours ?? 0);
-  if (!Number.isFinite(target) || target <= 0) return null;
-  const raw = Number(learner.completedHours ?? 0);
-  const done = Number.isFinite(raw) ? raw : 0;
-  return { done, target, percent: Math.max(0, Math.min(100, Math.round((done / target) * 100))) };
-}
-
-// Read-only view of the learners the enrolment team placed into a scope.
-// Curriculum owns the delivery structure, not the placements, so this panel
-// deliberately offers no allocation controls.
-//
-// The roster it is handed is already the scope's own -- asked for at
-// `/curriculum/groups/<id>/learner-roster/` -- so it lists what it is given and
-// filters nothing by placement. It used to be handed the whole programme's
-// roster and match rows on cohort and group *names*, which quietly dropped
-// learners whose stored labels had drifted from the records they were placed in.
-//
-// The controls here are the other kind of filtering. A cohort is 30+ people and
-// a programme is several cohorts, so the list is searched, filtered by lifecycle
-// and sorted, then sectioned by the cohort and group each person sits in. The
-// sections are what make a long roster readable: a flat list of 90 names says
-// nothing about the structure they were placed into, and the placement is the
-// thing the reader is holding in their head while they scan it.
-//
-// Each row is a button, because the roster is the way into the one thing a
-// designer actually comes here to ask: what has this person achieved in this
-// scope. The figures themselves belong to the achievement read, not to this
-// panel, so the row opens them rather than restating them -- with the single
-// exception of off-the-job progress, which is what decides who needs chasing and
-// is already on the roster row.
-function EnrolledLearnersPanel({
-  roster,
-  loading,
-  error,
-  selectedLearnerId,
-  onSelectLearner,
-  emptyHint,
-  scopeLabel = 'this group',
-}: {
-  roster: CurriculumProgrammeLearnerRosterResponse | null;
-  loading: boolean;
-  error: string | null;
-  selectedLearnerId: string;
-  onSelectLearner: (learner: CurriculumProgrammeAssignedLearner | null) => void;
-  emptyHint?: string;
-  /** What to call this scope in the summary line, e.g. "this group" or "this programme". */
-  scopeLabel?: string;
-}) {
-  const learners = useMemo(() => roster?.assignedLearners || [], [roster]);
-  const [query, setQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<RosterStatusFilter>('all');
-  const [sort, setSort] = useState<RosterSort>('name');
-
-  // The Learners column in the table above counts active placements; this list
-  // is asked for with learnerStatus=all, because someone paused or withdrawn is
-  // still a person this scope holds and still keeps whatever they earned here.
-  // Where the two disagree, say why rather than leaving the reader to wonder
-  // which number is wrong.
-  const inactive = useMemo(
-    () => learners.filter(learner => normalise(learner.lifecycleStatus) !== 'active').length,
-    [learners],
-  );
-
-  const visible = useMemo(() => {
-    const needle = normalise(query);
-    const matched = learners.filter(learner => {
-      if (statusFilter !== 'all') {
-        const isActive = normalise(learner.lifecycleStatus) === 'active';
-        if (statusFilter === 'active' && !isActive) return false;
-        if (statusFilter === 'inactive' && isActive) return false;
-      }
-      if (!needle) return true;
-      // Coach, cohort and group are searched too: "who does coach 2 have here"
-      // is asked as often as a person's own name.
-      return [learner.name, learner.email, learner.group, learner.cohort, learner.coachName]
-        .some(field => normalise(field).includes(needle));
-    });
-
-    const byName = (a: CurriculumProgrammeAssignedLearner, b: CurriculumProgrammeAssignedLearner) =>
-      clean(a.name || a.email).localeCompare(clean(b.name || b.email), undefined, { sensitivity: 'base' });
-
-    return [...matched].sort((a, b) => {
-      if (sort === 'group') {
-        const placement = clean(`${a.cohort} ${a.group}`)
-          .localeCompare(clean(`${b.cohort} ${b.group}`), undefined, { sensitivity: 'base' });
-        return placement || byName(a, b);
-      }
-      if (sort === 'progress') {
-        // Furthest behind first: this sort exists to find who needs chasing, so
-        // a learner with no target recorded sorts last rather than as 0%, which
-        // would bury the people who are genuinely behind.
-        const left = learnerOtjhProgress(a);
-        const right = learnerOtjhProgress(b);
-        if (left && right) return left.percent - right.percent || byName(a, b);
-        if (left) return -1;
-        if (right) return 1;
-        return byName(a, b);
-      }
-      return byName(a, b);
-    });
-  }, [learners, query, sort, statusFilter]);
-
-  // Sectioned by placement, but only when there is more than one placement in
-  // view: a group's own roster is already one section, and a single header above
-  // every row would be noise.
-  const sections = useMemo(() => {
-    const buckets = new Map<string, { cohort: string; group: string; rows: CurriculumProgrammeAssignedLearner[] }>();
-    for (const learner of visible) {
-      const cohort = clean(learner.cohort);
-      const group = clean(learner.group);
-      const key = `${cohort}|${group}`;
-      const bucket = buckets.get(key) || { cohort, group, rows: [] };
-      bucket.rows.push(learner);
-      buckets.set(key, bucket);
-    }
-    return [...buckets.values()];
-  }, [visible]);
-  const sectioned = sections.length > 1;
-
-  const filtering = Boolean(clean(query)) || statusFilter !== 'all';
-  const controlClass = 'h-8 rounded-lg border border-background-200 bg-background-50 px-2 text-[11px] font-semibold text-foreground-700 outline-none transition-smooth focus:border-primary-300';
-
-  const renderRow = (learner: CurriculumProgrammeAssignedLearner) => {
-    const key = String(learner.id);
-    const selected = key === selectedLearnerId;
-    const name = clean(learner.name) || clean(learner.email) || `Learner ${learner.id}`;
-    const active = normalise(learner.lifecycleStatus) === 'active';
-    const otjh = learnerOtjhProgress(learner);
-    return (
-      <button
-        key={key}
-        type="button"
-        onClick={() => onSelectLearner(selected ? null : learner)}
-        aria-pressed={selected}
-        className={`flex w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-smooth ${
-          selected
-            ? 'border-primary-300 bg-primary-50 shadow-sm'
-            : 'border-background-200 bg-background-50 hover:border-primary-200 hover:bg-background-100'
-        }`}
-      >
-        <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[11px] font-extrabold ${learnerTint(key)}`}>
-          {learnerInitials(name)}
-        </span>
-
-        <span className="min-w-0 flex-1">
-          <span className="flex items-center gap-1.5">
-            <span className="truncate text-[12.5px] font-bold text-foreground-900">{name}</span>
-            {!active && learner.lifecycleStatus && (
-              <span className="shrink-0 rounded-full bg-foreground-100 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-foreground-500">
-                {learner.lifecycleStatus}
-              </span>
-            )}
-          </span>
-          <span className="mt-0.5 block truncate text-[11px] text-foreground-500">
-            {clean(learner.email) || 'No email on record'}
-          </span>
-          <span className="mt-1 flex flex-wrap items-center gap-1.5">
-            {learner.group ? (
-              <span className="inline-flex items-center gap-1 rounded-md bg-background-100 px-1.5 py-0.5 text-[10px] font-semibold text-foreground-600">
-                <AppIcon className="ri-group-line text-[10px]"></AppIcon>
-                {learner.group}
-              </span>
-            ) : (
-              <span className="inline-flex items-center rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">
-                No group recorded
-              </span>
-            )}
-            {/* Coach only. The tutor belongs to the module, not to the group a
-                learner sits in, so naming one here would name the wrong person. */}
-            {learner.coachName ? (
-              <span className="inline-flex items-center gap-1 rounded-md bg-background-100 px-1.5 py-0.5 text-[10px] font-semibold text-foreground-600">
-                <AppIcon className="ri-user-star-line text-[10px]"></AppIcon>
-                {learner.coachName}
-              </span>
-            ) : (
-              <span className="inline-flex items-center rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">
-                No coach assigned
-              </span>
-            )}
-          </span>
-        </span>
-
-        <span className="hidden w-28 shrink-0 sm:block">
-          {otjh ? (
-            <>
-              <span className="flex items-baseline justify-between text-[10px] font-bold text-foreground-600">
-                <span>{otjh.percent}%</span>
-                <span className="font-semibold text-foreground-400">{formatHours(otjh.done)}/{formatHours(otjh.target)}h</span>
-              </span>
-              <span className="mt-1 block h-1.5 w-full overflow-hidden rounded-full bg-background-200">
-                <span
-                  className={`block h-full rounded-full ${otjh.percent >= 100 ? 'bg-emerald-500' : otjh.percent >= 50 ? 'bg-primary-400' : 'bg-accent-400'}`}
-                  style={{ width: `${Math.max(otjh.percent, 2)}%` }}
-                />
-              </span>
-            </>
-          ) : (
-            <span className="block text-right text-[10px] font-semibold text-foreground-400">No OTJH target set</span>
-          )}
-        </span>
-
-        <AppIcon className={`shrink-0 text-sm ${selected ? 'ri-arrow-up-s-line text-primary-600' : 'ri-arrow-right-s-line text-foreground-300'}`}></AppIcon>
-      </button>
-    );
-  };
-
-  return (
-    <>
-      {loading && <p className="text-[12px] text-foreground-500"><LoadingSkeleton label="Loading assigned learners..." variant="rows" /></p>}
-
-      {!loading && error && (
-        <p className="rounded-lg border border-amber-200/60 bg-amber-50 px-3 py-2 text-[12px] text-amber-700">{error}</p>
-      )}
-
-      {!loading && !error && learners.length === 0 && (
-        <p className="rounded-lg border border-background-200 bg-background-100 px-3 py-2 text-[12px] text-foreground-500">
-          {emptyHint || 'No learners have been assigned here by the enrolment team yet.'}
-        </p>
-      )}
-
-      {!loading && !error && learners.length > 0 && (
-        <>
-          <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-background-200 bg-background-100/60 p-2">
-            <label className="relative min-w-[180px] flex-1">
-              <AppIcon className="ri-search-line pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[13px] text-foreground-400"></AppIcon>
-              <input
-                type="search"
-                value={query}
-                onChange={event => setQuery(event.target.value)}
-                placeholder="Search name, email, group or coach"
-                aria-label="Search this roster"
-                className={`${controlClass} w-full pl-8`}
-              />
-            </label>
-
-            <div className="flex items-center gap-1 rounded-lg border border-background-200 bg-background-50 p-0.5">
-              {([
-                { id: 'all', label: 'All', count: learners.length },
-                { id: 'active', label: 'Active', count: learners.length - inactive },
-                { id: 'inactive', label: 'Not active', count: inactive },
-              ] as const).map(option => (
-                <button
-                  key={option.id}
-                  type="button"
-                  onClick={() => setStatusFilter(option.id)}
-                  aria-pressed={statusFilter === option.id}
-                  className={`inline-flex h-7 items-center gap-1 rounded-md px-2 text-[11px] font-bold transition-smooth ${
-                    statusFilter === option.id
-                      ? 'bg-primary-100 text-primary-800'
-                      : 'text-foreground-500 hover:bg-background-100'
-                  }`}
-                >
-                  {option.label}
-                  <span className={statusFilter === option.id ? 'text-primary-600' : 'text-foreground-400'}>{option.count}</span>
-                </button>
-              ))}
-            </div>
-
-            <label className="flex items-center gap-1.5">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">Sort</span>
-              <select
-                value={sort}
-                onChange={event => setSort(event.target.value as RosterSort)}
-                aria-label="Sort this roster"
-                className={controlClass}
-              >
-                <option value="name">Name (A-Z)</option>
-                <option value="group">Cohort and group</option>
-                <option value="progress">OTJH - furthest behind</option>
-              </select>
-            </label>
-          </div>
-
-          <p className="mb-2 text-[11px] text-foreground-500">
-            {filtering
-              ? `${visible.length} of ${learners.length} learner${learners.length === 1 ? '' : 's'} shown in ${scopeLabel}`
-              : `${learners.length} learner${learners.length === 1 ? '' : 's'} placed in ${scopeLabel}`}
-            {inactive && statusFilter === 'all' ? `, ${inactive} of them no longer active - the count above is active placements only` : ''}.
-            {' '}Open one to see the off-the-job hours and KSBs they have achieved here.
-          </p>
-
-          {visible.length === 0 ? (
-            <p className="rounded-lg border border-background-200 bg-background-100 px-3 py-2 text-[12px] text-foreground-500">
-              No learner in {scopeLabel} matches {clean(query) ? `"${clean(query)}"` : 'this filter'}
-              {statusFilter !== 'all' ? ` with status "${statusFilter === 'active' ? 'Active' : 'Not active'}"` : ''}.
-            </p>
-          ) : (
-            // Capped and scrolled: a cohort of 30+ would otherwise push the
-            // achievement detail this list opens off the bottom of the page.
-            <div className="max-h-[26rem] space-y-3 overflow-y-auto pr-1">
-              {sectioned
-                ? sections.map(section => (
-                  <section key={`${section.cohort}|${section.group}`}>
-                    <h4 className="sticky top-0 z-10 -mx-1 mb-1.5 flex items-center gap-1.5 bg-background-50/95 px-1 py-1 text-[10px] font-extrabold uppercase tracking-wider text-foreground-500 backdrop-blur">
-                      <AppIcon className="ri-folder-user-line text-[11px] text-primary-500"></AppIcon>
-                      {section.cohort || 'No cohort recorded'}
-                      <AppIcon className="ri-arrow-right-s-line text-[11px] text-foreground-300"></AppIcon>
-                      {section.group || 'No group recorded'}
-                      <span className="ml-auto rounded-full bg-background-200 px-1.5 py-0.5 text-[9px] font-bold text-foreground-600">
-                        {section.rows.length}
-                      </span>
-                    </h4>
-                    <div className="grid gap-2 lg:grid-cols-2">{section.rows.map(renderRow)}</div>
-                  </section>
-                ))
-                : <div className="grid gap-2 lg:grid-cols-2">{visible.map(renderRow)}</div>}
-            </div>
-          )}
-        </>
-      )}
-    </>
-  );
 }
 
 // ============================================================
@@ -5254,29 +4268,6 @@ function ComponentFigure({ state, value }: { state: ComponentFiguresState; value
   return <>{value}</>;
 }
 
-function QualityCheckCard({ title, count, clearText, issueText, icon, onClick }: { title: string; count: number; clearText: string; issueText: string; icon: string; onClick: () => void }) {
-  const clear = count === 0;
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="group flex min-h-32 flex-col rounded-xl border border-background-200 bg-background-100/50 p-4 text-left transition-smooth hover:border-primary-200 hover:bg-background-50 hover:shadow-sm"
-    >
-      <div className="flex w-full items-start justify-between gap-3">
-        <span className={`flex h-9 w-9 items-center justify-center rounded-lg ${clear ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
-          <AppIcon className={clear ? 'ri-checkbox-circle-line' : icon}></AppIcon>
-        </span>
-        <span className={`rounded-full px-2.5 py-1 text-[9px] font-extrabold uppercase ${clear ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
-          {clear ? 'Clear' : count}
-        </span>
-      </div>
-      <p className="mt-3 text-[12px] font-bold text-foreground-900"><LoadingLabel>{title}</LoadingLabel></p>
-      <p className={`mt-1 text-[11px] leading-5 ${clear ? 'text-emerald-700' : 'text-foreground-500'}`}>{clear ? clearText : issueText}</p>
-      <span className="mt-auto inline-flex items-center gap-1 pt-3 text-[10px] font-bold text-primary-700">{clear ? 'Review' : 'Fix issue'} <AppIcon className="ri-arrow-right-line transition-transform group-hover:translate-x-0.5"></AppIcon></span>
-    </button>
-  );
-}
-
 // The Achievement tab's level selector.
 //
 // A flat list of every module in the programme would be unreadable by the second
@@ -5495,18 +4486,6 @@ function ScopePicker({
       </div>
     </div>
   );
-}
-
-/** The identifier the scope endpoints resolve a module by. */
-function moduleWorkspaceIdentity(module: Pick<Module, 'id' | 'moduleId' | 'moduleCatalogueId' | 'catalogueId'>) {
-  return clean(module.moduleCatalogueId) || clean(module.catalogueId) || clean(module.moduleId) || clean(module.id);
-}
-
-
-function formatHours(value: number | string) {
-  const parsed = Number(value || 0);
-  if (!Number.isFinite(parsed)) return '0';
-  return Number.isInteger(parsed) ? String(parsed) : parsed.toFixed(1).replace(/\.0$/, '');
 }
 
 function KsbBadge({ code, compact = false }: { code: string; compact?: boolean }) {

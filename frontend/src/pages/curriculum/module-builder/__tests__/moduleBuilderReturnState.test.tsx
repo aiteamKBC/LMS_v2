@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearAllCachedResources } from '@/api/cachedRequest';
 import type { ReactNode } from 'react';
 import type { CurriculumCohort, CurriculumGroup, CurriculumModule, CurriculumProgramme } from '@/lib/curriculumApi';
-import { fetchCurriculumDeliveryScope } from '@/lib/curriculumApi';
+import { fetchCurriculumDeliveryScope, fetchCurriculumTutors } from '@/lib/curriculumApi';
 vi.mock('@/api/moduleCatalogueActivity', () => ({ fetchModuleCatalogueActivity: vi.fn(async () => Object.fromEntries(['MOD-1', 'MOD-2', 'MOD-3'].map(id => [id, { source: 'new_lms', startDate: '2000-01-01', lastLiveDate: '2099-12-31' }]))) }));
 
 /**
@@ -210,7 +210,11 @@ describe('Module Builder keeps the reader\'s place in its address', { timeout: 1
 
     expect(await screen.findByRole('dialog', { name: 'Data Foundations learner progress' })).toBeInTheDocument();
     expect(screen.getByLabelText('Learner status')).toHaveValue('withdrawn');
-    expect(fetchLearnerAssignments).toHaveBeenCalledWith(expect.objectContaining({ scope: 'module', id: 'MOD-1' }), undefined, { assignedOnly: true });
+    expect(fetchLearnerAssignments).toHaveBeenCalledWith(
+      expect.objectContaining({ scope: 'module', id: 'MOD-1' }),
+      undefined,
+      { assignedOnly: true },
+    );
     expect(screen.getByPlaceholderText('Search modules, tutors, cohorts...')).toHaveValue('Foundations');
     expect(within(screen.getByLabelText('Programme')).getByText('Data Analyst')).toBeInTheDocument();
     expect(within(screen.getByLabelText('Cohort')).getByText('Sept 2026')).toBeInTheDocument();
@@ -260,5 +264,18 @@ describe('Module Builder keeps the reader\'s place in its address', { timeout: 1
     await screen.findByText('Data Foundations');
     await waitFor(() => expect(address().has('learners')).toBe(false));
     expect(fetchLearnerAssignments).not.toHaveBeenCalled();
+  });
+
+  it('shows a tutor read failure alongside the catalogue and retries without losing filters', async () => {
+    const user = userEvent.setup();
+    vi.mocked(fetchCurriculumTutors).mockRejectedValueOnce(new Error('directory offline'));
+    await renderCatalogue('?q=Foundations');
+    await screen.findByText('Data Foundations');
+    expect(await screen.findByRole('alert')).toHaveTextContent('Unable to load tutors');
+    await user.click(screen.getByRole('button', { name: 'Retry staff options' }));
+    await waitFor(() => expect(screen.queryByText(/Unable to load tutors/)).not.toBeInTheDocument());
+    expect(screen.getByText('Data Foundations')).toBeInTheDocument();
+    expect(address().get('q')).toBe('Foundations');
+    expect(fetchCurriculumTutors).toHaveBeenLastCalledWith(expect.any(AbortSignal), { revalidate: true });
   });
 });

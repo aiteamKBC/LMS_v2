@@ -18,7 +18,7 @@ most 20 matches with the total, and never guess between them.
 """
 from __future__ import annotations
 
-from curriculum_api import free_course_catalogue
+from curriculum_api.catalogue.infrastructure import free_course_rows as free_course_catalogue
 
 from ..dispatch import call_api
 from . import ToolError, ToolResult, tool

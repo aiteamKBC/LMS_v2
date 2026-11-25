@@ -430,6 +430,7 @@ it.each([
   const { rail } = showWorkspace('curriculum', path);
   expect(within(rail).getByRole('button', { name: 'Toggle Recording Quality pages' })).toHaveAttribute('aria-expanded', 'true');
   const links = within(rail).getAllByRole('link').filter(link => link.hasAttribute('aria-current'));
+  // Both links retain the canonical destination; only the selected navigation item is current.
   expect(links).toHaveLength(1);
   expect(links[0]).toHaveAccessibleName(label);
 });
@@ -458,7 +459,7 @@ it('lets Curriculum open each recording destination and toggle the group without
   }
 });
 
-it('opens Quality Assurance from the sidebar and keeps its active state distinct from Quality', async () => {
+it('opens the same canonical workspace from Quality Assurance and Quality', async () => {
   const { rail } = showWorkspace('curriculum', '/curriculum/recordings-hub');
   const link = within(rail).getByRole('link', { name: 'Quality Assurance' });
   expect(link).toHaveAttribute('href', '/curriculum/quality');
@@ -466,7 +467,9 @@ it('opens Quality Assurance from the sidebar and keeps its active state distinct
   await act(async () => { fireEvent.click(link); });
   expect(screen.getByTestId('route')).toHaveTextContent('/curriculum/quality');
   expect(link).toHaveAttribute('aria-current', 'page');
-  expect(within(rail).getByRole('link', { name: 'Quality' })).not.toHaveAttribute('aria-current');
+  const quality = within(rail).getByRole('link', { name: 'Quality' });
+  expect(quality).toHaveAttribute('href', '/curriculum/quality');
+  expect(quality).not.toHaveAttribute('aria-current');
 });
 
 it.each([

@@ -8,7 +8,8 @@ from django.core.serializers.json import DjangoJSONEncoder
 from django.db import connection
 from config.management_safety import read_only_databases
 
-from curriculum_api.free_course_import import import_content, import_plan
+from curriculum_api.catalogue.api.free_course_import import import_content
+from curriculum_api.catalogue.api.free_course_import import import_plan
 
 
 class Command(BaseCommand):

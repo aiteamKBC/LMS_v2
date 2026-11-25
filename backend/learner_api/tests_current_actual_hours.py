@@ -58,7 +58,7 @@ class CurrentActualHoursTests(SimpleTestCase):
         self.assertIn('Current accepted OTJ hours are unavailable.', warnings)
 
     def test_reading_signed_review_keeps_its_frozen_legacy_actual_and_formula(self):
-        from curriculum_api.review_instances import review_instance_progress_snapshot
+        from curriculum_api.review_management.domain.instance_definitions import review_instance_progress_snapshot
         stored = {'schemaVersion': 4, 'formulaVersion': 'stored_completed_hours_and_component_ksb_v4',
                   'actualHoursSource': 'learner.completed_hours', 'offTheJobHours': {'actual': 9}}
         result = review_instance_progress_snapshot({'status': 'completed', 'progress_snapshot': stored})

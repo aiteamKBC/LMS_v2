@@ -1,5 +1,5 @@
 """Read-only programme totals using verified legacy results and local progress."""
-from curriculum_api.learning_storage import read_sql
+from curriculum_api.catalogue.infrastructure.course_storage_reads import read_sql
 import json
 import logging
 from collections import defaultdict

@@ -90,7 +90,7 @@ def read_live_credits(
         if not module_ids:
             return []
         from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
-        from curriculum_api.learning_storage import read_sql
+        from curriculum_api.catalogue.infrastructure.course_storage_reads import read_sql
         with connections['enrolment'].cursor() as cur:
             cur.execute(read_sql(f'''SELECT c.id,c.module_catalogue_id,c.title,
                 c.settings_json->>'teamsOccurrenceId',c.settings_json->>'teamsLiveSessionId',

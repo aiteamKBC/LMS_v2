@@ -1,0 +1,493 @@
+[
+  {
+    "file": "backend/curriculum_api/attendance_membership.py",
+    "bindings": [
+      {
+        "alias": "views",
+        "symbol": "curriculum_read_scope",
+        "owner": "curriculum_api.catalogue.infrastructure.cache_runtime",
+        "original": "curriculum_read_scope",
+        "scope": "assigned_module_ids_by_profile"
+      },
+      {
+        "alias": "views",
+        "symbol": "programme_identity_candidates",
+        "owner": "curriculum_api.catalogue.infrastructure.catalogue_resolution",
+        "original": "programme_identity_candidates",
+        "scope": "assigned_module_ids_by_profile"
+      },
+      {
+        "alias": "views",
+        "symbol": "scope_programme_identifier",
+        "owner": "curriculum_api.catalogue.infrastructure.placement_runtime",
+        "original": "scope_programme_identifier",
+        "scope": "assigned_module_ids_by_profile"
+      },
+      {
+        "alias": "views",
+        "symbol": "curriculum_read_scope",
+        "owner": "curriculum_api.catalogue.infrastructure.cache_runtime",
+        "original": "curriculum_read_scope",
+        "scope": "module_roster"
+      },
+      {
+        "alias": "views",
+        "symbol": "programme_identity_candidates",
+        "owner": "curriculum_api.catalogue.infrastructure.catalogue_resolution",
+        "original": "programme_identity_candidates",
+        "scope": "module_roster"
+      },
+      {
+        "alias": "views",
+        "symbol": "scope_programme_identifier",
+        "owner": "curriculum_api.catalogue.infrastructure.placement_runtime",
+        "original": "scope_programme_identifier",
+        "scope": "module_roster"
+      }
+    ],
+    "normalized_body_sha256": "da489481f5cc62e11e948b6400f1abb6598958ea8dd0d5bde6ab17a31d1c6f23"
+  },
+  {
+    "file": "backend/curriculum_api/authoring_row_cache.py",
+    "bindings": [
+      {
+        "alias": "views",
+        "symbol": "quote_ident",
+        "owner": "curriculum_api.catalogue.infrastructure.database_reads",
+        "original": "quote_ident",
+        "scope": "_fingerprint_sql"
+      },
+      {
+        "alias": "views",
+        "symbol": "REFLECTION_QUESTION_COLUMN",
+        "owner": "curriculum_api.catalogue.infrastructure.authoring_columns",
+        "original": "REFLECTION_QUESTION_COLUMN",
+        "scope": "read_verified_rows"
+      },
+      {
+        "alias": "views",
+        "symbol": "authoring_fetch_all",
+        "owner": "curriculum_api.catalogue.infrastructure.authoring_runtime",
+        "original": "authoring_fetch_all",
+        "scope": "read_verified_rows"
+      },
+      {
+        "alias": "views",
+        "symbol": "connection",
+        "owner": "django.db",
+        "original": "connection",
+        "scope": "read_verified_rows"
+      },
+      {
+        "alias": "views",
+        "symbol": "quote_ident",
+        "owner": "curriculum_api.catalogue.infrastructure.database_reads",
+        "original": "quote_ident",
+        "scope": "read_verified_rows"
+      },
+      {
+        "alias": "views",
+        "symbol": "rows_as_dicts",
+        "owner": "curriculum_api.catalogue.infrastructure.database_reads",
+        "original": "rows_as_dicts",
+        "scope": "read_verified_rows"
+      }
+    ],
+    "normalized_body_sha256": "f96ec9fa65573e81f5b010001ecf4143bc09444e6ec42c400f4b042cde6f77b0"
+  },
+  {
+    "file": "backend/curriculum_api/catalogue_activity.py",
+    "bindings": [
+      {
+        "alias": "views",
+        "symbol": "AUTHORING_MODULES_TABLE",
+        "owner": "curriculum_api.catalogue.infrastructure.database_reads",
+        "original": "AUTHORING_MODULES_TABLE",
+        "scope": "<module>"
+      },
+      {
+        "alias": "views",
+        "symbol": "LIVE_SESSIONS_TABLE",
+        "owner": "curriculum_api.meetings.domain.read_contracts",
+        "original": "LIVE_SESSIONS_TABLE",
+        "scope": "<module>"
+      },
+      {
+        "alias": "views",
+        "symbol": "LIVE_SESSION_OCCURRENCES_TABLE",
+        "owner": "curriculum_api.meetings.domain.read_contracts",
+        "original": "LIVE_SESSION_OCCURRENCES_TABLE",
+        "scope": "<module>"
+      },
+      {
+        "alias": "views",
+        "symbol": "authoring_fetch_all",
+        "owner": "curriculum_api.catalogue.infrastructure.authoring_runtime",
+        "original": "authoring_fetch_all",
+        "scope": "<module>"
+      },
+      {
+        "alias": "views",
+        "symbol": "authoring_table_name",
+        "owner": "curriculum_api.catalogue.infrastructure.database_reads",
+        "original": "authoring_table_name",
+        "scope": "<module>"
+      },
+      {
+        "alias": "views",
+        "symbol": "fetch_all",
+        "owner": "curriculum_api.catalogue.infrastructure.database_reads",
+        "original": "fetch_all",
+        "scope": "<module>"
+      },
+      {
+        "alias": "views",
+        "symbol": "live_authoring_rows_sql",
+        "owner": "curriculum_api.catalogue.infrastructure.authoring_sql",
+        "original": "live_authoring_rows_sql",
+        "scope": "<module>"
+      },
+      {
+        "alias": "views",
+        "symbol": "programme_deleted_row",
+        "owner": "curriculum_api.catalogue.domain.archive_policy",
+        "original": "programme_deleted_row",
+        "scope": "<module>"
+      }
+    ],
+    "normalized_body_sha256": "69ae4936ccfc3abee349849d2ebdf6ef13a184e8db20ece89e87eca3fc6db30a"
+  },
+  {
+    "file": "backend/curriculum_api/module_progress_metrics.py",
+    "bindings": [
+      {
+        "alias": "views",
+        "symbol": "coverage_normalise_code",
+        "owner": "curriculum_api.ksb_coverage",
+        "original": "normalise_code",
+        "scope": "apply_ksb_metrics"
+      },
+      {
+        "alias": "views",
+        "symbol": "learner_consumption_payload",
+        "owner": "curriculum_api.reporting.infrastructure.progress_runtime",
+        "original": "learner_consumption_payload",
+        "scope": "apply_ksb_metrics"
+      },
+      {
+        "alias": "views",
+        "symbol": "scope_ksb_achievement",
+        "owner": "curriculum_api.reporting.domain.source_values",
+        "original": "scope_ksb_achievement",
+        "scope": "apply_ksb_metrics"
+      }
+    ],
+    "normalized_body_sha256": "08a8f872623cc3676385d5138579f0a52d48520765ea52847fdb2a853eb7373d"
+  },
+  {
+    "file": "backend/curriculum_api/programme_audit.py",
+    "bindings": [
+      {
+        "alias": "curriculum_views",
+        "symbol": "build_curriculum_programme_tree_detail_payload",
+        "owner": "curriculum_api.catalogue.api.programme_detail_composition",
+        "original": "build_curriculum_programme_tree_detail_payload",
+        "scope": "<module>"
+      }
+    ],
+    "normalized_body_sha256": "815e2d49528283cbfe5d0ec623b0fbc407806c0a4f3476049d8a783f65a8d0e4"
+  },
+  {
+    "file": "backend/curriculum_api/programme_ksb_stats_batch.py",
+    "bindings": [
+      {
+        "alias": "V",
+        "symbol": "CURRICULUM_LEARNER_DATA_TTL_SECONDS",
+        "owner": "curriculum_api.catalogue.domain.read_contracts",
+        "original": "CURRICULUM_LEARNER_DATA_TTL_SECONDS",
+        "scope": "<module>"
+      },
+      {
+        "alias": "V",
+        "symbol": "build_programme_ksb_stats",
+        "owner": "curriculum_api.catalogue.infrastructure.programme_builder_runtime",
+        "original": "build_programme_ksb_stats",
+        "scope": "<module>"
+      },
+      {
+        "alias": "V",
+        "symbol": "cached_curriculum_value",
+        "owner": "curriculum_api.catalogue.infrastructure.cache_access",
+        "original": "cached_curriculum_value",
+        "scope": "<module>"
+      },
+      {
+        "alias": "V",
+        "symbol": "clean_str",
+        "owner": "curriculum_api.catalogue.domain.values",
+        "original": "clean_str",
+        "scope": "<module>"
+      },
+      {
+        "alias": "V",
+        "symbol": "curriculum_read_scope",
+        "owner": "curriculum_api.catalogue.infrastructure.cache_runtime",
+        "original": "curriculum_read_scope",
+        "scope": "<module>"
+      },
+      {
+        "alias": "V",
+        "symbol": "curriculum_visibility",
+        "owner": "curriculum_api.catalogue.api.responses",
+        "original": "curriculum_visibility",
+        "scope": "<module>"
+      },
+      {
+        "alias": "V",
+        "symbol": "forced_programme_ksb_design",
+        "owner": "curriculum_api.reporting.infrastructure.source_runtime",
+        "original": "forced_programme_ksb_design",
+        "scope": "<module>"
+      },
+      {
+        "alias": "V",
+        "symbol": "json_error",
+        "owner": "curriculum_api.catalogue.api.responses",
+        "original": "json_error",
+        "scope": "<module>"
+      },
+      {
+        "alias": "V",
+        "symbol": "request_bypasses_curriculum_cache",
+        "owner": "curriculum_api.catalogue.api.adapters",
+        "original": "request_bypasses_curriculum_cache",
+        "scope": "<module>"
+      }
+    ],
+    "normalized_body_sha256": "d21a474850491be18638a2730a3983171957deccc492a5e134a8063bcc3135eb"
+  },
+  {
+    "file": "backend/curriculum_api/quality.py",
+    "bindings": [
+      {
+        "alias": "curriculum_views",
+        "symbol": "clean_str",
+        "owner": "curriculum_api.catalogue.domain.values",
+        "original": "clean_str",
+        "scope": "<module>"
+      },
+      {
+        "alias": "curriculum_views",
+        "symbol": "fetch_all",
+        "owner": "curriculum_api.catalogue.infrastructure.database_reads",
+        "original": "fetch_all",
+        "scope": "<module>"
+      },
+      {
+        "alias": "curriculum_views",
+        "symbol": "json_error",
+        "owner": "curriculum_api.catalogue.api.responses",
+        "original": "json_error",
+        "scope": "<module>"
+      }
+    ],
+    "normalized_body_sha256": "bd7e0892c80d9bd8855700537ed8b7455b3d57d07a478d08f2b8d86931b826c2"
+  },
+  {
+    "file": "backend/curriculum_api/read_model.py",
+    "bindings": [
+      {
+        "alias": "views",
+        "symbol": "build_curriculum_payload",
+        "owner": "curriculum_api.catalogue.api.overview_composition",
+        "original": "build_curriculum_payload",
+        "scope": "build_curriculum_home"
+      },
+      {
+        "alias": "views",
+        "symbol": "compact_module_rows",
+        "owner": "curriculum_api.catalogue.infrastructure.structure_runtime",
+        "original": "compact_module_rows",
+        "scope": "build_curriculum_home"
+      },
+      {
+        "alias": "views",
+        "symbol": "curriculum_read_scope",
+        "owner": "curriculum_api.catalogue.infrastructure.cache_runtime",
+        "original": "curriculum_read_scope",
+        "scope": "build_curriculum_home"
+      },
+      {
+        "alias": "views",
+        "symbol": "enrich_modules_with_authoring",
+        "owner": "curriculum_api.catalogue.api.catalogue_adapters",
+        "original": "enrich_modules_with_authoring",
+        "scope": "build_curriculum_home"
+      },
+      {
+        "alias": "views",
+        "symbol": "enrich_programmes_with_module_counts",
+        "owner": "curriculum_api.catalogue.api.catalogue_adapters",
+        "original": "enrich_programmes_with_module_counts",
+        "scope": "build_curriculum_home"
+      }
+    ],
+    "normalized_body_sha256": "e8b634d259cce4a0bace718506ab9ba591eee3fcf0b20c05d066b4821b3e3fd1"
+  },
+  {
+    "file": "backend/curriculum_api/record_snapshots.py",
+    "bindings": [
+      {
+        "alias": "views",
+        "symbol": "clean_str",
+        "owner": "curriculum_api.catalogue.domain.values",
+        "original": "clean_str",
+        "scope": "<module>"
+      },
+      {
+        "alias": "views",
+        "symbol": "cohort_conflict_record",
+        "owner": "curriculum_api.catalogue.infrastructure.placement_runtime",
+        "original": "cohort_conflict_record",
+        "scope": "<module>"
+      },
+      {
+        "alias": "views",
+        "symbol": "curriculum_module_from_authoring_payload",
+        "owner": "curriculum_api.catalogue.application.module_projection",
+        "original": "curriculum_module_from_authoring_payload",
+        "scope": "<module>"
+      },
+      {
+        "alias": "views",
+        "symbol": "curriculum_record_revision",
+        "owner": "curriculum_api.catalogue.infrastructure.revision_runtime",
+        "original": "curriculum_record_revision",
+        "scope": "<module>"
+      },
+      {
+        "alias": "views",
+        "symbol": "get_authoring_structure_payload",
+        "owner": "curriculum_api.catalogue.api.structure_composition",
+        "original": "get_authoring_structure_payload",
+        "scope": "<module>"
+      },
+      {
+        "alias": "views",
+        "symbol": "group_conflict_record",
+        "owner": "curriculum_api.catalogue.infrastructure.placement_runtime",
+        "original": "group_conflict_record",
+        "scope": "<module>"
+      },
+      {
+        "alias": "views",
+        "symbol": "json_error",
+        "owner": "curriculum_api.catalogue.api.responses",
+        "original": "json_error",
+        "scope": "<module>"
+      },
+      {
+        "alias": "views",
+        "symbol": "programme_conflict_record",
+        "owner": "curriculum_api.catalogue.infrastructure.hierarchy_composition",
+        "original": "programme_conflict_record",
+        "scope": "<module>"
+      },
+      {
+        "alias": "views",
+        "symbol": "resolve_stored_module_catalogue_id",
+        "owner": "curriculum_api.catalogue.infrastructure.catalogue_resolution",
+        "original": "resolve_stored_module_catalogue_id",
+        "scope": "<module>"
+      }
+    ],
+    "normalized_body_sha256": "6e9d438709efb95f67ec080a81d05b3e5e8e1b6348441048d0cd7a5609449452"
+  },
+  {
+    "file": "backend/curriculum_api/review_otjh.py",
+    "bindings": [
+      {
+        "alias": "curriculum_views",
+        "symbol": "clean_str",
+        "owner": "curriculum_api.catalogue.domain.values",
+        "original": "clean_str",
+        "scope": "<module>"
+      },
+      {
+        "alias": "curriculum_views",
+        "symbol": "format_date",
+        "owner": "curriculum_api.catalogue.domain.values",
+        "original": "format_date",
+        "scope": "<module>"
+      }
+    ],
+    "normalized_body_sha256": "4e238da3599d7a562307c4612355edbedb3290dc7493c2178304b9258d183163"
+  },
+  {
+    "file": "backend/learner_api/free_courses_view.py",
+    "bindings": [
+      {
+        "alias": null,
+        "symbol": "active_component_rows",
+        "owner": "curriculum_api.catalogue.domain.content_values",
+        "original": "active_component_rows",
+        "scope": "<module>"
+      },
+      {
+        "alias": null,
+        "symbol": "active_week_rows",
+        "owner": "curriculum_api.catalogue.domain.archive_policy",
+        "original": "active_week_rows",
+        "scope": "<module>"
+      },
+      {
+        "alias": null,
+        "symbol": "authoring_table_name",
+        "owner": "curriculum_api.catalogue.infrastructure.database_reads",
+        "original": "authoring_table_name",
+        "scope": "<module>"
+      },
+      {
+        "alias": null,
+        "symbol": "clean_str",
+        "owner": "curriculum_api.catalogue.domain.values",
+        "original": "clean_str",
+        "scope": "<module>"
+      },
+      {
+        "alias": null,
+        "symbol": "free_programme_component_response",
+        "owner": "curriculum_api.catalogue.application.free_course_projection",
+        "original": "free_programme_component_response",
+        "scope": "<module>"
+      },
+      {
+        "alias": null,
+        "symbol": "programme_deleted_row",
+        "owner": "curriculum_api.catalogue.domain.archive_policy",
+        "original": "programme_deleted_row",
+        "scope": "<module>"
+      },
+      {
+        "alias": null,
+        "symbol": "truthy",
+        "owner": "curriculum_api.catalogue.domain.values",
+        "original": "truthy",
+        "scope": "<module>"
+      }
+    ],
+    "normalized_body_sha256": "83b9560d4179d350538be31257898d7d9b5a882a38b1267dc1b5fc32f8f94703"
+  },
+  {
+    "file": "backend/old_otjh/repository.py",
+    "bindings": [
+      {
+        "alias": null,
+        "symbol": "read_sql",
+        "owner": "curriculum_api.catalogue.infrastructure.course_storage_reads",
+        "scope": "_query_rows"
+      }
+    ],
+    "normalized_body_sha256": "f15509fd75d023400c0bbe0a44a2fcb522c239df7c102ee4983b242991be73a3"
+  }
+]

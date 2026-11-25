@@ -70,7 +70,7 @@ class HistoricalCrossRoleRouteTests(SimpleTestCase):
             "coach_api.views.resolve_migrated_template",
             "coach_api.views.build_progress_snapshot",
             "coach_api.views.sync_calendar_event_to_graph",
-            "curriculum_api.review_instances.ensure_review_instance",
+            'curriculum_api.review_management.application.instance_creation.ensure_review_instance',
             "learner_api.calendar._generated_cycle_events",
         ):
             replace(target, side_effect=AssertionError("Unexpected workflow: " + target))
@@ -219,7 +219,7 @@ class HistoricalCrossRoleRouteTests(SimpleTestCase):
         event = {"id": "review:native:2", "eventKey": "review:native:2", "source": "progress-review",
                  "reviewTemplateId": "native-template", "occurrenceNumber": 2, "status": "not-scheduled"}
         with patch.object(calendar, "_generated_cycle_events", return_value=[event]), \
-             patch("curriculum_api.review_instances.reconcile_review_event_keys", return_value={}), \
+             patch('curriculum_api.review_management.domain.occurrence_identity.reconcile_review_event_keys', return_value={}), \
              patch("learner_api.imported_review_calendar.imported_events_for_learner",
                    side_effect=AssertionError("Native source entered Aptem path")), \
              patch("learner_api.historical_review_presentation.enrich_historical_review",

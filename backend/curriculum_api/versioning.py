@@ -40,8 +40,8 @@ from . import schema_gate
 
 logger = logging.getLogger(__name__)
 
-REVISIONS_TABLE = 'record_revisions'
-VERSIONS_TABLE = 'record_versions'
+from .reporting.domain.revision_contracts import REVISIONS_TABLE
+from .reporting.domain.revision_contracts import VERSIONS_TABLE
 
 # The authoring tables that carry material. Keyed by table name, because that is
 # what the write helpers know about themselves.
@@ -52,23 +52,9 @@ VERSIONS_TABLE = 'record_versions'
 # tables are written by Microsoft Graph polling rather than by an author, so
 # recording them would fill the history with machine traffic. `live_sessions`
 # itself IS authored -- a person schedules it -- so it is here.
-VERSIONED_TABLES = {
-    'programmes': {'entity_type': 'programme', 'key': 'programme_id', 'title': 'name'},
-    'cohorts': {'entity_type': 'cohort', 'key': 'cohort_id', 'title': 'cohort_name'},
-    'groups': {'entity_type': 'group', 'key': 'group_id', 'title': 'group_name'},
-    'modules': {'entity_type': 'module', 'key': 'module_catalogue_id', 'title': 'title'},
-    'module_details': {'entity_type': 'module_details', 'key': 'module_catalogue_id', 'title': ''},
-    'module_completion_criteria': {'entity_type': 'module_completion', 'key': 'module_catalogue_id', 'title': ''},
-    'weeks': {'entity_type': 'week', 'key': 'id', 'title': 'title'},
-    'components': {'entity_type': 'component', 'key': 'id', 'title': 'title'},
-    'ksb_mappings': {'entity_type': 'ksb_mapping', 'key': 'id', 'title': 'ksb_code'},
-    'live_sessions': {'entity_type': 'live_session', 'key': 'id', 'title': 'module_title'},
-    'holidays': {'entity_type': 'holiday', 'key': 'id', 'title': 'label'},
-    'week_templates': {'entity_type': 'week_template', 'key': 'id', 'title': 'title'},
-    'week_template_components': {'entity_type': 'week_template_component', 'key': 'id', 'title': 'title'},
-}
+from .reporting.domain.revision_contracts import VERSIONED_TABLES
 
-ENTITY_TYPES = {config['entity_type'] for config in VERSIONED_TABLES.values()}
+from .reporting.domain.revision_contracts import ENTITY_TYPES
 
 # The columns a snapshot holds, per entity. Declaring them rather than taking
 # whatever the caller happened to pass is what makes two write paths comparable:
@@ -90,119 +76,27 @@ ENTITY_TYPES = {config['entity_type'] for config in VERSIONED_TABLES.values()}
 # invariants is that identity is traceable) while `join_url`, `web_link` and
 # `meeting_options_url` are left out: those are the capability to enter a
 # meeting, not a fact about it.
-SNAPSHOT_COLUMNS = {
-    'programme': (
-        'programme_id', 'name', 'standard', 'level', 'owner', 'color', 'description',
-        'structure_type', 'ksb_profile_source_id', 'standard_ref', 'standard_version', 'required_otjh', 'status', 'is_active',
-        'is_archived', 'deleted_at', 'deleted_by',
-    ),
-    'cohort': (
-        'cohort_id', 'cohort_name', 'programme_id', 'programme_name', 'start_date', 'end_date',
-        'duration_months', 'epa_months', 'apprenticeship_end_date', 'apprenticeship_end_override',
-        'color', 'status', 'group_ids', 'module_names', 'holiday_ids', 'excluded_holiday_ids',
-        'notes', 'deleted_at', 'deleted_by',
-    ),
-    'group': (
-        'group_id', 'group_name', 'cohort_id', 'cohort_name', 'programme_id', 'programme_name',
-        'module_ids', 'module_names', 'coach_name', 'color', 'session_week_day',
-        'session_start_time', 'session_end_time', 'notes', 'status', 'deleted_at', 'deleted_by',
-    ),
-    # Carries the delivery schedule and the tutor, not only the title: "who
-    # changed this module's tutor" and "who moved this module's start date" are
-    # among the questions most often asked of the trail, and neither could be
-    # answered while the snapshot stopped at the description.
-    'module': (
-        'module_catalogue_id', 'programme_id', 'programme_name', 'cohort_id', 'cohort_name',
-        'group_id', 'group_name', 'title', 'description', 'quality_score',
-        'status', 'tutor_name', 'tutor_email', 'coach_name', 'sessions_number',
-        'start_date', 'end_date', 'session_week_day', 'session_start_time', 'session_end_time',
-        'weekly_schedule', 'session_holidays', 'session_overrides', 'ksb_profile_source_id',
-        'color', 'cover_image_url', 'deleted_at', 'deleted_by',
-    ),
-    'week': (
-        'id', 'module_catalogue_id', 'week_number', 'title', 'summary', 'learning_outcomes',
-        'display_order', 'status', 'deleted_at', 'deleted_by',
-    ),
-    'component': (
-        'id', 'module_catalogue_id', 'week_id', 'type', 'title', 'description',
-        'expected_otjh', 'points', 'ksb_mappings', 'reflection_required',
-        'Reflection_Question', 'workplace_evidence_required', 'tutor_validation_required',
-        'coach_validation_required', 'display_order', 'settings_json', 'live_sessions_link',
-        'status', 'deleted_at', 'deleted_by',
-    ),
-    'module_details': (
-        'module_catalogue_id', 'background', 'epa_requirements',
-        'professional_qualification_outcomes', 'intent', 'learner_benefit', 'employer_benefit',
-        'sequence_purpose', 'deleted_at', 'deleted_by',
-    ),
-    'module_completion': (
-        'module_catalogue_id', 'quizzes_completed_required', 'checkpoints_completed_required',
-        'average_score_required_enabled', 'average_score_required',
-        'total_score_required_enabled', 'total_score_required', 'additional_notes',
-        'deleted_at', 'deleted_by',
-    ),
-    'ksb_mapping': (
-        'id', 'module_catalogue_id', 'week_id', 'component_id', 'template_component_id', 'ksb_id', 'ksb_code',
-        'ksb_description', 'classification', 'weight', 'weight_class', 'source_type', 'source_id',
-        'standard_ksb_id', 'status', 'deleted_at', 'deleted_by',
-    ),
-    # No join_url / web_link / meeting_options_url: see the note above.
-    'live_session': (
-        'id', 'module_catalogue_id', 'module_title', 'provider', 'graph_event_id',
-        'online_meeting_id', 'organizer_email', 'attendees', 'presenters', 'co_organizers',
-        'start_datetime', 'timezone', 'duration_minutes', 'repeat_pattern', 'repeat_occurrences',
-        'lobby_bypass', 'recording', 'spoken_language', 'meeting_type', 'request_responses',
-        'allow_time_proposals', 'hide_attendees', 'status',
-    ),
-    'holiday': (
-        'id', 'label', 'start_date', 'end_date', 'type', 'color', 'notes', 'is_archived',
-    ),
-    'week_template': (
-        'id', 'title', 'summary', 'learning_outcomes', 'course_type', 'programme_id',
-        'programme_name', 'module_catalogue_id', 'group_id', 'group_name', 'status',
-        'ksb_mappings', 'total_otjh', 'points', 'component_count', 'author',
-        'deleted_at', 'deleted_by',
-    ),
-    'week_template_component': (
-        'id', 'week_template_id', 'type', 'title', 'description', 'expected_otjh', 'points',
-        'reflection_required', 'workplace_evidence_required', 'tutor_validation_required',
-        'coach_validation_required', 'ksb_mappings', 'settings_json', 'display_order',
-    ),
-}
+from .reporting.domain.revision_contracts import SNAPSHOT_COLUMNS
 
 # The column whose value IS the entity's position among its siblings. A change
 # to only this is a reorder, not an edit -- see ``resolve_action``.
-ORDER_COLUMNS = {'display_order', 'week_number'}
+from .reporting.domain.revision_contracts import ORDER_COLUMNS
 
 # The column naming an entity's parent. A change to this is a move.
-PARENT_COLUMNS = {
-    'component': ('week_id', 'module_catalogue_id'),
-    'week': ('module_catalogue_id',),
-    'module': ('group_id', 'cohort_id', 'programme_id'),
-    'group': ('cohort_id', 'programme_id'),
-    'cohort': ('programme_id',),
-    'ksb_mapping': ('component_id', 'week_id', 'module_catalogue_id'),
-    'week_template_component': ('week_template_id',),
-    'live_session': ('module_catalogue_id',),
-}
+from .reporting.domain.revision_contracts import PARENT_COLUMNS
 
 # Parsed rather than stored as text, so the diff can reach inside them. A
 # component's material lives in settings_json, and "settings_json changed" would
 # be the least useful thing this feature could say. They also arrive as a JSON
 # string from one write path and as a parsed value from the other.
-JSON_SNAPSHOT_COLUMNS = {
-    'settings_json', 'ksb_mappings', 'learning_outcomes',
-    'weekly_schedule', 'session_holidays', 'session_overrides',
-    'attendees', 'presenters', 'co_organizers',
-    'group_ids', 'module_ids', 'module_names', 'holiday_ids', 'excluded_holiday_ids',
-}
+from .reporting.domain.revision_contracts import JSON_SNAPSHOT_COLUMNS
 
 # Settings keys that behave the same way inside settings_json.
-IGNORED_SETTING_KEYS = {'updatedAt', 'lastEdited'}
+from .reporting.domain.revision_contracts import IGNORED_SETTING_KEYS
 
 # A diff is read by a person, so long values are cut. The full value is always
 # in the snapshot; the diff only has to say *that* it changed and roughly how.
-DIFF_VALUE_LIMIT = 200
+from .reporting.domain.revision_contracts import DIFF_VALUE_LIMIT
 
 # ------------------------------------------------------ what the log keeps
 #
@@ -212,31 +106,22 @@ DIFF_VALUE_LIMIT = 200
 #: Identifiers and links Teams hands back after a push. The system fills them
 #: in and nobody edits them, and a join link is a way into a meeting. The log
 #: keeps one fact in their place: whether the component is linked to Teams.
-TEAMS_SYSTEM_SETTING_KEYS = frozenset({
-    'teamsEventId', 'teamsOnlineMeetingId', 'teamsLiveSessionId', 'teamsOccurrenceId',
-    'teamsMeetingUrl', 'teamsMeetingOptionsUrl', 'teamsWebLink', 'teamsProvider',
-    'teamsForBusiness', 'teamsCalendarSeries', 'teamsCalendarsToUpdate',
-    'liveSessionId', 'liveSessionIds', 'liveSessionUrl',
-})
-TEAMS_LINK_KEYS = ('teamsEventId', 'teamsLiveSessionId', 'liveSessionId', 'teamsOnlineMeetingId')
-TEAMS_LINK_MARKER = 'teamsMeeting'
-TEAMS_LINKED = 'Linked'
+from .reporting.domain.revision_contracts import TEAMS_SYSTEM_SETTING_KEYS
+from .reporting.domain.revision_contracts import TEAMS_LINK_KEYS
+from .reporting.domain.revision_contracts import TEAMS_LINK_MARKER
+from .reporting.domain.revision_contracts import TEAMS_LINKED
 
 #: Microsoft's own identifiers on a stored calendar, left out on the same rule.
-SYSTEM_COLUMNS = {'live_session': frozenset({'graph_event_id', 'online_meeting_id'})}
+from .reporting.domain.revision_contracts import SYSTEM_COLUMNS
 
 #: Invite lists: a count and what moved, not every address on the list.
-PEOPLE_LIST_FIELDS = frozenset({'settings.teamsAttendees', 'attendees'})
+from .reporting.domain.revision_contracts import PEOPLE_LIST_FIELDS
 
 #: Free text. The log records that it changed, never what it said: the record
 #: itself holds the words, and a copy of every draft is what made rows heavy.
-TEXT_COLUMNS = frozenset({
-    'description', 'summary', 'notes', 'Reflection_Question', 'background',
-    'epa_requirements', 'professional_qualification_outcomes', 'intent',
-    'learner_benefit', 'employer_benefit', 'sequence_purpose', 'additional_notes',
-})
-TEXT_SETTING_PATTERN = re.compile(r'(html|content|text|instructions?|description|body|prompt|summary|notes?|question)$', re.I)
-TEXT_CHANGED = 'Text changed'
+from .reporting.domain.revision_contracts import TEXT_COLUMNS
+from .reporting.domain.revision_contracts import TEXT_SETTING_PATTERN
+from .reporting.domain.revision_contracts import TEXT_CHANGED
 
 #: One person's saves to one record inside this window are one line.
 MERGE_WINDOW = timedelta(minutes=10)
@@ -544,196 +429,87 @@ class source(audit_context):
 # is never a channel for anything secret. Only these keys are stored, and the
 # values are bounded -- see the note on SNAPSHOT_COLUMNS for the same rule
 # applied to the snapshot itself.
-METADATA_KEYS = {
-    'import_type', 'import_batch_id', 'filename', 'row_count', 'reason_code',
-    'file_name', 'file_type', 'file_size', 'previous_file_name',
-    'recalculated_from', 'command', 'job', 'occurrences', 'note',
-    'page_path', 'page_label', 'page_workspace', 'page_source',
-    'request_path', 'request_method',
-    'merged_saves', 'last_saved_at',
-    # The parent an archive went with (curriculum_api.archive_state): the
-    # normalised schema keeps no deleted_via_parent, so restore reads it here.
-    'archived_via',
-}
+from .reporting.domain.revision_contracts import METADATA_KEYS
 
-METADATA_VALUE_LIMIT = 200
-METADATA_JSON_LIMIT = 2000
+from .reporting.domain.revision_contracts import METADATA_VALUE_LIMIT
+from .reporting.domain.revision_contracts import METADATA_JSON_LIMIT
 
 
 def safe_metadata(metadata):
-    """The declared metadata, reduced to what is safe and small enough to keep.
-
-    An allowlist rather than a filter of known-bad names: a deny-list has to
-    guess every future spelling of "token", and the first one it has not heard
-    of ends up in an append-only log nobody can edit. Anything not named here is
-    dropped silently -- the caller is passing descriptive context, not content,
-    and a dropped key costs a note in the trail rather than a leak.
-    """
-    if not isinstance(metadata, dict):
-        return {}
-    safe = {}
-    for key, value in metadata.items():
-        name = clean(key)
-        if name not in METADATA_KEYS:
-            continue
-        if value is None or isinstance(value, bool) or isinstance(value, int):
-            safe[name] = value
-            continue
-        text = clean(value if isinstance(value, str) else json.dumps(jsonable(value), ensure_ascii=False))
-        # A URL can carry a SAS token, a signature or a session in its query
-        # string, so only the part before the '?' is ever kept.
-        if '://' in text or text.startswith('/'):
-            text = text.split('?', 1)[0].split('#', 1)[0]
-        safe[name] = text[:METADATA_VALUE_LIMIT]
-    if len(json.dumps(safe, ensure_ascii=False)) > METADATA_JSON_LIMIT:
-        # Bounded rather than truncated mid-value: half a JSON document in an
-        # append-only column is worse than an honest note that it was too big.
-        return {'note': 'metadata omitted: too large'}
-    return safe
+    from .reporting.domain.snapshot_values import safe_metadata as implementation
+    return implementation(
+        metadata, METADATA_JSON_LIMIT=METADATA_JSON_LIMIT, METADATA_KEYS=METADATA_KEYS,
+        METADATA_VALUE_LIMIT=METADATA_VALUE_LIMIT, clean=clean, json=json, jsonable=jsonable,
+    )
 
 
 # ------------------------------------------------------------------ helpers
 
 def clean(value):
-    return str(value or '').strip()
+    from .reporting.domain.snapshot_values import clean as implementation
+    return implementation(
+        value,
+    )
 
 
 def qualified(table):
-    if connection.vendor != 'postgresql':
-        return f'"{table}"'
-    return f'"curriculum"."{table}"'
+    from .reporting.infrastructure.revision_reads import qualified as implementation
+    return implementation(
+        table, connection=connection,
+    )
 
 
 _AVAILABLE = {}
 
 
 def history_available():
-    """True when both history tables exist. Cached; a miss is not cached.
-
-    Probed with ``to_regclass``, which answers NULL for a missing relation
-    instead of raising. Selecting from a table that is not there would raise,
-    and in Postgres a raised statement aborts the whole surrounding transaction
-    -- so the cheapest possible check would have been able to fail the very save
-    it was asked to record.
-
-    Not caching the negative matters: these tables are created by hand against
-    Neon, and a process started before that SQL ran must begin recording once it
-    has, without a restart.
-    """
-    if _AVAILABLE.get('ready'):
-        return True
-    try:
-        with connection.cursor() as cursor:
-            if connection.vendor == 'postgresql':
-                cursor.execute(
-                    'select to_regclass(%s) is not null and to_regclass(%s) is not null',
-                    [f'curriculum.{REVISIONS_TABLE}', f'curriculum.{VERSIONS_TABLE}'],
-                )
-            else:
-                cursor.execute(
-                    "select count(*) = 2 from sqlite_master "
-                    "where type = 'table' and name in (%s, %s)",
-                    [REVISIONS_TABLE, VERSIONS_TABLE],
-                )
-            row = cursor.fetchone()
-    except Exception:
-        return False
-    if not (row and row[0]):
-        return False
-    _AVAILABLE['ready'] = True
-    return True
+    from .reporting.infrastructure.revision_reads import history_available as implementation
+    return implementation(
+        REVISIONS_TABLE=REVISIONS_TABLE, VERSIONS_TABLE=VERSIONS_TABLE, _AVAILABLE=_AVAILABLE,
+        connection=connection,
+    )
 
 
 def reset_availability():
-    _AVAILABLE.pop('ready', None)
-    _AVAILABLE.pop('metadata', None)
+    from .reporting.infrastructure.revision_reads import reset_availability as implementation
+    return implementation(
+        _AVAILABLE=_AVAILABLE,
+    )
 
 
 def as_list(value):
-    """A json column as a list, whether the driver parsed it or handed back text."""
-    if isinstance(value, list):
-        return value
-    text = clean(value)
-    if not text:
-        return []
-    try:
-        parsed = json.loads(text)
-    except (TypeError, ValueError):
-        return []
-    return parsed if isinstance(parsed, list) else []
+    from .reporting.domain.snapshot_values import as_list as implementation
+    return implementation(
+        value, clean=clean, json=json,
+    )
 
 
 def as_dict(value):
-    """A jsonb column as a dict, whatever the driver handed back."""
-    if isinstance(value, dict):
-        return value
-    text = clean(value)
-    if not text:
-        return {}
-    try:
-        parsed = json.loads(text)
-    except (TypeError, ValueError):
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
+    from .reporting.domain.snapshot_values import as_dict as implementation
+    return implementation(
+        value, clean=clean, json=json,
+    )
 
 
 def jsonable(value):
-    """A column value in a form ``json.dumps`` accepts, without losing meaning.
-
-    Decimal becomes float on purpose. The driver returns ``Decimal('2.00')`` for
-    an OTJH column while the tree save passes ``2.0``; as text those differ, and
-    every alternate save would report a change to a field nobody touched.
-    """
-    if value is None or isinstance(value, (bool, int, float, str)):
-        return value
-    if isinstance(value, Decimal):
-        return float(value)
-    if isinstance(value, (datetime, date)):
-        return value.isoformat()
-    if isinstance(value, dict):
-        return {str(key): jsonable(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [jsonable(item) for item in value]
-    # UUID and anything else the driver invents: text is lossless enough for a
-    # snapshot and always comparable.
-    return str(value)
+    from .reporting.domain.snapshot_values import jsonable as implementation
+    return implementation(
+        value, Decimal=Decimal, date=date, datetime=datetime, jsonable=jsonable,
+    )
 
 
 def parse_json_column(value):
-    """A JSON column as its parsed value, whether it arrived parsed or as text."""
-    if isinstance(value, (dict, list)):
-        return value
-    text = clean(value)
-    if not text:
-        return None
-    try:
-        return json.loads(text)
-    except (TypeError, ValueError):
-        return None
+    from .reporting.domain.snapshot_values import parse_json_column as implementation
+    return implementation(
+        value, clean=clean, json=json,
+    )
 
 
 def strip_credentials(value):
-    """The same value with any URL query string removed, however deep it sits.
-
-    A stored upload URL can carry a SAS token, a signature or a one-time key in
-    its query string. The allowlist above keeps such things out of *metadata*,
-    but a component's own ``settings_json`` holds the URL as ordinary content,
-    so without this the snapshot and the diff would quietly archive a working
-    credential in an append-only table that nobody can edit afterwards.
-
-    Only the query and fragment go. The path stays, because which file this is
-    remains the useful part, and two different signatures for the same file were
-    never a change worth reporting anyway.
-    """
-    if isinstance(value, str):
-        if ('://' in value or value.startswith('/')) and ('?' in value or '#' in value):
-            return value.split('?', 1)[0].split('#', 1)[0]
-        return value
-    if isinstance(value, dict):
-        return {key: strip_credentials(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [strip_credentials(item) for item in value]
-    return value
+    from .reporting.domain.snapshot_values import strip_credentials as implementation
+    return implementation(
+        value, strip_credentials=strip_credentials,
+    )
 
 
 #: Columns whose value must never reach history, per entity type, registered by
@@ -747,258 +523,120 @@ def strip_credentials(value):
 #: digest of itself: the same value digests the same way and records no change,
 #: a different one records a change, and neither digest can be read back into
 #: the value it stands for.
-REDACTED_COLUMNS = {}
+from .reporting.domain.revision_contracts import REDACTED_COLUMNS
 
-REDACTED_PREFIX = 'redacted:'
+from .reporting.domain.revision_contracts import REDACTED_PREFIX
 
 
 def redacted(value):
-    """A stand-in that changes when the value changes and reveals nothing."""
-    if value is None or value == '':
-        return None
-    text = value if isinstance(value, str) else json.dumps(jsonable(value), sort_keys=True, ensure_ascii=False)
-    return REDACTED_PREFIX + hashlib.sha256(text.encode('utf-8')).hexdigest()[:16]
+    from .reporting.domain.snapshot_values import redacted as implementation
+    return implementation(
+        value, REDACTED_PREFIX=REDACTED_PREFIX, hashlib=hashlib, json=json, jsonable=jsonable,
+    )
 
 
 def audit_display_value(entity_type, field, value):
-    """Apply today's privacy policy to old plaintext history on read as well."""
-    if field.split('.', 1)[0] in REDACTED_COLUMNS.get(entity_type, ()):
-        return None if value is None or value == '' else REDACTED_PREFIX + 'hidden'
-    return strip_credentials(value)
+    from .reporting.domain.snapshot_values import audit_display_value as implementation
+    return implementation(
+        entity_type, field, value, REDACTED_COLUMNS=REDACTED_COLUMNS, REDACTED_PREFIX=REDACTED_PREFIX,
+        strip_credentials=strip_credentials,
+    )
 
 
 def build_snapshot(entity_type, row):
-    """The saved record as history will hold it, in a shape both write paths share.
-
-    Always carries exactly the columns ``SNAPSHOT_COLUMNS`` declares for the
-    entity — see the note there for why the source's own key set is not used.
-    Columns named in ``REDACTED_COLUMNS`` carry a digest instead of the value.
-    """
-    row = row or {}
-    hidden = REDACTED_COLUMNS.get(entity_type) or frozenset()
-    skipped = SYSTEM_COLUMNS.get(entity_type) or frozenset()
-    snapshot = {}
-    for column in SNAPSHOT_COLUMNS.get(entity_type, ()):
-        if column in skipped:
-            continue
-        value = row.get(column)
-        if column in hidden:
-            snapshot[column] = redacted(value)
-            continue
-        if column in JSON_SNAPSHOT_COLUMNS:
-            parsed = parse_json_column(value)
-            if column == 'settings_json':
-                parsed = logged_settings(parsed)
-            snapshot[column] = strip_credentials(jsonable(parsed)) if parsed is not None else None
-            continue
-        snapshot[column] = strip_credentials(jsonable(value))
-    return snapshot
+    from .reporting.domain.snapshot_values import build_snapshot as implementation
+    return implementation(
+        entity_type, row, JSON_SNAPSHOT_COLUMNS=JSON_SNAPSHOT_COLUMNS,
+        REDACTED_COLUMNS=REDACTED_COLUMNS, SNAPSHOT_COLUMNS=SNAPSHOT_COLUMNS,
+        SYSTEM_COLUMNS=SYSTEM_COLUMNS, jsonable=jsonable, logged_settings=logged_settings,
+        parse_json_column=parse_json_column, redacted=redacted, strip_credentials=strip_credentials,
+    )
 
 
 def logged_settings(settings):
-    """Settings as the log keeps them: the Teams ids and links become one flag."""
-    if not isinstance(settings, dict):
-        return settings
-    kept = {key: value for key, value in settings.items() if key not in TEAMS_SYSTEM_SETTING_KEYS}
-    if any(settings.get(key) for key in TEAMS_LINK_KEYS):
-        kept[TEAMS_LINK_MARKER] = TEAMS_LINKED
-    return kept
+    from .reporting.domain.snapshot_values import logged_settings as implementation
+    return implementation(
+        settings, TEAMS_LINKED=TEAMS_LINKED, TEAMS_LINK_KEYS=TEAMS_LINK_KEYS,
+        TEAMS_LINK_MARKER=TEAMS_LINK_MARKER, TEAMS_SYSTEM_SETTING_KEYS=TEAMS_SYSTEM_SETTING_KEYS,
+    )
 
 
 def logged_view(entity_type, snapshot):
-    """An older stored snapshot put in today's shape before it is compared.
-
-    Rows written before these rules still carry the Teams ids and Microsoft's
-    calendar ids. Comparing them as they are would report every one of those
-    keys as removed on the next save.
-    """
-    if not snapshot:
-        return snapshot
-    skipped = SYSTEM_COLUMNS.get(entity_type) or frozenset()
-    view = {key: value for key, value in snapshot.items() if key not in skipped}
-    if isinstance(view.get('settings_json'), dict):
-        view['settings_json'] = logged_settings(view['settings_json'])
-    return view
+    from .reporting.domain.snapshot_values import logged_view as implementation
+    return implementation(
+        entity_type, snapshot, SYSTEM_COLUMNS=SYSTEM_COLUMNS, logged_settings=logged_settings,
+    )
 
 
 def short(value):
-    """A diff-sized rendering of a value, and whether it had to be cut."""
-    if value is None:
-        return '', False
-    if isinstance(value, (dict, list)):
-        text = json.dumps(value, sort_keys=True, ensure_ascii=False)
-    else:
-        text = str(value)
-    if len(text) <= DIFF_VALUE_LIMIT:
-        return text, False
-    return f'{text[:DIFF_VALUE_LIMIT]}…', True
+    from .reporting.domain.snapshot_values import short as implementation
+    return implementation(
+        value, DIFF_VALUE_LIMIT=DIFF_VALUE_LIMIT, json=json,
+    )
 
 
 def diff_snapshots(previous, current):
-    """Field-level changes between two snapshots, newest value last.
-
-    ``settings_json`` is compared one level in, so an edit reads as
-    ``settings.contentHtml`` rather than as the whole settings blob changing.
-    """
-    changes = []
-    previous = previous or {}
-    current = current or {}
-    for key in sorted(set(previous) | set(current)):
-        # Underscore keys are context, not content. See CONTEXT_KEY.
-        if key.startswith('_'):
-            continue
-        before = previous.get(key)
-        after = current.get(key)
-        if before == after:
-            continue
-        if key == 'settings_json' and (isinstance(before, dict) or isinstance(after, dict)):
-            changes.extend(diff_settings(
-                before if isinstance(before, dict) else {},
-                after if isinstance(after, dict) else {},
-            ))
-            continue
-        changes.append(change_entry(key, before, after))
-    return changes
+    from .reporting.domain.snapshot_changes import diff_snapshots as implementation
+    return implementation(
+        previous, current, change_entry=change_entry, diff_settings=diff_settings,
+    )
 
 
 def people_in(value):
-    if isinstance(value, str):
-        value = parse_json_column(value) if value.strip().startswith('[') else value.split(',')
-    if not isinstance(value, list):
-        return set()
-    return {clean(item).lower() for item in value if clean(item)}
+    from .reporting.domain.snapshot_changes import people_in as implementation
+    return implementation(
+        value, clean=clean, parse_json_column=parse_json_column,
+    )
 
 
 def is_text_field(field, before, after):
-    name = field.split('.', 1)[1] if field.startswith('settings.') else field
-    if field.startswith('settings.'):
-        if TEXT_SETTING_PATTERN.search(name):
-            return isinstance(before, (str, type(None))) and isinstance(after, (str, type(None)))
-    elif name in TEXT_COLUMNS:
-        return True
-    # Anything too long to show whole is prose, not a setting.
-    return any(isinstance(value, str) and len(value) > DIFF_VALUE_LIMIT for value in (before, after))
+    from .reporting.domain.snapshot_changes import is_text_field as implementation
+    return implementation(
+        field, before, after, DIFF_VALUE_LIMIT=DIFF_VALUE_LIMIT, TEXT_COLUMNS=TEXT_COLUMNS,
+        TEXT_SETTING_PATTERN=TEXT_SETTING_PATTERN,
+    )
 
 
 def change_entry(field, before, after):
-    """One changed field as the log keeps it."""
-    if field in PEOPLE_LIST_FIELDS:
-        was, now = people_in(before), people_in(after)
-        added, removed = len(now - was), len(was - now)
-        return {
-            'field': field, 'from': f'{len(was)} invited',
-            'to': f'{len(now)} invited (+{added}, -{removed})', 'truncated': False,
-        }
-    if is_text_field(field, before, after):
-        return {'field': field, 'from': '', 'to': TEXT_CHANGED, 'truncated': False, 'text': True}
-    from_text, from_cut = short(before)
-    to_text, to_cut = short(after)
-    return {'field': field, 'from': from_text, 'to': to_text, 'truncated': from_cut or to_cut}
+    from .reporting.domain.snapshot_changes import change_entry as implementation
+    return implementation(
+        field, before, after, PEOPLE_LIST_FIELDS=PEOPLE_LIST_FIELDS, TEXT_CHANGED=TEXT_CHANGED,
+        is_text_field=is_text_field, people_in=people_in, short=short,
+    )
 
 
 def merge_changes(earlier, later):
-    """Two diffs of one record as one: each field from its first value to its last.
-
-    A field put back where it started drops out; text keeps its "changed" line,
-    since the log never held the words to compare.
-    """
-    merged = {}
-    for change in list(earlier or ()) + list(later or ()):
-        field = clean(change.get('field'))
-        if not field:
-            continue
-        if field in merged:
-            first = merged[field]
-            combined = dict(change)
-            combined['from'] = first.get('from')
-            combined['truncated'] = bool(first.get('truncated') or change.get('truncated'))
-            combined['text'] = bool(first.get('text') or change.get('text'))
-            if not combined['text']:
-                combined.pop('text')
-            merged[field] = combined
-        else:
-            merged[field] = dict(change)
-    return [change for change in merged.values() if change.get('text') or change.get('from') != change.get('to')]
+    from .reporting.domain.snapshot_changes import merge_changes as implementation
+    return implementation(
+        earlier, later, clean=clean,
+    )
 
 
 def diff_settings(previous, current):
-    changes = []
-    for key in sorted(set(previous) | set(current)):
-        if key in IGNORED_SETTING_KEYS:
-            continue
-        before = previous.get(key)
-        after = current.get(key)
-        if before == after:
-            continue
-        changes.append(change_entry(f'settings.{key}', before, after))
-    return changes
+    from .reporting.domain.snapshot_changes import diff_settings as implementation
+    return implementation(
+        previous, current, IGNORED_SETTING_KEYS=IGNORED_SETTING_KEYS, change_entry=change_entry,
+    )
 
 
 # Where each entity's own title lives in its snapshot, and which column names
 # its parent for the indexed ``parent_id`` column.
-ENTITY_FACT_FIELDS = {
-    'programme': {'title': 'name', 'parent': '', 'status': 'status'},
-    'cohort': {'title': 'cohort_name', 'parent': 'programme_id', 'status': 'status'},
-    'group': {'title': 'group_name', 'parent': 'cohort_id', 'status': ''},
-    'module': {'title': 'title', 'parent': 'programme_id', 'status': 'status'},
-    'module_details': {'title': '', 'parent': 'module_catalogue_id', 'status': ''},
-    'module_completion': {'title': '', 'parent': 'module_catalogue_id', 'status': ''},
-    'week': {'title': 'title', 'parent': 'module_catalogue_id', 'status': ''},
-    'component': {'title': 'title', 'parent': 'week_id', 'status': ''},
-    'ksb_mapping': {'title': 'ksb_code', 'parent': 'component_id', 'status': 'classification'},
-    'live_session': {'title': 'module_title', 'parent': 'module_catalogue_id', 'status': 'status'},
-    'holiday': {'title': 'label', 'parent': '', 'status': ''},
-    'week_template': {'title': 'title', 'parent': 'programme_id', 'status': 'status'},
-    'week_template_component': {'title': 'title', 'parent': 'week_template_id', 'status': ''},
-}
+from .reporting.domain.revision_contracts import ENTITY_FACT_FIELDS
 
 
 def snapshot_title(snapshot, columns, join=' '):
-    """The record's own name, from one snapshot column or several joined.
-
-    Several, because outside the curriculum a record's name is rarely in one
-    column: a coaching meeting is identified by whose it is *and* what kind it
-    is, and an employer contact by a first name *and* a surname. A column that
-    is empty is skipped rather than joined as a gap, so a contact with no
-    surname reads as their first name and not as a name with a dangling
-    separator.
-    """
-    if not columns:
-        return ''
-    if isinstance(columns, str):
-        columns = (columns,)
-    parts = [clean(snapshot.get(column)) for column in columns]
-    return join.join(part for part in parts if part)
+    from .reporting.domain.snapshot_context import snapshot_title as implementation
+    return implementation(
+        snapshot, columns, join, clean=clean,
+    )
 
 
 def entity_facts(entity_type, snapshot):
-    """The columns the history table denormalises out of a snapshot."""
-    fields = ENTITY_FACT_FIELDS.get(entity_type) or {}
-    settings = as_dict(snapshot.get('settings_json'))
-    version_label = clean(settings.get('version')) if entity_type == 'component' else ''
-    content_status = clean(settings.get('contentStatus')) if entity_type == 'component' else ''
-    if not content_status and fields.get('status'):
-        content_status = clean(snapshot.get(fields['status']))
-    title_column = fields.get('title')
-    title = snapshot_title(snapshot, title_column, fields.get('title_join') or ' ')
-    # A record whose usual name is blank still has to be findable in a list.
-    # `title_fallback` names the column to use instead -- an email where a
-    # username was never set -- rather than leaving the row to be listed under
-    # its own primary key, which tells a reader nothing.
-    if not title and fields.get('title_fallback'):
-        title = snapshot_title(snapshot, fields['title_fallback'])
-    # A row with no title of its own is still worth naming in a list, and the
-    # only honest name it has is the record it belongs to.
-    if not title and entity_type in {'module_details', 'module_completion'}:
-        title = clean(snapshot.get('module_catalogue_id'))
-    parent_column = fields.get('parent')
-    return {
-        'module_catalogue_id': clean(snapshot.get('module_catalogue_id')),
-        'parent_id': clean(snapshot.get(parent_column)) if parent_column else '',
-        'title': title[:500],
-        'version_label': version_label,
-        'content_status': content_status[:64],
-    }
+    from .reporting.domain.snapshot_context import entity_facts as implementation
+    return implementation(
+        entity_type, snapshot, ENTITY_FACT_FIELDS=ENTITY_FACT_FIELDS, as_dict=as_dict, clean=clean,
+        snapshot_title=snapshot_title,
+    )
 
 
 # --------------------------------------------------------- parent context
@@ -1011,7 +649,7 @@ def entity_facts(entity_type, snapshot):
 # a component must not report "changed" because the programme above it was
 # renamed. A move that really does change the entity's own parent still shows,
 # because that is a change to the entity's own `week_id` / `programme_id` column.
-CONTEXT_KEY = '_context'
+from .reporting.domain.revision_contracts import CONTEXT_KEY
 
 #: entity_type -> the snapshot columns that place a record, in reading order.
 #: Registered by ``system_audit.writes`` for everything outside the curriculum,
@@ -1021,93 +659,21 @@ CONTEXT_KEY = '_context'
 #: The curriculum's own entities are deliberately absent. Theirs is resolved
 #: from the module table below, because a component's programme is not in the
 #: component's own row.
-ENTITY_CONTEXT_FIELDS = {}
+from .reporting.domain.revision_contracts import ENTITY_CONTEXT_FIELDS
 
 
 def context_for(entity_type, snapshot, ancestry):
-    """The ancestry to store beside a snapshot, from an already-resolved map."""
-    registered = ENTITY_CONTEXT_FIELDS.get(entity_type)
-    if registered:
-        # Read off the row itself, and stored with it, for the same reason the
-        # curriculum's is: this is where the record sat WHEN the change
-        # happened. A learner moved to another cohort next month must not
-        # silently rewrite the line against today's edit.
-        return {
-            column: clean(snapshot.get(column))
-            for column in registered
-            if clean(snapshot.get(column))
-        }
-    module_id = clean(snapshot.get('module_catalogue_id'))
-    context = {}
-    if entity_type == 'programme':
-        context = {'programme_id': clean(snapshot.get('programme_id')), 'programme_name': clean(snapshot.get('name'))}
-    elif entity_type in {'cohort', 'group', 'module', 'week_template'}:
-        context = {
-            'programme_id': clean(snapshot.get('programme_id')),
-            'programme_name': clean(snapshot.get('programme_name')),
-        }
-        if entity_type in {'group', 'module'}:
-            context['cohort_id'] = clean(snapshot.get('cohort_id'))
-            context['cohort_name'] = clean(snapshot.get('cohort_name'))
-        if entity_type == 'module':
-            context['group_id'] = clean(snapshot.get('group_id'))
-            context['group_name'] = clean(snapshot.get('group_name'))
-    elif module_id:
-        context = dict(ancestry.get(module_id) or {})
-    if entity_type == 'component':
-        context['week_id'] = clean(snapshot.get('week_id'))
-        context['module_catalogue_id'] = module_id
-    elif entity_type == 'week':
-        context['module_catalogue_id'] = module_id
-    elif entity_type == 'ksb_mapping':
-        context['week_id'] = clean(snapshot.get('week_id'))
-        context['component_id'] = clean(snapshot.get('component_id'))
-        context['module_catalogue_id'] = module_id
-    return {key: value for key, value in context.items() if value}
+    from .reporting.domain.snapshot_context import context_for as implementation
+    return implementation(
+        entity_type, snapshot, ancestry, ENTITY_CONTEXT_FIELDS=ENTITY_CONTEXT_FIELDS, clean=clean,
+    )
 
 
 def resolve_ancestry(module_ids):
-    """Programme / cohort / group / module names for these modules, in one read.
-
-    One query for every module touched by the flush, not one per row: a tree
-    save buffers thousands of components and they nearly all sit under the same
-    handful of modules.
-    """
-    ids = sorted({clean(value) for value in module_ids if clean(value)})
-    if not ids:
-        return {}
-    placeholders = ', '.join(['%s'] * len(ids))
-    # The module keeps ids; the names are its programme's / cohort's / group's own.
-    query = (
-        'select m.module_catalogue_id, m.title, m.programme_id, p.name as programme_name, '
-        'm.cohort_id, c.cohort_name, m.group_id, g.group_name '
-        f'from {qualified("modules")} m '
-        f'left join {qualified("programmes")} p on p.programme_id = m.programme_id '
-        f'left join {qualified("cohorts")} c on c.cohort_id = m.cohort_id '
-        f'left join {qualified("groups")} g on g.group_id = m.group_id '
-        f'where m.module_catalogue_id in ({placeholders})'
+    from .reporting.infrastructure.revision_reads import resolve_ancestry as implementation
+    return implementation(
+        module_ids, clean=clean, connection=connection, logger=logger, qualified=qualified,
     )
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute(query, ids)
-            columns = [column[0] for column in cursor.description]
-            rows = [dict(zip(columns, values)) for values in cursor.fetchall()]
-    except Exception:
-        # Context is a nicety; the snapshot and the diff are the record. A module
-        # that has just been hard-deleted is exactly the case that lands here.
-        logger.debug('Could not resolve curriculum ancestry.', exc_info=True)
-        return {}
-    return {
-        clean(row.get('module_catalogue_id')): {
-            key: clean(row.get(key))
-            for key in (
-                'programme_id', 'programme_name', 'cohort_id', 'cohort_name',
-                'group_id', 'group_name',
-            )
-            if clean(row.get(key))
-        } | {'module_name': clean(row.get('title'))}
-        for row in rows
-    }
 
 
 # 'recorded' is the first revision of a record that already existed before
@@ -1120,122 +686,58 @@ def resolve_ancestry(module_ids):
 # handler. The file and recalculation entries below are here because each is a
 # thing a reader asks about by name ("who replaced that PDF", "why did the end
 # date move"), which a generic `updated` cannot answer.
-ACTIONS = (
-    'created', 'updated', 'archived', 'restored', 'deleted', 'moved', 'reordered', 'recorded',
-    'file_uploaded', 'file_replaced', 'file_removed', 'recalculated', 'imported',
-)
+from .reporting.domain.revision_contracts import ACTIONS
 
 # Actions a caller may declare for itself through ``audit_context(action=...)``.
 # Archive, restore, move and reorder are deliberately absent: those are read off
 # the row's own diff, and a caller that could assert them could assert one that
 # did not happen.
-DECLARABLE_ACTIONS = {'file_uploaded', 'file_replaced', 'file_removed', 'recalculated', 'imported'}
+from .reporting.domain.revision_contracts import DECLARABLE_ACTIONS
 
 # Where a component records the file attached to it, and the two settings keys
 # that describe that file. Nothing here is the file's URL: an upload URL can
 # carry a SAS token or a signature in its query string, and an append-only log is
 # the last place one should land.
-UPLOAD_NAME_FIELD = 'settings.uploadedFileName'
-UPLOAD_NAME_KEY = 'uploadedFileName'
-UPLOAD_TYPE_KEY = 'uploadedFileContentType'
-UPLOAD_SIZE_KEY = 'uploadedFileSize'
+from .reporting.domain.revision_contracts import UPLOAD_NAME_FIELD
+from .reporting.domain.revision_contracts import UPLOAD_NAME_KEY
+from .reporting.domain.revision_contracts import UPLOAD_TYPE_KEY
+from .reporting.domain.revision_contracts import UPLOAD_SIZE_KEY
 
 
 def resolve_file_action(changes):
-    """Which file event this diff is, if it is one at all."""
-    for change in changes or ():
-        if change.get('field') != UPLOAD_NAME_FIELD:
-            continue
-        before, after = clean(change.get('from')), clean(change.get('to'))
-        if before and not after:
-            return 'file_removed'
-        if after and not before:
-            return 'file_uploaded'
-        if after and before:
-            return 'file_replaced'
-    return ''
+    from .reporting.domain.snapshot_changes import resolve_file_action as implementation
+    return implementation(
+        changes, UPLOAD_NAME_FIELD=UPLOAD_NAME_FIELD, clean=clean,
+    )
 
 
 def file_metadata(action, snapshot, previous_snapshot):
-    """What the trail records about a file event, read from the rows themselves.
-
-    Only ever the name, the type and the size -- enough for a reader to know
-    which file this was, and nothing that is the file or that could let someone
-    fetch it.
-    """
-    if action not in {'file_uploaded', 'file_replaced', 'file_removed'}:
-        return {}
-    settings = as_dict(snapshot.get('settings_json'))
-    previous = as_dict((previous_snapshot or {}).get('settings_json'))
-    if action == 'file_removed':
-        return safe_metadata({'previous_file_name': previous.get(UPLOAD_NAME_KEY)})
-    metadata = {
-        'file_name': settings.get(UPLOAD_NAME_KEY),
-        'file_type': settings.get(UPLOAD_TYPE_KEY),
-        'file_size': settings.get(UPLOAD_SIZE_KEY),
-    }
-    if action == 'file_replaced':
-        metadata['previous_file_name'] = previous.get(UPLOAD_NAME_KEY)
-    return safe_metadata({key: value for key, value in metadata.items() if value not in (None, '')})
+    from .reporting.domain.snapshot_changes import file_metadata as implementation
+    return implementation(
+        action, snapshot, previous_snapshot, UPLOAD_NAME_KEY=UPLOAD_NAME_KEY,
+        UPLOAD_SIZE_KEY=UPLOAD_SIZE_KEY, UPLOAD_TYPE_KEY=UPLOAD_TYPE_KEY, as_dict=as_dict,
+        safe_metadata=safe_metadata,
+    )
 
 
 # Entity types whose lifecycle is the normalised ``status`` column alone.
-STATUS_LIFECYCLE_TYPES = frozenset({'programme', 'cohort', 'group', 'module', 'week', 'component', 'ksb_mapping'})
+from .reporting.domain.revision_contracts import STATUS_LIFECYCLE_TYPES
 
 
 def snapshot_archived(snapshot, entity_type=''):
-    """Is this snapshot of an archived row?
-
-    The normalised schema records it in ``status`` ('inactive'); snapshots taken
-    on the old schema carry ``deleted_at``, and history mixes both.
-    """
-    if snapshot.get('deleted_at'):
-        return True
-    if entity_type not in STATUS_LIFECYCLE_TYPES:
-        return False
-    return str(snapshot.get('status') or '').strip().lower() in ('inactive', 'archived')
+    from .reporting.domain.snapshot_changes import snapshot_archived as implementation
+    return implementation(
+        snapshot, entity_type, STATUS_LIFECYCLE_TYPES=STATUS_LIFECYCLE_TYPES,
+    )
 
 
 def resolve_action(entity_type, snapshot, previous_row, changes):
-    """The action this revision records, from the row and its own diff.
-
-    Archive and restore win over everything, because withdrawing a record is the
-    most consequential thing that can happen to it. Below those, a diff that
-    touches only the parent column is a move and a diff that touches only the
-    order column is a reorder -- said outright rather than left for a reader to
-    infer from a `week_id` that went from one opaque id to another.
-    """
-    archived = snapshot_archived(snapshot, entity_type)
-    if previous_row is None:
-        return 'archived' if archived else 'created'
-    was_archived = snapshot_archived(previous_row.get('snapshot') or {}, entity_type)
-    if archived and not was_archived:
-        return 'archived'
-    if was_archived and not archived:
-        return 'restored'
-    # Attaching, swapping or detaching a file, read off the component's own
-    # diff rather than declared by a caller.
-    #
-    # Derived on purpose. The obvious place to declare it is the upload endpoint,
-    # but that endpoint does not write the component (it hands the file's details
-    # back and the browser saves them with the next component save), so a
-    # declaration there would label a write that never happens while the real one
-    # went on reading as a settings edit. The name the component ends up carrying
-    # is the fact; whichever save carried it is beside the point.
-    file_action = resolve_file_action(changes)
-    if file_action:
-        return file_action
-    fields = {change.get('field') for change in changes or ()}
-    if fields:
-        parents = set(PARENT_COLUMNS.get(entity_type) or ())
-        # A move has to actually touch a parent column. Landing in a new position
-        # within the same week is a reorder, and reading it as a move because
-        # `week_id` happens to be a parent column would mislabel every drag.
-        if fields & parents and fields <= (parents | ORDER_COLUMNS):
-            return 'moved'
-        if fields <= ORDER_COLUMNS:
-            return 'reordered'
-    return 'updated'
+    from .reporting.domain.snapshot_changes import resolve_action as implementation
+    return implementation(
+        entity_type, snapshot, previous_row, changes, ORDER_COLUMNS=ORDER_COLUMNS,
+        PARENT_COLUMNS=PARENT_COLUMNS, resolve_file_action=resolve_file_action,
+        snapshot_archived=snapshot_archived,
+    )
 
 
 
@@ -1243,49 +745,12 @@ def resolve_action(entity_type, snapshot, previous_row, changes):
 # ------------------------------------------------------------------- writes
 
 def latest_revisions(entity_type, entity_ids):
-    """The newest revision per entity, in one read.
-
-    ``distinct on`` keeps this a single index scan over
-    ``record_revisions_entity_idx`` however many ids are asked for, which is
-    what makes the bulk path viable — the tree save hands over every component
-    in a module at once.
-    """
-    ids = [clean(value) for value in entity_ids if clean(value)]
-    if not ids:
-        return {}
-    placeholders = ', '.join(['%s'] * len(ids))
-    columns_sql = 'entity_id, id, revision_no, snapshot, version_label, content_status, action, actor_email, created_at, changed_fields'
-    if metadata_columns_available():
-        columns_sql += ', metadata'
-    if connection.vendor == 'postgresql':
-        query = (
-            f'select distinct on (entity_id) {columns_sql} '
-            f'from {qualified(REVISIONS_TABLE)} '
-            f'where entity_type = %s and entity_id in ({placeholders}) '
-            f'order by entity_id, revision_no desc'
-        )
-    else:
-        # sqlite has no `distinct on`, and the correlated-subquery form cannot
-        # alias a schema-qualified name. The row count here is bounded by the
-        # revisions of the entities being saved, so the newest is picked below.
-        query = (
-            f'select {columns_sql} from {qualified(REVISIONS_TABLE)} '
-            f'where entity_type = %s and entity_id in ({placeholders}) '
-            f'order by entity_id, revision_no'
-        )
-    with connection.cursor() as cursor:
-        cursor.execute(query, [entity_type, *ids])
-        columns = [column[0] for column in cursor.description]
-        rows = [dict(zip(columns, values)) for values in cursor.fetchall()]
-    result = {}
-    for row in rows:
-        key = clean(row.get('entity_id'))
-        existing = result.get(key)
-        if existing and int(existing.get('revision_no') or 0) >= int(row.get('revision_no') or 0):
-            continue
-        row['snapshot'] = as_dict(row.get('snapshot'))
-        result[key] = row
-    return result
+    from .reporting.infrastructure.revision_reads import latest_revisions as implementation
+    return implementation(
+        entity_type, entity_ids, REVISIONS_TABLE=REVISIONS_TABLE, as_dict=as_dict, clean=clean,
+        connection=connection, metadata_columns_available=metadata_columns_available,
+        qualified=qualified,
+    )
 
 
 def record_rows(table, rows, *, reason='', deleted=False, using=None, before_rows=None):
@@ -1717,78 +1182,35 @@ def trim_superseded(pending, inserted):
 
 
 def looks_newly_created(item):
-    """Whether this row came into existence now, or merely reached history now.
-
-    Both stamps have to be readable for this to answer yes. An unreadable or
-    missing stamp is treated as "cannot tell", and the honest answer to "cannot
-    tell whether this was just created" is no -- claiming a create that did not
-    happen is the worse of the two mistakes, because it puts a false origin
-    story against a record nobody can correct afterwards.
-    """
-    created, updated = item.get('created_at'), item.get('updated_at')
-    if created is None or updated is None:
-        return False
-    if isinstance(created, datetime) and isinstance(updated, datetime):
-        # The two are written microseconds apart by the same statement, never
-        # exactly equal, so this asks whether the row's whole life fits inside
-        # this save rather than whether the stamps match to the microsecond.
-        return abs((updated - created).total_seconds()) < 1
-    return clean(created) == clean(updated)
+    from .reporting.domain.snapshot_changes import looks_newly_created as implementation
+    return implementation(
+        item, clean=clean, datetime=datetime,
+    )
 
 
 def strip_context(snapshot):
-    """A snapshot without its ancestry, for the did-anything-change comparison.
+    from .reporting.domain.snapshot_changes import strip_context as implementation
+    return implementation(
+        snapshot,
+    )
 
-    Renaming a programme must not make every component under it look edited.
-    """
-    return {key: value for key, value in (snapshot or {}).items() if not key.startswith('_')}
 
-
-REVISION_COLUMNS = (
-    'entity_type', 'entity_id', 'revision_no', 'action', 'module_catalogue_id', 'parent_id',
-    'title', 'version_label', 'content_status', 'snapshot', 'changed_fields',
-    'actor_email', 'actor_name', 'reason',
-)
+from .reporting.domain.revision_contracts import REVISION_COLUMNS
 
 # Added by 2026-09-16_curriculum_record_revisions_audit_metadata.sql. Written
 # only once that has run, so a deployment whose database is still on the old
 # shape keeps recording rather than failing every save on a missing column.
-METADATA_COLUMNS = ('actor_type', 'triggered_by_email', 'triggered_by_name', 'source', 'metadata')
+from .reporting.domain.revision_contracts import METADATA_COLUMNS
 
-JSON_REVISION_COLUMNS = {'snapshot', 'changed_fields', 'metadata'}
+from .reporting.domain.revision_contracts import JSON_REVISION_COLUMNS
 
 
 def metadata_columns_available():
-    """Whether ``record_revisions`` has the Phase 2 metadata columns yet.
-
-    Probed the same way the tables themselves are, and for the same reason: this
-    runs inside somebody's save, so it has to answer without raising. Cached on
-    success only -- the columns are added by hand against Neon, and a process
-    started before that SQL ran must begin using them once it has, without a
-    restart. ``reset_availability`` clears it.
-    """
-    if _AVAILABLE.get('metadata'):
-        return True
-    try:
-        with connection.cursor() as cursor:
-            if connection.vendor == 'postgresql':
-                cursor.execute(
-                    'select count(*) from information_schema.columns '
-                    'where table_schema = %s and table_name = %s and column_name = any(%s)',
-                    ['curriculum', REVISIONS_TABLE, list(METADATA_COLUMNS)],
-                )
-            else:
-                cursor.execute(f'pragma table_info("{REVISIONS_TABLE}")')
-                names = {row[1] for row in cursor.fetchall()}
-                _AVAILABLE['metadata'] = set(METADATA_COLUMNS) <= names
-                return _AVAILABLE['metadata']
-            row = cursor.fetchone()
-    except Exception:
-        return False
-    if not (row and int(row[0] or 0) == len(METADATA_COLUMNS)):
-        return False
-    _AVAILABLE['metadata'] = True
-    return True
+    from .reporting.infrastructure.revision_reads import metadata_columns_available as implementation
+    return implementation(
+        METADATA_COLUMNS=METADATA_COLUMNS, REVISIONS_TABLE=REVISIONS_TABLE, _AVAILABLE=_AVAILABLE,
+        connection=connection,
+    )
 
 
 def insert_revisions(pending):
@@ -1906,13 +1328,10 @@ def version_label_for(entity_type, item):
 
 
 def module_publish_count(entity_id):
-    with connection.cursor() as cursor:
-        cursor.execute(
-            f'select count(*) from {qualified(VERSIONS_TABLE)} where entity_type = %s and entity_id = %s',
-            ['module', entity_id],
-        )
-        row = cursor.fetchone()
-    return int(row[0]) if row else 0
+    from .reporting.infrastructure.revision_reads import module_publish_count as implementation
+    return implementation(
+        entity_id, VERSIONS_TABLE=VERSIONS_TABLE, connection=connection, qualified=qualified,
+    )
 
 
 def provision_history_tables():

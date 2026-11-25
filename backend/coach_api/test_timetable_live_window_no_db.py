@@ -37,7 +37,7 @@ EMPTY_RESOLVED = {
 class TimetableLiveSessionWindowTests(SimpleTestCase):
     @patch("coach_api.views.build_timetable_summary", return_value={"sourceCounts": {}})
     @patch("coach_api.views.assign_timetable_slots", side_effect=lambda events: events)
-    @patch("coach_api.views.curriculum_review_instances.reconcile_review_event_keys", return_value={})
+    @patch('curriculum_api.review_management.domain.occurrence_identity.reconcile_review_event_keys', return_value={})
     @patch("coach_api.views.fetch_calendar_event_records", return_value={})
     @patch("coach_api.views.fetch_standalone_event_records", return_value=[])
     @patch("coach_api.views.resolve_coach_review_events", return_value=EMPTY_RESOLVED)
@@ -57,7 +57,7 @@ class TimetableLiveSessionWindowTests(SimpleTestCase):
 
     @patch("coach_api.views.build_timetable_summary", return_value={"sourceCounts": {}})
     @patch("coach_api.views.assign_timetable_slots", side_effect=lambda events: events)
-    @patch("coach_api.views.curriculum_review_instances.reconcile_review_event_keys", return_value={})
+    @patch('curriculum_api.review_management.domain.occurrence_identity.reconcile_review_event_keys', return_value={})
     @patch("coach_api.views.fetch_calendar_event_records", return_value={})
     @patch("coach_api.views.fetch_standalone_event_records", return_value=[])
     @patch("coach_api.views.resolve_coach_review_events", return_value=EMPTY_RESOLVED)

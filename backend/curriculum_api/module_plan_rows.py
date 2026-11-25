@@ -24,18 +24,18 @@ def _s(value):
 
 
 def profile_for(learner):
-    """The one learner profile linked to this enrolment row, or None."""
-    return (LearnerProfile.objects.using(learner._state.db or 'default')
-            .only('id', 'enrolment_id').filter(enrolment_id=learner.pk).first())
+    from learner_api.learning_plans.infrastructure.plan_reads import profile_for as implementation
+    return implementation(learner, LearnerProfile=LearnerProfile)
 
 
 def has_plan_rows(profile):
-    return profile is not None and LearnerTrainingPlanModule.objects.filter(learner=profile).exists()
+    from learner_api.learning_plans.infrastructure.plan_reads import has_plan_rows as implementation
+    return implementation(profile, LearnerTrainingPlanModule=LearnerTrainingPlanModule)
 
 
 def has_module_row(profile, module_id):
-    return profile is not None and LearnerTrainingPlanModule.objects.filter(
-        learner=profile, curriculum_module_id=module_id).exists()
+    from learner_api.learning_plans.infrastructure.plan_reads import has_module_row as implementation
+    return implementation(profile, module_id, LearnerTrainingPlanModule=LearnerTrainingPlanModule)
 
 
 def _normalized_children():

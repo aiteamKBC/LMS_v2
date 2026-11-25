@@ -16,7 +16,11 @@ from django.test import TestCase
 
 from coach_api.management.commands import reconcile_legacy_review_events as cmd_module
 from coach_api.models import CoachCalendarEvent
-from curriculum_api import review_instances, review_types
+import curriculum_api.review_management.application.instance_creation as review_application_instance_creation
+import curriculum_api.review_management.application.instance_lifecycle as review_application_instance_lifecycle
+import curriculum_api.review_management.domain.classification as review_domain_classification
+import curriculum_api.review_management.domain.instance_rules as review_domain_instance_rules
+import curriculum_api.review_management.infrastructure.instance_rows as review_infrastructure_instance_rows
 
 from learner_api.tests_review_scheduling_sync import (
     COACH_EMAIL,
@@ -78,7 +82,7 @@ class BlankStringHandlingTests(ReconcileLegacyReviewEventsTestCase):
         self.assertFalse(cmd_module._blank("REVT-1"))
 
     def test_2_blank_string_review_instance_id_is_treated_as_missing(self):
-        template = self.template(name="Monthly Learner Catch-up", type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        template = self.template(name="Monthly Learner Catch-up", type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         occurrence = self.coach_occurrence("mcr")
         target = date.fromisoformat(occurrence["targetDate"])
         row = self.make_legacy_row(event_id=146, target_date=target, review_template_id="  ", review_instance_id="")
@@ -92,7 +96,7 @@ class BlankStringHandlingTests(ReconcileLegacyReviewEventsTestCase):
 
 class SafeLinkTests(ReconcileLegacyReviewEventsTestCase):
     def test_3_exact_mcm_occurrence_match_links_correctly(self):
-        template = self.template(name="Monthly Learner Catch-up", type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        template = self.template(name="Monthly Learner Catch-up", type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         occurrence = self.coach_occurrence("mcr")
         target = date.fromisoformat(occurrence["targetDate"])
         row = self.make_legacy_row(event_id=146, target_date=target)
@@ -106,7 +110,7 @@ class SafeLinkTests(ReconcileLegacyReviewEventsTestCase):
         self.assertEqual(row.occurrence_number, occurrence["occurrenceNumber"])
 
     def test_4_5_event_id_and_event_key_preserved(self):
-        template = self.template(name="Monthly Learner Catch-up", type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        template = self.template(name="Monthly Learner Catch-up", type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         occurrence = self.coach_occurrence("mcr")
         target = date.fromisoformat(occurrence["targetDate"])
         original_key = f"mcr:{MIRROR_ID}:1:{target.isoformat()}"
@@ -120,7 +124,7 @@ class SafeLinkTests(ReconcileLegacyReviewEventsTestCase):
         self.assertEqual(row.event_key, original_key)
 
     def test_6_target_date_preserved(self):
-        self.template(name="Monthly Learner Catch-up", type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        self.template(name="Monthly Learner Catch-up", type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         occurrence = self.coach_occurrence("mcr")
         target = date.fromisoformat(occurrence["targetDate"])
         row = self.make_legacy_row(event_id=146, target_date=target)
@@ -131,7 +135,7 @@ class SafeLinkTests(ReconcileLegacyReviewEventsTestCase):
         self.assertEqual(row.target_date, target)
 
     def test_7_scheduled_date_preserved(self):
-        self.template(name="Monthly Learner Catch-up", type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        self.template(name="Monthly Learner Catch-up", type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         occurrence = self.coach_occurrence("mcr")
         target = date.fromisoformat(occurrence["targetDate"])
         scheduled = bookable_day(40)
@@ -143,7 +147,7 @@ class SafeLinkTests(ReconcileLegacyReviewEventsTestCase):
         self.assertEqual(row.scheduled_date, scheduled)
 
     def test_8_scheduled_time_preserved(self):
-        self.template(name="Monthly Learner Catch-up", type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        self.template(name="Monthly Learner Catch-up", type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         occurrence = self.coach_occurrence("mcr")
         target = date.fromisoformat(occurrence["targetDate"])
         row = self.make_legacy_row(event_id=146, target_date=target, scheduled_time=time(9, 30))
@@ -154,7 +158,7 @@ class SafeLinkTests(ReconcileLegacyReviewEventsTestCase):
         self.assertEqual(row.scheduled_time, time(9, 30))
 
     def test_9_meeting_link_preserved(self):
-        self.template(name="Monthly Learner Catch-up", type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        self.template(name="Monthly Learner Catch-up", type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         occurrence = self.coach_occurrence("mcr")
         target = date.fromisoformat(occurrence["targetDate"])
         row = self.make_legacy_row(
@@ -168,7 +172,7 @@ class SafeLinkTests(ReconcileLegacyReviewEventsTestCase):
         self.assertEqual(row.meeting_link, "https://teams.microsoft.com/l/meetup-join/keep-me")
 
     def test_10_graph_event_id_preserved(self):
-        self.template(name="Monthly Learner Catch-up", type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        self.template(name="Monthly Learner Catch-up", type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         occurrence = self.coach_occurrence("mcr")
         target = date.fromisoformat(occurrence["targetDate"])
         row = self.make_legacy_row(event_id=146, target_date=target, graph_event_id="KEEP-ME")
@@ -179,7 +183,7 @@ class SafeLinkTests(ReconcileLegacyReviewEventsTestCase):
         self.assertEqual(row.graph_event_id, "KEEP-ME")
 
     def test_11_owner_and_learner_fields_preserved(self):
-        self.template(name="Monthly Learner Catch-up", type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        self.template(name="Monthly Learner Catch-up", type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         occurrence = self.coach_occurrence("mcr")
         target = date.fromisoformat(occurrence["targetDate"])
         row = self.make_legacy_row(event_id=146, target_date=target)
@@ -194,7 +198,7 @@ class SafeLinkTests(ReconcileLegacyReviewEventsTestCase):
         self.assertEqual(row.learner_email, LEARNER_EMAIL)
 
     def test_12_correct_review_template_id_set(self):
-        template = self.template(name="Monthly Learner Catch-up", type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        template = self.template(name="Monthly Learner Catch-up", type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         occurrence = self.coach_occurrence("mcr")
         target = date.fromisoformat(occurrence["targetDate"])
         row = self.make_legacy_row(event_id=146, target_date=target)
@@ -205,7 +209,7 @@ class SafeLinkTests(ReconcileLegacyReviewEventsTestCase):
         self.assertEqual(row.review_template_id, template["id"])
 
     def test_13_exactly_one_review_instance_created_or_found(self):
-        self.template(name="Monthly Learner Catch-up", type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        self.template(name="Monthly Learner Catch-up", type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         occurrence = self.coach_occurrence("mcr")
         target = date.fromisoformat(occurrence["targetDate"])
         row = self.make_legacy_row(event_id=146, target_date=target)
@@ -213,14 +217,14 @@ class SafeLinkTests(ReconcileLegacyReviewEventsTestCase):
         _run("--event-id", "146", "--apply")
 
         row.refresh_from_db()
-        found = review_instances.find_review_instance(
+        found = review_infrastructure_instance_rows.find_review_instance(
             row.review_template_id, MIRROR_ID, occurrence["occurrenceNumber"],
         )
         self.assertIsNotNone(found)
         self.assertEqual(found["id"], row.review_instance_id)
 
     def test_14_calendar_event_id_backlink_set(self):
-        self.template(name="Monthly Learner Catch-up", type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        self.template(name="Monthly Learner Catch-up", type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         occurrence = self.coach_occurrence("mcr")
         target = date.fromisoformat(occurrence["targetDate"])
         row = self.make_legacy_row(event_id=146, target_date=target)
@@ -228,11 +232,11 @@ class SafeLinkTests(ReconcileLegacyReviewEventsTestCase):
         _run("--event-id", "146", "--apply")
 
         row.refresh_from_db()
-        instance = review_instances.get_review_instance(row.review_instance_id)
+        instance = review_infrastructure_instance_rows.get_review_instance(row.review_instance_id)
         self.assertEqual(str(instance["calendar_event_id"]), str(row.id))
 
     def test_15_status_remains_scheduled(self):
-        self.template(name="Monthly Learner Catch-up", type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        self.template(name="Monthly Learner Catch-up", type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         occurrence = self.coach_occurrence("mcr")
         target = date.fromisoformat(occurrence["targetDate"])
         row = self.make_legacy_row(event_id=146, target_date=target)
@@ -241,15 +245,15 @@ class SafeLinkTests(ReconcileLegacyReviewEventsTestCase):
 
         row.refresh_from_db()
         self.assertEqual(row.status, CoachCalendarEvent.STATUS_SCHEDULED)
-        instance = review_instances.get_review_instance(row.review_instance_id)
-        self.assertEqual(instance["status"], review_instances.STATUS_SCHEDULED)
+        instance = review_infrastructure_instance_rows.get_review_instance(row.review_instance_id)
+        self.assertEqual(instance["status"], review_domain_instance_rules.STATUS_SCHEDULED)
         self.assertIsNone(instance.get("started_at"))
         self.assertIsNone(instance.get("completed_at"))
 
     def test_progress_review_also_links_correctly(self):
         template = self.template(
             name="Quarterly Progress Conversation",
-            type_code=review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW, interval=8,
+            type_code=review_domain_classification.REVIEW_TYPE_CODE_PROGRESS_REVIEW, interval=8,
         )
         occurrence = self.coach_occurrence("progress-review")
         target = date.fromisoformat(occurrence["targetDate"])
@@ -264,7 +268,7 @@ class SafeLinkTests(ReconcileLegacyReviewEventsTestCase):
     def test_approved_legacy_target_links_to_reviewed_canonical_occurrence(self):
         template = self.template(
             name="Monthly Learner Catch-up",
-            type_code=review_types.REVIEW_TYPE_CODE_MCM,
+            type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM,
         )
         legacy_target = date(2026, 10, 5)
         canonical_target = date(2026, 10, 15)
@@ -281,7 +285,7 @@ class SafeLinkTests(ReconcileLegacyReviewEventsTestCase):
             "reviewTemplateId": template["id"],
             "occurrenceNumber": 1,
             "title": "Monthly Learner Catch-up",
-            "reviewTypeCode": review_types.REVIEW_TYPE_CODE_MCM,
+            "reviewTypeCode": review_domain_classification.REVIEW_TYPE_CODE_MCM,
         }]
 
         with patch.object(cmd_module, "generated_occurrences", return_value=generated):
@@ -295,14 +299,14 @@ class SafeLinkTests(ReconcileLegacyReviewEventsTestCase):
         self.assertEqual(row.scheduled_date, scheduled)
         self.assertEqual(row.scheduled_time, time(14, 0))
         self.assertEqual(row.meeting_link, "https://teams.microsoft.com/l/meetup-join/existing")
-        instance = review_instances.get_review_instance(row.review_instance_id)
+        instance = review_infrastructure_instance_rows.get_review_instance(row.review_instance_id)
         self.assertEqual(str(instance["target_date"]), canonical_target.isoformat())
-        self.assertEqual(instance["status"], review_instances.STATUS_SCHEDULED)
+        self.assertEqual(instance["status"], review_domain_instance_rules.STATUS_SCHEDULED)
 
     def test_approved_mapping_refuses_an_unreviewed_legacy_target(self):
         template = self.template(
             name="Monthly Learner Catch-up",
-            type_code=review_types.REVIEW_TYPE_CODE_MCM,
+            type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM,
         )
         row = self.make_legacy_row(event_id=146, target_date=date(2026, 10, 6))
         generated = [{
@@ -311,7 +315,7 @@ class SafeLinkTests(ReconcileLegacyReviewEventsTestCase):
             "reviewTemplateId": template["id"],
             "occurrenceNumber": 1,
             "title": "Monthly Learner Catch-up",
-            "reviewTypeCode": review_types.REVIEW_TYPE_CODE_MCM,
+            "reviewTypeCode": review_domain_classification.REVIEW_TYPE_CODE_MCM,
         }]
 
         with patch.object(cmd_module, "generated_occurrences", return_value=generated):
@@ -340,7 +344,7 @@ class SafeLinkTests(ReconcileLegacyReviewEventsTestCase):
                     "reviewTemplateId": f"REVT-{event_id}",
                     "occurrenceNumber": 1,
                     "title": "Monthly Learner Catch-up",
-                    "reviewTypeCode": review_types.REVIEW_TYPE_CODE_MCM,
+                    "reviewTypeCode": review_domain_classification.REVIEW_TYPE_CODE_MCM,
                 }]
 
                 with patch.object(
@@ -360,7 +364,7 @@ class SafeLinkTests(ReconcileLegacyReviewEventsTestCase):
 
 class IdempotencyTests(ReconcileLegacyReviewEventsTestCase):
     def test_16_second_run_is_a_no_op(self):
-        self.template(name="Monthly Learner Catch-up", type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        self.template(name="Monthly Learner Catch-up", type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         occurrence = self.coach_occurrence("mcr")
         target = date.fromisoformat(occurrence["targetDate"])
         row = self.make_legacy_row(event_id=146, target_date=target)
@@ -381,8 +385,8 @@ class IdempotencyTests(ReconcileLegacyReviewEventsTestCase):
         self.assertEqual(row.scheduled_date, first_scheduled)
         self.assertEqual(row.graph_event_id, first_graph)
         self.assertEqual(
-            review_instances.get_review_instance(first_instance)["status"],
-            review_instances.STATUS_SCHEDULED,
+            review_infrastructure_instance_rows.get_review_instance(first_instance)["status"],
+            review_domain_instance_rules.STATUS_SCHEDULED,
         )
 
 
@@ -414,7 +418,7 @@ class NoMatchAmbiguousConflictTests(ReconcileLegacyReviewEventsTestCase):
         self.assertEqual(row.review_instance_id, "")
 
     def test_19_conflicting_existing_instance_writes_nothing(self):
-        template = self.template(name="Monthly Learner Catch-up", type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        template = self.template(name="Monthly Learner Catch-up", type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         occurrence = self.coach_occurrence("mcr")
         target = date.fromisoformat(occurrence["targetDate"])
 
@@ -422,11 +426,11 @@ class NoMatchAmbiguousConflictTests(ReconcileLegacyReviewEventsTestCase):
         other = self.make_legacy_row(event_id=9999, target_date=target, review_template_id=template["id"],
                                       occurrence_number=occurrence["occurrenceNumber"],
                                       event_key=occurrence["eventKey"])
-        instance = review_instances.ensure_review_instance(
+        instance = review_application_instance_creation.ensure_review_instance(
             template, learner_id=MIRROR_ID, learner_kind="", programme_id=template["programme_id"],
             occurrence_number=occurrence["occurrenceNumber"], target_date=target,
         )
-        review_instances.link_calendar_event(instance["id"], other.id)
+        review_application_instance_lifecycle.link_calendar_event(instance["id"], other.id)
 
         row = self.make_legacy_row(event_id=146, target_date=target)
 
@@ -437,13 +441,13 @@ class NoMatchAmbiguousConflictTests(ReconcileLegacyReviewEventsTestCase):
         self.assertEqual(row.review_template_id, "")
         self.assertEqual(row.review_instance_id, "")
         # The instance stays pointed at the row that legitimately owns it.
-        refreshed_instance = review_instances.get_review_instance(instance["id"])
+        refreshed_instance = review_infrastructure_instance_rows.get_review_instance(instance["id"])
         self.assertEqual(str(refreshed_instance["calendar_event_id"]), str(other.id))
 
 
 class TransactionSafetyTests(ReconcileLegacyReviewEventsTestCase):
     def test_20_transaction_rollback_prevents_partial_linkage(self):
-        self.template(name="Monthly Learner Catch-up", type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        self.template(name="Monthly Learner Catch-up", type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         occurrence = self.coach_occurrence("mcr")
         target = date.fromisoformat(occurrence["targetDate"])
         row = self.make_legacy_row(event_id=146, target_date=target)
@@ -478,7 +482,7 @@ class AllowlistTests(ReconcileLegacyReviewEventsTestCase):
 
 class NoGraphCallTests(ReconcileLegacyReviewEventsTestCase):
     def test_22_no_graph_api_request_is_made(self):
-        self.template(name="Monthly Learner Catch-up", type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        self.template(name="Monthly Learner Catch-up", type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         occurrence = self.coach_occurrence("mcr")
         target = date.fromisoformat(occurrence["targetDate"])
         self.make_legacy_row(event_id=146, target_date=target)
@@ -490,7 +494,7 @@ class NoGraphCallTests(ReconcileLegacyReviewEventsTestCase):
 
 class DryRunNeverWritesTests(ReconcileLegacyReviewEventsTestCase):
     def test_dry_run_reports_safe_to_link_but_writes_nothing(self):
-        self.template(name="Monthly Learner Catch-up", type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        self.template(name="Monthly Learner Catch-up", type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         occurrence = self.coach_occurrence("mcr")
         target = date.fromisoformat(occurrence["targetDate"])
         row = self.make_legacy_row(event_id=146, target_date=target)
@@ -503,7 +507,7 @@ class DryRunNeverWritesTests(ReconcileLegacyReviewEventsTestCase):
         self.assertEqual(row.review_instance_id, "")
 
     def test_default_mode_without_flags_is_dry_run(self):
-        self.template(name="Monthly Learner Catch-up", type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        self.template(name="Monthly Learner Catch-up", type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         occurrence = self.coach_occurrence("mcr")
         target = date.fromisoformat(occurrence["targetDate"])
         row = self.make_legacy_row(event_id=146, target_date=target)

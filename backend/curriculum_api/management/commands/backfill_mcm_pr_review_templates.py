@@ -38,8 +38,13 @@ Dry-run by default: pass --apply to write.
 """
 from django.core.management.base import BaseCommand
 
-from ... import review_types
-from ... import reviews
+import curriculum_api.review_management.domain.classification as review_domain_classification
+import curriculum_api.review_management.infrastructure.type_rows as review_infrastructure_type_rows
+import curriculum_api.review_management.infrastructure.type_schema as review_infrastructure_type_schema
+import curriculum_api.review_management.api.commands as review_api_commands
+import curriculum_api.review_management.domain.template_rules as review_domain_template_rules
+import curriculum_api.review_management.infrastructure.template_rows as review_infrastructure_template_rows
+import curriculum_api.review_management.infrastructure.template_schema as review_infrastructure_template_schema
 from ... import views as curriculum_views
 
 
@@ -193,7 +198,7 @@ MCM_SECTIONS = [
             _text_field(
                 "Summary",
                 placeholder="Summarise progress, key discussion points, risks, support and next steps...",
-                semantic_key=reviews.MEETING_SUMMARY_SEMANTIC_KEY,
+                semantic_key=review_domain_template_rules.MEETING_SUMMARY_SEMANTIC_KEY,
             ),
             _text_field("Meeting notes", placeholder="Add any detailed coaching notes...", required=False),
             _rag_field("Select the overall meeting outcome."),
@@ -228,14 +233,14 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         apply_changes = options["apply"]
-        reviews.ensure_review_tables()
-        review_types.ensure_review_types_table()
+        review_infrastructure_template_schema.ensure_review_tables()
+        review_infrastructure_type_schema.ensure_review_types_table()
         if apply_changes:
-            review_types.seed_system_review_types()
+            review_infrastructure_type_schema.seed_system_review_types()
 
         type_ids = {}
-        for code in (review_types.REVIEW_TYPE_CODE_MCM, review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW):
-            type_row = review_types.get_review_type_by_code(code)
+        for code in (review_domain_classification.REVIEW_TYPE_CODE_MCM, review_domain_classification.REVIEW_TYPE_CODE_PROGRESS_REVIEW):
+            type_row = review_infrastructure_type_rows.get_review_type_by_code(code)
             if type_row:
                 type_ids[code] = type_row.get("id")
 
@@ -243,20 +248,20 @@ class Command(BaseCommand):
         programme_ids = sorted({curriculum_views.programme_config_id(c) for c in configs if curriculum_views.programme_config_id(c)})
         self.stdout.write(f"Found {len(programme_ids)} programme(s).")
 
-        created = {code: 0 for code in (review_types.REVIEW_TYPE_CODE_MCM, review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW)}
+        created = {code: 0 for code in (review_domain_classification.REVIEW_TYPE_CODE_MCM, review_domain_classification.REVIEW_TYPE_CODE_PROGRESS_REVIEW)}
         skipped = dict(created)
 
         for programme_id in programme_ids:
             for code, name, interval, unit, sections in (
-                (review_types.REVIEW_TYPE_CODE_MCM, "Monthly Coaching Meeting", 1, "months", MCM_SECTIONS),
-                (review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW, "Progress Review", 12, "weeks", []),
+                (review_domain_classification.REVIEW_TYPE_CODE_MCM, "Monthly Coaching Meeting", 1, "months", MCM_SECTIONS),
+                (review_domain_classification.REVIEW_TYPE_CODE_PROGRESS_REVIEW, "Progress Review", 12, "weeks", []),
             ):
                 type_id = type_ids.get(code)
                 if not type_id:
                     self.stderr.write(f"  Review Type '{code}' is not seeded -- run backfill_review_types --apply first.")
                     continue
 
-                existing = reviews.get_review_template_rows(
+                existing = review_infrastructure_template_rows.get_review_template_rows(
                     "programme_id = %s and enabled = true and review_type_id = %s",
                     [programme_id, type_id],
                 )
@@ -270,9 +275,9 @@ class Command(BaseCommand):
                     continue
 
                 payload = _template_payload(name, interval=interval, unit=unit, sections=sections, review_type_id=type_id)
-                if code == review_types.REVIEW_TYPE_CODE_MCM:
+                if code == review_domain_classification.REVIEW_TYPE_CODE_MCM:
                     payload['signatures']['participant'] = True
-                review_id, errors = reviews.create_review(programme_id, payload, actor="backfill_mcm_pr_review_templates")
+                review_id, errors = review_api_commands.create_review(programme_id, payload, actor="backfill_mcm_pr_review_templates")
                 if errors:
                     self.stderr.write(f"  FAILED for programme {programme_id} ({code}): {errors}")
                     continue

@@ -186,8 +186,8 @@ class MigratedHoursTests(TestCase):
     def test_existing_native_credit_and_existing_canonical_allocation_are_refused(self):
         link = SimpleNamespace(native_review_instance_id="native:1", native_template_id="T1")
         with patch("coach_api.reconciliation_links.active_links", return_value=[link]), \
-             patch("curriculum_api.review_instances.get_review_instance", return_value={"status": "completed"}), \
-             patch("curriculum_api.reviews.get_review_template_row", return_value={"expected_otjh": 1, "counts_towards_otjh": True}), \
+             patch('curriculum_api.review_management.infrastructure.instance_rows.get_review_instance', return_value={"status": "completed"}), \
+             patch('curriculum_api.review_management.infrastructure.template_rows.get_review_template_row', return_value={"expected_otjh": 1, "counts_towards_otjh": True}), \
              self.assertRaisesMessage(ValueError, "Native OTJH"):
             self.finish()
         self.overlay.refresh_from_db()
@@ -265,7 +265,7 @@ class MigratedHoursTests(TestCase):
         from learner_api.learning_plan import _meetings
         from learner_api.review_progress_inputs import review_planned_target_hours
         self.source(2, target="2026-11-19")
-        with patch("curriculum_api.review_otjh.completed_hours", return_value=0):
+        with patch('curriculum_api.review_management.application.otjh_queries.completed_hours', return_value=0):
             self.assertEqual(_review_otjh_hours(self.profile), (3, 0))
         self.assertEqual(review_planned_target_hours(self.profile, as_of=date(2026, 10, 31)), (3, 1.5))
         with patch("coach_api.review_sources.review_profile_for_source", return_value=self.profile):

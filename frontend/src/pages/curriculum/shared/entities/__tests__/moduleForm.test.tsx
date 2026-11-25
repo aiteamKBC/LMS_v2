@@ -198,7 +198,7 @@ describe('ModuleFormDrawer', () => {
     renderDrawer({ module: stale });
 
     const weekStart = await screen.findByRole('combobox', { name: /Study week starts on/i });
-    // The control exists before the asynchronous saved-record read is adopted.
+    // The saved snapshot reveals the control before its form-state effect applies the value.
     await waitFor(() => expect(weekStart).toHaveTextContent('Monday'));
     expect(weekStart).toBeDisabled();
     const weeks = screen.getByRole('spinbutton', { name: /weeks/i });

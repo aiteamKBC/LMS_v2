@@ -30,7 +30,7 @@ from . import canonical_learning
 from .replaced_teams_attendance import REPLACED_ATTENDANCE_LATERAL_SQL
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 from curriculum_api.canonical_read_sql import module_expected_otjh_sql
-from curriculum_api.learning_storage import read_sql
+from curriculum_api.catalogue.infrastructure.course_storage_reads import read_sql
 
 log = logging.getLogger(__name__)
 
@@ -155,10 +155,10 @@ def attach_curriculum_slots(module_rows, by_id, week_counts, weeks_by_number=Non
     -- the spine then matches the scheduler's own output exactly, which the
     Reading Week regression tests rely on.
     """
-    from curriculum_api.views import (
-        cohort_selected_holidays_by_cohort, module_session_plan_for_count,
-        module_stored_session_count,
-    )
+    from curriculum_api.catalogue.infrastructure.cohort_calendar_composition import cohort_selected_holidays_by_cohort
+    from curriculum_api.catalogue.infrastructure.session_plan_composition import module_session_plan_for_count
+    from curriculum_api.catalogue.infrastructure.session_plan_composition import module_session_plan_for_weeks
+    from curriculum_api.catalogue.domain.delivery_values import module_stored_session_count
 
     weeks_by_number = weeks_by_number or {}
     try:
@@ -177,9 +177,11 @@ def attach_curriculum_slots(module_rows, by_id, week_counts, weeks_by_number=Non
             continue
         week_count = week_counts.get(row['id'], 0)
         try:
-            plan = module_session_plan_for_count(
+            study_weeks = row.get('week_boundary_mode') == 'calendar'
+            planner = module_session_plan_for_weeks if study_weeks else module_session_plan_for_count
+            plan = planner(
                 row,
-                module_stored_session_count(row, week_count),
+                week_count if study_weeks else module_stored_session_count(row, week_count),
                 holidays=holidays.get(str(row.get('cohort_id') or ''), []),
             )
         except Exception:

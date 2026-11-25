@@ -1,0 +1,1 @@
+"""Curriculum reporting read boundary."""

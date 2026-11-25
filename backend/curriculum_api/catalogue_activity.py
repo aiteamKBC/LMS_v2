@@ -12,7 +12,11 @@ from django.utils.dateparse import parse_date, parse_datetime
 from django.views.decorators.http import require_GET
 
 from login.permissions import require_access
-from . import views
+from curriculum_api.catalogue.infrastructure.database_reads import AUTHORING_MODULES_TABLE, authoring_table_name, fetch_all
+from curriculum_api.meetings.domain.read_contracts import LIVE_SESSIONS_TABLE, LIVE_SESSION_OCCURRENCES_TABLE
+from curriculum_api.catalogue.infrastructure.authoring_runtime import authoring_fetch_all
+from curriculum_api.catalogue.infrastructure.authoring_sql import live_authoring_rows_sql
+from curriculum_api.catalogue.domain.archive_policy import programme_deleted_row
 
 
 CANCELLED = {'cancelled', 'canceled'}
@@ -92,10 +96,10 @@ def catalogue_facts(modules, series):
 
 
 def read_catalogue_facts():
-    where, params = views.live_authoring_rows_sql(views.AUTHORING_MODULES_TABLE)
-    modules = views.authoring_fetch_all(views.AUTHORING_MODULES_TABLE, where, params,
+    where, params = live_authoring_rows_sql(AUTHORING_MODULES_TABLE)
+    modules = authoring_fetch_all(AUTHORING_MODULES_TABLE, where, params,
         ensure_tables=False, columns=['module_catalogue_id', 'start_date', 'source_type', 'status', 'teams_shared_source_module_id'])
-    modules = [row for row in modules if not views.programme_deleted_row(row)
+    modules = [row for row in modules if not programme_deleted_row(row)
                and str(row.get('status') or '').lower() != 'archived']
     series = []
     # Bound SQL parameters even for a large catalogue; never a read per card.
@@ -103,9 +107,9 @@ def read_catalogue_facts():
     for offset in range(0, len(ids), 400):
         batch = ids[offset:offset + 400]
         slots = ','.join(['%s'] * len(batch))
-        live_table = views.authoring_table_name(views.LIVE_SESSIONS_TABLE)
-        occurrences = views.authoring_table_name(views.LIVE_SESSION_OCCURRENCES_TABLE)
-        series.extend(views.fetch_all(f'''
+        live_table = authoring_table_name(LIVE_SESSIONS_TABLE)
+        occurrences = authoring_table_name(LIVE_SESSION_OCCURRENCES_TABLE)
+        series.extend(fetch_all(f'''
             SELECT s.id, s.module_catalogue_id, s.status, s.start_datetime, s.duration_minutes,
                 COUNT(o.id) AS occurrence_count,
                 MAX(CASE WHEN lower(coalesce(o.status, '')) NOT IN ('cancelled','canceled')

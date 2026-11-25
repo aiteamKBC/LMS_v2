@@ -130,12 +130,12 @@ def published_invitation_list(series):
     them in one list. Comparing only the ``attendees`` column would report every
     presenter as a gate-crasher.
     """
-    from . import views as v
+    from .meetings.domain.invitation_policy import teams_series_email_list
 
     return list(dict.fromkeys([
-        *v.teams_series_email_list(series.get('co_organizers')),
-        *v.teams_series_email_list(series.get('presenters')),
-        *v.teams_series_email_list(series.get('attendees')),
+        *teams_series_email_list(series.get('co_organizers')),
+        *teams_series_email_list(series.get('presenters')),
+        *teams_series_email_list(series.get('attendees')),
     ]))
 
 

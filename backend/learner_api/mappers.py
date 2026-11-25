@@ -31,12 +31,12 @@ from .constants import (
 )
 
 
+from .learning_plans.domain.stored_plan import _s, _maybe_json, stored_training_plan
+
+
 # --------------------------------------------------------------------------- #
 # small defensive helpers                                                      #
 # --------------------------------------------------------------------------- #
-def _s(value):
-    """Coerce to a trimmed string ('' for None)."""
-    return "" if value is None else str(value).strip()
 
 
 def _as_list(value):
@@ -55,20 +55,6 @@ def _pick(d, *keys, default=""):
     return default
 
 
-def _maybe_json(value):
-    """A TEXT column that might hold JSON. Returns parsed value or None."""
-    if value is None:
-        return None
-    if isinstance(value, (list, dict)):
-        return value
-    if isinstance(value, str):
-        import json
-
-        try:
-            return json.loads(value)
-        except (ValueError, TypeError):
-            return None
-    return None
 
 
 # --------------------------------------------------------------------------- #
@@ -624,13 +610,6 @@ def training_plan_field(source):
     return "training_plan" if isinstance(_maybe_json(getattr(source, "training_plan", None)), list) else "learning_plan"
 
 
-def stored_training_plan(source):
-    """None means unsaved; an empty array is an explicitly cleared assignment."""
-    for field in ("training_plan", "learning_plan"):
-        plan = _maybe_json(getattr(source, field, None))
-        if isinstance(plan, list):
-            return [entry for entry in plan if isinstance(entry, dict)]
-    return None
 
 
 def get_training_plan(source):

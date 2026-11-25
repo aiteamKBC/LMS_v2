@@ -263,7 +263,7 @@ class HistoricalWriteGateTests(SimpleTestCase):
         storage.start()
         self.addCleanup(storage.stop)
 
-    @patch("coach_api.views.curriculum_review_instances.progress_review_rag_history", return_value=[])
+    @patch('curriculum_api.review_management.application.instance_progress.progress_review_rag_history', return_value=[])
     @patch("coach_api.views._imported_review_progress_snapshot", return_value=None)
     @patch("coach_api.views.ImportedReviewInstance.objects.filter")
     @patch("coach_api.views._sections_by_review")

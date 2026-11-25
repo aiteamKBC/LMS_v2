@@ -44,7 +44,7 @@ with patch.object(BaseDatabaseWrapper, 'ensure_connection', side_effect=Assertio
             'learner_api.test_imported_course_continuation_no_db',
             'learner_api.test_replacement_learning_no_db',
             'learner_api.test_my_learning_replacement_visibility_no_db',
-            'curriculum_api.test_learner_directory_details_no_db',
+            'curriculum_api.directory.tests.test_learner_directory_details_no_db',
             'learner_api.test_personal_learning_no_db',
         ])
         result = unittest.TextTestRunner(verbosity=1).run(suite)

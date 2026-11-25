@@ -142,7 +142,7 @@ def meeting_profile(record):
     if not owner or not record.learner_profile_id:
         return None
     if record.review_instance_id:
-        from curriculum_api.review_instances import get_review_instance
+        from curriculum_api.review_management.infrastructure.instance_rows import get_review_instance
         instance = get_review_instance(record.review_instance_id)
         if (not instance or instance.get('calendar_event_id') != record.pk
                 or instance.get('learner_id') != record.learner_profile_id

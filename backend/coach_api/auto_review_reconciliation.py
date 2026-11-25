@@ -110,7 +110,7 @@ def evaluate_auto_reconciliation(*, learner_id=None):
 Evaluate the complete learner set before selecting an execution subset, so a
 calendar-id filter cannot conceal another Native row claiming the same source.
 """
-    from curriculum_api import review_instances as engine
+    import curriculum_api.review_management.infrastructure.instance_rows as review_infrastructure_instance_rows
     canonical.require_same_database()
     schema = reconciliation_schema_available()
     rows, contexts, sources_by_learner, caseloads = [], {}, {}, {}
@@ -125,7 +125,7 @@ calendar-id filter cannot conceal another Native row claiming the same source.
         if not profile or broken or decision.kind != "aptem":
             _block(row, "INVALID_OWNERSHIP", "Stable linked Aptem learner identity is unavailable or conflicting.")
             continue
-        instance = engine.get_review_instance(record.review_instance_id)
+        instance = review_infrastructure_instance_rows.get_review_instance(record.review_instance_id)
         row["native_status"] = instance.get("status") if instance else None
         if not instance or instance.get("learner_id") != profile.pk or instance.get("calendar_event_id") != record.pk:
             _block(row, "INVALID_OWNERSHIP", "Native instance and booking ownership differ.")

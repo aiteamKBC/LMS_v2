@@ -107,6 +107,14 @@ class SchemaNotProvisionedMiddleware:
             curriculum_names.end_request()
 
     def process_exception(self, request, exception):
+        from .catalogue.application.read_errors import CatalogueReadUnavailable
+        from .catalogue.application.staff_profiles import StaffDirectoryUnavailable
+        if isinstance(exception, (CatalogueReadUnavailable, StaffDirectoryUnavailable)):
+            # Report unavailability without exposing SQL, connection details or
+            # the chained database exception. Real empty reads remain successful.
+            code = exception.code if isinstance(exception, CatalogueReadUnavailable) else 'staff_directory_unavailable'
+            logger.warning('Required curriculum read unavailable: %s', code)
+            return JsonResponse({'error': str(exception), 'code': code}, status=503)
         from .progress_errors import LearnerProgressUnavailable
         from .schema_compat import UnsupportedOnNormalisedSchema
         if isinstance(exception, LearnerProgressUnavailable):

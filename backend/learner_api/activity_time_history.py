@@ -1,5 +1,5 @@
 """Server-owned session credit baseline for the first native time decision."""
-from curriculum_api.learning_storage import read_sql
+from curriculum_api.catalogue.infrastructure.course_storage_reads import read_sql
 from django.db import connections
 
 

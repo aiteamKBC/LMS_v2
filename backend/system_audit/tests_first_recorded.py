@@ -23,7 +23,7 @@ from django.db import connection, models
 from django.test.utils import isolate_apps
 
 from curriculum_api import versioning, views
-from curriculum_api.tests_audit_trail import AuditHarness
+from curriculum_api.reporting.tests.tests_audit_trail import AuditHarness
 from system_audit import writes
 
 LONG_AGO = datetime(2025, 1, 6, 9, 30, 0)

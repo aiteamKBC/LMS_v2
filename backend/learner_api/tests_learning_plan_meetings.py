@@ -48,7 +48,7 @@ class LearningPlanMeetingsTestCase(SimpleTestCase):
     def test_programme_is_resolved_from_the_learner_not_the_plan(self):
         learner = _learner(programme='Final Test')
         with patch('coach_api.views.resolve_curriculum_programme_id', return_value='PROG-FINAL') as resolve, \
-             patch('curriculum_api.review_otjh.planned_meetings', return_value=[MEETING]) as planned:
+             patch('curriculum_api.review_management.application.otjh_queries.planned_meetings', return_value=[MEETING]) as planned:
             meetings, reason = _meetings(learner)
 
         # Resolved from the learner's own programme NAME...
@@ -61,7 +61,7 @@ class LearningPlanMeetingsTestCase(SimpleTestCase):
     def test_learner_start_and_status_drive_the_projection(self):
         learner = _learner(start='2026-08-03', end='2027-08-02', status='Active')
         with patch('coach_api.views.resolve_curriculum_programme_id', return_value='PROG-FINAL'), \
-             patch('curriculum_api.review_otjh.planned_meetings', return_value=[]) as planned:
+             patch('curriculum_api.review_management.application.otjh_queries.planned_meetings', return_value=[]) as planned:
             _meetings(learner)
 
         programme_id, learner_id, status, start, window_start, window_end = planned.call_args.args
@@ -77,7 +77,7 @@ class LearningPlanMeetingsTestCase(SimpleTestCase):
 
     def test_programme_not_configured_in_curriculum_shows_no_meetings(self):
         with patch('coach_api.views.resolve_curriculum_programme_id', return_value=None), \
-             patch('curriculum_api.review_otjh.planned_meetings') as planned:
+             patch('curriculum_api.review_management.application.otjh_queries.planned_meetings') as planned:
             self.assertEqual(_meetings(_learner())[0], [])
         planned.assert_not_called()
 
@@ -88,12 +88,12 @@ class LearningPlanMeetingsTestCase(SimpleTestCase):
 
     def test_review_engine_failure_shows_no_meetings_rather_than_failing(self):
         with patch('coach_api.views.resolve_curriculum_programme_id', return_value='PROG-FINAL'), \
-             patch('curriculum_api.review_otjh.planned_meetings', side_effect=RuntimeError('boom')):
+             patch('curriculum_api.review_management.application.otjh_queries.planned_meetings', side_effect=RuntimeError('boom')):
             self.assertEqual(_meetings(_learner())[0], [])
 
     def test_missing_dates_show_no_meetings(self):
         with patch('coach_api.views.resolve_curriculum_programme_id', return_value='PROG-FINAL'), \
-             patch('curriculum_api.review_otjh.planned_meetings') as planned:
+             patch('curriculum_api.review_management.application.otjh_queries.planned_meetings') as planned:
             self.assertEqual(_meetings(_learner(start=''))[0], [])
             self.assertEqual(_meetings(_learner(end=''))[0], [])
             # An unparseable date is not a window either.
@@ -101,7 +101,7 @@ class LearningPlanMeetingsTestCase(SimpleTestCase):
         planned.assert_not_called()
 
     def test_blank_programme_shows_no_meetings(self):
-        with patch('curriculum_api.review_otjh.planned_meetings') as planned:
+        with patch('curriculum_api.review_management.application.otjh_queries.planned_meetings') as planned:
             self.assertEqual(_meetings(_learner(programme=''))[0], [])
         planned.assert_not_called()
 
@@ -120,19 +120,19 @@ class LearningPlanMeetingsTestCase(SimpleTestCase):
         with patch('coach_api.views.resolve_curriculum_programme_id', return_value='PROG-FINAL'):
             self.assertEqual(_meetings(_learner(start=''))[1], 'no-dates')
 
-            with patch('curriculum_api.review_otjh.planned_meetings', side_effect=RuntimeError('boom')):
+            with patch('curriculum_api.review_management.application.otjh_queries.planned_meetings', side_effect=RuntimeError('boom')):
                 self.assertEqual(_meetings(_learner())[1], 'unavailable')
 
             # The real-world case: templates exist but none carries hours with
             # countsTowardsOtjh ticked.
-            with patch('curriculum_api.review_otjh.planned_meetings', return_value=[]), \
-                 patch('curriculum_api.review_otjh.otjh_template_rows', return_value=[]):
+            with patch('curriculum_api.review_management.application.otjh_queries.planned_meetings', return_value=[]), \
+                 patch('curriculum_api.review_management.application.otjh_queries.otjh_template_rows', return_value=[]):
                 self.assertEqual(_meetings(_learner())[1], 'no-otjh-reviews')
 
             # Hours ARE configured, so the learner's status is what excluded
             # them -- a different fix, so a different message.
-            with patch('curriculum_api.review_otjh.planned_meetings', return_value=[]), \
-                 patch('curriculum_api.review_otjh.otjh_template_rows', return_value=[{'id': 'REV-1'}]):
+            with patch('curriculum_api.review_management.application.otjh_queries.planned_meetings', return_value=[]), \
+                 patch('curriculum_api.review_management.application.otjh_queries.otjh_template_rows', return_value=[{'id': 'REV-1'}]):
                 self.assertEqual(_meetings(_learner(status='Paused'))[1], 'not-eligible')
 
     # ------------------------------------------------------------- arithmetic

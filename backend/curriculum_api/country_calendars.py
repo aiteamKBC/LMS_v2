@@ -8,40 +8,14 @@ import requests
 from django.db import transaction
 
 from .calendar_policy import COUNTRIES
-
-TABLE = 'country_holiday_calendars'
-REFRESH_DAYS = 25
-EXPIRY_DAYS = 30
-
-
-class CalendarUnavailable(ValueError):
-    pass
+from .catalogue.infrastructure.country_calendar_reads import (
+    CalendarUnavailable, EXPIRY_DAYS, REFRESH_DAYS, TABLE, _stamp, cache_status, holidays_for_period, saved_calendars,
+)
 
 
 def _views():
     from . import views
     return views
-
-
-def saved_calendars():
-    v = _views()
-    if not v.table_exists(TABLE):
-        return []
-    return v.fetch_all(f'select * from {v.table_name(TABLE)} order by country, year')
-
-
-def _stamp(value):
-    if isinstance(value, str):
-        value = datetime.fromisoformat(value.replace('Z', '+00:00'))
-    return value.replace(tzinfo=value.tzinfo or timezone.utc) if value else None
-
-
-def cache_status(row):
-    stamp = _stamp(row.get('fetched_at'))
-    age = datetime.now(timezone.utc) - stamp if stamp else timedelta(days=EXPIRY_DAYS)
-    return dict(country=row['country'], year=row['year'], fetchedAt=stamp.isoformat() if stamp else '',
-                due=age >= timedelta(days=REFRESH_DAYS), expired=age >= timedelta(days=EXPIRY_DAYS),
-                count=len(_views().parse_json_value(row.get('holidays'), [])), message=row.get('last_error') or '')
 
 
 def fetch_holidays(country, year):
@@ -117,23 +91,6 @@ def ensure_calendar(country, year, *, force=False):
             row = v.rows_as_dicts(cursor)[0]
         v.invalidate_curriculum_cache()
         return row
-
-
-def holidays_for_period(country, start, end=None):
-    """Read only. A missing/expired calendar never silently becomes England."""
-    v = _views()
-    start = v.parse_date(start)
-    end = v.parse_date(end) or start
-    if not start:
-        raise CalendarUnavailable('Set delivery dates to select the required holiday years.')
-    rows = {int(row['year']): row for row in saved_calendars() if row['country'] == country}
-    output = []
-    for year in range(start.year, max(start.year, end.year) + 1):
-        row = rows.get(year)
-        if not row or cache_status(row)['expired']:
-            raise CalendarUnavailable(f'Sync {country} public holidays for {year} before planning sessions.')
-        output.extend(v.parse_json_value(row.get('holidays'), []))
-    return output
 
 
 def sync_saved(*, due_only=False):

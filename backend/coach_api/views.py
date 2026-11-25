@@ -173,10 +173,21 @@ from curriculum_api.views import (
     teams_meeting_base_path,
     teams_online_meeting_from_join_url,
 )
-from curriculum_api import review_instances as curriculum_review_instances
-from curriculum_api import review_types as curriculum_review_types
+import curriculum_api.review_management.application.instance_answers as review_application_instance_answers
+import curriculum_api.review_management.application.instance_creation as review_application_instance_creation
+import curriculum_api.review_management.application.instance_definitions as review_application_instance_definitions
+import curriculum_api.review_management.application.instance_lifecycle as review_application_instance_lifecycle
+import curriculum_api.review_management.application.instance_progress as review_application_instance_progress
+import curriculum_api.review_management.application.instance_reopening as review_application_instance_reopening
+import curriculum_api.review_management.application.instance_signatures as review_application_instance_signatures
+import curriculum_api.review_management.application.learner_occurrences as review_application_learner_occurrences
+import curriculum_api.review_management.domain.instance_definitions as review_domain_instance_definitions
+import curriculum_api.review_management.domain.instance_rules as review_domain_instance_rules
+import curriculum_api.review_management.domain.occurrence_identity as review_domain_occurrence_identity
+import curriculum_api.review_management.infrastructure.instance_rows as review_infrastructure_instance_rows
+import curriculum_api.review_management.domain.classification as review_domain_classification
 from .review_categories import imported_review_category, review_event_category
-from curriculum_api import reviews as curriculum_reviews
+import curriculum_api.review_management.infrastructure.template_rows as review_infrastructure_template_rows
 from learner_api.review_progress_snapshot import (
     UnresolvedTrainingPlanTarget,
     build_progress_snapshot,
@@ -504,11 +515,11 @@ def review_type_fields_by_template(template_ids) -> dict:
     if not wanted:
         return {}
     try:
-        from curriculum_api import review_types as curriculum_review_types
+        import curriculum_api.review_management.infrastructure.type_rows as review_infrastructure_type_rows
 
-        type_index = curriculum_review_types.review_type_index()
+        type_index = review_infrastructure_type_rows.review_type_index()
         resolved = {}
-        for template_row in curriculum_reviews.get_review_template_rows(
+        for template_row in review_infrastructure_template_rows.get_review_template_rows(
             f"id in ({', '.join(['%s'] * len(wanted))})", sorted(wanted), include_deleted=True,
         ):
             template_id = template_row['id']
@@ -536,7 +547,7 @@ def review_titles_by_template(template_ids) -> dict[str, str]:
         return {}
     return {
         row['id']: clean_text(row.get('name'))
-        for row in curriculum_reviews.get_review_template_rows(
+        for row in review_infrastructure_template_rows.get_review_template_rows(
             f"id in ({', '.join(['%s'] * len(wanted))})", wanted, include_deleted=True,
         )
     }
@@ -585,7 +596,7 @@ def resolve_curriculum_review_occurrences(
     if not programme_id:
         return []
     try:
-        return curriculum_review_instances.resolve_programme_review_occurrences(
+        return review_application_learner_occurrences.resolve_programme_review_occurrences(
             programme_id,
             learner_id,
             learner_status,
@@ -2591,7 +2602,7 @@ def log_review_anchor_skip(
     progress data, nothing beyond what is needed to find and fix the record.
     """
     try:
-        templates = curriculum_review_instances.programme_review_template_identifiers(
+        templates = review_application_learner_occurrences.programme_review_template_identifiers(
             programme_id, template_cache=template_cache,
         )
     except Exception:  # a diagnostic must never be the thing that breaks a page
@@ -6369,7 +6380,7 @@ def build_generated_calendar_event(
     review_template_id: str | None = None,
     review_title: str | None = None,
     review_type: dict | None = None,
-    occurrence_source: str = curriculum_review_instances.OCCURRENCE_SOURCE_GENERATED,
+    occurrence_source: str = review_domain_instance_rules.OCCURRENCE_SOURCE_GENERATED,
     manual_addition_id: str | None = None,
 ) -> dict:
     source = clean_text(event_type) or GENERIC_REVIEW_EVENT_TYPE
@@ -6383,16 +6394,16 @@ def build_generated_calendar_event(
     )
     employer_name = clean_text((employer_attendee or {}).get("name"))
     employer_email = clean_email((employer_attendee or {}).get("email"))
-    is_manual = occurrence_source == curriculum_review_instances.OCCURRENCE_SOURCE_MANUAL
+    is_manual = occurrence_source == review_domain_instance_rules.OCCURRENCE_SOURCE_MANUAL
     if is_manual:
         # Identity-based, date-independent -- never rebuilt from target_date,
         # so editing/rescheduling a learner-specific addition never changes
         # this row's identity. See review_calendar_event_key_manual.
-        event_key = curriculum_review_instances.review_calendar_event_key_manual(
+        event_key = review_domain_occurrence_identity.review_calendar_event_key_manual(
             learner.id, review_template_id, manual_addition_id,
         )
     elif review_template_id:
-        event_key = curriculum_review_instances.review_calendar_event_key(learner.id, review_template_id, sequence)
+        event_key = review_domain_occurrence_identity.review_calendar_event_key(learner.id, review_template_id, sequence)
     else:
         event_key = build_timetable_event_key(learner.id, event_type, sequence, target_date)
     event = {
@@ -6965,8 +6976,8 @@ COACH_MEETING_SUMMARY_TYPES = {"mcr", "progress-review", GENERIC_REVIEW_EVENT_TY
 # already supports both event types; this set keeps Review-form exposure
 # deliberate and aligned with the Curriculum Form Builder validation.
 REVIEW_MEETING_SUMMARY_REVIEW_TYPES = {
-    curriculum_review_types.REVIEW_TYPE_CODE_MCM,
-    curriculum_review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW,
+    review_domain_classification.REVIEW_TYPE_CODE_MCM,
+    review_domain_classification.REVIEW_TYPE_CODE_PROGRESS_REVIEW,
 }
 COACH_MEETING_SUMMARY_MODEL = getattr(settings, "OPENAI_MEETING_SUMMARY_MODEL", "") or getattr(settings, "OPENAI_MODEL", "gpt-4o-mini")
 COACH_MEETING_TRANSCRIPT_UPLOAD_MAX_BYTES = 5 * 1024 * 1024
@@ -7017,7 +7028,7 @@ def require_review_template_for_first_linkage(review_template_id: str) -> dict:
     be linked to for the first time. Raises ReviewTemplateUnavailableError
     instead of returning falsy so a missing/deleted template can never be
     silently swallowed into a scheduled-but-unlinked row."""
-    template_row = curriculum_reviews.get_review_template_row(review_template_id)
+    template_row = review_infrastructure_template_rows.get_review_template_row(review_template_id)
     if not template_row:
         raise ReviewTemplateUnavailableError(
             "This review's configured template is no longer available. "
@@ -7054,10 +7065,10 @@ def ensure_review_instance_for_calendar_record(record: CoachCalendarEvent, base_
         )
 
     template_row = require_review_template_for_first_linkage(record.review_template_id)
-    occurrence_source = (base_event or {}).get('occurrenceSource', curriculum_review_instances.OCCURRENCE_SOURCE_GENERATED)
-    is_manual = occurrence_source == curriculum_review_instances.OCCURRENCE_SOURCE_MANUAL
+    occurrence_source = (base_event or {}).get('occurrenceSource', review_domain_instance_rules.OCCURRENCE_SOURCE_GENERATED)
+    is_manual = occurrence_source == review_domain_instance_rules.OCCURRENCE_SOURCE_MANUAL
     occurrence_ref = (base_event or {}).get('occurrenceRef') if is_manual else None
-    instance = curriculum_review_instances.ensure_review_instance(
+    instance = review_application_instance_creation.ensure_review_instance(
         template_row,
         learner_id=record.learner_profile_id,
         learner_kind='',
@@ -7079,7 +7090,7 @@ def ensure_review_instance_for_calendar_record(record: CoachCalendarEvent, base_
         )
     record.review_instance_id = instance.get('id')
     record.save(update_fields=["review_instance_id", "review_template_id", "occurrence_number", "updated_at"])
-    curriculum_review_instances.link_calendar_event(instance.get('id'), record.pk, actor=record.owner_email or 'coach')
+    review_application_instance_lifecycle.link_calendar_event(instance.get('id'), record.pk, actor=record.owner_email or 'coach')
     # This runs at the moment the calendar row itself is actually booked (the
     # caller sets record.status = STATUS_SCHEDULED just before this, then
     # persists it) -- a real date/time now exists, so the linked review
@@ -7088,14 +7099,14 @@ def ensure_review_instance_for_calendar_record(record: CoachCalendarEvent, base_
     # at not-scheduled indefinitely and the scheduled -> in-progress
     # attendance transition (mark_review_instance_in_progress_from_attendance)
     # could never engage. Guarded/idempotent in the UPDATE itself.
-    curriculum_review_instances.mark_review_instance_scheduled(instance.get('id'), actor=record.owner_email or 'coach')
+    review_application_instance_lifecycle.mark_review_instance_scheduled(instance.get('id'), actor=record.owner_email or 'coach')
 
 
 def resolve_review_display_title(event_type: str, review_template_id: str | None) -> str:
     """The live Curriculum Review name for a stored review_template_id, or the
     legacy fallback label for an old row that predates this linkage."""
     if review_template_id:
-        template_row = curriculum_reviews.get_review_template_row(review_template_id, include_deleted=True)
+        template_row = review_infrastructure_template_rows.get_review_template_row(review_template_id, include_deleted=True)
         name = clean_text((template_row or {}).get("name"))
         if name:
             return name
@@ -7550,7 +7561,7 @@ def apply_teams_attendance_status_transition(record: CoachCalendarEvent, attenda
     # Attendance remains stored against this same meeting, never the Native form.
     if for_calendar(record):
         return False
-    updated = curriculum_review_instances.mark_review_instance_in_progress_from_attendance(
+    updated = review_application_instance_lifecycle.mark_review_instance_in_progress_from_attendance(
         record.review_instance_id, started_at=joined_at, actor="teams-attendance-sync",
     )
     if not updated:
@@ -9549,7 +9560,7 @@ def cancel_reserved_calendar_event(record: CoachCalendarEvent) -> tuple[CoachCal
             )
         instance = None
         if clean_text(current.review_instance_id):
-            instance = curriculum_review_instances.get_review_instance(
+            instance = review_infrastructure_instance_rows.get_review_instance(
                 current.review_instance_id, for_update=True,
             )
             if (
@@ -9565,16 +9576,16 @@ def cancel_reserved_calendar_event(record: CoachCalendarEvent) -> tuple[CoachCal
                     "This booking's review link is inconsistent. Please contact support."
                 )
             if instance.get("status") in {
-                curriculum_review_instances.STATUS_IN_PROGRESS,
-                curriculum_review_instances.STATUS_AWAITING_SIGNATURE,
-                curriculum_review_instances.STATUS_COMPLETED,
+                review_domain_instance_rules.STATUS_IN_PROGRESS,
+                review_domain_instance_rules.STATUS_AWAITING_SIGNATURE,
+                review_domain_instance_rules.STATUS_COMPLETED,
             }:
                 raise LearnerCalendarConflict(
                     "A review that has started, been submitted or completed cannot be cancelled."
                 )
             if instance.get("status") not in {
-                curriculum_review_instances.STATUS_SCHEDULED,
-                curriculum_review_instances.STATUS_NOT_SCHEDULED,
+                review_domain_instance_rules.STATUS_SCHEDULED,
+                review_domain_instance_rules.STATUS_NOT_SCHEDULED,
             }:
                 raise LearnerCalendarConflict(
                     "This review cannot be cancelled from its current status."
@@ -9608,7 +9619,7 @@ def cancel_reserved_calendar_event(record: CoachCalendarEvent) -> tuple[CoachCal
             )
 
         if instance:
-            transitioned = curriculum_review_instances.mark_review_instance_not_scheduled(
+            transitioned = review_application_instance_lifecycle.mark_review_instance_not_scheduled(
                 instance["id"],
                 calendar_event_id=current.pk,
                 learner_id=current.learner_profile_id,
@@ -10640,7 +10651,7 @@ def resolve_coach_review_events(
 
     for learner in native_learners:
         programme_id = resolve_curriculum_programme_id(getattr(learner, "programme_id", None) or getattr(learner, "programme", None))
-        template_identifiers = curriculum_review_instances.programme_review_template_identifiers(
+        template_identifiers = review_application_learner_occurrences.programme_review_template_identifiers(
             programme_id, template_cache=review_template_cache,
         )
         if not programme_id:
@@ -10705,7 +10716,7 @@ def resolve_coach_review_events(
                 review_template_id=occurrence["reviewTemplateId"],
                 review_title=occurrence["reviewName"],
                 review_type=occurrence,
-                occurrence_source=occurrence.get("occurrenceSource", curriculum_review_instances.OCCURRENCE_SOURCE_GENERATED),
+                occurrence_source=occurrence.get("occurrenceSource", review_domain_instance_rules.OCCURRENCE_SOURCE_GENERATED),
                 manual_addition_id=occurrence.get("additionId"),
             )
             event["reviewSource"] = "curriculum"
@@ -10814,7 +10825,7 @@ def collect_generated_timetable(
     legacy_records = fetch_calendar_event_records(owner_email, legacy_keys) if legacy_keys else {}
     stored_records = {record.event_key: record for record in persisted_standalone_records}
     stored_records.update(legacy_records)
-    record_map = curriculum_review_instances.reconcile_review_event_keys(
+    record_map = review_domain_occurrence_identity.reconcile_review_event_keys(
         curriculum_events,
         list(stored_records.values()),
     )
@@ -11343,7 +11354,7 @@ def sync_scheduled_review_instance(record: CoachCalendarEvent, *, coach_reschedu
         from .reconciliation_links import require_schedulable
         if require_schedulable(record, **({'allow_started': True} if coach_reschedule else {})):
             return record
-        instance = curriculum_review_instances.get_review_instance(record.review_instance_id, for_update=True)
+        instance = review_infrastructure_instance_rows.get_review_instance(record.review_instance_id, for_update=True)
         if (
             not instance
             or instance.get('calendar_event_id') != record.pk
@@ -11359,15 +11370,15 @@ def sync_scheduled_review_instance(record: CoachCalendarEvent, *, coach_reschedu
         if (
             record.status != CoachCalendarEvent.STATUS_SCHEDULED
             or instance.get('status') not in {
-                curriculum_review_instances.STATUS_NOT_SCHEDULED,
-                curriculum_review_instances.STATUS_SCHEDULED,
+                review_domain_instance_rules.STATUS_NOT_SCHEDULED,
+                review_domain_instance_rules.STATUS_SCHEDULED,
             }
         ):
             raise LearnerCalendarConflict("Only an unstarted review can be scheduled or rescheduled.")
         if record.scheduled_date is None or record.scheduled_time is None:
             raise LearnerCalendarConflict("A review booking must have a scheduled date and time.")
-        if instance['status'] == curriculum_review_instances.STATUS_NOT_SCHEDULED:
-            updated = curriculum_review_instances.mark_review_instance_scheduled(
+        if instance['status'] == review_domain_instance_rules.STATUS_NOT_SCHEDULED:
+            updated = review_application_instance_lifecycle.mark_review_instance_scheduled(
                 instance['id'], actor=record.owner_email or 'coach',
             )
             if not updated:
@@ -11951,7 +11962,7 @@ def coach_timetable_schedule_event(request):
     if review_template_id:
         record.review_template_id = review_template_id
         record.occurrence_number = (
-            None if base_event.get("occurrenceSource") == curriculum_review_instances.OCCURRENCE_SOURCE_MANUAL
+            None if base_event.get("occurrenceSource") == review_domain_instance_rules.OCCURRENCE_SOURCE_MANUAL
             else parse_int(base_event.get("occurrenceNumber"), record.sequence)
         )
 
@@ -12476,17 +12487,17 @@ def coach_timetable_event_action(request):
         # field ids to this review's own Curriculum-defined fields, and the
         # instance's answers are already the canonical saved state (entered
         # via "Open form" / ReviewInstanceModal, not this payload).
-        instance_row = curriculum_review_instances.get_review_instance(record.review_instance_id)
+        instance_row = review_infrastructure_instance_rows.get_review_instance(record.review_instance_id)
         if not instance_row:
             return JsonResponse({"detail": "This review's canonical record could not be found."}, status=404)
-        ok, errors = curriculum_review_instances.complete_review_instance(instance_row, actor=owner_email)
+        ok, errors = review_application_instance_lifecycle.complete_review_instance(instance_row, actor=owner_email)
         if not ok:
             detail = (errors or {}).get(
                 "status",
                 ["This review cannot be completed yet. Open its form to finish any unanswered required questions."],
             )[0]
             return JsonResponse({"detail": detail, "errors": errors}, status=400)
-        instance_row = curriculum_review_instances.get_review_instance(instance_row["id"])
+        instance_row = review_infrastructure_instance_rows.get_review_instance(instance_row["id"])
         _sync_calendar_record_to_review_instance_status(instance_row)
         record.refresh_from_db()
     elif action == "complete":
@@ -12507,11 +12518,11 @@ def coach_timetable_event_action(request):
         # here -- one canonical transition, one mirror. The legacy
         # manager_signed_at/by columns are left untouched so they never
         # disagree with review_instance_signatures for a linked row.
-        instance_row = curriculum_review_instances.get_review_instance(record.review_instance_id)
+        instance_row = review_infrastructure_instance_rows.get_review_instance(record.review_instance_id)
         if not instance_row:
             return JsonResponse({"detail": "This review's canonical record could not be found."}, status=404)
         try:
-            curriculum_review_instances.record_review_instance_signature(
+            review_application_instance_signatures.record_review_instance_signature(
                 instance_row, "advisor",
                 signed_by=owner_email, signed_name=clean_text(payload.get("managerName")) or "Line Manager",
                 signature="signed", actor=owner_email,
@@ -12747,7 +12758,7 @@ def dashboard_latest_completed_review_dates(
                 for event in curriculum_events
             ]
             legacy_records = fetch_calendar_event_records(owner_email, legacy_keys)
-            record_map = curriculum_review_instances.reconcile_review_event_keys(
+            record_map = review_domain_occurrence_identity.reconcile_review_event_keys(
                 curriculum_events,
                 list(legacy_records.values()),
             )
@@ -13730,7 +13741,7 @@ def _case_file_review_events(owner_email, profile):
     legacy_records = fetch_calendar_event_records(owner_email, legacy_keys) if legacy_keys else {}
     stored_records = {record.event_key: record for record in standalone_records}
     stored_records.update(legacy_records)
-    curriculum_records = curriculum_review_instances.reconcile_review_event_keys(curriculum_events, list(stored_records.values()))
+    curriculum_records = review_domain_occurrence_identity.reconcile_review_event_keys(curriculum_events, list(stored_records.values()))
     curriculum_keys = [event["eventKey"] for event in curriculum_events]
     if curriculum_keys:
         curriculum_records.update(fetch_calendar_event_records(owner_email, curriculum_keys))
@@ -15186,7 +15197,7 @@ def coach_review_learner_addition_templates(request):
     eventual POST is independently re-validated against this exact same
     resolution, never trusting whatever the frontend last rendered.
     """
-    from curriculum_api import review_types as curriculum_review_types
+    import curriculum_api.review_management.infrastructure.type_rows as review_infrastructure_type_rows
 
     if request.method != "GET":
         return JsonResponse({"detail": "Method not allowed."}, status=405)
@@ -15212,9 +15223,9 @@ def coach_review_learner_addition_templates(request):
     if not programme_id:
         return JsonResponse({"learnerId": learner_id, "programmeId": None, "templates": [], **policy})
 
-    type_index = curriculum_review_types.review_type_index()
+    type_index = review_infrastructure_type_rows.review_type_index()
     templates = []
-    for template_row in curriculum_review_instances.list_enabled_review_templates(programme_id):
+    for template_row in review_application_learner_occurrences.list_enabled_review_templates(programme_id):
         type_row = type_index.get(clean_text(template_row.get("review_type_id")))
         templates.append({
             "id": template_row.get("id"),
@@ -15250,7 +15261,7 @@ def coach_review_learner_additions_create(request):
     returns the SAME addition/occurrence -- see
     create_learner_review_addition's own idempotent get-or-create.
     """
-    from curriculum_api import review_types as curriculum_review_types
+    import curriculum_api.review_management.infrastructure.type_rows as review_infrastructure_type_rows
 
     if request.method != "POST":
         return JsonResponse({"detail": "Method not allowed."}, status=405)
@@ -15271,7 +15282,7 @@ def coach_review_learner_additions_create(request):
     except ValidationError as exc:
         return validation_error_response(exc)
 
-    if reason_code and reason_code not in curriculum_review_instances.LEARNER_REVIEW_ADDITION_REASON_CODES:
+    if reason_code and reason_code not in review_domain_instance_rules.LEARNER_REVIEW_ADDITION_REASON_CODES:
         return JsonResponse({"detail": "Unrecognised reasonCode."}, status=400)
 
     learner = next(
@@ -15292,7 +15303,7 @@ def coach_review_learner_additions_create(request):
     # OWN programme -- a coach can never submit a review_template_id that
     # belongs to a different programme, regardless of what the frontend sent.
     template_row = None
-    for candidate in curriculum_review_instances.list_enabled_review_templates(programme_id):
+    for candidate in review_application_learner_occurrences.list_enabled_review_templates(programme_id):
         if candidate.get("id") == review_template_id:
             template_row = candidate
             break
@@ -15302,7 +15313,7 @@ def coach_review_learner_additions_create(request):
         )
 
     try:
-        addition = curriculum_review_instances.create_learner_review_addition(
+        addition = review_application_instance_creation.create_learner_review_addition(
             review_template_id=review_template_id,
             programme_id=programme_id,
             learner_id=learner_id,
@@ -15311,8 +15322,8 @@ def coach_review_learner_additions_create(request):
             reason=reason,
             actor=owner_email or "coach",
         )
-        occurrence_ref = f"{curriculum_review_instances.OCCURRENCE_SOURCE_MANUAL}:{addition['id']}"
-        instance = curriculum_review_instances.ensure_review_instance(
+        occurrence_ref = f"{review_domain_instance_rules.OCCURRENCE_SOURCE_MANUAL}:{addition['id']}"
+        instance = review_application_instance_creation.ensure_review_instance(
             template_row,
             learner_id=learner_id,
             learner_kind="",
@@ -15321,15 +15332,15 @@ def coach_review_learner_additions_create(request):
             target_date=target_date,
             coach_email=owner_email,
             actor=owner_email or "coach",
-            occurrence_source=curriculum_review_instances.OCCURRENCE_SOURCE_MANUAL,
+            occurrence_source=review_domain_instance_rules.OCCURRENCE_SOURCE_MANUAL,
             occurrence_ref=occurrence_ref,
         )
     except ReviewCreationBlocked as exc:
         return JsonResponse(exc.policy, status=409)
-    event_key = curriculum_review_instances.review_calendar_event_key_manual(
+    event_key = review_domain_occurrence_identity.review_calendar_event_key_manual(
         learner_id, review_template_id, addition["id"],
     )
-    type_row = curriculum_review_types.review_type_index().get(clean_text(template_row.get("review_type_id")))
+    type_row = review_infrastructure_type_rows.review_type_index().get(clean_text(template_row.get("review_type_id")))
     return JsonResponse({
         "additionId": addition["id"],
         "eventKey": event_key,
@@ -15345,7 +15356,7 @@ def coach_review_learner_additions_create(request):
 
 def _authorized_review_instance(request, instance_id):
     owner_email = authenticated_coach_email(request)
-    instance_row = curriculum_review_instances.get_review_instance(clean_text(instance_id))
+    instance_row = review_infrastructure_instance_rows.get_review_instance(clean_text(instance_id))
     if not instance_row:
         return None, JsonResponse({"detail": "Review not found."}, status=404)
     if clean_email(instance_row.get("coach_email")) != clean_email(owner_email):
@@ -15397,10 +15408,10 @@ def _review_instance_meeting_summary_source(instance_row, definition=None):
     This helper never contacts Graph or OpenAI. The formal answer remains on
     the field inside ``definition['sections']`` and always wins in the client.
     """
-    definition = definition or curriculum_review_instances.review_instance_form_definition(instance_row)
+    definition = definition or review_application_instance_definitions.review_instance_form_definition(instance_row)
     if definition.get("template", {}).get("reviewTypeCode") not in REVIEW_MEETING_SUMMARY_REVIEW_TYPES:
         return None
-    field = curriculum_review_instances.meeting_summary_field(definition)
+    field = review_domain_instance_definitions.meeting_summary_field(definition)
     if not field:
         return None
     source = {
@@ -15444,7 +15455,7 @@ def _review_learner_identity(learner):
 
 
 def _coach_review_instance_definition(instance_row):
-    definition = curriculum_review_instances.review_instance_form_definition(instance_row)
+    definition = review_application_instance_definitions.review_instance_form_definition(instance_row)
     learner = LearnerProfile.objects.filter(pk=instance_row.get("learner_id")).only(
         "full_name", "email", "programme_id",
     ).first()
@@ -15894,7 +15905,7 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
         )
     signatures = {
         role: {"required": False, "signed": False, "signedBy": None, "signedName": None, "signedAt": None, "signature": None}
-        for role in curriculum_review_instances.SIGNATURE_ROLES
+        for role in review_domain_instance_rules.SIGNATURE_ROLES
     }
     if migrated_form and saved_instance:
         from coach_api.migrated_completion import signature_states
@@ -15952,8 +15963,8 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
                     or (clean_text(approved_template.name) if is_template_preview else "")
                     or clean_text(review.get("name")) or review_type or "Imported review",
             "reviewTypeCode": review_type_code,
-            "signatures": {role: signatures[role]["required"] for role in curriculum_review_instances.SIGNATURE_ROLES},
-            "visibleTo": {role: role == "advisor" for role in curriculum_review_instances.SIGNATURE_ROLES},
+            "signatures": {role: signatures[role]["required"] for role in review_domain_instance_rules.SIGNATURE_ROLES},
+            "visibleTo": {role: role == "advisor" for role in review_domain_instance_rules.SIGNATURE_ROLES},
             "recurrence": {"interval": 0, "unit": "none"},
             "notifications": {},
             "allowEditingPriorDays": 0,
@@ -15963,7 +15974,7 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
         "manualOverride": None,
         "progressSnapshot": progress_snapshot,
         "ragHistory": (
-            curriculum_review_instances.progress_review_rag_history(profile_id)
+            review_application_instance_progress.progress_review_rag_history(profile_id)
             if progress_snapshot is not None
             else []
         ),
@@ -16548,7 +16559,7 @@ def coach_review_instance_for_event(request):
     if not review_template_id:
         return JsonResponse({"detail": "This event is not a Curriculum review."}, status=400)
 
-    template_row = curriculum_reviews.get_review_template_row(review_template_id)
+    template_row = review_infrastructure_template_rows.get_review_template_row(review_template_id)
     if not template_row:
         return JsonResponse({"detail": "This review is no longer configured in Curriculum."}, status=404)
 
@@ -16556,7 +16567,7 @@ def coach_review_instance_for_event(request):
     if isinstance(target_date, datetime):
         target_date = target_date.date()
 
-    is_manual = base_event.get("occurrenceSource") == curriculum_review_instances.OCCURRENCE_SOURCE_MANUAL
+    is_manual = base_event.get("occurrenceSource") == review_domain_instance_rules.OCCURRENCE_SOURCE_MANUAL
 
     try:
         if record:
@@ -16585,7 +16596,7 @@ def coach_review_instance_for_event(request):
                 except (ReviewTemplateUnavailableError, ReviewCreationBlocked) as exc:
                     return JsonResponse(getattr(exc, "policy", {"detail": str(exc)}), status=409)
             else:
-                instance = curriculum_review_instances.ensure_review_instance(
+                instance = review_application_instance_creation.ensure_review_instance(
                     template_row,
                     learner_id=int(base_event["learnerId"]),
                     learner_kind='',
@@ -16599,7 +16610,7 @@ def coach_review_instance_for_event(request):
                     actor=owner_email or "coach",
                     occurrence_source=base_event.get(
                         "occurrenceSource",
-                        curriculum_review_instances.OCCURRENCE_SOURCE_GENERATED,
+                        review_domain_instance_rules.OCCURRENCE_SOURCE_GENERATED,
                     ),
                     occurrence_ref=base_event.get("occurrenceRef") if is_manual else None,
                 )
@@ -16609,13 +16620,13 @@ def coach_review_instance_for_event(request):
                 record.save(update_fields=[
                     "review_template_id", "occurrence_number", "review_instance_id", "updated_at",
                 ])
-                curriculum_review_instances.link_calendar_event(
+                review_application_instance_lifecycle.link_calendar_event(
                     instance.get("id"), record.pk, actor=owner_email or "coach",
                 )
             record.refresh_from_db()
             return JsonResponse({"instanceId": clean_text(record.review_instance_id)})
 
-        instance = curriculum_review_instances.ensure_review_instance(
+        instance = review_application_instance_creation.ensure_review_instance(
             template_row,
             learner_id=int(base_event["learnerId"]),
             learner_kind='',
@@ -16628,7 +16639,7 @@ def coach_review_instance_for_event(request):
             actor=owner_email or "coach",
             occurrence_source=base_event.get(
                 "occurrenceSource",
-                curriculum_review_instances.OCCURRENCE_SOURCE_GENERATED,
+                review_domain_instance_rules.OCCURRENCE_SOURCE_GENERATED,
             ),
             occurrence_ref=base_event.get("occurrenceRef") if is_manual else None,
         )
@@ -16716,7 +16727,7 @@ def coach_review_instance_previous(request, instance_id):
     if current_occurrence is None or current_occurrence <= 1:
         return JsonResponse(unavailable)
 
-    previous = curriculum_review_instances.find_review_instance(
+    previous = review_infrastructure_instance_rows.find_review_instance(
         instance_row.get("review_template_id"),
         instance_row.get("learner_id"),
         current_occurrence - 1,
@@ -16733,20 +16744,20 @@ def coach_review_instance_previous(request, instance_id):
         unavailable["reason"] = "The previous occurrence is not assigned to this coach."
         return JsonResponse(unavailable)
     if previous.get("status") in {
-        curriculum_review_instances.STATUS_NOT_SCHEDULED,
-        curriculum_review_instances.STATUS_SCHEDULED,
+        review_domain_instance_rules.STATUS_NOT_SCHEDULED,
+        review_domain_instance_rules.STATUS_SCHEDULED,
     }:
         unavailable["reason"] = "The previous occurrence has not started yet."
         return JsonResponse(unavailable)
 
-    previous_definition = curriculum_review_instances.review_instance_form_definition(previous)
+    previous_definition = review_application_instance_definitions.review_instance_form_definition(previous)
     record = _review_instance_calendar_record(previous)
 
     summary_text = ""
     # The formal mapped Meeting Summary answer is the source of truth.  This
     # lets an MCM show a coach-edited summary rather than only the generated
     # artifact.
-    summary_field = curriculum_review_instances.meeting_summary_field(previous_definition)
+    summary_field = review_domain_instance_definitions.meeting_summary_field(previous_definition)
     if not summary_text and summary_field:
         value = summary_field.get("answer")
         if isinstance(value, str):
@@ -16872,11 +16883,11 @@ def coach_review_instance_answers(request, instance_id):
     if not isinstance(answers, dict):
         return JsonResponse({"detail": "answers must be an object keyed by field id."}, status=400)
     try:
-        curriculum_review_instances.save_review_instance_answers(instance_row, answers, actor=owner_email)
+        review_application_instance_answers.save_review_instance_answers(instance_row, answers, actor=owner_email)
     except ValueError as exc:
         return JsonResponse({'detail': str(exc)}, status=409)
     return JsonResponse(_coach_review_instance_definition(
-        curriculum_review_instances.get_review_instance(instance_row["id"])
+        review_infrastructure_instance_rows.get_review_instance(instance_row["id"])
     ))
 
 
@@ -16911,17 +16922,17 @@ def coach_review_instance_meeting_summary(request, instance_id):
     instance_row, error = _authorized_review_instance(request, instance_id)
     if error:
         return error
-    definition = curriculum_review_instances.review_instance_form_definition(instance_row)
+    definition = review_application_instance_definitions.review_instance_form_definition(instance_row)
     if definition.get("template", {}).get("reviewTypeCode") not in REVIEW_MEETING_SUMMARY_REVIEW_TYPES:
         return JsonResponse({"detail": "Meeting Summary generation is only available on a Monthly Coaching Meeting or Progress Review."}, status=404)
-    field = curriculum_review_instances.meeting_summary_field(definition)
+    field = review_domain_instance_definitions.meeting_summary_field(definition)
     if not field:
         return JsonResponse({
             "detail": "This Review Instance has no explicitly mapped Meeting Summary field. Enter the summary manually.",
         }, status=409)
     if instance_row.get("status") in {
-        curriculum_review_instances.STATUS_AWAITING_SIGNATURE,
-        curriculum_review_instances.STATUS_COMPLETED,
+        review_domain_instance_rules.STATUS_AWAITING_SIGNATURE,
+        review_domain_instance_rules.STATUS_COMPLETED,
     }:
         return JsonResponse({"detail": "This Review has already been submitted and its answers are read-only."}, status=409)
 
@@ -17078,8 +17089,8 @@ def coach_review_instance_progress(request, instance_id):
     if error:
         return error
 
-    definition = curriculum_review_instances.review_instance_form_definition(instance_row)
-    if definition["template"].get("reviewTypeCode") != curriculum_review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW:
+    definition = review_application_instance_definitions.review_instance_form_definition(instance_row)
+    if definition["template"].get("reviewTypeCode") != review_domain_classification.REVIEW_TYPE_CODE_PROGRESS_REVIEW:
         # Identified by the Review Type's stable code, never by the template's
         # name -- another Review Type simply has no progress snapshot.
         return JsonResponse({"detail": "Calculating progress is only available on a Progress Review."}, status=404)
@@ -17115,7 +17126,7 @@ def coach_review_instance_progress(request, instance_id):
             calculated_at=timezone.now(),
             calculated_by=actor,
         )
-        curriculum_review_instances.save_review_instance_progress_snapshot(
+        review_application_instance_progress.save_review_instance_progress_snapshot(
             instance_row, snapshot, actor=actor,
         )
     except UnresolvedTrainingPlanTarget as exc:
@@ -17131,7 +17142,7 @@ def coach_review_instance_progress(request, instance_id):
 
     return JsonResponse(
         _coach_review_instance_definition(
-            curriculum_review_instances.get_review_instance(instance_row["id"]),
+            review_infrastructure_instance_rows.get_review_instance(instance_row["id"]),
         )
     )
 
@@ -17214,7 +17225,7 @@ def coach_review_instance_complete(request, instance_id):
     answers = payload.get("answers")
     if answers is not None and not isinstance(answers, dict):
         return JsonResponse({"detail": "answers must be an object keyed by field id."}, status=400)
-    ok, errors = curriculum_review_instances.complete_review_instance(
+    ok, errors = review_application_instance_lifecycle.complete_review_instance(
         instance_row, actor=owner_email, answers=answers,
     )
     if not ok:
@@ -17224,7 +17235,7 @@ def coach_review_instance_complete(request, instance_id):
         # as the headline message so the coach sees why, not a generic string.
         detail = (errors or {}).get("status", ["This review cannot be completed yet."])[0]
         return JsonResponse({"detail": detail, "errors": errors}, status=400)
-    instance_row = curriculum_review_instances.get_review_instance(instance_row["id"])
+    instance_row = review_infrastructure_instance_rows.get_review_instance(instance_row["id"])
     # Completion already mirrors the verified calendar link in its transaction.
     return JsonResponse(_coach_review_instance_definition(instance_row))
 
@@ -17276,14 +17287,14 @@ def coach_review_instance_mark_in_progress_manually(request, instance_id):
         if started_at.tzinfo is not None:
             started_at = started_at.astimezone(timezone.UTC).replace(tzinfo=None)
 
-    ok, result = curriculum_review_instances.mark_review_instance_in_progress_manually(
+    ok, result = review_application_instance_lifecycle.mark_review_instance_in_progress_manually(
         instance_row, reason_code=reason_code, note=note, started_at=started_at, actor=actor,
     )
     if not ok:
         detail = next(iter(result.values()))[0] if result else "This review cannot be marked in progress."
         return JsonResponse({"detail": detail, "errors": result}, status=400)
 
-    updated_instance = curriculum_review_instances.get_review_instance(instance_row["id"])
+    updated_instance = review_infrastructure_instance_rows.get_review_instance(instance_row["id"])
     _sync_calendar_record_to_review_instance_status(updated_instance)
     return JsonResponse(_coach_review_instance_definition(updated_instance))
 
@@ -17334,7 +17345,7 @@ def coach_review_instance_reopen(request, instance_id):
     note = clean_text(payload.get("note"))
 
     try:
-        ok, result = curriculum_review_instances.reopen_review_instance_for_editing(
+        ok, result = review_application_instance_reopening.reopen_review_instance_for_editing(
             instance_row, reason_code=reason_code, note=note, actor=actor,
         )
     except ValueError as exc:
@@ -17345,7 +17356,7 @@ def coach_review_instance_reopen(request, instance_id):
         detail = next(iter(result.values()))[0] if result else "This review cannot be reopened."
         return JsonResponse({"detail": detail, "errors": result}, status=400)
 
-    updated_instance = curriculum_review_instances.get_review_instance(instance_row["id"])
+    updated_instance = review_infrastructure_instance_rows.get_review_instance(instance_row["id"])
     return JsonResponse(_coach_review_instance_definition(updated_instance))
 
 
@@ -17370,7 +17381,7 @@ def coach_review_instance_signature(request, instance_id):
         return JsonResponse({"detail": "A coach may only sign as the coach."}, status=403)
     owner_email = authenticated_coach_email(request)
     try:
-        result = curriculum_review_instances.record_review_instance_signature(
+        result = review_application_instance_signatures.record_review_instance_signature(
             instance_row, role,
             signed_by=owner_email, signed_name=clean_text(payload.get("signedName")),
             signature=clean_text(payload.get("signature")), actor=owner_email,
@@ -17381,7 +17392,7 @@ def coach_review_instance_signature(request, instance_id):
     # projection for every signature, in the same transaction as the status
     # change. One canonical transition, one mirror.
     return JsonResponse(_coach_review_instance_definition(
-        curriculum_review_instances.get_review_instance(instance_row["id"])
+        review_infrastructure_instance_rows.get_review_instance(instance_row["id"])
     ))
 
 
@@ -17394,7 +17405,7 @@ def _sync_calendar_record_to_review_instance_status(instance_row: dict) -> None:
     if not calendar_event_id:
         return
     status = instance_row.get("status")
-    if status == curriculum_review_instances.STATUS_COMPLETED:
+    if status == review_domain_instance_rules.STATUS_COMPLETED:
         updated = CoachCalendarEvent.objects.filter(
             pk=calendar_event_id,
             status__in={
@@ -17413,7 +17424,7 @@ def _sync_calendar_record_to_review_instance_status(instance_row: dict) -> None:
                        "requested_status": status,
                        "reason": "incompatible_calendar_status_or_missing_row"},
             )
-    elif status == curriculum_review_instances.STATUS_AWAITING_SIGNATURE:
+    elif status == review_domain_instance_rules.STATUS_AWAITING_SIGNATURE:
         updated = CoachCalendarEvent.objects.filter(
             pk=calendar_event_id,
             status__in={
@@ -17430,7 +17441,7 @@ def _sync_calendar_record_to_review_instance_status(instance_row: dict) -> None:
                        "requested_status": status,
                        "reason": "incompatible_calendar_status_or_missing_row"},
             )
-    elif status == curriculum_review_instances.STATUS_IN_PROGRESS:
+    elif status == review_domain_instance_rules.STATUS_IN_PROGRESS:
         # Only ever reached via apply_teams_attendance_status_transition (a
         # real Teams join), never by this instance simply being opened/
         # edited. Guarded to the calendar row's own current status so this

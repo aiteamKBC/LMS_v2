@@ -1,0 +1,134 @@
+{
+  "record_revision": {
+    "source": "def record_revision(sources):\n    \"\"\"Fingerprint the rows a guarded write would replace.\n\n    ``sources`` is one ``(label, table, where_sql, params, sort_column)`` per\n    table, in a fixed order so the fingerprint never depends on dictionary\n    iteration. Volatile columns are dropped and rows are sorted by their own\n    key, for the two reasons ``module_structure_revision`` gives: a timestamp\n    the write itself bumps would make every fingerprint differ from the last,\n    and one that trusted database order would refuse saves at random.\n\n    Returns '' when a table cannot be read at all, and also when the FIRST\n    source -- by convention the record's own row -- matches nothing. Callers\n    treat '' as \"this could not be checked\" and refuse the guarded save rather\n    than run it unchecked, the same fail-closed rule the structure endpoint\n    follows. The missing-row case earns its own answer because these records\n    are all edited in place: a record that is not stored has no version to be\n    stale against, and hashing its absence would mint a real-looking token that\n    every unstored record shared. (``module_structure_revision`` deliberately\n    does the opposite, because a module's first save is a legitimate write of\n    something not yet stored.)\n    \"\"\"\n    material = []\n    for index, (label, table, where_sql, params, sort_column) in enumerate(sources):\n        try:\n            rows = authoring_fetch_all(\n                table,\n                where_sql,\n                params,\n                ensure_tables=False,\n                exclude_columns=STRUCTURE_REVISION_VOLATILE_COLUMNS,\n            )\n        except Exception:\n            # A table that cannot be read must not fail the request it was asked\n            # about; the caller decides what an unreadable fingerprint means.\n            logger.warning('Unable to fingerprint %s.', table, exc_info=True)\n            return ''\n        if index == 0 and not rows:\n            return ''\n        material.append([\n            label,\n            sorted(rows, key=lambda row: clean_str(row.get(sort_column))),\n        ])\n    return hashlib.sha256(\n        json.dumps(material, sort_keys=True, default=str).encode()\n    ).hexdigest()[:32]\n",
+    "decorators": [],
+    "module": "curriculum_api.catalogue.infrastructure.record_revisions",
+    "new_name": "record_revision",
+    "deps": [
+      "authoring_fetch_all",
+      "STRUCTURE_REVISION_VOLATILE_COLUMNS",
+      "logger",
+      "clean_str"
+    ]
+  },
+  "programme_record_revision": {
+    "source": "def programme_record_revision(identifier):\n    \"\"\"Fingerprint of the ``programmes`` row a programme PATCH rewrites.\n\n    The name cascade onto cohorts, groups and modules is deliberately left out.\n    It is derived from this row rather than authored, so folding it in would\n    make a rename of the programme look like a change to every child -- and\n    would refuse a colleague's unrelated cohort edit.\n    \"\"\"\n    ensure_module_authoring_tables()\n    config = programme_config_by_identifier(identifier)\n    if not config:\n        return ''\n    try:\n        key_column = programme_config_key_column()\n    except Exception:\n        logger.warning('Unable to resolve the programmes key column.', exc_info=True)\n        return ''\n    key_value = config.get(key_column)\n    if not clean_str(key_value):\n        return ''\n    return record_revision((\n        ('programme', 'programmes', quote_ident(key_column) + ' = %s', [key_value], key_column),\n    ))\n",
+    "decorators": [],
+    "module": "curriculum_api.catalogue.application.record_revisions",
+    "new_name": "programme_record_revision",
+    "deps": [
+      "ensure_module_authoring_tables",
+      "programme_config_by_identifier",
+      "programme_config_key_column",
+      "logger",
+      "clean_str",
+      "record_revision",
+      "quote_ident"
+    ]
+  },
+  "cohort_record_revision": {
+    "source": "def cohort_record_revision(cohort_id):\n    \"\"\"Fingerprint of the single ``curriculum.cohorts`` row a cohort PATCH writes.\"\"\"\n    ident = clean_str(cohort_id)\n    if not ident:\n        return ''\n    ensure_module_authoring_tables()\n    return record_revision((\n        ('cohort', COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id = %s', [ident], 'cohort_id'),\n    ))\n",
+    "decorators": [],
+    "module": "curriculum_api.catalogue.application.record_revisions",
+    "new_name": "cohort_record_revision",
+    "deps": [
+      "clean_str",
+      "ensure_module_authoring_tables",
+      "record_revision",
+      "COHORT_AUTHORING_DETAILS_TABLE"
+    ]
+  },
+  "group_record_revision": {
+    "source": "def group_record_revision(group_id):\n    \"\"\"Fingerprint of the single ``curriculum.groups`` row a group PATCH writes.\n\n    The delivery-slot cascade onto the group's module rows is left out for the\n    reason the programme rename is: those rows inherit the slot, so including\n    them would report a module's own schedule edit as a change to the group.\n    The group row is what the group drawer authors, and it moves whenever the\n    cascade has anything to do.\n    \"\"\"\n    ident = clean_str(group_id)\n    if not ident:\n        return ''\n    ensure_module_authoring_tables()\n    return record_revision((\n        ('group', GROUPS_TABLE, 'group_id = %s', [ident], 'group_id'),\n    ))\n",
+    "decorators": [],
+    "module": "curriculum_api.catalogue.application.record_revisions",
+    "new_name": "group_record_revision",
+    "deps": [
+      "clean_str",
+      "ensure_module_authoring_tables",
+      "record_revision",
+      "GROUPS_TABLE"
+    ]
+  },
+  "week_template_revision": {
+    "source": "def week_template_revision(template_id):\n    \"\"\"Fingerprint of the week template and the components it owns.\n\n    Both tables, because a week template PATCH deletes every component row and\n    re-inserts the list it was sent: the components are the part of the record\n    an author spends an afternoon on, and a token that only covered the header\n    row would let a colleague's whole component list be replaced unnoticed.\n    \"\"\"\n    ident = clean_str(template_id)\n    if not ident:\n        return ''\n    ensure_week_template_tables()\n    return record_revision((\n        ('template', WEEK_TEMPLATES_TABLE, 'id = %s', [ident], 'id'),\n        ('components', WEEK_TEMPLATE_COMPONENTS_TABLE, 'week_template_id = %s', [ident], 'id'),\n    ))\n",
+    "decorators": [],
+    "module": "curriculum_api.catalogue.application.record_revisions",
+    "new_name": "week_template_revision",
+    "deps": [
+      "clean_str",
+      "ensure_week_template_tables",
+      "record_revision",
+      "WEEK_TEMPLATES_TABLE",
+      "WEEK_TEMPLATE_COMPONENTS_TABLE"
+    ]
+  },
+  "module_record_revision": {
+    "source": "def module_record_revision(identifier):\n    \"\"\"Fingerprint of the module a drawer PATCH writes.\n\n    Shared with the Module Builder rather than its own: the drawer writes\n    through ``save_module_authoring_structure``, the same helper the structure\n    PATCH uses, so one token means a drawer edit and a Builder save can never\n    be told apart -- and either one refuses a stale copy of the other.\n    \"\"\"\n    ident = clean_str(identifier)\n    if not ident:\n        return ''\n    return module_structure_revision(resolve_stored_module_catalogue_id(ident) or ident)\n",
+    "decorators": [
+      "with_course_storage"
+    ],
+    "module": "curriculum_api.catalogue.application.record_revisions",
+    "new_name": "module_record_revision",
+    "deps": [
+      "clean_str",
+      "module_structure_revision",
+      "resolve_stored_module_catalogue_id"
+    ]
+  },
+  "curriculum_record_revision": {
+    "source": "def curriculum_record_revision(kind, identifier):\n    \"\"\"The current token for one record, or '' if it cannot be read.\"\"\"\n    read = CURRICULUM_RECORD_REVISIONS.get(kind)\n    if not read:\n        return ''\n    try:\n        return read(identifier) or ''\n    except Exception:\n        logger.warning('Unable to read the %s revision for %s.', kind, identifier, exc_info=True)\n        return ''\n",
+    "decorators": [],
+    "module": "curriculum_api.catalogue.application.record_revisions",
+    "new_name": "curriculum_record_revision",
+    "deps": [
+      "CURRICULUM_RECORD_REVISIONS",
+      "logger"
+    ]
+  },
+  "cohort_conflict_record": {
+    "source": "def cohort_conflict_record(cohort_id):\n    row = fetch_cohort_row(cohort_id)\n    if not row:\n        return None\n    return curriculum_cohort_from_authoring_detail({\n        **row,\n        # Stored as JSON text; the payload builder passes whatever it is handed\n        # straight through, and the drawer merges these as lists.\n        'holiday_ids': parse_json_value(row.get('holiday_ids'), []),\n        'excluded_holiday_ids': parse_json_value(row.get('excluded_holiday_ids'), []),\n    })\n",
+    "decorators": [],
+    "module": "curriculum_api.catalogue.application.conflict_records",
+    "new_name": "cohort_conflict_record",
+    "deps": [
+      "fetch_cohort_row",
+      "curriculum_cohort_from_authoring_detail",
+      "parse_json_value"
+    ]
+  },
+  "group_conflict_record": {
+    "source": "def group_conflict_record(group_id):\n    row = fetch_group_row(group_id)\n    return curriculum_group_from_authoring_detail(row) if row else None\n",
+    "decorators": [],
+    "module": "curriculum_api.catalogue.application.conflict_records",
+    "new_name": "group_conflict_record",
+    "deps": [
+      "fetch_group_row",
+      "curriculum_group_from_authoring_detail"
+    ]
+  },
+  "programme_conflict_record": {
+    "source": "def programme_conflict_record(identifier):\n    \"\"\"The programme drawer's own fields, read from the ``programmes`` row.\n\n    Not ``programme_response``: that assembles the whole curriculum payload with\n    ``force=True``, which is seconds of work against a remote database -- and\n    this runs while the record's row is locked. The drawer authors the name,\n    level, description and colour, and they all live on the row already read.\n    \"\"\"\n    config = programme_config_by_identifier(identifier)\n    if not config:\n        return None\n    return {\n        'id': programme_config_identity(config),\n        'sourceId': programme_config_identity(config),\n        'name': config.get('name') or '',\n        'level': config.get('level') or '',\n        'description': config.get('description') or '',\n        'color': config.get('color') or '',\n    }\n",
+    "decorators": [],
+    "module": "curriculum_api.catalogue.application.conflict_records",
+    "new_name": "programme_conflict_record",
+    "deps": [
+      "programme_config_by_identifier",
+      "programme_config_identity"
+    ]
+  },
+  "curriculum_record_revisions": {
+    "source": "def curriculum_record_revisions(request):\n    \"\"\"Current tokens for the records named in the query string.\n\n    The drawers open their record from the curriculum overview, which is a\n    cached payload shared by every screen; a token minted there would be one\n    more thing to keep fresh, and would go stale exactly when a colleague saved.\n    So they ask for it here instead -- one indexed read per record, off the\n    cache entirely, when the drawer opens and again whenever it adopts a stored\n    version.\n\n    ``?cohort=COHORT-1&cohort=COHORT-2&group=GROUP-9`` answers\n    ``{\"revisions\": {\"cohort\": {\"COHORT-1\": \"...\"}, \"group\": {...}}}``. A record\n    that cannot be fingerprinted is answered with '' rather than left out, so a\n    caller can tell \"unreadable\" from \"not asked for\": a drawer holding ''\n    sends no token and saves unguarded, which is what it did before any of this.\n    \"\"\"\n    revisions = {}\n    for kind in CURRICULUM_RECORD_REVISIONS:\n        wanted = unique([\n            clean_str(value) for value in request.GET.getlist(kind) if clean_str(value)\n        ])\n        if not wanted:\n            continue\n        revisions[kind] = {\n            identifier: curriculum_record_revision(kind, identifier)\n            for identifier in wanted\n        }\n    return JsonResponse({'revisions': revisions})\n",
+    "decorators": [
+      "require_GET"
+    ],
+    "module": "curriculum_api.catalogue.application.record_revisions",
+    "new_name": "read_record_revisions",
+    "deps": [
+      "CURRICULUM_RECORD_REVISIONS",
+      "unique",
+      "clean_str",
+      "curriculum_record_revision"
+    ]
+  }
+}

@@ -11,7 +11,7 @@ def add_schedule_mode(apps, schema_editor):
             if cursor.fetchone()[0] is not None:
                 # Shared module readers use the mixed/native projections after
                 # free-course cutover; adding the physical column alone hides it.
-                from curriculum_api.free_course_native_schema import create_read_views
+                from curriculum_api.catalogue.infrastructure.free_course_native_schema import create_read_views
                 create_read_views(connection, tables={'modules'})
         else:
             cursor.execute('pragma table_info(modules)')

@@ -45,100 +45,46 @@ from datetime import datetime, timezone
 from django.db import connection
 from .canonical_read_sql import ksb_physical_table, standard_ksb_compatibility_id_sql, standard_source_sql
 
-LIFECYCLE_TABLES = frozenset({
-    'programmes', 'cohorts', 'groups', 'modules', 'weeks', 'components',
-    'ksb_mappings', 'coaches', 'tutors',
-})
-# Any of these present means the table still carries the legacy stamps.
-LEGACY_LIFECYCLE_COLUMNS = ('deleted_at', 'is_programme_deleted', 'is_archived')
-INACTIVE = 'inactive'
-ACTIVE = 'active'
-# 'archived' is what the legacy code writes for programmes/cohorts; both read
-# as withdrawn so a value written by an older process is never shown as live.
-INACTIVE_STATUSES = ('inactive', 'archived')
-_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
-
-# Columns the normalised schema derives instead of storing, per table.
-# Tables the read relation covers. Free Course weeks are deliberately absent:
-# they now store their own canonical fields and are read by free_course_catalogue.
-DERIVED_COLUMNS = {
-    # SQL filters and ordering need these labels before Python row projection.
-    # They remain FK reads, never copied storage.
-    'cohorts': ('programme_name',),
-    'groups': ('programme_name', 'cohort_name'),
-    'modules': ('programme_name', 'cohort_name', 'group_name', 'ksb_profile_source_id'),
-    'programmes': ('ksb_profile_source_id',),
-    # Staff names (tutor_name ...), child lists (module_ids,
-    # group_ids, assigned_*_ids ...) and a cohort's holiday choices are not
-    # here: curriculum_names puts them on the rows natively, by key
-    # (curriculum_names.ROW_FIELDS, calendar_holidays.attach_cohort_choices).
-    'ksb_mappings': ('module_catalogue_id', 'week_id', 'ksb_code', 'ksb_description', 'ksb_id'),
-    'components': ('ksb_mappings', 'library_state', 'detached_at', 'origin_module_catalogue_id',
-                   'origin_week_id', 'origin_module_title', 'origin_week_label'),
-    'weeks': ('library_state', 'detached_at', 'origin_module_catalogue_id', 'origin_week_id',
-              'origin_module_title', 'origin_week_label'),
-}
-
-
-RELATION_TABLES = LIFECYCLE_TABLES
-
+# Compatibility exports: schema-shape values and pure rules have one owner.
+from .catalogue.infrastructure.schema_contracts import (
+    LIFECYCLE_TABLES,
+    LEGACY_LIFECYCLE_COLUMNS,
+    INACTIVE,
+    ACTIVE,
+    INACTIVE_STATUSES,
+    _EPOCH,
+    DERIVED_COLUMNS,
+    RELATION_TABLES,
+    uses_status_lifecycle,
+    is_normalised,
+    inactive_condition,
+    active_condition,
+    status_is_inactive,
+    LEGACY_LIFECYCLE_BY_TABLE,
+    _lifecycle_select,
+    _LINKED_FREE_WEEK_FIELDS,
+    _linked_free_week_shape,
+    PYTHON_DERIVED_COLUMNS,
+    _lifecycle_fields,
+    _wanted,
+)
 
 class UnsupportedOnNormalisedSchema(ValueError):
     """A legacy-only operation was asked of the normalised schema."""
 
 
 def _qualified(table):
-    table = ksb_physical_table(table)
-    if connection.vendor != 'postgresql':
-        return f'"{table}"'
-    return f'"curriculum"."{table}"'
-
-
-def _internal(table):
-    table = ksb_physical_table(table)
-    """A table reference adapt_sql never rewrites (``ONLY`` -- these tables have
-    no inheritance, so it reads exactly the same rows). Used inside the read
-    relation and this module's own queries, so a statement is adapted once."""
-    if connection.vendor != 'postgresql':
-        return f'"{table}"'
-    return f'only "curriculum"."{table}"'
-
-
-def uses_status_lifecycle(table, columns):
-    """True when ``table`` records withdrawal in ``status`` only."""
-    columns = set(columns or ())
-    return (
-        table in LIFECYCLE_TABLES
-        and 'status' in columns
-        and not any(column in columns for column in LEGACY_LIFECYCLE_COLUMNS)
+    from .catalogue.infrastructure.schema_relations import _qualified as read
+    return read(
+        table, connection=connection,
     )
 
 
-def is_normalised(table, columns):
-    """True when ``table`` is the normalised shape (any derived column absent).
-
-    An empty column set means the shape is unknown (table missing, or not
-    PostgreSQL): that is never treated as normalised.
-    """
-    columns = set(columns or ())
-    if not columns:
-        return False
-    derived = DERIVED_COLUMNS.get(table, ())
-    return uses_status_lifecycle(table, columns) or any(column not in columns for column in derived)
-
-
-def inactive_condition(prefix=''):
-    prefix = f'{prefix}.' if prefix and not prefix.endswith('.') else prefix
-    return f"lower(coalesce({prefix}\"status\", '')) in ('inactive', 'archived')"
-
-
-def active_condition(prefix=''):
-    prefix = f'{prefix}.' if prefix and not prefix.endswith('.') else prefix
-    return f"lower(coalesce({prefix}\"status\", '')) not in ('inactive', 'archived')"
-
-
-def status_is_inactive(value):
-    return str(value or '').strip().lower() in INACTIVE_STATUSES
+def _internal(table):
+    from .catalogue.infrastructure.schema_relations import _internal as read
+    return read(
+        table, connection=connection,
+    )
 
 
 # --- read relation ------------------------------------------------------------
@@ -148,103 +94,34 @@ def status_is_inactive(value):
 # keeps working unchanged. Writes never use it (a derived table is not
 # updatable); the curriculum writes the real table natively (write_shape).
 
-# Exactly the withdrawal columns each table had before normalisation. Adding
-# one a table never had would make an unqualified reference in a join
-# ambiguous (programmes never had is_programme_deleted, for instance).
-LEGACY_LIFECYCLE_BY_TABLE = {
-    'programmes': ('deleted_at', 'deleted_by', 'deleted_via_parent', 'is_archived', 'is_active'),
-    'cohorts': ('deleted_at', 'deleted_by', 'deleted_via_parent', 'is_programme_deleted'),
-    'groups': ('deleted_at', 'deleted_by', 'deleted_via_parent', 'is_programme_deleted'),
-    'modules': ('deleted_at', 'deleted_by', 'deleted_via_parent', 'is_programme_deleted'),
-    'weeks': ('deleted_at', 'deleted_by', 'deleted_via_parent', 'is_programme_deleted'),
-    'components': ('deleted_at', 'deleted_by', 'deleted_via_parent', 'is_programme_deleted'),
-    'ksb_mappings': ('deleted_at', 'deleted_by', 'deleted_via_parent', 'is_programme_deleted'),
-    'coaches': ('is_archived',),
-    'tutors': ('is_archived',),
-}
-
-
-def _lifecycle_select(table, columns, alias='t'):
-    if not uses_status_lifecycle(table, columns):
-        return []
-    inactive = inactive_condition(alias)
-    timestamp = f'{alias}."updated_at"' if 'updated_at' in columns else (
-        f'{alias}."created_at"' if 'created_at' in columns else 'null::timestamp')
-    expressions = {
-        'is_programme_deleted': f'({inactive}) as "is_programme_deleted"',
-        'deleted_at': f'case when {inactive} then coalesce({timestamp}, now()) end as "deleted_at"',
-        'deleted_by': 'null::varchar as "deleted_by"',
-        'deleted_via_parent': 'null::varchar as "deleted_via_parent"',
-        'is_archived': f'({inactive}) as "is_archived"',
-        'is_active': f'(not ({inactive})) as "is_active"',
-    }
-    return [expressions[name] for name in LEGACY_LIFECYCLE_BY_TABLE.get(table, ())]
-
-
 def legacy_read_columns(table, columns):
-    """Legacy column names the read relation adds for ``table`` (absent from ``columns``)."""
-    columns = set(columns or ())
-    if connection.vendor == 'postgresql' and _linked_free_week_shape(table, columns):
-        return [name for name in _LINKED_FREE_WEEK_FIELDS if name not in columns]
-    if connection.vendor != 'postgresql' or table not in RELATION_TABLES or not is_normalised(table, columns):
-        return []
-    keep = []
-    for expression in _lifecycle_select(table, columns):
-        name = expression.rsplit(' as ', 1)[-1].strip('"')
-        if name not in columns:
-            keep.append(name)
-    keep += [key for key in DERIVED_COLUMNS.get(table, ()) if key not in columns and key != 'ksb_mappings']
-    return keep
-
-
-_LINKED_FREE_WEEK_FIELDS = {
-    'week_title': "coalesce(fw.title, '')::text",
-    'week_number': 'coalesce(fw.week_number, 1)',
-    'description': 'fw.summary',
-    'course_name': "coalesce(fc.course_name, '')::text",
-    'cover_image_url': 'fc.cover_image_url',
-}
-
-
-def _linked_free_week_shape(table, columns):
-    # Compatibility for the historical schema only. Canonical rows must never
-    # acquire regular-week ownership, even if a provenance column survives.
-    return (table == 'free_course_weeks' and {'id', 'course_id', 'week_id'} <= set(columns)
-            and 'title' not in columns and 'legacy_copied_from_week_id' not in columns)
+    from .catalogue.infrastructure.schema_relations import legacy_read_columns as read
+    return read(
+        table, columns, DERIVED_COLUMNS=DERIVED_COLUMNS, RELATION_TABLES=RELATION_TABLES,
+        _LINKED_FREE_WEEK_FIELDS=_LINKED_FREE_WEEK_FIELDS, _lifecycle_select=_lifecycle_select,
+        _linked_free_week_shape=_linked_free_week_shape, connection=connection, is_normalised=is_normalised,
+    )
 
 
 _COLUMNS_CACHE = {}
 
 
 def columns_of(schema, table):
-    """Column names of ``schema.table`` (cached per process; empty off PostgreSQL)."""
-    key = (schema, table)
-    if key in _COLUMNS_CACHE:
-        return _COLUMNS_CACHE[key]
-    if connection.vendor != 'postgresql':
-        return set()
-    if schema == 'curriculum':
-        # One answer per table: views.column_names keeps the curriculum cache
-        # (cleared with the curriculum caches), so the two never both ask.
-        from . import views
-        return set(views.column_names(table))
-    with connection.cursor() as cursor:
-        cursor.execute(
-            'select column_name from information_schema.columns where table_schema = %s and table_name = %s',
-            [schema, table],
-        )
-        names = {row[0] for row in cursor.fetchall()}
-    if names:
-        _COLUMNS_CACHE[key] = names
-    return names
+    def read_curriculum_columns(table):
+        from .catalogue.infrastructure.database_reads import column_names
+        return column_names(table)
+    from .catalogue.infrastructure.schema_relations import columns_of as read
+    return read(
+        schema, table, _COLUMNS_CACHE=_COLUMNS_CACHE, connection=connection,
+        read_curriculum_columns=read_curriculum_columns,
+    )
 
 
 def relation_sql(table):
-    """FROM-clause text for hand-written curriculum reads: the legacy-shaped
-    read relation on the normalised schema, else the plain table. The caller
-    adds its own alias: ``f'from {relation_sql("modules")} m'``."""
-    relation = read_relation(table, columns_of('curriculum', table), alias=False)
-    return relation or _qualified(table)
+    from .catalogue.infrastructure.schema_relations import relation_sql as read
+    return read(
+        table, _qualified=_qualified, columns_of=columns_of, read_relation=read_relation,
+    )
 
 
 _TABLE_REF = re.compile(
@@ -256,67 +133,12 @@ _ADAPTED = {}
 
 
 def adapt_sql(sql):
-    """Point hand-written curriculum reads at the legacy-shaped read relation.
-
-    Kept for the Learner team's code that curriculum calls (learner_api reads
-    ``curriculum.*`` naming columns the current schema dropped: programme_name,
-    deleted_at, module_ids ...). Curriculum's own statements no longer need it
-    (agreed 2026-11-08); a curriculum read that is rewritten here is a defect
-    to fix at its source, not a feature. Remove once learner_api reads the
-    current schema.
-
-    Only ``FROM``/``JOIN`` references to a normalised lifecycle table, and only
-    when the statement names one of that table's legacy columns, are replaced;
-    ``DELETE FROM`` targets, row-locking statements and every statement on the
-    legacy schema pass through untouched.
-    """
-    if connection.vendor != 'postgresql' or not isinstance(sql, str) or 'curriculum' not in sql.lower():
-        return sql
-    cached = _ADAPTED.get(sql)
-    if cached is not None:
-        return cached
-    if _LOCKING.search(sql):
-        _ADAPTED[sql] = sql
-        return sql
-    lowered = sql.lower()
-
-    def replace(match):
-        table = (match.group('qt') or match.group('t') or '').lower()
-        original_table = table
-        if table == 'ksb_component_mappings':
-            table = 'ksb_mappings'
-        if table not in RELATION_TABLES:
-            return match.group(0)
-        if re.search(r'\bdelete\s+$', lowered[max(0, match.start() - 12):match.start()]):
-            return match.group(0)
-        columns = columns_of('curriculum', table)
-        legacy = legacy_read_columns(table, columns)
-        if not legacy or not any(re.search(rf'\b{re.escape(name)}\b', lowered) for name in legacy):
-            return match.group(0)
-        relation = read_relation(table, columns, alias=False)
-        if not relation:
-            return match.group(0)
-        # Unaliased reference (``from curriculum.modules where ...``): keep the
-        # table's own name addressable, as ``modules.title`` may follow.
-        following = _NEXT_WORD.match(sql, match.end())
-        word = (following.group(1) or '').lower() if following else ''
-        if not word or word in _CLAUSE_WORDS:
-            relation += f' as "{original_table}"'
-            requalify.add(original_table)
-        return match.group('kw') + relation
-
-    requalify = set()
-    adapted = _TABLE_REF.sub(replace, sql)
-    for table in requalify:
-        # The ORM names columns by schema and table ("curriculum"."modules"."title");
-        # once the table is the relation aliased "modules" that reference is
-        # invalid, so it is re-pointed at the alias.
-        adapted = re.sub(
-            rf'(?:"curriculum"|\bcurriculum)\s*\.\s*(?:"{table}"|\b{table}\b)\s*\.',
-            f'"{table}".', adapted, flags=re.IGNORECASE,
-        )
-    _ADAPTED[sql] = adapted
-    return adapted
+    from .catalogue.infrastructure.sql_compatibility import adapt_sql as read
+    return read(
+        sql, RELATION_TABLES=RELATION_TABLES, _ADAPTED=_ADAPTED, _CLAUSE_WORDS=_CLAUSE_WORDS, _LOCKING=_LOCKING,
+        _NEXT_WORD=_NEXT_WORD, _TABLE_REF=_TABLE_REF, columns_of=columns_of, connection=connection,
+        legacy_read_columns=legacy_read_columns, re=re, read_relation=read_relation,
+    )
 
 
 _NEXT_WORD = re.compile(r'\s*(?:as\s+)?("?[A-Za-z_][A-Za-z0-9_]*"?)?')
@@ -387,74 +209,16 @@ class CurriculumSchemaCompatMiddleware:
 # programme's mapping read moved -- for 235 distinct rows.
 # Only authoring_select_sql defers; hand-written SQL (relation_sql/adapt_sql,
 # the Learner team's reads) still gets the column from the relation.
-PYTHON_DERIVED_COLUMNS = {'ksb_mappings': ('ksb_description',)}
 
 
 def read_relation(table, columns, alias=True, defer=()):
-    """``(select ...) as "<table>"`` exposing legacy columns, or None on the legacy shape.
-
-    ``defer`` names legacy columns to leave out (see PYTHON_DERIVED_COLUMNS):
-    the caller derives them after the fetch.
-    """
-    columns = set(columns or ())
-    if connection.vendor == 'postgresql' and _linked_free_week_shape(table, columns):
-        extra = [f'{expression} as "{name}"' for name, expression in _LINKED_FREE_WEEK_FIELDS.items()
-                 if name not in columns and name not in defer]
-        selection = ', '.join(['t.*', *extra])
-        result = (f'(select {selection} from {_internal(table)} t '
-                  f'left join {_internal("free_courses")} fc on fc.id = t.course_id '
-                  f'left join {_internal("weeks")} fw on fw.id = t.week_id)')
-        return result + (f' as "{table}"' if alias else '')
-    if connection.vendor != 'postgresql' or table not in RELATION_TABLES or not is_normalised(table, columns):
-        return None
-    q = _internal
-    t = 't'
-    extra = [expr for expr in _lifecycle_select(table, columns, t)
-             if expr.rsplit(' as ', 1)[-1].strip('"') not in columns]
-    joins = []
-
-    def add(name, expression):
-        if name not in columns and name not in defer:
-            extra.append(f'{expression} as "{name}"')
-
-    for output, source, key, label in (
-        ('programme_name', 'programmes', 'programme_id', 'name'),
-        ('cohort_name', 'cohorts', 'cohort_id', 'cohort_name'),
-        ('group_name', 'groups', 'group_id', 'group_name'),
-    ):
-        if output in DERIVED_COLUMNS.get(table, ()) and key in columns:
-            add(output, f"coalesce((select placement.{label} from {q(source)} placement "
-                        f"where placement.{key} = {t}.{key}), '')::varchar")
-
-    if table == 'ksb_mappings':
-        joins.append(f'left join {q("components")} cc on cc.id = {t}.component_id')
-        joins.append(f'left join {q("ksb_standard_definitions")} sk on sk.id = {t}.standard_ksb_id')
-        add('module_catalogue_id', "coalesce(cc.module_catalogue_id, '')::varchar")
-        add('week_id', 'cc.week_id')
-        add('ksb_id', standard_ksb_compatibility_id_sql('sk'))
-        add('ksb_code', "coalesce(sk.ksb_code, '')::varchar")
-        add('ksb_description', 'sk.ksb_description')
-    elif table == 'programmes':
-        add('ksb_profile_source_id', standard_source_sql('t'))
-    elif table == 'modules':
-        add('ksb_profile_source_id', f"(select {standard_source_sql('sp')} from {q('programmes')} sp where sp.programme_id=t.programme_id)")
-    elif table in {'weeks', 'components'}:
-        if table == 'weeks':
-            # Canonical weeks always belong to a normal module. Free Course
-            # weeks have their own table and never imply a reusable-library row.
-            add('library_state', "''::varchar")
-        else:
-            add('library_state', "''::varchar")
-        add('detached_at', 'null::timestamptz')
-        add('origin_module_catalogue_id', "''::varchar")
-        add('origin_week_id', "''::varchar")
-        add('origin_module_title', "''::text")
-        add('origin_week_label', "''::text")
-    if not extra:
-        return None
-    owner_filter = f' where {t}.component_id is not null' if table == 'ksb_mappings' else ''
-    body = f'(select {t}.*, ' + ', '.join(extra) + f' from {q(table)} {t} ' + ' '.join(joins) + owner_filter + ')'
-    return f'{body} as "{table}"' if alias else body
+    from .catalogue.infrastructure.schema_relations import read_relation as read
+    return read(
+        table, columns, alias, defer, DERIVED_COLUMNS=DERIVED_COLUMNS, RELATION_TABLES=RELATION_TABLES,
+        _LINKED_FREE_WEEK_FIELDS=_LINKED_FREE_WEEK_FIELDS, _internal=_internal,
+        _lifecycle_select=_lifecycle_select, _linked_free_week_shape=_linked_free_week_shape,
+        connection=connection, is_normalised=is_normalised,
+    )
 
 
 def invalidate():
@@ -464,71 +228,15 @@ def invalidate():
 
 # --- read projection ----------------------------------------------------------
 
-def _lifecycle_fields(table, row):
-    inactive = status_is_inactive(row.get('status'))
-    fields = {
-        'is_programme_deleted': inactive,
-        'deleted_at': (row.get('updated_at') or row.get('created_at') or _EPOCH) if inactive else None,
-        'deleted_by': None,
-        'deleted_via_parent': None,
-        'is_archived': inactive,
-        'is_active': not inactive,
-    }
-    wanted = LEGACY_LIFECYCLE_BY_TABLE.get(table, ())
-    return {key: value for key, value in fields.items() if key in wanted}
-
-
-def _wanted(key, columns, requested, excluded):
-    """Project ``key`` only when the table lacks it and the caller would have got it."""
-    if key in columns:
-        return False
-    if requested is not None and key not in requested:
-        return False
-    return key not in (excluded or ())
-
 
 def project_rows(table, rows, columns, *, requested=None, excluded=None):
-    """Add the legacy keys the code still reads to rows of the normalised schema.
-
-    ``columns`` is the table's real column set; ``requested`` the caller's
-    narrowed column list (None for ``select *``); ``excluded`` its exclusions.
-    Mutates and returns ``rows``. A no-op on the legacy schema.
-    """
-    if not rows or table not in RELATION_TABLES:
-        return rows
-    columns = set(columns or ())
-    if not is_normalised(table, columns):
-        return rows
-    requested = set(requested) if requested else None
-    # Keys the read relation already supplied are left alone: only what is
-    # still missing (components' ksb_mappings JSON, rows read another way) is derived.
-    present = set(rows[0])
-    want = lambda key: key not in present and _wanted(key, columns, requested, excluded)  # noqa: E731
-
-    if uses_status_lifecycle(table, columns) and 'status' in rows[0]:
-        lifecycle_keys = [key for key in ('is_programme_deleted', 'deleted_at', 'deleted_by',
-                                          'deleted_via_parent', 'is_archived', 'is_active') if want(key)]
-        if lifecycle_keys:
-            for row in rows:
-                for key, value in _lifecycle_fields(table, row).items():
-                    if key in lifecycle_keys:
-                        row.setdefault(key, value)
-
-    derived = [key for key in DERIVED_COLUMNS.get(table, ()) if want(key)]
-    if not derived:
-        return rows
-    if table == 'ksb_mappings':
-        _project_ksb_mappings(rows, derived)
-    elif table == 'components':
-        _project_components(rows, derived)
-    elif table == 'weeks':
-        for row in rows:
-            for key in derived:
-                if key == 'library_state':
-                    row.setdefault(key, '')
-                else:
-                    row.setdefault(key, None if key == 'detached_at' else '')
-    return rows
+    from .catalogue.infrastructure.schema_projection import project_rows as read
+    return read(
+        table, rows, columns, requested=requested, excluded=excluded, DERIVED_COLUMNS=DERIVED_COLUMNS,
+        RELATION_TABLES=RELATION_TABLES, _lifecycle_fields=_lifecycle_fields,
+        _project_components=_project_components, _project_ksb_mappings=_project_ksb_mappings, _wanted=_wanted,
+        is_normalised=is_normalised, uses_status_lifecycle=uses_status_lifecycle,
+    )
 
 
 def _chunks(values, size=2000):
@@ -546,24 +254,12 @@ _STANDARD_TEXTS_LOCK = threading.Lock()
 
 
 def standard_ksb_texts(standard_ids):
-    """``{ksb_standard_definitions.id: (ksb_code, ksb_description)}`` for ``standard_ids``."""
-    wanted = {value for value in standard_ids if value is not None}
-    if not wanted:
-        return {}
-    with _STANDARD_TEXTS_LOCK:
-        if time.monotonic() - _STANDARD_TEXTS['read_at'] > STANDARD_TEXTS_TTL_SECONDS:
-            _STANDARD_TEXTS.update(read_at=time.monotonic(), rows={})
-        known = _STANDARD_TEXTS['rows']
-        missing = wanted - known.keys()
-    if missing:
-        found = {}
-        with connection.cursor() as cursor:
-            for chunk in _chunks(missing):
-                cursor.execute(f'select id, ksb_code, ksb_description from {_internal("ksb_standard_definitions")} where id = any(%s)', [chunk])
-                found.update({sid: (code, description) for sid, code, description in cursor.fetchall()})
-        with _STANDARD_TEXTS_LOCK:
-            known.update(found)
-    return {value: known[value] for value in wanted if value in known}
+    from .catalogue.infrastructure.schema_projection import standard_ksb_texts as read
+    return read(
+        standard_ids, STANDARD_TEXTS_TTL_SECONDS=STANDARD_TEXTS_TTL_SECONDS, _STANDARD_TEXTS=_STANDARD_TEXTS,
+        _STANDARD_TEXTS_LOCK=_STANDARD_TEXTS_LOCK, _chunks=_chunks, _internal=_internal, connection=connection,
+        time=time,
+    )
 
 
 def reset_standard_ksb_texts():
@@ -572,70 +268,23 @@ def reset_standard_ksb_texts():
 
 
 def _project_ksb_mappings(rows, derived):
-    placements, standards = {}, {}
-    if {'module_catalogue_id', 'week_id'} & set(derived):
-        component_ids = {str(row.get('component_id')) for row in rows if row.get('component_id')}
-        with connection.cursor() as cursor:
-            for chunk in _chunks(component_ids):
-                cursor.execute(f'select id, module_catalogue_id, week_id from {_internal("components")} where id = any(%s)', [chunk])
-                placements.update({cid: (module_id, week_id) for cid, module_id, week_id in cursor.fetchall()})
-    if {'ksb_code', 'ksb_description'} & set(derived):
-        standards = standard_ksb_texts(row.get('standard_ksb_id') for row in rows)
-    identifiers = {}
-    if 'ksb_id' in derived:
-        with connection.cursor() as cursor:
-            for chunk in _chunks({r.get('standard_ksb_id') for r in rows if r.get('standard_ksb_id')}):
-                cursor.execute(f'select s.id,{standard_ksb_compatibility_id_sql("s")} from {_internal("ksb_standard_definitions")} s where s.id=any(%s)', [chunk])
-                identifiers.update(cursor.fetchall())
-    for row in rows:
-        module_id, week_id = placements.get(str(row.get('component_id')), (None, None))
-        code, description = standards.get(row.get('standard_ksb_id'), ('', ''))
-        values = {'ksb_id': identifiers.get(row.get('standard_ksb_id'), ''),
-                  'module_catalogue_id': module_id or '', 'week_id': week_id,
-                  'ksb_code': code or '', 'ksb_description': description}
-        for key in derived:
-            row.setdefault(key, values[key])
+    from .catalogue.infrastructure.schema_projection import _project_ksb_mappings as read
+    return read(
+        rows, derived, _chunks=_chunks, _internal=_internal, connection=connection,
+        standard_ksb_texts=standard_ksb_texts,
+    )
 
 
 def component_mapping_items(component_ids):
-    """``{component_id: [mapping item, ...]}`` in the shape of the old JSON copy."""
-    items = {}
-    ids = [str(value) for value in component_ids if value]
-    if not ids:
-        return items
-    with connection.cursor() as cursor:
-        for chunk in _chunks(ids):
-            cursor.execute(
-                f'''
-                select m.component_id, m.id, {standard_ksb_compatibility_id_sql("s")}, m.weight, m.classification, m.source_type,
-                       m.source_id, m.weight_class, s.ksb_code, s.ksb_description, m.standard_ksb_id
-                from {_internal("ksb_mappings")} m
-                left join {_internal("ksb_standard_definitions")} s on s.id = m.standard_ksb_id
-                where m.component_id = any(%s) and {active_condition("m")}
-                order by m.component_id, s.ksb_code, m.id
-                ''',
-                [chunk],
-            )
-            for (component_id, mapping_id, ksb_id, weight, classification, source_type,
-                 source_id, weight_class, code, description, *official_id) in cursor.fetchall():
-                items.setdefault(component_id, []).append({
-                    'id': mapping_id, 'ksb_id': ksb_id or '',
-                    **({'standard_ksb_id': official_id[0]} if official_id else {}),
-                    'weight': float(weight) if weight is not None else None,
-                    'ksb_code': code or '', 'source_id': source_id or '',
-                    'description': description or '', 'source_type': source_type or '',
-                    'weight_class': weight_class or '', 'classification': classification or '',
-                })
-    return items
+    from .catalogue.infrastructure.schema_projection import component_mapping_items as read
+    return read(
+        component_ids, _chunks=_chunks, _internal=_internal, active_condition=active_condition,
+        connection=connection,
+    )
 
 
 def _project_components(rows, derived):
-    if 'ksb_mappings' in derived:
-        items = component_mapping_items({row.get('id') for row in rows})
-        for row in rows:
-            row.setdefault('ksb_mappings', items.get(str(row.get('id')), []))
-    for row in rows:
-        for key in derived:
-            if key == 'ksb_mappings':
-                continue
-            row.setdefault(key, None if key == 'detached_at' else '')
+    from .catalogue.infrastructure.schema_projection import _project_components as read
+    return read(
+        rows, derived, component_mapping_items=component_mapping_items,
+    )

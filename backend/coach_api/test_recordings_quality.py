@@ -126,14 +126,15 @@ class QualityEvidenceTests(SimpleTestCase):
             quality.validate_suggestion(bad, analysis())
 
     def test_template_references_are_programme_scoped_question_labels_only(self):
-        from curriculum_api import reviews, review_types
+        import curriculum_api.review_management.infrastructure.template_rows as review_infrastructure_template_rows
+        import curriculum_api.review_management.infrastructure.type_rows as review_infrastructure_type_rows
         with patch.object(quality.LearnerProfile.objects, 'filter') as learner, \
-                patch.object(review_types, 'review_type_index', return_value={'m': {'code': 'mcm'}, 'p': {'code': 'progress_review'}}), \
-                patch.object(reviews, 'get_review_template_rows', return_value=[
+                patch.object(review_infrastructure_type_rows, 'review_type_index', return_value={'m': {'code': 'mcm'}, 'p': {'code': 'progress_review'}}), \
+                patch.object(review_infrastructure_template_rows, 'get_review_template_rows', return_value=[
                     {'id': 'mcm-template', 'name': 'Monthly', 'review_type_id': 'm'},
                     {'id': 'pr-template', 'name': 'Progress', 'review_type_id': 'p'}]) as templates, \
-                patch.object(reviews, 'get_review_section_rows', return_value=[{'id': 's', 'title': 'Goals', 'enabled': True}]), \
-                patch.object(reviews, 'get_review_field_rows', return_value=[{'section_id': 's', 'title': 'Discuss progress?', 'private_value': 'never send'}]):
+                patch.object(review_infrastructure_template_rows, 'get_review_section_rows', return_value=[{'id': 's', 'title': 'Goals', 'enabled': True}]), \
+                patch.object(review_infrastructure_template_rows, 'get_review_field_rows', return_value=[{'section_id': 's', 'title': 'Discuss progress?', 'private_value': 'never send'}]):
             learner.return_value.values.return_value.first.return_value = {'programme_id': 'programme-one'}
             result = quality.template_references(record())
         templates.assert_called_once_with('programme_id = %s and enabled = true', ['programme-one'])

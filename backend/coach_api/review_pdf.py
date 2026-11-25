@@ -1,12 +1,10 @@
 """Authorized final PDF download for a coach-owned review or Aptem import."""
 from django.views.decorators.http import require_GET
 from .auth import coach_access_required
-from curriculum_api.review_pdf import (
-    historical_pdf_response,
-    learner_information,
-    mcm_pdf_response,
-    pdf_availability,
-)
+from curriculum_api.review_management.api.pdf_responses import historical_pdf_response
+from curriculum_api.review_management.application.pdf_export import learner_information
+from curriculum_api.review_management.api.pdf_responses import mcm_pdf_response
+from curriculum_api.review_management.domain.pdf_policy import pdf_availability
 
 
 @coach_access_required
@@ -17,7 +15,7 @@ def coach_mcm_pdf(request, instance_id):
     from .auth import authenticated_coach_email
     from .models import CoachCalendarEvent
     from learner_api.models import LearnerProfile, EnrolmentUser
-    from curriculum_api.review_instances import review_instance_form_definition
+    from curriculum_api.review_management.application.instance_definitions import review_instance_form_definition
 
     if instance_id.startswith('imported-review:'):
         definition = _imported_review_definition(authenticated_coach_email(request), instance_id, pdf_only=True)

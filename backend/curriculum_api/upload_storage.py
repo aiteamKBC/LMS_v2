@@ -134,7 +134,7 @@ def blob_name_for(relative_path) -> str:
     ``COMPONENT_UPLOAD_ROOT`` is dropped: it exists to keep uploads apart from
     other media inside MEDIA_ROOT, and the container already does that.
     """
-    from curriculum_api.views import COMPONENT_UPLOAD_ROOT
+    from curriculum_api.catalogue.infrastructure.upload_paths import COMPONENT_UPLOAD_ROOT
     text = str(relative_path or '').strip('/')
     prefix = f'{COMPONENT_UPLOAD_ROOT}/'
     return text[len(prefix):] if text.startswith(prefix) else text

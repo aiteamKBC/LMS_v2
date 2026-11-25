@@ -99,7 +99,7 @@ def _unassigned_programme(row):
 
 def target(kind, target_id):
     if kind == 'free_course':
-        from .free_course_videos import target as free_course_target
+        from curriculum_api.catalogue.infrastructure.free_course_video_jobs import target as free_course_target
         return free_course_target(target_id)
     from .learning_storage import course, native_authoring_scope
 
@@ -458,7 +458,7 @@ def public_asset(asset):
 @require_role('admin', 'staff')
 def component_video(request, kind, target_id, component_id):
     if kind == 'free_course':
-        from .free_course_videos import component_video as free_course_video
+        from curriculum_api.catalogue.api.free_course_videos import component_video as free_course_video
         return free_course_video(request, target_id, component_id)
     return _component_video(request, kind, target_id, component_id)
 

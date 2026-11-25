@@ -1,0 +1,314 @@
+{
+  "state": [
+    "_CURRICULUM_CACHE",
+    "_CURRICULUM_CACHE_LOCK",
+    "_CURRICULUM_BUILD_LOCKS",
+    "_CURRICULUM_CACHE_EPOCH",
+    "_SHARED_EPOCH_STATE",
+    "_SHARED_EPOCH_LOCK",
+    "_SHARED_EPOCH_REFRESH_LOCK",
+    "_CURRICULUM_EPOCH_TABLE_READY",
+    "_CURRICULUM_EPOCH_BUMP",
+    "_CURRICULUM_READ_SCOPE"
+  ],
+  "functions": {
+    "ensure_curriculum_epoch_table": {
+      "owner": "curriculum_api.catalogue.infrastructure.cache_epochs",
+      "deps": [
+        "CURRICULUM_EPOCH_TABLE",
+        "CURRICULUM_SCHEMA",
+        "connection",
+        "logger",
+        "quote_ident",
+        "reconciliation_command",
+        "schema_gate",
+        "table_name",
+        "transaction"
+      ],
+      "source": "def ensure_curriculum_epoch_table():\n    \"\"\"Provision the one-row counter table, once per process.\n\n    Created here rather than in a migration for the same reason the other\n    ``ensure_*`` helpers do it: this app owns externally managed tables in the\n    ``curriculum`` schema and provisions them on first use. Returns False when\n    the table cannot be reached at all, which is the signal to fall back to the\n    process-local counter rather than fail a read.\n    \"\"\"\n    from config.management_safety import reconciliation_command\n    if reconciliation_command():\n        return False\n    global _CURRICULUM_EPOCH_TABLE_READY\n    if _CURRICULUM_EPOCH_TABLE_READY:\n        return True\n    if not schema_gate.runtime_bootstrap_allowed():\n        # Schema is migration-owned here (production, the normalised database):\n        # verify the table, never create it. This runs on GET paths, so it must\n        # not issue CREATE SCHEMA / CREATE TABLE / INSERT. A missing table is\n        # the same \"cannot be reached\" signal as before: the local counter.\n        try:\n            with transaction.atomic():\n                present = schema_gate.table_exists(CURRICULUM_EPOCH_TABLE)\n        except Exception:\n            logger.warning('Unable to verify the shared curriculum epoch table.', exc_info=True)\n            return False\n        if not present:\n            logger.warning('%s.%s is missing; using the process-local curriculum epoch.',\n                           CURRICULUM_SCHEMA, CURRICULUM_EPOCH_TABLE)\n            return False\n        _CURRICULUM_EPOCH_TABLE_READY = True\n        return True\n    try:\n        # Under a savepoint: this runs on a read path that a write request may\n        # already have inside an atomic block, and in PostgreSQL a failed\n        # statement poisons the whole transaction unless it can be rolled back\n        # to one. The same guard is on every other statement below.\n        with transaction.atomic(), connection.cursor() as cursor:\n            if connection.vendor == 'postgresql':\n                cursor.execute('create schema if not exists %s' % quote_ident(CURRICULUM_SCHEMA))\n            cursor.execute(\n                'create table if not exists %s ('\n                ' id integer primary key,'\n                ' epoch bigint not null default 0'\n                ')' % table_name(CURRICULUM_EPOCH_TABLE)\n            )\n            cursor.execute(\n                'insert into %s (id, epoch) values (1, 0) on conflict (id) do nothing'\n                % table_name(CURRICULUM_EPOCH_TABLE)\n            )\n    except Exception:\n        logger.warning('Unable to provision the shared curriculum epoch table.', exc_info=True)\n        return False\n    _CURRICULUM_EPOCH_TABLE_READY = True\n    return True",
+      "decorators": [],
+      "callbacks": {
+        "reconciliation_command": "from config.management_safety import reconciliation_command"
+      }
+    },
+    "local_shared_curriculum_epoch": {
+      "owner": "curriculum_api.catalogue.infrastructure.cache_epochs",
+      "deps": [
+        "_CURRICULUM_SHARED_EPOCH_KEY",
+        "cache",
+        "logger"
+      ],
+      "source": "def local_shared_curriculum_epoch():\n    \"\"\"The pre-database behaviour: the counter in Django's own cache.\n\n    Correct when a Redis ``CACHE_URL`` is configured and harmless when it is\n    not, so it stays as the fallback for a database that cannot answer.\n    \"\"\"\n    try:\n        cache.add(_CURRICULUM_SHARED_EPOCH_KEY, 0, timeout=None)\n        return int(cache.get(_CURRICULUM_SHARED_EPOCH_KEY) or 0)\n    except Exception:\n        # A cache backend must never turn a cacheable read into an outage.\n        logger.warning('Unable to read shared curriculum cache epoch.', exc_info=True)\n        return 0",
+      "decorators": [],
+      "callbacks": {}
+    },
+    "remember_shared_curriculum_epoch": {
+      "owner": "curriculum_api.catalogue.infrastructure.cache_epochs",
+      "deps": [],
+      "source": "def remember_shared_curriculum_epoch(value):\n    with _SHARED_EPOCH_LOCK:\n        _SHARED_EPOCH_STATE['value'] = int(value)\n        _SHARED_EPOCH_STATE['checked_at'] = time.monotonic()",
+      "decorators": [],
+      "callbacks": {}
+    },
+    "note_read_shared_curriculum_epoch": {
+      "owner": "curriculum_api.catalogue.infrastructure.cache_epochs",
+      "deps": [],
+      "source": "def note_read_shared_curriculum_epoch(value):\n    \"\"\"A reading of the epoch row taken by another query (cache_scope's poll).\n\n    Taken as this worker's poll when it is not older than what is held. The\n    scope poll reads the epoch in the same statement, so this spares the\n    separate read -- and keeps the two polls from disagreeing: a scope\n    generation newer than the global one let a build pair post-write scope\n    keys with rows the rows cache still held from before the write.\n    \"\"\"\n    with _SHARED_EPOCH_LOCK:\n        current = _SHARED_EPOCH_STATE['value']\n        if current is None or int(value) >= current:\n            _SHARED_EPOCH_STATE['value'] = int(value)\n            _SHARED_EPOCH_STATE['checked_at'] = time.monotonic()",
+      "decorators": [],
+      "callbacks": {}
+    },
+    "refresh_curriculum_generations": {
+      "owner": "curriculum_api.catalogue.infrastructure.cache_epochs",
+      "deps": [
+        "forget_epochs"
+      ],
+      "source": "def refresh_curriculum_generations():\n    \"\"\"Make this worker's next generation lookup read the database.\n\n    For a read straight after this client's own save, which may have been\n    taken by another worker less than a poll interval ago. Costs the one\n    epoch read; cached entries of the current generation still serve.\n    \"\"\"\n    with _SHARED_EPOCH_LOCK:\n        _SHARED_EPOCH_STATE['checked_at'] = 0.0\n    from .cache_scope import forget_epochs\n    forget_epochs()",
+      "decorators": [],
+      "callbacks": {
+        "forget_epochs": "from .cache_scope import forget_epochs"
+      }
+    },
+    "read_shared_curriculum_epoch_row": {
+      "owner": "curriculum_api.catalogue.infrastructure.cache_epochs",
+      "deps": [
+        "CURRICULUM_EPOCH_TABLE",
+        "fetch_all",
+        "quote_ident",
+        "table_name"
+      ],
+      "source": "def read_shared_curriculum_epoch_row():\n    rows = fetch_all(\n        'select %s from %s where %s = 1'\n        % (quote_ident('epoch'), table_name(CURRICULUM_EPOCH_TABLE), quote_ident('id'))\n    )\n    return int((rows[0] if rows else {}).get('epoch') or 0)",
+      "decorators": [],
+      "callbacks": {}
+    },
+    "shared_curriculum_epoch": {
+      "owner": "curriculum_api.catalogue.infrastructure.cache_epochs",
+      "deps": [
+        "SHARED_EPOCH_POLL_SECONDS",
+        "connection",
+        "ensure_curriculum_epoch_table",
+        "local_shared_curriculum_epoch",
+        "logger",
+        "read_shared_curriculum_epoch_row",
+        "reconciliation_command",
+        "transaction"
+      ],
+      "source": "def shared_curriculum_epoch():\n    \"\"\"The generation every worker's cache entries are keyed on.\n\n    Read from the database at most once per ``SHARED_EPOCH_POLL_SECONDS``; in\n    between, this process answers from what it last saw. A bump made *here*\n    writes straight through to that memory, so the change-log middleware still\n    sees the epoch move across its own request.\n    \"\"\"\n    from config.management_safety import reconciliation_command\n    if reconciliation_command():\n        return 0\n    now = time.monotonic()\n    with _SHARED_EPOCH_LOCK:\n        value = _SHARED_EPOCH_STATE['value']\n        checked_at = _SHARED_EPOCH_STATE['checked_at']\n    if value is not None and now - checked_at < SHARED_EPOCH_POLL_SECONDS:\n        return value\n    # Concurrent page requests share one refresh. The short state lock stays\n    # free while SQL runs, so writes can still publish their new generation.\n    with _SHARED_EPOCH_REFRESH_LOCK:\n        with _SHARED_EPOCH_LOCK:\n            value = _SHARED_EPOCH_STATE['value']\n            checked_at = _SHARED_EPOCH_STATE['checked_at']\n        if value is not None and time.monotonic() - checked_at < SHARED_EPOCH_POLL_SECONDS:\n            return value\n        if not ensure_curriculum_epoch_table():\n            return local_shared_curriculum_epoch()\n        try:\n            # A standalone SELECT needs no BEGIN/COMMIT round trips. Inside a\n            # caller's transaction retain the savepoint: a failed SELECT must\n            # not poison that caller's transaction.\n            needs_savepoint = connection.in_atomic_block or not connection.get_autocommit()\n            guard = transaction.atomic() if needs_savepoint else contextlib.nullcontext()\n            with guard:\n                epoch = read_shared_curriculum_epoch_row()\n        except Exception:\n            logger.warning('Unable to read the shared curriculum epoch.', exc_info=True)\n            with _SHARED_EPOCH_LOCK:\n                latest = _SHARED_EPOCH_STATE['value']\n            return latest if latest is not None else local_shared_curriculum_epoch()\n        with _SHARED_EPOCH_LOCK:\n            # A local write may have published a newer epoch during the read.\n            if _SHARED_EPOCH_STATE['checked_at'] != checked_at:\n                return _SHARED_EPOCH_STATE['value']\n            _SHARED_EPOCH_STATE['value'] = epoch\n            _SHARED_EPOCH_STATE['checked_at'] = time.monotonic()\n        return epoch",
+      "decorators": [],
+      "callbacks": {
+        "reconciliation_command": "from config.management_safety import reconciliation_command"
+      }
+    },
+    "write_shared_curriculum_epoch_bump": {
+      "owner": "curriculum_api.catalogue.infrastructure.cache_epochs",
+      "deps": [
+        "CURRICULUM_EPOCH_TABLE",
+        "_CURRICULUM_SHARED_EPOCH_KEY",
+        "bump_scopes",
+        "cache",
+        "connection",
+        "drop_scoped_curriculum_entries",
+        "ensure_curriculum_epoch_table",
+        "fetch_all",
+        "logger",
+        "quote_ident",
+        "read_shared_curriculum_epoch_row",
+        "remember_scope_epochs",
+        "remember_shared_curriculum_epoch",
+        "table_name",
+        "transaction"
+      ],
+      "source": "def write_shared_curriculum_epoch_bump(scopes=None):\n    \"\"\"Move the counter by one and record where it landed.\n\n    ``scopes`` is the set of programmes the write was attributed to. Without\n    one the unscoped counter moves, which retires every programme's payloads\n    exactly as the global epoch always has.\n    \"\"\"\n    from .cache_scope import bump_scopes, remember_scope_epochs\n    if not ensure_curriculum_epoch_table():\n        # No database counter, so nothing retires this process's scoped\n        # entries either; drop them here, as before scoping.\n        drop_scoped_curriculum_entries()\n        try:\n            cache.add(_CURRICULUM_SHARED_EPOCH_KEY, 0, timeout=None)\n            cache.incr(_CURRICULUM_SHARED_EPOCH_KEY)\n        except Exception:\n            logger.warning('Unable to invalidate shared curriculum cache.', exc_info=True)\n        return\n    scope_rows = None\n    try:\n        with transaction.atomic():\n            if connection.vendor == 'postgresql':\n                rows = fetch_all(\n                    'update %s set %s = %s + 1 where %s = 1 returning %s'\n                    % (\n                        table_name(CURRICULUM_EPOCH_TABLE),\n                        quote_ident('epoch'),\n                        quote_ident('epoch'),\n                        quote_ident('id'),\n                        quote_ident('epoch'),\n                    )\n                )\n                epoch = int((rows[0] if rows else {}).get('epoch') or 0)\n                # Same transaction as the global bump, so a reader's snapshot\n                # sees both moves or neither. See cache_scope for why.\n                scope_rows = bump_scopes(scopes)\n            else:\n                with connection.cursor() as cursor:\n                    cursor.execute(\n                        'update %s set %s = %s + 1 where %s = 1'\n                        % (\n                            table_name(CURRICULUM_EPOCH_TABLE),\n                            quote_ident('epoch'),\n                            quote_ident('epoch'),\n                            quote_ident('id'),\n                        )\n                    )\n                epoch = read_shared_curriculum_epoch_row()\n    except Exception:\n        # Nothing committed: no worker will be told about this write. Other\n        # workers serve their copies until the TTL, as they always have when\n        # this counter could not move; this one, at least, must not keep\n        # serving the programme pages it just changed.\n        logger.error(\n            'Unable to bump the shared curriculum epoch; other workers keep '\n            'their cached curriculum payloads until they expire.',\n            exc_info=True,\n        )\n        drop_scoped_curriculum_entries()\n        return\n    remember_shared_curriculum_epoch(epoch)\n    if connection.vendor == 'postgresql':\n        remember_scope_epochs(scope_rows, epoch)",
+      "decorators": [],
+      "callbacks": {
+        "bump_scopes": "from .cache_scope import bump_scopes",
+        "remember_scope_epochs": "from .cache_scope import remember_scope_epochs"
+      }
+    },
+    "invalidate_curriculum_cache": {
+      "owner": "curriculum_api.catalogue.infrastructure.cache_invalidation",
+      "deps": [
+        "_TABLE_EXISTS_CACHE",
+        "bump_shared_curriculum_epoch",
+        "enqueue_all_curriculum_home_refreshes",
+        "logger",
+        "retire_all_content",
+        "schedule_curriculum_warm",
+        "schema_compat",
+        "transaction"
+      ],
+      "source": "def invalidate_curriculum_cache(content_scope=None):\n    \"\"\"Retire curriculum caches after a write.\n\n    ``content_scope='all'`` is for a writer that changed modules, weeks,\n    components or KSB mappings by raw SQL, which no write helper reported: it\n    also retires every module's learner content entries (content_cache). Writes\n    made through the helpers below retire only their own modules' entries, by\n    themselves, so the default leaves learner content alone.\n    \"\"\"\n    global _CURRICULUM_CACHE_EPOCH\n    schema_compat.invalidate()\n    if content_scope == 'all':\n        from . import content_cache\n        content_cache.retire_all()\n    with _CURRICULUM_CACHE_LOCK:\n        # Programme-scoped entries stay: their generation is checked on every\n        # read, and the bump this write owes retires exactly the ones it touched.\n        for key in [key for key, entry in _CURRICULUM_CACHE.items() if not entry.get('scoped')]:\n            _CURRICULUM_CACHE.pop(key, None)\n        # Bumping the epoch discards results from any factory that is mid-flight\n        # right now. Without it, a build that started before this write completes\n        # afterwards and repopulates the cache with pre-write rows, which would\n        # then serve stale authoring data for the rest of the TTL.\n        _CURRICULUM_CACHE_EPOCH += 1\n    # Generation-based invalidation: every worker keys its cache entries on the\n    # counter, so moving it retires all of them at once without needing a\n    # backend-specific delete-pattern API. Old generations expire naturally\n    # after the normal TTL.\n    bump_shared_curriculum_epoch()\n    # One outbox pair per write request, recorded while the caller's database\n    # transaction is still active. A tree save can invalidate once per row, so\n    # the request-scoped marker prevents that from becoming thousands of\n    # duplicate outbox inserts; the worker still coalesces concurrent requests.\n    if not getattr(_CURRICULUM_EPOCH_BUMP, 'read_model_queued', False):\n        try:\n            from .read_model import enqueue_all_curriculum_home_refreshes\n            enqueue_all_curriculum_home_refreshes(reason='curriculum-change')\n        except Exception:\n            logger.warning('Unable to enqueue Curriculum Home refresh.', exc_info=True)\n        if getattr(_CURRICULUM_EPOCH_BUMP, 'scoped', False):\n            _CURRICULUM_EPOCH_BUMP.read_model_queued = True\n    # Only the negative answers are dropped. Whether a table exists changes on\n    # DDL, never on a curriculum write, and the ensure_* helpers only ever add\n    # tables -- so a cached True is still true, while a cached False may have\n    # been provisioned since and has to be asked again. Clearing the lot cost\n    # ~8 information_schema round trips on the rebuild straight after every\n    # write (~1-2s against a remote database) to re-learn a schema that had not\n    # moved. Tests that roll the schema away call reset_schema_ready_flags(),\n    # which still clears this outright.\n    for key in [key for key, exists in _TABLE_EXISTS_CACHE.items() if not exists]:\n        _TABLE_EXISTS_CACHE.pop(key, None)\n    # Rebuild what was just dropped, off the request path. Scheduling rather\n    # than building keeps this call as cheap as it was -- it is made from inside\n    # write handlers, sometimes once per written row -- and the delay in the\n    # warm loop collapses a burst of these into one rebuild.\n    #\n    # on_commit, because several handlers invalidate from inside their atomic\n    # block: a warm that started before the commit would read the pre-write\n    # rows and cache them for the full TTL, with no later invalidation to\n    # correct it. Outside an atomic block this runs straight away, and a\n    # rollback correctly warms nothing.\n    try:\n        transaction.on_commit(schedule_curriculum_warm)\n    except Exception:\n        logger.warning('Unable to schedule curriculum cache warm.', exc_info=True)",
+      "decorators": [],
+      "callbacks": {
+        "retire_all_content": "from . import content_cache",
+        "enqueue_all_curriculum_home_refreshes": "from .read_model import enqueue_all_curriculum_home_refreshes"
+      }
+    },
+    "drop_scoped_curriculum_entries": {
+      "owner": "curriculum_api.catalogue.infrastructure.cache_invalidation",
+      "deps": [
+        "forget_epochs"
+      ],
+      "source": "def drop_scoped_curriculum_entries():\n    \"\"\"Forget this process's programme-scoped payloads and in-flight builds.\n\n    invalidate_curriculum_cache() keeps scoped entries because the database\n    bump is what retires them. When that bump cannot be made, this restores\n    the pre-scoping behaviour for the writing worker: everything it cached is\n    dropped, and a build already running cannot publish (the local epoch moves).\n    \"\"\"\n    global _CURRICULUM_CACHE_EPOCH\n    from .cache_scope import forget_epochs\n    with _CURRICULUM_CACHE_LOCK:\n        for key in [key for key, entry in _CURRICULUM_CACHE.items() if entry.get('scoped')]:\n            _CURRICULUM_CACHE.pop(key, None)\n        _CURRICULUM_CACHE_EPOCH += 1\n    forget_epochs()",
+      "decorators": [],
+      "callbacks": {
+        "forget_epochs": "from .cache_scope import forget_epochs"
+      }
+    },
+    "bump_shared_curriculum_epoch": {
+      "owner": "curriculum_api.catalogue.infrastructure.cache_invalidation",
+      "deps": [
+        "write_shared_curriculum_epoch_bump"
+      ],
+      "source": "def bump_shared_curriculum_epoch():\n    \"\"\"Retire every worker's cached payload, once per request that writes.\n\n    Inside a request the bump is owed rather than made: the change-log\n    middleware flushes it after the view, so one save costs one UPDATE however\n    many rows it wrote, and the new generation becomes visible to other workers\n    only once the data it describes has committed. Outside a request (a\n    management command, the warm loop) there is nobody to flush it, so it is\n    made straight away.\n    \"\"\"\n    if getattr(_CURRICULUM_EPOCH_BUMP, 'scoped', False):\n        _CURRICULUM_EPOCH_BUMP.pending = True\n        return\n    write_shared_curriculum_epoch_bump()",
+      "decorators": [],
+      "callbacks": {}
+    },
+    "begin_curriculum_write_scope": {
+      "owner": "curriculum_api.catalogue.infrastructure.cache_invalidation",
+      "deps": [
+        "begin_content_write_scope",
+        "begin_request"
+      ],
+      "source": "def begin_curriculum_write_scope():\n    _CURRICULUM_EPOCH_BUMP.scoped = True\n    _CURRICULUM_EPOCH_BUMP.pending = False\n    _CURRICULUM_EPOCH_BUMP.read_model_queued = False\n    from .module_live import begin_request\n    begin_request()\n    from . import content_cache\n    content_cache.begin_write_scope()",
+      "decorators": [],
+      "callbacks": {
+        "begin_request": "from .module_live import begin_request",
+        "begin_content_write_scope": "from . import content_cache"
+      }
+    },
+    "end_curriculum_write_scope": {
+      "owner": "curriculum_api.catalogue.infrastructure.cache_invalidation",
+      "deps": [
+        "end_content_write_scope",
+        "end_request",
+        "write_shared_curriculum_epoch_bump"
+      ],
+      "source": "def end_curriculum_write_scope(scopes=None):\n    \"\"\"Make the request's one bump, if anything in it invalidated.\"\"\"\n    from . import content_cache\n    # The modules this request wrote: one version move each, after the view.\n    content_cache.end_write_scope()\n    pending = getattr(_CURRICULUM_EPOCH_BUMP, 'pending', False)\n    _CURRICULUM_EPOCH_BUMP.scoped = False\n    _CURRICULUM_EPOCH_BUMP.pending = False\n    _CURRICULUM_EPOCH_BUMP.read_model_queued = False\n    try:\n        if pending:\n            write_shared_curriculum_epoch_bump(scopes)\n    finally:\n        # The per-module counters the Module Builder watches. Moved after the\n        # global bump and in their own statement, so a reader that sees a\n        # module counter move also finds the data it describes committed.\n        from .module_live import end_request\n        end_request()",
+      "decorators": [],
+      "callbacks": {
+        "end_content_write_scope": "from . import content_cache",
+        "end_request": "from .module_live import end_request"
+      }
+    },
+    "curriculum_write_pending": {
+      "owner": "curriculum_api.catalogue.infrastructure.cache_invalidation",
+      "deps": [],
+      "source": "def curriculum_write_pending():\n    \"\"\"Whether this request has invalidated and still owes its bump.\"\"\"\n    return bool(getattr(_CURRICULUM_EPOCH_BUMP, 'pending', False))",
+      "decorators": [],
+      "callbacks": {}
+    },
+    "curriculum_read_scope": {
+      "owner": "curriculum_api.catalogue.infrastructure.cache_runtime",
+      "deps": [],
+      "source": "def curriculum_read_scope(targeted_child_reads=False):\n    from .catalogue.infrastructure.read_scope import curriculum_read_scope as query\n    with query(\n        targeted_child_reads, read_scope_state=lambda: _CURRICULUM_READ_SCOPE,\n    ):\n        yield",
+      "decorators": [
+        "contextlib.contextmanager"
+      ],
+      "callbacks": {}
+    },
+    "_scope_memo_key": {
+      "owner": "curriculum_api.catalogue.infrastructure.cache_runtime",
+      "deps": [],
+      "source": "def _scope_memo_key(value):\n    from .catalogue.infrastructure.read_scope import _scope_memo_key as query\n    return query(\n        value,\n    )",
+      "decorators": [],
+      "callbacks": {}
+    },
+    "scoped_curriculum_read": {
+      "owner": "curriculum_api.catalogue.infrastructure.cache_runtime",
+      "deps": [
+        "_scope_memo_key",
+        "native_only"
+      ],
+      "source": "def scoped_curriculum_read(fn):\n    from .catalogue.infrastructure.read_scope import scoped_curriculum_read as query\n    return query(\n        fn, _scope_memo_key=_scope_memo_key, functools=functools, inspect=inspect,\n        native_only=lambda: native_only(), read_scope_state=lambda: _CURRICULUM_READ_SCOPE,\n    )",
+      "decorators": [],
+      "callbacks": {}
+    },
+    "curriculum_build_lock": {
+      "owner": "curriculum_api.catalogue.infrastructure.cache_runtime",
+      "deps": [],
+      "source": "def curriculum_build_lock(key):\n    from .catalogue.infrastructure.payload_cache import curriculum_build_lock as query\n    return query(\n        key, _CURRICULUM_BUILD_LOCKS=_CURRICULUM_BUILD_LOCKS,\n        _CURRICULUM_CACHE_LOCK=_CURRICULUM_CACHE_LOCK, threading=threading,\n    )",
+      "decorators": [],
+      "callbacks": {}
+    },
+    "cached_curriculum_value": {
+      "owner": "curriculum_api.catalogue.infrastructure.cache_runtime",
+      "deps": [
+        "CURRICULUM_CACHE_TTL_SECONDS",
+        "CURRICULUM_SHARED_TTL_SECONDS",
+        "_pack_shared",
+        "_unpack_shared",
+        "cache",
+        "connection",
+        "curriculum_build_lock",
+        "datetime",
+        "logger",
+        "programme_cache_generation",
+        "shared_build",
+        "shared_curriculum_cache_key",
+        "shared_curriculum_epoch"
+      ],
+      "source": "def cached_curriculum_value(key, factory, force=False, ttl=None, shared=True, scope=None, fingerprint=None, compress=False):\n    from .catalogue.infrastructure.payload_cache import cached_curriculum_value as query\n    return query(\n        key, factory, force, ttl, shared, scope, fingerprint, compress,\n        CURRICULUM_CACHE_TTL_SECONDS=CURRICULUM_CACHE_TTL_SECONDS,\n        CURRICULUM_SHARED_TTL_SECONDS=CURRICULUM_SHARED_TTL_SECONDS, _CURRICULUM_CACHE=_CURRICULUM_CACHE,\n        _CURRICULUM_CACHE_LOCK=_CURRICULUM_CACHE_LOCK, _CURRICULUM_EPOCH_BUMP=_CURRICULUM_EPOCH_BUMP,\n        _pack_shared=_pack_shared, _unpack_shared=_unpack_shared, cache=cache, connection=connection,\n        curriculum_build_lock=curriculum_build_lock, datetime=datetime, logger=logger,\n        programme_cache_generation=programme_cache_generation, shared_build=shared_build,\n        shared_curriculum_cache_key=shared_curriculum_cache_key,\n        shared_curriculum_epoch=shared_curriculum_epoch, time=time,\n        read_local_epoch=lambda: _CURRICULUM_CACHE_EPOCH,\n    )",
+      "decorators": [],
+      "callbacks": {}
+    },
+    "_pack_shared": {
+      "owner": "curriculum_api.catalogue.infrastructure.cache_runtime",
+      "deps": [],
+      "source": "def _pack_shared(value):\n    from .catalogue.infrastructure.payload_cache import _pack_shared as query\n    return query(\n        value,\n    )",
+      "decorators": [],
+      "callbacks": {}
+    },
+    "_unpack_shared": {
+      "owner": "curriculum_api.catalogue.infrastructure.cache_runtime",
+      "deps": [],
+      "source": "def _unpack_shared(blob):\n    from .catalogue.infrastructure.payload_cache import _unpack_shared as query\n    return query(\n        blob,\n    )",
+      "decorators": [],
+      "callbacks": {}
+    },
+    "shared_curriculum_cache_key": {
+      "owner": "curriculum_api.catalogue.infrastructure.cache_runtime",
+      "deps": [],
+      "source": "def shared_curriculum_cache_key(key, epoch):\n    digest = hashlib.sha256(str(key).encode()).hexdigest()\n    return f'curriculum:v{epoch}:{digest}'",
+      "decorators": [],
+      "callbacks": {}
+    },
+    "record_curriculum_change": {
+      "owner": "curriculum_api.catalogue.infrastructure.cache_runtime",
+      "deps": [
+        "CURRICULUM_CHANGE_LOG_KEY",
+        "CURRICULUM_CHANGE_LOG_SIZE",
+        "cache",
+        "logger"
+      ],
+      "source": "def record_curriculum_change(path, low, high):\n    \"\"\"Note that the epochs in ``(low, high]`` were moved by a write to ``path``.\n\n    The counter on its own says only that something changed, which leaves every\n    open tab in the estate to throw away its whole cache and read the ~13s\n    overview back. This log is what turns that into \"re-read the programmes\".\n\n    Deliberately best-effort. The read-modify-write below is not atomic, so two\n    workers finishing at once can lose an entry -- and that is safe, because a\n    client only trusts the log when it covers every epoch it missed and drops\n    back to the blunt refresh when it does not. A lost entry costs one wasted\n    reload; a lost entry mistaken for \"nothing relevant changed\" would cost a\n    stale screen, which is why coverage is checked rather than assumed.\n    \"\"\"\n    if high <= low:\n        return\n    try:\n        entries = list(cache.get(CURRICULUM_CHANGE_LOG_KEY) or [])\n        entries.append({'path': path, 'lo': int(low), 'hi': int(high)})\n        cache.set(\n            CURRICULUM_CHANGE_LOG_KEY,\n            entries[-CURRICULUM_CHANGE_LOG_SIZE:],\n            timeout=None,\n        )\n    except Exception:\n        logger.warning('Unable to record curriculum change for %s.', path, exc_info=True)",
+      "decorators": [],
+      "callbacks": {}
+    },
+    "recent_curriculum_changes": {
+      "owner": "curriculum_api.catalogue.infrastructure.cache_runtime",
+      "deps": [
+        "CURRICULUM_CHANGE_LOG_KEY",
+        "cache",
+        "logger"
+      ],
+      "source": "def recent_curriculum_changes():\n    try:\n        return list(cache.get(CURRICULUM_CHANGE_LOG_KEY) or [])\n    except Exception:\n        logger.warning('Unable to read the curriculum change log.', exc_info=True)\n        return []",
+      "decorators": [],
+      "callbacks": {}
+    }
+  },
+  "initializers": {
+    "_CURRICULUM_CACHE": "_CURRICULUM_CACHE = {}",
+    "_CURRICULUM_CACHE_LOCK": "_CURRICULUM_CACHE_LOCK = threading.Lock()",
+    "_CURRICULUM_BUILD_LOCKS": "_CURRICULUM_BUILD_LOCKS = {}",
+    "_CURRICULUM_CACHE_EPOCH": "_CURRICULUM_CACHE_EPOCH = 0",
+    "_CURRICULUM_SHARED_EPOCH_KEY": "_CURRICULUM_SHARED_EPOCH_KEY = 'curriculum:cache-epoch'",
+    "CURRICULUM_EPOCH_TABLE": "CURRICULUM_EPOCH_TABLE = 'cache_epoch'",
+    "SHARED_EPOCH_POLL_SECONDS": "SHARED_EPOCH_POLL_SECONDS = 3.0",
+    "_SHARED_EPOCH_STATE": "_SHARED_EPOCH_STATE = {'value': None, 'checked_at': 0.0}",
+    "_SHARED_EPOCH_LOCK": "_SHARED_EPOCH_LOCK = threading.Lock()",
+    "_SHARED_EPOCH_REFRESH_LOCK": "_SHARED_EPOCH_REFRESH_LOCK = threading.Lock()",
+    "_CURRICULUM_EPOCH_TABLE_READY": "_CURRICULUM_EPOCH_TABLE_READY = False",
+    "_CURRICULUM_EPOCH_BUMP": "_CURRICULUM_EPOCH_BUMP = threading.local()",
+    "_CURRICULUM_READ_SCOPE": "_CURRICULUM_READ_SCOPE = threading.local()"
+  },
+  "schema_ready_flags": "_SCHEMA_READY_FLAGS = (\n    '_AUTHORING_TABLES_READY',\n    '_FREE_PROGRAMME_TABLES_READY',\n    '_PROGRAMME_CONFIG_DEDUP_READY',\n    '_TRAINING_PLAN_CANONICAL_READY',\n    '_LIVE_SESSIONS_TABLE_READY',\n    '_LIVE_SESSION_TRACKING_TABLES_READY',\n    '_WEEK_TEMPLATE_TABLES_READY',\n    '_CURRICULUM_EPOCH_TABLE_READY',\n)"
+}

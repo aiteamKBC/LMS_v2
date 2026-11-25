@@ -146,7 +146,7 @@ jobs:
         run: |
           docker run --rm -u 0 -e DJANGO_SECRET_KEY=ci -e DJANGO_DEBUG=false \
             --entrypoint python lms-backend:ci manage.py test --noinput \
-            curriculum_api.test_youtube_download
+            curriculum_api.catalogue.tests.test_youtube_download
 
       - name: Container answers /health/
         run: |

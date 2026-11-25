@@ -217,8 +217,8 @@ class EmployerPortalOverviewTests(SimpleTestCase):
                         mock.patch("learner_api.calendar.coaching_events_for_learner", return_value=[event]), \
                         mock.patch.object(employer_portal.review_instances, "get_review_instance", return_value={"id": "gateway-instance", "learner_id": 55}), \
                         mock.patch.object(employer_portal.review_instances, "review_instance_form_definition", return_value=definition), \
-                        mock.patch("curriculum_api.review_pdf.learner_information", return_value={}), \
-                        mock.patch("curriculum_api.review_pdf.mcm_pdf_response", return_value=HttpResponse(b"%PDF-saved-gateway")), \
+                        mock.patch('curriculum_api.review_management.application.pdf_export.learner_information', return_value={}), \
+                        mock.patch('curriculum_api.review_management.api.pdf_responses.mcm_pdf_response', return_value=HttpResponse(b"%PDF-saved-gateway")), \
                         mock.patch.object(employer_portal.review_instances, "ensure_review_instance") as create:
                     listed = json.loads(self.progress_reviews(kind=kind).content)
                     self.assertEqual([row["eventKey"] for row in listed["events"]], [event["eventKey"]])
@@ -319,7 +319,7 @@ class EmployerPortalOverviewTests(SimpleTestCase):
                 mock.patch.object(employer_portal.review_instances, "get_review_instance", return_value={"id": "instance-a", "learner_id": 55}), \
                 mock.patch.object(employer_portal.review_instances, "find_review_instance", return_value=None), \
                 mock.patch.object(employer_portal.review_instances, "review_instance_form_definition", return_value=definition), \
-                mock.patch("curriculum_api.reviews.get_review_template_row", side_effect=lambda template_id, **kwargs: {"id": template_id}), \
+                mock.patch('curriculum_api.review_management.infrastructure.template_rows.get_review_template_row', side_effect=lambda template_id, **kwargs: {"id": template_id}), \
                 mock.patch.object(employer_portal.review_instances, "build_definition_snapshot", side_effect=snapshot):
             response = self.progress_reviews()
         source.assert_called_once_with(self.learner, profile)
@@ -349,7 +349,7 @@ class EmployerPortalOverviewTests(SimpleTestCase):
         event = {"id": "archived", "eventKey": "archived", "source": "progress-review", "importedReview": {"id": "88", "sections": []}}
         with mock.patch("learner_api.calendar._calendar_profile", return_value=SimpleNamespace(pk=55)), \
                 mock.patch("learner_api.calendar.coaching_events_for_learner", return_value=[event]), \
-                mock.patch("curriculum_api.review_pdf.learner_information", return_value={}), \
+                mock.patch('curriculum_api.review_management.application.pdf_export.learner_information', return_value={}), \
                 mock.patch("learner_api.aptem_review_pdf.original_review_pdf", return_value=b"%PDF-saved-original"):
             detail = self.progress_reviews(event_key="archived")
             pdf = self.progress_reviews(event_key="archived", as_pdf=True)

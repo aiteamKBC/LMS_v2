@@ -1,0 +1,225 @@
+{
+  "views_ast_sha256": "1ad0b6341fcf4923b2c2b8412758274266e59a09af00de576048ffc4051f23ee",
+  "functions": {
+    "filtered_payload": {
+      "source": "def filtered_payload(table, payload, allow_null_columns=None):\n    allow_null_columns = set(allow_null_columns or [])\n    columns = column_names(table)\n    # The chosen tutor / coach is stored as its id (curriculum_names).\n    payload, staff_nullable = curriculum_names.store_staff(table, payload, columns)\n    # Status values, blank keys and a mapping's standard KSB, as the table stores them.\n    payload, shaped_nullable = write_shape.normalise(table, payload, columns)\n    allow_null_columns |= shaped_nullable | staff_nullable\n    return {\n        key: value\n        for key, value in payload.items()\n        if key in columns and (value is not None or key in allow_null_columns)\n    }",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.infrastructure.row_persistence",
+      "deps": [
+        "column_names",
+        "curriculum_names",
+        "write_shape"
+      ],
+      "callbacks": {}
+    },
+    "written_rows": {
+      "source": "def written_rows(table, rows):\n    \"\"\"Rows a write returned, carrying the names a read gives them.\n\n    The tables keep ids only; history snapshots and the callers that show the\n    saved record read the module's programme / cohort / group / tutor names off\n    the row, so they are put on it here exactly as authoring_fetch_all does.\n    \"\"\"\n    return curriculum_names.attach(table, rows)",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.infrastructure.row_persistence",
+      "deps": [
+        "curriculum_names"
+      ],
+      "callbacks": {}
+    },
+    "insert_row": {
+      "source": "def insert_row(table, payload):\n    values = filtered_payload(table, payload)\n    if not values:\n        raise ValueError(f'No writable columns found for {table}.')\n    columns = list(values.keys())\n    placeholders = ', '.join(['%s'] * len(columns))\n    query = (\n        f'insert into {table_name(table)} '\n        f'({\", \".join(quote_ident(column) for column in columns)}) '\n        f'values ({placeholders}) returning *'\n    )\n    try:\n        row = written_rows(table, execute_returning(query, [values[column] for column in columns]))[0]\n        # The created row is its own snapshot, so recording the create costs no\n        # extra read. Without this a programme, a holiday or a week template\n        # entered history only at its first EDIT, and \"who created this?\" -- the\n        # first question anyone asks of an audit trail -- had no answer at all.\n        versioning.record_rows(table, [row])\n        note_live_rows(table, [row])\n        return row\n    except DatabaseError as exc:\n        if 'no column named' not in str(exc).lower():\n            raise\n        _TABLE_COLUMNS_CACHE.pop(table, None)\n        _TABLE_COLUMNS_CACHE.pop(f'{CURRICULUM_SCHEMA}.{table}', None)\n        values = filtered_payload(table, payload)\n        if not values:\n            raise\n        columns = list(values.keys())\n        placeholders = ', '.join(['%s'] * len(columns))\n        query = (\n            f'insert into {table_name(table)} '\n            f'({\", \".join(quote_ident(column) for column in columns)}) '\n            f'values ({placeholders}) returning *'\n        )\n        row = written_rows(table, execute_returning(query, [values[column] for column in columns]))[0]\n        versioning.record_rows(table, [row])\n        note_live_rows(table, [row])\n        return row",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.infrastructure.row_persistence",
+      "deps": [
+        "CURRICULUM_SCHEMA",
+        "DatabaseError",
+        "_TABLE_COLUMNS_CACHE",
+        "execute_returning",
+        "filtered_payload",
+        "note_live_rows",
+        "quote_ident",
+        "table_name",
+        "versioning",
+        "written_rows"
+      ],
+      "callbacks": {}
+    },
+    "update_rows": {
+      "source": "def update_rows(table, where_sql, where_params, payload, allow_null_columns=None):\n    values = filtered_payload(table, payload, allow_null_columns=allow_null_columns)\n    if not values:\n        raise ValueError(f'No writable columns found for {table}.')\n    if native_only():\n        from .free_course_contract import COLUMNS\n        if table in COLUMNS:\n            return update_authoring_rows(table, where_sql, where_params, values)\n    assignments = ', '.join(f'{quote_ident(column)} = %s' for column in values)\n    query = f'update {table_name(table)} set {assignments} where {where_sql} returning *'\n    note_previous_content_modules(table, where_sql=where_sql, where_params=where_params, payloads=[values])\n    rows = written_rows(table, execute_returning(query, [*values.values(), *where_params]))\n    versioning.record_rows(table, rows)\n    note_live_rows(table, rows)\n    return rows",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.infrastructure.row_persistence",
+      "deps": [
+        "execute_returning",
+        "filtered_payload",
+        "load_free_course_columns",
+        "native_only",
+        "note_live_rows",
+        "note_previous_content_modules",
+        "quote_ident",
+        "table_name",
+        "update_authoring_rows",
+        "versioning",
+        "written_rows"
+      ],
+      "callbacks": {
+        "load_free_course_columns": {
+          "module": "free_course_contract",
+          "name": "COLUMNS",
+          "loader": true
+        }
+      }
+    },
+    "note_live_rows": {
+      "source": "def note_live_rows(table, rows):\n    \"\"\"Tell Module Builder live sync which module/group these rows belong to.\n\n    Called beside every history record in the write helpers below, from the\n    rows the write itself returned, so it costs no query. See module_live.\n    \"\"\"\n    # Names/ids derived for the normalised schema must reflect this write --\n    # but only a write to a table they are read from can change them.\n    curriculum_names.invalidate_for(table)\n    try:\n        from .module_live import note_rows\n        note_rows(table, rows)\n    except Exception:\n        logger.debug('Unable to note a write for live sync.', exc_info=True)\n    # Learner content entries of these rows' modules (never raises; on any\n    # doubt it retires all modules).\n    from . import content_cache\n    content_cache.note_rows(table, rows)",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.infrastructure.write_notifications",
+      "deps": [
+        "curriculum_names",
+        "load_content_cache",
+        "logger",
+        "note_rows"
+      ],
+      "callbacks": {
+        "load_content_cache": {
+          "module": null,
+          "name": "content_cache",
+          "loader": true
+        },
+        "note_rows": {
+          "module": "module_live",
+          "name": "note_rows",
+          "loader": false
+        }
+      }
+    },
+    "note_previous_content_modules": {
+      "source": "def note_previous_content_modules(table, *, where_sql=None, where_params=None, key_columns=None, payloads=()):\n    \"\"\"Before a write that sets module_catalogue_id, retire the rows' CURRENT modules.\n\n    The rows a write returns name only the module they now belong to; a row\n    moved out of a module must retire that module's cached content too. Read\n    with the write's own WHERE or key, so it costs one small query, and only\n    for writes that can move a row.\n    \"\"\"\n    from . import content_cache\n    bare = str(table or '').split('.')[-1].strip('\"')\n    if bare not in content_cache.CONTENT_TABLES or bare == AUTHORING_MODULES_TABLE:\n        return\n    if not any('module_catalogue_id' in (payload or {}) for payload in payloads):\n        return\n    if connection.vendor != 'postgresql':\n        content_cache.retire_all()\n        return\n    try:\n        if where_sql is not None:\n            rows = fetch_all(f'select distinct module_catalogue_id from {table_name(table)} where {where_sql}',\n                             list(where_params or []))\n        elif list(key_columns or []) == ['id']:\n            ids = [payload.get('id') for payload in payloads if payload and payload.get('id') not in (None, '')]\n            if not ids:\n                return\n            rows = fetch_all(f'select distinct module_catalogue_id from {table_name(table)} where id = any(%s)',\n                             [ids])\n        else:\n            content_cache.retire_all()\n            return\n        content_cache.note_modules(row['module_catalogue_id'] for row in rows)\n    except Exception:\n        logger.warning('Unable to read the modules a write moves rows from; retiring all content.',\n                       exc_info=True)\n        content_cache.retire_all()",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.infrastructure.write_notifications",
+      "deps": [
+        "AUTHORING_MODULES_TABLE",
+        "connection",
+        "fetch_all",
+        "load_content_cache",
+        "logger",
+        "table_name"
+      ],
+      "callbacks": {
+        "load_content_cache": {
+          "module": null,
+          "name": "content_cache",
+          "loader": true
+        }
+      }
+    },
+    "ensure_programme_config_for_authoring": {
+      "source": "def ensure_programme_config_for_authoring(programme_name, programme_id=None, status=''):\n    name = clean_str(programme_name)\n    if not name or normalise(name) in {'unassignedprogramme', 'unassigned'}:\n        return None\n\n    ensure_program_config_archive_columns()\n    configs = get_program_config_rows()\n    # A placeholder id from an unsaved local draft (\"programme-local\") must not\n    # be matched against or persisted; fall back to matching on name instead so\n    # the draft attaches to the real programme rather than inventing one.\n    requested_id = sanitised_programme_id(programme_id)\n    existing = next((\n        config for config in configs\n        if requested_id and programme_config_identity(config) == requested_id\n    ), None)\n    if not existing:\n        existing = next((\n            config for config in configs\n            if normalise(config.get('name')) == normalise(name)\n        ), None)\n    now = datetime.utcnow()\n\n    if existing:\n        programme_status = programme_status_from_payload({'status': status} if clean_str(status) else {}, existing)\n        try:\n            key_column = programme_config_key_column()\n        except Exception:\n            key_column = programme_config_key_column()\n        key_value = existing.get(key_column)\n        wanted = {\n            'name': name,\n            'status': programme_status,\n        }\n        # Only when something differs. Every module save calls this, and an\n        # unconditional UPDATE held the programme row locked for the rest of the\n        # save's transaction -- so two people saving two different modules of\n        # one programme queued behind each other, and a long enough queue ran\n        # past the 15s statement timeout.\n        if any(\n            column in existing and (\n                bool(existing.get(column)) != bool(value) if isinstance(value, bool)\n                else clean_str(existing.get(column)) != clean_str(value)\n            )\n            for column, value in wanted.items()\n        ):\n            update_rows('programmes', f'{quote_ident(key_column)} = %s', [key_value], {**wanted, 'updated_at': now})\n            invalidate_curriculum_cache()\n        source_id = programme_config_id(existing) or clean_str(key_value)\n        return {\n            'id': source_id,\n            'sourceId': source_id,\n            'name': name,\n            'standard': name,\n        }\n\n    # Seed from the requested id only. Passing `name` here was misleading: a\n    # name never matches the PROG-* shape, so unique_prefixed_id() discards it\n    # and mints a timestamp id anyway. Being explicit keeps a programme name\n    # from ever being mistaken for an identifier.\n    source_id = unique_program_id(requested_id, configs)\n    programme_status = normalise_programme_status(status, 'active')\n    insert_row('programmes', {\n        'programme_id': source_id,\n        'id': source_id,\n        'program_id': source_id,\n        'name': name,\n        'color': '#6941c6',\n        'description': '',\n        'status': programme_status,\n        'created_at': now,\n        'updated_at': now,\n    })\n    invalidate_curriculum_cache()\n    return {'id': source_id, 'sourceId': source_id, 'name': name, 'standard': name}",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.application.programme_configuration",
+      "deps": [
+        "clean_str",
+        "datetime",
+        "ensure_program_config_archive_columns",
+        "get_program_config_rows",
+        "insert_row",
+        "invalidate_curriculum_cache",
+        "normalise",
+        "normalise_programme_status",
+        "programme_config_id",
+        "programme_config_identity",
+        "programme_config_key_column",
+        "programme_status_from_payload",
+        "quote_ident",
+        "sanitised_programme_id",
+        "unique_program_id",
+        "update_rows"
+      ],
+      "callbacks": {}
+    },
+    "get_program_config_rows_raw": {
+      "source": "def get_program_config_rows_raw():\n    # The order the curator dragged the cards into comes first; name orders\n    # anything never dragged, and is the whole order on a database that predates\n    # backend/sql/2026-09-22_programme_display_order.sql.\n    try:\n        ordered_by_hand = has_column('programmes', 'display_order')\n    except Exception:\n        ordered_by_hand = False\n    ordering = 'order by coalesce(display_order, 0), name' if ordered_by_hand else 'order by name'\n    return fetch_all(f'''\n        select *\n        from {table_name(\"programmes\")}\n        {ordering}\n    ''')",
+      "decorators": [
+        "scoped_curriculum_read"
+      ],
+      "owner": "curriculum_api.catalogue.infrastructure.programme_reads",
+      "deps": [
+        "fetch_all",
+        "has_column",
+        "table_name"
+      ],
+      "callbacks": {}
+    },
+    "ensure_columns": {
+      "source": "def ensure_columns(table, specs):\n    missing = {column: definition for column, definition in specs.items() if not has_column(table, column)}\n    if not missing:\n        return\n    with connection.cursor() as cursor:\n        for column, definition in missing.items():\n            if connection.vendor == 'postgresql':\n                add_column = f'add column if not exists {quote_ident(column)} {definition}'\n            else:\n                # SQLite supports ADD COLUMN but not ADD COLUMN IF NOT EXISTS.\n                # ``missing`` was already calculated through PRAGMA table_info.\n                add_column = f'add column {quote_ident(column)} {definition}'\n            cursor.execute(\n                f'alter table {table_name(table)} {add_column}'\n            )\n    _TABLE_COLUMNS_CACHE.pop(table, None)\n    _TABLE_COLUMNS_CACHE.pop(f'{CURRICULUM_SCHEMA}.{table}', None)",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.infrastructure.authoring_schema",
+      "deps": [
+        "CURRICULUM_SCHEMA",
+        "_TABLE_COLUMNS_CACHE",
+        "connection",
+        "has_column",
+        "quote_ident",
+        "table_name"
+      ],
+      "callbacks": {}
+    },
+    "ensure_program_config_archive_columns": {
+      "source": "def ensure_program_config_archive_columns():\n    # ``status`` is the programme's archive record; the old is_archived /\n    # is_active flags are gone from curriculum.programmes and are deliberately\n    # absent here, as re-adding them would resurrect the columns empty.\n    #\n    # Schema is migration-owned in production, so this ALTER TABLE path is\n    # confined to test/local provisioning.\n    if not schema_gate.runtime_bootstrap_allowed():\n        return\n    try:\n        ensure_columns('programmes', {\n            'level': 'varchar(64)',\n            'color': 'varchar(32)',\n            'description': 'text',\n            'status': 'varchar(32)',\n            'ksb_profile_source_id': 'varchar(128)',\n            'required_otjh': 'numeric(8, 2)',\n            'display_order': 'integer',\n        })\n    except Exception as exc:\n        logger.warning('Could not inspect programme config archive columns: %s', exc)\n        return\n    if has_column('programmes', 'status'):\n        try:\n            update_rows('programmes', \"coalesce(btrim(status), '') = ''\", [], {'status': 'active'})\n        except Exception:\n            pass",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.infrastructure.authoring_schema",
+      "deps": [
+        "ensure_columns",
+        "has_column",
+        "logger",
+        "schema_gate",
+        "update_rows"
+      ],
+      "callbacks": {}
+    },
+    "unassign_authoring_modules_from_group": {
+      "source": "def unassign_authoring_modules_from_group(group_id, keep_catalogue_ids=None):\n    \"\"\"Clear this group's omitted module links from ``curriculum.modules``.\n\n    Module Builder content is preserved; only the delivery relationship columns\n    are cleared for modules no longer present in the group's saved draft.\n    \"\"\"\n    group_id = clean_str(group_id)\n    keep = {clean_str(value) for value in (keep_catalogue_ids or []) if clean_str(value)}\n    if not group_id:\n        return []\n    rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, 'group_id = %s', [group_id])\n    removed = []\n    for row in rows:\n        module_id = clean_str(row.get('module_catalogue_id'))\n        if module_id in keep:\n            continue\n        update_authoring_rows(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_id], {\n            'cohort_id': None,\n            'group_id': None,\n        })\n        removed.append(module_id)\n    return removed",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.infrastructure.hierarchy_writes",
+      "deps": [
+        "AUTHORING_MODULES_TABLE",
+        "authoring_fetch_all",
+        "clean_str",
+        "update_authoring_rows"
+      ],
+      "callbacks": {}
+    },
+    "update_authoring_delivery_rows": {
+      "source": "def update_authoring_delivery_rows(rows, status):\n    updates = []\n    updated_at = datetime.utcnow()\n    targets = [\n        ('modules', 'module_catalogue_id', unique_row_values(rows, TRAINING_MODULE_CATALOGUE_COLUMN), {'status': status, 'updated_at': updated_at}),\n        ('groups', 'group_id', unique_row_values(rows, 'group_id'), {'status': status, 'updated_at': updated_at}),\n        ('cohorts', 'cohort_id', unique_row_values(rows, 'cohort_id'), {'status': status, 'updated_at': updated_at}),\n    ]\n    for table, key_column, ids, payload in targets:\n        if not ids or not table_exists(table):\n            continue\n        placeholders = ', '.join(['%s'] * len(ids))\n        values = filtered_payload(table, payload)\n        if not values:\n            continue\n        updates.extend(update_rows(table, f'{quote_ident(key_column)} in ({placeholders})', ids, values))\n    return updates",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.infrastructure.lifecycle_writes",
+      "deps": [
+        "TRAINING_MODULE_CATALOGUE_COLUMN",
+        "datetime",
+        "filtered_payload",
+        "quote_ident",
+        "table_exists",
+        "unique_row_values",
+        "update_rows"
+      ],
+      "callbacks": {}
+    }
+  },
+  "removed": {
+    "_notes_with_authoring_meta": {
+      "source": "def _notes_with_authoring_meta(module_row, programme_row=None, cohort_row=None, group_row=None):\n    module_row = module_row or {}\n    programme_row = programme_row or {}\n    cohort_row = cohort_row or {}\n    group_row = group_row or {}\n    notes = clean_str(module_row.get('notes'))\n    meta = {\n        'program_id': module_row.get('programme_id') or programme_row.get('program_id'),\n        'cohort_id': module_row.get('cohort_id') or cohort_row.get('cohort_id') or group_row.get('cohort_id'),\n        'cohort_end_date': module_row.get('end_date') or cohort_row.get('end_date'),\n        'group_id': module_row.get('group_id') or group_row.get('group_id'),\n        'group_name': module_row.get('group_name') or group_row.get('group_name'),\n        'coach_name': group_row.get('coach_name'),\n        'module_catalogue_id': module_row.get('module_catalogue_id'),\n        'module_color': module_row.get('color') or programme_row.get('color'),\n    }\n    meta_lines = [f'__{key}:{value}' for key, value in meta.items() if clean_str(value)]\n    return '\\n'.join([notes, *meta_lines]).strip()",
+      "index": 430
+    },
+    "merge_duplicate_program_configs_by_name": {
+      "source": "def merge_duplicate_program_configs_by_name(*, allow_writes=False):\n    \"\"\"Collapse programme configs that share a name onto a single row.\n\n    This DELETES rows, so it only runs when a caller explicitly opts in via\n    allow_writes. It used to run from get_program_config_rows() — a read path\n    hit by nearly every curriculum request — which meant an ordinary GET could\n    silently destroy production rows.\n    \"\"\"\n    global _PROGRAMME_CONFIG_DEDUP_READY\n    if not allow_writes:\n        return\n    if _PROGRAMME_CONFIG_DEDUP_READY:\n        return\n    _PROGRAMME_CONFIG_DEDUP_READY = True\n    try:\n        configs = get_program_config_rows_raw()\n    except Exception:\n        logger.debug('Could not load programme configs for duplicate cleanup.', exc_info=True)\n        return\n\n    by_name = defaultdict(list)\n    for config in configs:\n        name_key = normalise(config.get('name'))\n        if name_key:\n            by_name[name_key].append(config)\n\n    changed = False\n    reference_tables = [\n        AUTHORING_MODULES_TABLE,\n        GROUPS_TABLE,\n        COHORT_AUTHORING_DETAILS_TABLE,\n        AUTHORING_KSB_MAPPINGS_TABLE,\n        FREE_PROGRAMME_MODULES_TABLE,\n        FREE_PROGRAMME_COMPONENTS_TABLE,\n    ]\n    for duplicates in by_name.values():\n        if len(duplicates) <= 1:\n            continue\n        canonical = max(duplicates, key=program_config_preference)\n        canonical_id = programme_config_identity(canonical)\n        canonical_name = clean_str(canonical.get('name'))\n        if not canonical_id:\n            continue\n        for duplicate in duplicates:\n            duplicate_id = programme_config_identity(duplicate)\n            if not duplicate_id or duplicate_id == canonical_id:\n                continue\n            try:\n                # Reassign children FIRST. If this raises, the delete below is\n                # skipped and the row survives with its children intact —\n                # deleting first would orphan them irrecoverably.\n                for table in reference_tables:\n                    update_programme_reference_table(table, duplicate_id, canonical_id, canonical_name)\n                key_column = programme_config_key_column()\n                key_value = duplicate.get(key_column)\n                if key_value is None:\n                    logger.warning(\n                        'Skipping dedup delete for programme %s: no %s value on the row.',\n                        duplicate_id, key_column,\n                    )\n                    continue\n                logger.info('Dedup: merging programme %s into %s and deleting the duplicate.',\n                            duplicate_id, canonical_id)\n                delete_rows('programmes', f'{quote_ident(key_column)} = %s', [key_value])\n                changed = True\n            except Exception:\n                logger.warning('Could not merge duplicate programme config %s; left in place.',\n                               duplicate_id, exc_info=True)\n    if changed:\n        invalidate_curriculum_cache()",
+      "index": 443
+    },
+    "update_programme_reference_table": {
+      "source": "def update_programme_reference_table(table, old_id, new_id, programme_name):\n    if not old_id or not new_id or old_id == new_id:\n        return\n    try:\n        if not table_exists(table) or not has_column(table, 'programme_id'):\n            return\n        payload = {'programme_id': new_id}\n        if has_column(table, 'programme_name'):\n            payload['programme_name'] = programme_name\n        update_rows(table, f'{quote_ident(\"programme_id\")} = %s', [old_id], payload)\n    except Exception:\n        logger.debug('Could not reassign %s rows from programme %s to %s.', table, old_id, new_id, exc_info=True)",
+      "index": 437
+    },
+    "sync_group_authoring_details_from_modules": {
+      "source": "def sync_group_authoring_details_from_modules():\n    try:\n        module_rows = safe_authoring_module_rows()\n        groups_by_id = {}\n        for row in module_rows:\n            group_id = clean_str(row.get('group_id'))\n            group_name = clean_str(row.get('group_name'))\n            if not group_id:\n                continue\n            group = groups_by_id.setdefault(group_id, {\n                'id': group_id,\n                'name': group_name or group_id,\n                'cohortId': clean_str(row.get('cohort_id')),\n                'cohort': clean_str(row.get('cohort_name')),\n                'programmeId': clean_str(row.get('programme_id')),\n                'programme': clean_str(row.get('programme_name')),\n                'weekDays': clean_str(row.get('session_week_day')),\n                'startTime': clean_str(row.get('session_start_time')),\n                'endTime': clean_str(row.get('session_end_time')),\n                'mode': 'Live',\n                'status': clean_str(row.get('status')) or 'planned',\n                'modules': [],\n            })\n            if row.get('title'):\n                group['modules'].append(row.get('title'))\n            if not clean_str(group.get('weekDays')) and clean_str(row.get('session_week_day')):\n                group['weekDays'] = clean_str(row.get('session_week_day'))\n            if not clean_str(group.get('startTime')) and clean_str(row.get('session_start_time')):\n                group['startTime'] = clean_str(row.get('session_start_time'))\n            if not clean_str(group.get('endTime')) and clean_str(row.get('session_end_time')):\n                group['endTime'] = clean_str(row.get('session_end_time'))\n        for group in groups_by_id.values():\n            group['modules'] = unique(group.get('modules') or [])\n            persist_group_authoring_detail(group, [], module_rows)\n    except (Exception, AssertionError) as exc:\n        logger.warning('Could not sync group authoring details from modules: %s', exc)",
+      "index": 626
+    },
+    "_PROGRAMME_CONFIG_DEDUP_READY": {
+      "source": "_PROGRAMME_CONFIG_DEDUP_READY = False",
+      "index": 89
+    }
+  },
+  "flags": "_SCHEMA_READY_FLAGS = (\n    '_AUTHORING_TABLES_READY',\n    '_FREE_PROGRAMME_TABLES_READY',\n    '_PROGRAMME_CONFIG_DEDUP_READY',\n    '_TRAINING_PLAN_CANONICAL_READY',\n    '_LIVE_SESSIONS_TABLE_READY',\n    '_LIVE_SESSION_TRACKING_TABLES_READY',\n    '_WEEK_TEMPLATE_TABLES_READY',\n)"
+}

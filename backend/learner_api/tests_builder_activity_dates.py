@@ -17,7 +17,7 @@ class BuilderActivityDatesTests(SimpleTestCase):
             [(component_id, 'MOD-1', week_id, title, kind, settings)
              for component_id, week_id, title, kind, settings in components],
         ]
-        with patch('curriculum_api.views.cohort_selected_holidays_by_cohort',
+        with patch('curriculum_api.catalogue.infrastructure.cohort_calendar_composition.cohort_selected_holidays_by_cohort',
                    return_value={'COHORT-1': holidays or []}) as read_holidays, \
              patch('curriculum_api.views.ensure_module_authoring_tables') as ensure_tables:
             result = read_builder_activity_dates(self.cursor, ['MOD-1'])
@@ -148,7 +148,7 @@ class BuilderActivityDatesTests(SimpleTestCase):
                      for component_id, week_id, title, kind, settings in components]
         # A component of a module the Builder does not list (e.g. deleted) is ignored.
         preloaded.append(('OTHER', 'MOD-DELETED', 'W1', 'Other', 'reading', {}))
-        with patch('curriculum_api.views.cohort_selected_holidays_by_cohort', return_value={'COHORT-1': []}):
+        with patch('curriculum_api.catalogue.infrastructure.cohort_calendar_composition.cohort_selected_holidays_by_cohort', return_value={'COHORT-1': []}):
             result = read_builder_activity_dates(cursor, ['MOD-1'], components=preloaded)
         self.assertEqual(result, expected)
         self.assertEqual(cursor.execute.call_count, 2)

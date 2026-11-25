@@ -33,8 +33,12 @@ Dry-run by default: pass --apply to write.
 """
 from django.core.management.base import BaseCommand
 
-from ... import review_types
-from ... import reviews
+import curriculum_api.review_management.domain.classification as review_domain_classification
+import curriculum_api.review_management.infrastructure.type_rows as review_infrastructure_type_rows
+import curriculum_api.review_management.infrastructure.type_schema as review_infrastructure_type_schema
+import curriculum_api.review_management.infrastructure.relations as review_infrastructure_relations
+import curriculum_api.review_management.infrastructure.template_rows as review_infrastructure_template_rows
+import curriculum_api.review_management.infrastructure.template_schema as review_infrastructure_template_schema
 from ... import views as curriculum_views
 
 
@@ -46,31 +50,31 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         apply_changes = options["apply"]
-        reviews.ensure_review_tables()
-        review_types.ensure_review_types_table()
+        review_infrastructure_template_schema.ensure_review_tables()
+        review_infrastructure_type_schema.ensure_review_types_table()
 
         if apply_changes:
-            seeded = review_types.seed_system_review_types()
+            seeded = review_infrastructure_type_schema.seed_system_review_types()
             self.stdout.write(f"Seeded system review types: {', '.join(seeded) if seeded else 'none missing'}")
         else:
-            present = {curriculum_views.clean_str(row.get('code')).lower() for row in review_types.list_review_types(include_inactive=True)}
-            missing = [entry['code'] for entry in review_types.SYSTEM_REVIEW_TYPES if entry['code'] not in present]
+            present = {curriculum_views.clean_str(row.get('code')).lower() for row in review_infrastructure_type_rows.list_review_types(include_inactive=True)}
+            missing = [entry['code'] for entry in review_domain_classification.SYSTEM_REVIEW_TYPES if entry['code'] not in present]
             self.stdout.write(f"Would seed system review types: {', '.join(missing) if missing else 'none missing'}")
 
-        if 'coach_surface' not in curriculum_views.column_names(reviews.REVIEW_TEMPLATES_TABLE):
+        if 'coach_surface' not in curriculum_views.column_names(review_infrastructure_relations.REVIEW_TEMPLATES_TABLE):
             self.stdout.write("No coach_surface column on review_templates -- nothing to backfill.")
             return
 
         by_code = {}
-        for code in review_types.COACH_SURFACE_LEGACY_CODES.values():
-            row = review_types.get_review_type_by_code(code)
+        for code in review_domain_classification.COACH_SURFACE_LEGACY_CODES.values():
+            row = review_infrastructure_type_rows.get_review_type_by_code(code)
             if row:
                 by_code[code] = row.get('id')
 
         updated = {}
-        for surface, code in review_types.COACH_SURFACE_LEGACY_CODES.items():
+        for surface, code in review_domain_classification.COACH_SURFACE_LEGACY_CODES.items():
             type_id = by_code.get(code)
-            rows = reviews.get_review_template_rows(
+            rows = review_infrastructure_template_rows.get_review_template_rows(
                 'coach_surface = %s and (review_type_id is null or review_type_id = %s)',
                 [surface, ''],
                 include_deleted=True,
@@ -89,12 +93,12 @@ class Command(BaseCommand):
             if apply_changes:
                 for row in rows:
                     curriculum_views.update_rows(
-                        reviews.REVIEW_TEMPLATES_TABLE, 'id = %s', [row.get('id')],
+                        review_infrastructure_relations.REVIEW_TEMPLATES_TABLE, 'id = %s', [row.get('id')],
                         {'review_type_id': type_id},
                     )
             updated[surface] = len(rows)
 
-        unclassified = reviews.get_review_template_rows(
+        unclassified = review_infrastructure_template_rows.get_review_template_rows(
             'review_type_id is null or review_type_id = %s', [''],
         )
         if apply_changes:

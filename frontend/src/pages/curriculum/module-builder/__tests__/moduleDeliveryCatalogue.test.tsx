@@ -3,8 +3,8 @@ import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, MemoryRouter, RouterProvider, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
-import type { CurriculumCohort, CurriculumGroup, CurriculumModule, CurriculumProgramme } from '@/lib/curriculumApi';
-import { fetchCurriculumDeliveryScope, fetchCurriculumOverview, fetchCurriculumTeamsMeetingSummaries } from '@/lib/curriculumApi';
+import type { CurriculumCohort, CurriculumGroup, CurriculumModule, CurriculumProgramme, FreeCourseAuthoringDocument } from '@/lib/curriculumApi';
+import { fetchCurriculumDeliveryScope, fetchCurriculumOverview, fetchCurriculumTeamsMeetingSummaries, fetchFreeCourseAuthoringCourse } from '@/lib/curriculumApi';
 import { fetchAssignedLearners } from '@/api/assignedLearners';
 import { fetchModuleCatalogueActivity } from '@/api/moduleCatalogueActivity';
 import { clearAllCachedResources } from '@/api/cachedRequest';
@@ -189,6 +189,28 @@ vi.mock('@/hooks/useCurriculumKsbSets', () => ({
   }),
 }));
 
+function freeCourseDocuments(): FreeCourseAuthoringDocument[] {
+  return modules.filter(module => module.isFreeCourse).map(module => ({
+    schemaVersion: '1', scope: 'course', revision: 'synthetic-revision',
+    course: { courseId: `FREE-${module.moduleCatalogueId}`, courseName: module.name,
+      description: '', coverImageUrl: '', displayOrder: 0, courseType: 'free',
+      isForSale: module.isForSale === true, price: module.price ?? null, currency: 'GBP' },
+    weeks: Array.from({ length: module.weeks || 0 }, (_, index) => ({
+      freeCourseWeekId: `FREE-WEEK-${index}`, legacyCopiedFromWeekId: null, weekNumber: index + 1,
+      title: `Week ${index + 1}`, summary: '', learningOutcomes: [], status: 'active',
+      holidayNoteEnabled: false, holidayNote: '', displayOrder: index, components: [],
+    })),
+    integrity: { status: 'ok', issues: [], legacyQuizReferenceCount: 0 },
+  }));
+}
+
+function freeCourseCatalogue() {
+  const documents = freeCourseDocuments();
+  return { schemaVersion: '1', scope: 'catalogue', revision: 'synthetic-catalogue', documents,
+    courses: documents.map(document => ({ ...document.course, weekCount: document.weeks.length,
+      componentCount: 0, totalOtjh: 0, authoringHref: '' })) };
+}
+
 vi.mock('@/lib/curriculumApi', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/curriculumApi')>()),
   fetchCurriculumStandards: vi.fn(async () => []),
@@ -197,11 +219,14 @@ vi.mock('@/lib/curriculumApi', async importOriginal => ({
   fetchCurriculumOverview: vi.fn(async () => ({ programmes, cohorts, groups, modules })),
   fetchCurriculumDeliveryScope: vi.fn(async () => ({ cohorts, groups })),
   fetchCurriculumHolidays: vi.fn(async () => []),
-  // The tab badge reads the free-course count on mount (page.tsx); unmocked it
-  // hits the network and the undefined catalogue crashes the whole page.
-  fetchFreeCourseAuthoringCatalogue: vi.fn(async () => ({ revision: 'test', courses: freeDocuments().map(document => document.course) })),
-  fetchFreeCourseAuthoringCatalogueWithDocuments: vi.fn(async () => ({ revision: 'test', courses: freeDocuments().map(document => document.course), documents: freeDocuments() })),
-  fetchFreeCourseAuthoringCourse: vi.fn(async (id: string) => freeDocuments().find(document => document.course.courseId === id)),
+  // Free courses now use their native catalogue/document API and distinct IDs.
+  fetchFreeCourseAuthoringCatalogue: vi.fn(async () => freeCourseCatalogue()),
+  fetchFreeCourseAuthoringCatalogueWithDocuments: vi.fn(async () => freeCourseCatalogue()),
+  fetchFreeCourseAuthoringCourse: vi.fn(async (id: string) => {
+    const document = freeCourseDocuments().find(item => item.course.courseId === id);
+    if (!document) throw new Error(`Unknown synthetic free course: ${id}`);
+    return document;
+  }),
   fetchCurriculumScopeLearnerKsbImpact: (...args: unknown[]) => fetchCurriculumScopeLearnerKsbImpact(...args),
 }));
 
@@ -456,7 +481,8 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
     await renderCatalogue();
     expect(screen.getByRole('button', { name: 'New module' })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Free course' }));
-    expect(await screen.findByLabelText('Course name')).toBeVisible();
+    expect(await screen.findByRole('heading', { name: 'Add free course' })).toBeVisible();
+    expect(screen.getByLabelText('Course name')).toHaveValue('');
   });
 
   it('keeps standalone free courses visible in All modules without a programme', async () => {
@@ -478,9 +504,10 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
       programme: '', programmeId: '', weeks: 2, lessons: 1, assignments: 0 } as CurriculumModule);
     await renderCatalogue('?catalogue=free', 'Paid independent study');
     const card = cardFor('Paid independent study');
-    expect(card.getByText('For sale · £49.99')).toBeInTheDocument();
+    expect(card.getByText(/£49\.99/)).toBeInTheDocument();
     await userEvent.click(card.getByRole('button', { name: 'Edit' }));
     expect(await screen.findByLabelText('Price (GBP)')).toHaveValue('49.99');
+    expect(fetchFreeCourseAuthoringCourse).toHaveBeenCalledWith('FREE-MOD-PRICED', expect.any(AbortSignal));
   });
 
   it('filters independent free courses without delivery restrictions and restores the module filters', async () => {
@@ -519,7 +546,7 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
     expect(screen.getByLabelText('Tutor')).toHaveTextContent('All tutors');
   });
 
-  it('opens a free-course deep link and its existing edit form without waiting for live-teaching activity', async () => {
+  it('opens a free-course deep link and its native editor without waiting for live-teaching activity', async () => {
     const user = userEvent.setup();
     modules.push({ id: 'MOD-FREE', moduleCatalogueId: 'MOD-FREE', name: 'Independent study',
       isFreeCourse: true, programme: '', programmeId: '', weeks: 2, lessons: 1, assignments: 0 } as CurriculumModule);
@@ -527,19 +554,14 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
     await renderCatalogue('?catalogue=free', 'Independent study');
     expect(screen.getAllByRole('article')).toHaveLength(1);
     await user.click(cardFor('Independent study').getByRole('button', { name: 'Edit' }));
-    expect(await screen.findByLabelText('Course name')).toBeVisible();
-    expect(screen.getByLabelText('Course name')).toHaveValue('Independent study');
+    expect(await screen.findByLabelText('Course name')).toHaveValue('Independent study');
+    expect(fetchFreeCourseAuthoringCourse).toHaveBeenCalledWith('FREE-MOD-FREE', expect.any(AbortSignal));
   });
 
   it('keeps the free-course filter in the address when opening content and returning', async () => {
     const user = userEvent.setup();
     modules.push({ id: 'MOD-FREE', moduleCatalogueId: 'MOD-FREE', name: 'Independent study',
       isFreeCourse: true, programme: '', programmeId: '', weeks: 0, lessons: 0, assignments: 0 } as CurriculumModule);
-    vi.mocked(fetch).mockImplementation(async () => new Response(JSON.stringify({
-      id: 'module-MOD-FREE', catalogueId: 'MOD-FREE', title: 'Independent study', isFreeCourse: true,
-      programmeId: '', programmeName: '', status: 'draft', weekStructure: [], moduleKsbMappings: [],
-      sessionsNumber: 0, weeks: 0, completionCriteria: {}, advancedDetails: {},
-    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
     window.history.replaceState({}, '', '/curriculum/module-builder');
     const { default: ModuleBuilder } = await import('../page');
     const router = createMemoryRouter([{ path: '*', element: <><ModuleBuilder /><HistoryProbe /></> }], {
@@ -552,8 +574,8 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
     await screen.findByRole('heading', { name: 'Independent study', level: 3 });
     await user.click(cardFor('Independent study').getByRole('button', { name: 'Edit' }));
     await screen.findByText('Course structure');
-    await waitFor(() => expect(screen.getByTestId('history-location')).toHaveTextContent('freeCourse=MOD-FREE'));
-    expect(new URLSearchParams(router.state.location.search).get('returnTo')).toBe('/curriculum/module-builder?catalogue=free');
+    await waitFor(() => expect(screen.getByTestId('history-location')).toHaveTextContent('freeCourse=FREE-MOD-FREE'));
+    expect(new URLSearchParams(router.state.location.search).get('returnTo')).toContain('catalogue=free');
     await act(async () => { await router.navigate(-1); });
     await waitFor(() => expect(router.state.location.search).not.toContain('freeCourse='));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Free courses' })).toHaveAttribute('aria-pressed', 'true'));

@@ -340,7 +340,7 @@ class SubjectCacheCases(unittest.TestCase):
             with connection.cursor() as cur:
                 cur.execute("UPDATE curriculum.modules SET title='Renamed' WHERE module_catalogue_id='MOD-1'")
             views.invalidate_curriculum_cache()
-            views._SHARED_EPOCH_STATE['checked_at'] = 0.0
+            views.cache_state._SHARED_EPOCH_STATE['checked_at'] = 0.0
         self.assertEqual(self.assert_changed_after(self.first, rename), [('MOD-1', 'Renamed')])
         with connection.cursor() as cur:
             cur.execute("UPDATE curriculum.modules SET title='One' WHERE module_catalogue_id='MOD-1'")

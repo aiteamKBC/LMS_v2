@@ -1,0 +1,217 @@
+{
+  "component_week_label": {
+    "source": "def component_week_label(row):\n    week_number = parse_int(row.get('week_number'), 0)\n    return f'Week {week_number}' if week_number else (row.get('title') or 'Week 1')\n",
+    "module": "curriculum_api.catalogue.application.component_projection",
+    "deps": [
+      "parse_int"
+    ],
+    "bindings": {},
+    "attrs": {},
+    "special": "missing_week",
+    "decorators": []
+  },
+  "component_builder_response": {
+    "source": "def component_builder_response(row, module_by_id=None, week_by_id=None, mappings_by_component=None):\n    module_by_id = module_by_id or {}\n    week_by_id = week_by_id or {}\n    mappings_by_component = mappings_by_component or {}\n    component_id = str(row.get('id'))\n    module = module_by_id.get(str(row.get('module_catalogue_id')), {})\n    week = week_by_id.get(str(row.get('week_id')), {})\n    settings = component_builder_settings(row)\n    duration = parse_int(settings.get('durationMinutes'), 0) or round(float(row.get('expected_otjh') or 0) * 60)\n    expected_otjh = float(row.get('expected_otjh') or 0)\n    mapping_rows = mappings_by_component.get(component_id, [])\n    ksb_mappings = [component_ksb_mapping_api_item(mapping) for mapping in component_ksb_mappings_from_row(row, mapping_rows)]\n    ksb_refs = [mapping.get('code') for mapping in ksb_mappings if mapping.get('code')]\n    return {\n        'id': component_id,\n        'moduleCatalogueId': str(row.get('module_catalogue_id') or ''),\n        'moduleId': str(row.get('module_catalogue_id') or ''),\n        'weekId': str(row.get('week_id') or ''),\n        'title': row.get('title') or '',\n        'description': row.get('description') or '',\n        'type': settings.get('displayType') or display_component_type(row.get('type')),\n        'displayOrder': parse_int(row.get('display_order'), 0),\n        'module': module.get('title') or '',\n        'programme': module.get('programme_name') or 'Unassigned programme',\n        'week': component_week_label(week),\n        'weekTitle': week.get('title') or component_week_label(week),\n        'duration': duration,\n        'expectedOtjh': expected_otjh,\n        'reflectionRequired': bool(row.get('reflection_required')),\n        'workplaceEvidenceRequired': bool(row.get('workplace_evidence_required')),\n        'tutorValidationRequired': bool(row.get('tutor_validation_required')),\n        'expectedOtjh': float(row.get('expected_otjh') or 0),\n        'points': parse_int(row.get('points'), 0),\n        'isDeleted': programme_deleted_row(row),\n        'deletedAt': archived_at(row),\n        'deletedViaParent': row.get('deleted_via_parent') or '',\n        'reflectionRequired': bool_payload(row.get('reflection_required')),\n        'reflectionQuestion': component_reflection_question(row, settings),\n        'workplaceEvidenceRequired': bool_payload(row.get('workplace_evidence_required')),\n        'tutorValidationRequired': bool_payload(row.get('tutor_validation_required')),\n        'coachValidationRequired': component_coach_validation(row),\n        'ksbRefs': ksb_refs,\n        'ksbMappings': ksb_mappings,\n        'status': settings.get('componentBuilderStatus') or 'draft',\n        'lastEdited': format_date(row.get('updated_at')),\n        'contentSections': parse_int(settings.get('contentSections'), 0),\n        'quizQuestions': parse_int(settings.get('quizQuestions'), 0) or None,\n        'hasResources': bool_payload(settings.get('hasResources')),\n        'settings': settings,\n    }\n",
+    "module": "curriculum_api.catalogue.application.component_projection",
+    "deps": [
+      "archived_at",
+      "bool_payload",
+      "component_builder_settings",
+      "component_coach_validation",
+      "component_ksb_mapping_api_item",
+      "component_ksb_mappings_from_row",
+      "component_reflection_question",
+      "component_week_label",
+      "display_component_type",
+      "format_date",
+      "parse_int",
+      "programme_deleted_row"
+    ],
+    "bindings": {},
+    "attrs": {},
+    "special": "",
+    "decorators": []
+  },
+  "sort_rows_by_updated_at_desc": {
+    "source": "def sort_rows_by_updated_at_desc(rows):\n    \"\"\"Reproduce ``order by updated_at desc`` on rows already sorted by the\n    remaining ``order by`` terms.\n\n    Two details make this equal to the database rather than merely similar.\n    Postgres sorts ``desc`` as NULLS FIRST, so a row that has never been\n    stamped leads; the key below puts ``None`` in its own group that ranks\n    above every real timestamp. And ``sorted`` is stable, so rows sharing an\n    ``updated_at`` keep the ``display_order, id`` order they arrived in --\n    which is exactly what the trailing sort terms did.\n    \"\"\"\n    return sorted(\n        rows,\n        key=lambda row: (1, None) if row.get('updated_at') is None else (0, row.get('updated_at')),\n        reverse=True,\n    )\n",
+    "module": "curriculum_api.catalogue.application.component_projection",
+    "deps": [],
+    "bindings": {},
+    "attrs": {},
+    "special": "",
+    "decorators": []
+  },
+  "component_builder_rows": {
+    "source": "def component_builder_rows(module_catalogue_ids=None, omit_content=False, programme_view=False):\n    \"\"\"The component builder rows, whole; or with ``omit_content``, exactly as\n    component_rows_without_content() would project them, with the long text\n    stripped in the database where it can be (live_component_rows_without_content).\n\n    ``programme_view`` is the programme page's projection\n    (component_rows_for_programme_page); it implies ``omit_content``.\n    \"\"\"\n    catalogue_ids = [clean_str(value) for value in (module_catalogue_ids or []) if clean_str(value)]\n    omit_content = omit_content or programme_view\n    keep_keys = (PROGRAMME_PAGE_SETTING_KEYS + COMPONENT_DERIVED_SETTING_KEYS) if programme_view else None\n    stripped_rows = (\n        live_component_rows_without_content(\n            catalogue_ids, keep_keys=keep_keys,\n            exclude_columns=PROGRAMME_VIEW_EXCLUDED_COLUMNS if programme_view else (),\n        )\n        if omit_content else None\n    )\n    if stripped_rows is None:\n        rows = _component_builder_rows(catalogue_ids)\n        if programme_view:\n            return component_rows_for_programme_page(rows)\n        return component_rows_without_content(rows) if omit_content else rows\n    db_omitted_by_id = {\n        str(row.get('id')): list(row.pop(COMPONENT_DB_OMITTED_KEYS_COLUMN, None) or [])\n        for row in stripped_rows\n    }\n    if programme_view:\n        # The columns left out above (the description, the reflection question)\n        # and the mappings' KSB text are missing from every row, so every row\n        # is marked partial: the KSB preview then loads the full row, and a\n        # save built from one is refused (partial_read_errors).\n        already_omitted = {\n            row_id: keys or list(PROGRAMME_VIEW_EXCLUDED_COLUMNS)\n            for row_id, keys in db_omitted_by_id.items()\n        }\n        return component_rows_for_programme_page(\n            _component_builder_rows(\n                catalogue_ids, stripped_rows, mapping_exclude_columns=PROGRAMME_VIEW_EXCLUDED_MAPPING_COLUMNS,\n            ),\n            already_omitted=already_omitted,\n        )\n    projected = []\n    for row in _component_builder_rows(catalogue_ids, stripped_rows):\n        db_omitted = db_omitted_by_id.get(str(row.get('id'))) or []\n        # Anything the database could not strip (a settings document stored\n        # as a JSON string) is still taken out here, so the result never\n        # depends on which path removed the text.\n        row = component_rows_without_content([row])[0]\n        omitted = [\n            key for key in COMPONENT_CONTENT_SETTING_KEYS\n            if key in db_omitted or key in (row.get(COMPONENT_SETTINGS_OMITTED_FLAG) or [])\n        ]\n        if omitted:\n            row = {**row, COMPONENT_SETTINGS_OMITTED_FLAG: omitted}\n        projected.append(row)\n    return projected\n",
+    "module": "curriculum_api.catalogue.application.component_catalogue",
+    "deps": [
+      "COMPONENT_CONTENT_SETTING_KEYS",
+      "COMPONENT_DB_OMITTED_KEYS_COLUMN",
+      "COMPONENT_DERIVED_SETTING_KEYS",
+      "COMPONENT_SETTINGS_OMITTED_FLAG",
+      "PROGRAMME_PAGE_SETTING_KEYS",
+      "PROGRAMME_VIEW_EXCLUDED_COLUMNS",
+      "PROGRAMME_VIEW_EXCLUDED_MAPPING_COLUMNS",
+      "_component_builder_rows",
+      "clean_str",
+      "component_rows_for_programme_page",
+      "component_rows_without_content",
+      "live_component_rows_without_content"
+    ],
+    "bindings": {},
+    "attrs": {},
+    "special": "",
+    "decorators": []
+  },
+  "_component_builder_rows": {
+    "source": "def _component_builder_rows(catalogue_ids, component_rows=None, mapping_exclude_columns=None):\n    ensure_module_authoring_tables()\n    where_sql = ''\n    params = []\n    if catalogue_ids:\n        where_sql = f'module_catalogue_id in ({\", \".join([\"%s\"] * len(catalogue_ids))})'\n        params = catalogue_ids\n    # Read in the same order as get_authoring_structure_payloads() and re-sort\n    # here. order_sql is part of the read memo key, so asking for a second sort\n    # of the identical rows made the programme detail build fetch every\n    # component for the programme twice -- ~28 s of a 64 s build. Ordering the\n    # list is this reader's own concern, not the database's.\n    # Paged and live-only on the database side; see live_component_rows_paged.\n    # Same arguments as the structure reader, so a detail build shares the read.\n    if component_rows is None:\n        component_rows = live_component_rows_paged(catalogue_ids or None, 'display_order, id')\n    component_rows = active_component_rows(component_rows)\n    component_rows = sort_rows_by_updated_at_desc(component_rows)\n    module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, where_sql, params) if catalogue_ids else authoring_fetch_all(AUTHORING_MODULES_TABLE)\n    week_rows = active_week_rows(authoring_fetch_all(AUTHORING_WEEKS_TABLE, where_sql, params) if catalogue_ids else authoring_fetch_all(AUTHORING_WEEKS_TABLE))\n    mapping_rows = active_mapping_rows(\n        authoring_fetch_all(AUTHORING_KSB_MAPPINGS_TABLE, where_sql, params, exclude_columns=mapping_exclude_columns)\n        if catalogue_ids else authoring_fetch_all(AUTHORING_KSB_MAPPINGS_TABLE, exclude_columns=mapping_exclude_columns)\n    )\n    mapping_rows = mappings_with_inferred_sources(mapping_rows, module_rows)\n    module_by_id = {str(row.get('module_catalogue_id')): row for row in module_rows}\n    week_by_id = {str(row.get('id')): row for row in week_rows}\n    mappings_by_component = defaultdict(list)\n    for row in mapping_rows:\n        if row.get('component_id'):\n            mappings_by_component[str(row.get('component_id'))].append(row)\n    return [\n        component_builder_response(row, module_by_id, week_by_id, mappings_by_component)\n        for row in component_rows\n    ]\n",
+    "module": "curriculum_api.catalogue.application.component_catalogue",
+    "deps": [
+      "AUTHORING_KSB_MAPPINGS_TABLE",
+      "AUTHORING_MODULES_TABLE",
+      "AUTHORING_WEEKS_TABLE",
+      "active_component_rows",
+      "active_mapping_rows",
+      "active_week_rows",
+      "authoring_fetch_all",
+      "component_builder_response",
+      "ensure_module_authoring_tables",
+      "live_component_rows_paged",
+      "mappings_with_inferred_sources",
+      "sort_rows_by_updated_at_desc"
+    ],
+    "bindings": {},
+    "attrs": {},
+    "special": "",
+    "decorators": []
+  },
+  "component_summary_rows": {
+    "source": "def component_summary_rows(module_catalogue_ids):\n    \"\"\"Programme-page component figures, one row per module/week/programme bucket.\n\n    Every figure the programme Overview derives from its component list -- how\n    many components, how many published, the Expected OTJH, which weeks hold\n    any -- without sending the ~17k components of the largest programme to\n    the browser to be counted there. Each row carries the fields the page\n    matches and buckets a component by (moduleCatalogueId/moduleId, module,\n    programme, weekId, week, weekTitle), with the same values\n    component_builder_response() gives every component in it, plus:\n\n    ``count``          components in the bucket;\n    ``publishedCount`` of those, the ones whose builder status is 'published';\n    ``otjhMinutes``    sum over them of ``max(0, Math.round(expectedOtjh * 60))``,\n                       the per-component minute rounding the page applies;\n    ``displayOrder`` / ``title``  of the bucket's first component in the order\n                       the page sorts a week by, so a week's fallback title can\n                       be taken from the same component.\n    \"\"\"\n    catalogue_ids = sorted({clean_str(value) for value in (module_catalogue_ids or []) if clean_str(value)})\n    if not catalogue_ids:\n        return []\n    ensure_module_authoring_tables()\n    where_sql = f'module_catalogue_id in ({\", \".join([\"%s\"] * len(catalogue_ids))})'\n    component_rows = component_summary_source_rows(catalogue_ids)\n    module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, where_sql, catalogue_ids, columns=list(COMPONENT_SUMMARY_MODULE_COLUMNS))\n    week_rows = active_week_rows(authoring_fetch_all(AUTHORING_WEEKS_TABLE, where_sql, catalogue_ids, columns=list(COMPONENT_SUMMARY_WEEK_COLUMNS)))\n    module_by_id = {str(row.get('module_catalogue_id')): row for row in module_rows}\n    week_by_id = {str(row.get('id')): row for row in week_rows}\n    buckets = {}\n    for row in component_rows:\n        module = module_by_id.get(str(row.get('module_catalogue_id')), {})\n        week = week_by_id.get(str(row.get('week_id')), {})\n        catalogue_id = str(row.get('module_catalogue_id') or '')\n        key = (\n            catalogue_id,\n            str(row.get('week_id') or ''),\n            component_week_label(week),\n            week.get('title') or component_week_label(week),\n            module.get('title') or '',\n            module.get('programme_name') or 'Unassigned programme',\n        )\n        bucket = buckets.get(key)\n        if bucket is None:\n            bucket = buckets[key] = {\n                'moduleCatalogueId': key[0], 'moduleId': key[0], 'weekId': key[1],\n                'week': key[2], 'weekTitle': key[3], 'module': key[4], 'programme': key[5],\n                'count': 0, 'publishedCount': 0, 'otjhMinutes': 0,\n                'displayOrder': None, 'title': '',\n            }\n        count = int(row.get('_count') or 0)\n        bucket['count'] += count\n        bucket['publishedCount'] += int(row.get('_published') or 0)\n        bucket['otjhMinutes'] += count * max(0, js_round(float(row.get('expected_otjh') or 0) * 60))\n        order = parse_int(row.get('display_order'), 0)\n        title = row.get('title') or ''\n        if bucket['displayOrder'] is None or (order, title) < (bucket['displayOrder'], bucket['title']):\n            bucket['displayOrder'] = order\n            bucket['title'] = title\n    # ``ksbCodes``: the distinct KSB codes mapped to the bucket's components, so\n    # a module's KSB count needs no component list. Absent (not empty) when the\n    # mappings cannot be read this way; the page then reads the full list.\n    ksb_codes = component_summary_ksb_codes(catalogue_ids)\n    if ksb_codes is not None:\n        for bucket in buckets.values():\n            bucket['ksbCodes'] = sorted(ksb_codes.get((bucket['moduleCatalogueId'], bucket['weekId']), ()))\n    return list(buckets.values())\n",
+    "module": "curriculum_api.catalogue.application.component_catalogue",
+    "deps": [
+      "AUTHORING_MODULES_TABLE",
+      "AUTHORING_WEEKS_TABLE",
+      "COMPONENT_SUMMARY_MODULE_COLUMNS",
+      "COMPONENT_SUMMARY_WEEK_COLUMNS",
+      "active_week_rows",
+      "authoring_fetch_all",
+      "clean_str",
+      "component_summary_ksb_codes",
+      "component_summary_source_rows",
+      "component_week_label",
+      "ensure_module_authoring_tables",
+      "js_round",
+      "parse_int"
+    ],
+    "bindings": {},
+    "attrs": {},
+    "special": "",
+    "decorators": []
+  },
+  "library_component_where": {
+    "source": "def library_component_where(*, search='', types=None, origins=None, ids=None):\n    \"\"\"The SQL predicate for a library search. Everything filters in the database.\n\n    Origin is expressed in SQL rather than in Python so that the LIMIT applies\n    to the rows the caller actually asked for. The archive state separates\n    active from archived; the detached ``library`` bucket is always empty.\n    \"\"\"\n    clauses = []\n    params = []\n    wanted_ids = sorted({clean_str(value) for value in (ids or []) if clean_str(value)})\n    if wanted_ids:\n        placeholders = ', '.join(['%s'] * len(wanted_ids))\n        clauses.append(f'id in ({placeholders})')\n        params.extend(wanted_ids)\n    search = clean_str(search).lower()\n    if search:\n        # lower(...) like ... rather than ilike, so the same SQL runs on the\n        # SQLite test database as on Postgres.\n        clauses.append(\n            \"(lower(coalesce(title, '')) like %s or lower(coalesce(description, '')) like %s)\"\n        )\n        params.extend([f'%{search}%'] * 2)\n    wanted_types = sorted({normalise_component_type(value) for value in (types or []) if clean_str(value)})\n    if wanted_types:\n        placeholders = ', '.join(['%s'] * len(wanted_types))\n        clauses.append(f'type in ({placeholders})')\n        params.extend(wanted_types)\n    retired = sorted(RETIRED_COMPONENT_TYPES)\n    if retired:\n        # Retired types cannot be authored any more, so reusing one is a dead end.\n        placeholders = ', '.join(['%s'] * len(retired))\n        clauses.append(f'type not in ({placeholders})')\n        params.extend(retired)\n\n    wanted_origins = {clean_str(value).lower() for value in (origins or []) if clean_str(value)}\n    wanted_origins = wanted_origins & set(LIBRARY_ORIGINS) or set(LIBRARY_ORIGINS)\n    if wanted_origins != set(LIBRARY_ORIGINS):\n        # Nothing is ever detached, so the 'library' bucket matches no row.\n        archived = deleted_sql_condition(AUTHORING_COMPONENTS_TABLE)\n        origin_sql = {\n            LIBRARY_ORIGIN_LIBRARY: '(1 = 0)',\n            LIBRARY_ORIGIN_ARCHIVED: f'({archived})',\n            LIBRARY_ORIGIN_ACTIVE: f'(not ({archived}))',\n        }\n        # No placeholders here on purpose: every fragment is built from module\n        # constants, so there is nothing to bind and nothing to get out of order\n        # with the clauses appended above.\n        clauses.append('(' + ' or '.join(\n            origin_sql[origin] for origin in sorted(wanted_origins) if origin in origin_sql\n        ) + ')')\n    return ' and '.join(clauses), params\n",
+    "module": "curriculum_api.catalogue.infrastructure.library_reads",
+    "deps": [
+      "AUTHORING_COMPONENTS_TABLE",
+      "LIBRARY_ORIGINS",
+      "LIBRARY_ORIGIN_ACTIVE",
+      "LIBRARY_ORIGIN_ARCHIVED",
+      "LIBRARY_ORIGIN_LIBRARY",
+      "RETIRED_COMPONENT_TYPES",
+      "clean_str",
+      "deleted_sql_condition",
+      "normalise_component_type"
+    ],
+    "bindings": {},
+    "attrs": {},
+    "special": "",
+    "decorators": []
+  },
+  "rows_for_ids": {
+    "source": "def rows_for_ids(table, column, values):\n    \"\"\"Fetch just the rows these ids name. No ids means no query at all.\"\"\"\n    wanted = sorted({clean_str(value) for value in (values or []) if clean_str(value)})\n    if not wanted or not table_exists(table):\n        return []\n    placeholders = ', '.join(['%s'] * len(wanted))\n    # Module rows carry their programme / cohort / group names, as on every read.\n    return curriculum_names.attach(table, fetch_all(\n        f'select * from {authoring_table_name(table)} where {quote_ident(column)} in ({placeholders})',\n        wanted,\n    ))\n",
+    "module": "curriculum_api.catalogue.infrastructure.library_reads",
+    "deps": [
+      "attach_curriculum_names",
+      "clean_str",
+      "fetch_all",
+      "quote_ident",
+      "read_source"
+    ],
+    "bindings": {
+      "attach_curriculum_names": "lambda *args, **kwargs: curriculum_names.attach(*args, **kwargs)",
+      "read_source": "lambda table: ksb_mapping_placement.read_source(table)"
+    },
+    "attrs": {
+      "attach_curriculum_names": "curriculum_names.attach"
+    },
+    "special": "normalized_ksb",
+    "decorators": []
+  },
+  "library_component_rows": {
+    "source": "def library_component_rows(*, search='', types=None, programme_ids=None, origins=None,\n                           ids=None, page=1, page_size=LIBRARY_PAGE_SIZE_DEFAULT, detail=False):\n    \"\"\"Components available for reuse, across every programme ever authored.\n\n    Deliberately does NOT go through ``active_component_rows``: archived and\n    detached content is the point of this read, and that filter is exactly what\n    removes it.\n\n    Every filter and the page window are pushed into SQL, and the list omits\n    ``settings_json``. That is not a micro-optimisation. ``curriculum.components``\n    holds ~18k rows and 39 MB, 24 MB of it ``settings_json``, and the database is\n    remote: reading the table in full measured ~90 s against ~190 ms for a\n    narrow, limited read.\n\n    ``detail=True`` returns the heavy authoring fields (``settings``,\n    ``ksbMappings``) and is meant to be called with ``ids``, for the handful of\n    components actually being copied.\n    \"\"\"\n    ensure_module_authoring_tables()\n    where_sql, params = library_component_where(search=search, types=types, origins=origins, ids=ids)\n    page = max(1, parse_int(page, 1))\n    page_size = min(LIBRARY_PAGE_SIZE_MAX, max(1, parse_int(page_size, LIBRARY_PAGE_SIZE_DEFAULT)))\n\n    if detail:\n        columns = '*'\n    else:\n        columns = ', '.join(\n            quote_ident(column) for column in LIBRARY_LIST_COLUMNS\n            if has_column(AUTHORING_COMPONENTS_TABLE, column)\n        )\n    query = f'select {columns} from {learning_read_table(AUTHORING_COMPONENTS_TABLE)}'\n    if where_sql:\n        query += f' where {where_sql}'\n    query += ' order by updated_at desc, display_order, id limit %s offset %s'\n    component_rows = fetch_all(query, [*params, page_size, (page - 1) * page_size])\n    if not component_rows:\n        return []\n\n    # Look up only the parents this page refers to. A detached component's module\n    # row may be long gone and an archived one's module is archived too, so these\n    # cannot go through the active-only helpers.\n    module_by_id = {\n        str(row.get('module_catalogue_id')): row\n        for row in rows_for_ids(\n            AUTHORING_MODULES_TABLE, 'module_catalogue_id',\n            {clean_str(row.get('module_catalogue_id')) for row in component_rows},\n        )\n    }\n    week_by_id = {\n        str(row.get('id')): row\n        for row in rows_for_ids(\n            AUTHORING_WEEKS_TABLE, 'id',\n            {clean_str(row.get('week_id')) for row in component_rows},\n        )\n    }\n    mappings_by_component = defaultdict(list)\n    if detail:\n        for row in rows_for_ids(\n            AUTHORING_KSB_MAPPINGS_TABLE, 'component_id',\n            {clean_str(row.get('id')) for row in component_rows},\n        ):\n            mappings_by_component[str(row.get('component_id'))].append(row)\n\n    wanted_programmes = {clean_str(value) for value in (programme_ids or []) if clean_str(value)}\n    results = []\n    for row in component_rows:\n        module = module_by_id.get(str(row.get('module_catalogue_id')), {})\n        week = week_by_id.get(str(row.get('week_id')), {})\n        # Not ``component_week_label(week)`` for a missing week: it returns a\n        # plausible-looking \"Week 1\" for {}, which would mislabel the component.\n        module_title = clean_str(module.get('title')) if module else ''\n        week_label = component_week_label(week) if week else ''\n        module_id = clean_str(row.get('module_catalogue_id'))\n        if wanted_programmes and clean_str(module.get('programme_id')) not in wanted_programmes:\n            continue\n        payload = component_builder_response(row, module_by_id, week_by_id, mappings_by_component)\n        payload.update({\n            'origin': library_component_origin(row),\n            # component_builder_response puts a human label in `type`\n            # (\"Self-study\"), which cannot be copied into a new component.\n            # The authoring type is the hyphenated machine value.\n            'componentType': frontend_component_type(row.get('type')),\n            'originModuleCatalogueId': module_id,\n            'originModuleTitle': module_title,\n            'originWeekId': clean_str(row.get('week_id')),\n            'originWeekLabel': week_label,\n            'detachedAt': None,\n            'copiedFromId': clean_str(row.get('copied_from_id')),\n            'module': module_title,\n            'week': week_label,\n            'weekTitle': clean_str(week.get('title')) if week else week_label,\n        })\n        results.append(payload)\n    return results\n",
+    "module": "curriculum_api.catalogue.application.component_catalogue",
+    "deps": [
+      "AUTHORING_KSB_MAPPINGS_TABLE",
+      "AUTHORING_MODULES_TABLE",
+      "AUTHORING_WEEKS_TABLE",
+      "clean_str",
+      "component_builder_response",
+      "component_week_label",
+      "frontend_component_type",
+      "library_component_origin",
+      "read_library_component_page",
+      "rows_for_ids"
+    ],
+    "bindings": {},
+    "attrs": {},
+    "special": "library_page",
+    "decorators": [],
+    "query_source": "    ensure_module_authoring_tables()\n    where_sql, params = library_component_where(search=search, types=types, origins=origins, ids=ids)\n    page = max(1, parse_int(page, 1))\n    page_size = min(LIBRARY_PAGE_SIZE_MAX, max(1, parse_int(page_size, LIBRARY_PAGE_SIZE_DEFAULT)))\n\n    if detail:\n        columns = '*'\n    else:\n        columns = ', '.join(\n            quote_ident(column) for column in LIBRARY_LIST_COLUMNS\n            if has_column(AUTHORING_COMPONENTS_TABLE, column)\n        )\n    query = f'select {columns} from {learning_read_table(AUTHORING_COMPONENTS_TABLE)}'\n    if where_sql:\n        query += f' where {where_sql}'\n    query += ' order by updated_at desc, display_order, id limit %s offset %s'\n    component_rows = fetch_all(query, [*params, page_size, (page - 1) * page_size])\n",
+    "page_deps": [
+      "AUTHORING_COMPONENTS_TABLE",
+      "AUTHORING_MODULES_TABLE",
+      "LIBRARY_LIST_COLUMNS",
+      "LIBRARY_PAGE_SIZE_DEFAULT",
+      "LIBRARY_PAGE_SIZE_MAX",
+      "authoring_table_name",
+      "clean_str",
+      "ensure_module_authoring_tables",
+      "fetch_all",
+      "has_column",
+      "learning_read_table",
+      "library_component_where",
+      "parse_int",
+      "quote_ident",
+      "database_vendor"
+    ],
+    "page_bindings": {
+      "database_vendor": "lambda: connection.vendor"
+    }
+  },
+  "component_rows_without_content": {
+    "source": "def component_rows_without_content(rows):\n    \"\"\"Component rows with the authored long text taken out of ``settings``.\n\n    A row that lost anything says which keys in ``settingsOmitted``, so its\n    settings are never mistaken for the whole of them; a row without that key\n    is complete. Empty values stay where they are (nothing to save, and no\n    reason to make a reader fetch the row again). Copies rather than edits:\n    the rows may be a cached list other responses share.\n    \"\"\"\n    projected = []\n    for row in rows:\n        settings = row.get('settings')\n        omitted = [\n            key for key in COMPONENT_CONTENT_SETTING_KEYS\n            if isinstance(settings, dict) and settings.get(key) not in (None, '', [], {})\n        ]\n        if not omitted:\n            projected.append(row)\n            continue\n        projected.append({\n            **row,\n            'settings': {key: value for key, value in settings.items() if key not in omitted},\n            COMPONENT_SETTINGS_OMITTED_FLAG: omitted,\n        })\n    return projected\n",
+    "module": "curriculum_api.catalogue.application.component_projection",
+    "deps": [
+      "COMPONENT_CONTENT_SETTING_KEYS",
+      "COMPONENT_SETTINGS_OMITTED_FLAG"
+    ],
+    "bindings": {},
+    "attrs": {},
+    "special": "",
+    "decorators": []
+  },
+  "component_rows_for_programme_page": {
+    "source": "def component_rows_for_programme_page(rows, already_omitted=None):\n    \"\"\"Component rows reduced to what the programme page reads.\n\n    ``settings`` keeps only PROGRAMME_PAGE_SETTING_KEYS (empty values too: the\n    page tests some of them for presence). A row that lost anything -- here, or\n    in the database (``already_omitted``), or already marked -- carries\n    ``settingsOmitted: ['*']`` (PROGRAMME_VIEW_OMITTED_MARKER) and loses the\n    PROGRAMME_PAGE_DROPPED_FIELDS too. Copies rather than edits: the rows may\n    be a cached list.\n    \"\"\"\n    keep = set(PROGRAMME_PAGE_SETTING_KEYS)\n    already_omitted = already_omitted or {}\n    projected = []\n    for row in rows:\n        settings = row.get('settings')\n        settings = settings if isinstance(settings, dict) else {}\n        kept = {key: value for key, value in settings.items() if key in keep}\n        trimmed_here = len(kept) != len(settings)\n        if not (trimmed_here or row.get(COMPONENT_SETTINGS_OMITTED_FLAG)\n                or already_omitted.get(str(row.get('id')))):\n            projected.append(row)\n            continue\n        trimmed = {key: value for key, value in row.items() if key not in PROGRAMME_PAGE_DROPPED_FIELDS}\n        trimmed['settings'] = kept\n        trimmed[COMPONENT_SETTINGS_OMITTED_FLAG] = [PROGRAMME_VIEW_OMITTED_MARKER]\n        projected.append(trimmed)\n    return projected\n",
+    "module": "curriculum_api.catalogue.application.component_projection",
+    "deps": [
+      "COMPONENT_SETTINGS_OMITTED_FLAG",
+      "PROGRAMME_PAGE_DROPPED_FIELDS",
+      "PROGRAMME_PAGE_SETTING_KEYS",
+      "PROGRAMME_VIEW_OMITTED_MARKER"
+    ],
+    "bindings": {},
+    "attrs": {},
+    "special": "",
+    "decorators": []
+  }
+}

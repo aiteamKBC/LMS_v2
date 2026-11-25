@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from .subject_dates import activity_schedule, as_date
+from .weekly_calendar import normalise_projected_calendar
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 
 
@@ -69,6 +70,9 @@ STUDY_WEEK_SCHEDULE_SQL = """CASE WHEN to_jsonb(m)->>'week_boundary_mode'='calen
 def _merge_study_schedule(module):
     schedule = module.pop('study_schedule', None) or {}
     module.update(json.loads(schedule) if isinstance(schedule, str) else schedule)
+    # Raw cursor JSON can contain the text "null". Decode at the read boundary;
+    # malformed non-null values still reach the scheduler's strict validators.
+    module.update(normalise_projected_calendar(module))
 
 
 def read_schedule_components(cursor, module_ids):
@@ -116,9 +120,8 @@ def read_builder_activity_dates(cursor, module_ids, components=None, *, resolved
     """
     if not module_ids:
         return {}
-    from curriculum_api.views import (
-        apply_module_session_plan_to_weeks, cohort_selected_holidays_by_cohort,
-    )
+    from curriculum_api.catalogue.infrastructure.session_plan_persistence import apply_module_session_plan_to_weeks
+    from curriculum_api.catalogue.infrastructure.cohort_calendar_composition import cohort_selected_holidays_by_cohort
 
     if resolved_metadata is not None and all(key in resolved_metadata for key in
                                              ('schedule_modules', 'weeks', 'schedule_components')):

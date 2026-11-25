@@ -17,6 +17,7 @@ Role-rejection for a learner/employer session is not re-tested (same reasoning
 as tests_review_instance_manual_override): @coach_access_required is already
 covered by coach_api.tests_security.
 """
+from curriculum_api.review_management.infrastructure import instance_schema, instance_calendar
 import json
 from datetime import date, time
 from inspect import unwrap
@@ -26,7 +27,21 @@ from unittest.mock import patch
 from django.db import connection, transaction
 from django.test import RequestFactory, TestCase
 
-from curriculum_api import review_instances, review_types, reviews
+import curriculum_api.review_management.api.commands as review_api_commands
+import curriculum_api.review_management.application.instance_answers as review_application_instance_answers
+import curriculum_api.review_management.application.instance_lifecycle as review_application_instance_lifecycle
+import curriculum_api.review_management.application.instance_reopening as review_application_instance_reopening
+import curriculum_api.review_management.application.instance_signatures as review_application_instance_signatures
+import curriculum_api.review_management.domain.instance_rules as review_domain_instance_rules
+import curriculum_api.review_management.infrastructure.instance_calendar as review_infrastructure_instance_calendar
+import curriculum_api.review_management.infrastructure.instance_relations as review_infrastructure_instance_relations
+import curriculum_api.review_management.infrastructure.instance_rows as review_infrastructure_instance_rows
+import curriculum_api.review_management.infrastructure.instance_schema as review_infrastructure_instance_schema
+import curriculum_api.review_management.infrastructure.relations as review_infrastructure_relations
+import curriculum_api.review_management.infrastructure.template_rows as review_infrastructure_template_rows
+import curriculum_api.review_management.infrastructure.template_schema as review_infrastructure_template_schema
+import curriculum_api.review_management.infrastructure.type_rows as review_infrastructure_type_rows
+import curriculum_api.review_management.infrastructure.type_schema as review_infrastructure_type_schema
 from curriculum_api import views as curriculum_views
 
 from . import views as coach_views
@@ -45,15 +60,15 @@ class ReopenReviewInstanceTestCase(TestCase):
         curriculum_views.reset_schema_ready_flags()
         curriculum_views.invalidate_curriculum_cache()
         self._ensure_programmes_table()
-        reviews.provision_review_template_tables()
-        review_types.provision_review_types_table()
-        review_instances.provision_review_instance_tables()
-        review_instances._provision_review_instance_reopens_table()
+        review_infrastructure_template_schema.provision_review_template_tables()
+        review_infrastructure_type_schema.provision_review_types_table()
+        review_infrastructure_instance_schema.provision_review_instance_tables()
+        review_infrastructure_instance_schema._provision_review_instance_reopens_table()
         # Marks the reopens gate satisfied so ensure_review_instance_reopens_
         # table never runs its first CREATE TABLE partway through a test -- the
         # same hazard mark_review_instance_in_progress_manually documents for
         # the manual-overrides table.
-        review_instances._REOPENS_TABLE_READY = True
+        instance_schema._REOPENS_TABLE_READY = True
         self._clear()
         self._programme()
 
@@ -76,16 +91,16 @@ class ReopenReviewInstanceTestCase(TestCase):
 
     def _clear(self):
         for table in (
-            review_instances.REVIEW_INSTANCE_REOPENS_TABLE,
-            review_instances.REVIEW_INSTANCE_SIGNATURES_TABLE,
-            review_instances.REVIEW_INSTANCE_ANSWERS_TABLE,
-            review_instances.REVIEW_INSTANCES_TABLE,
-            reviews.REVIEW_FIELDS_TABLE, reviews.REVIEW_SECTIONS_TABLE,
-            reviews.REVIEW_TEMPLATES_TABLE, review_types.REVIEW_TYPES_TABLE, 'programmes',
+            review_infrastructure_instance_relations.REVIEW_INSTANCE_REOPENS_TABLE,
+            review_infrastructure_instance_relations.REVIEW_INSTANCE_SIGNATURES_TABLE,
+            review_infrastructure_instance_relations.REVIEW_INSTANCE_ANSWERS_TABLE,
+            review_infrastructure_instance_relations.REVIEW_INSTANCES_TABLE,
+            review_infrastructure_relations.REVIEW_FIELDS_TABLE, review_infrastructure_relations.REVIEW_SECTIONS_TABLE,
+            review_infrastructure_relations.REVIEW_TEMPLATES_TABLE, review_infrastructure_relations.REVIEW_TYPES_TABLE, 'programmes',
         ):
             with connection.cursor() as cursor:
                 cursor.execute(f'delete from {curriculum_views.authoring_table_name(table)}')
-        review_types.seed_system_review_types()
+        review_infrastructure_type_schema.seed_system_review_types()
 
     def _programme(self):
         curriculum_views.insert_row('programmes', {
@@ -96,8 +111,8 @@ class ReopenReviewInstanceTestCase(TestCase):
         curriculum_views.invalidate_curriculum_cache()
 
     def _template(self):
-        type_id = review_types.get_review_type_by_code('mcm')['id']
-        review_id, errors = reviews.create_review('PROG-REOPEN', {
+        type_id = review_infrastructure_type_rows.get_review_type_by_code('mcm')['id']
+        review_id, errors = review_api_commands.create_review('PROG-REOPEN', {
             'name': 'Monthly Coaching Meeting',
             'enabled': True, 'reviewTypeId': type_id,
             'recurrence': {'interval': 4, 'unit': 'weeks'}, 'scheduleAnchorDate': '2026-01-01',
@@ -136,30 +151,30 @@ class ReopenReviewInstanceTestCase(TestCase):
 
         force_review_instance_status_for_tests stands in for the real trigger
         (confirmed Teams attendance) exactly as it does in
-        curriculum_api.tests_review_instances.
+        curriculum_api.review_management.tests.tests_review_instances.
         """
         record, review_id = self._linked_row()
-        field_id = reviews.get_review_field_rows(review_id)[0]['id']
-        review_instances.force_review_instance_status_for_tests(
-            record.review_instance_id, review_instances.STATUS_IN_PROGRESS, actor='test',
+        field_id = review_infrastructure_template_rows.get_review_field_rows(review_id)[0]['id']
+        review_infrastructure_instance_rows.force_review_instance_status_for_tests(
+            record.review_instance_id, review_domain_instance_rules.STATUS_IN_PROGRESS, actor='test',
         )
         record.status = CoachCalendarEvent.STATUS_IN_PROGRESS
         record.save(update_fields=['status', 'updated_at'])
-        instance = review_instances.get_review_instance(record.review_instance_id)
-        review_instances.save_review_instance_answers(instance, {field_id: answer}, actor=COACH_EMAIL)
+        instance = review_infrastructure_instance_rows.get_review_instance(record.review_instance_id)
+        review_application_instance_answers.save_review_instance_answers(instance, {field_id: answer}, actor=COACH_EMAIL)
         return record, review_id, field_id
 
     def _awaiting_signature(self):
         record, review_id, field_id = self._answered_in_progress()
-        instance = review_instances.get_review_instance(record.review_instance_id)
-        ok, errors = review_instances.complete_review_instance(instance, actor=COACH_EMAIL)
+        instance = review_infrastructure_instance_rows.get_review_instance(record.review_instance_id)
+        ok, errors = review_application_instance_lifecycle.complete_review_instance(instance, actor=COACH_EMAIL)
         self.assertTrue(ok, errors)
         # complete_review_instance deliberately does not touch Calendar; the
         # real completion endpoint projects it immediately afterwards. Going
         # through the same helper keeps this fixture in the state production is
         # actually in, rather than one only a direct domain call can produce.
         coach_views._sync_calendar_record_to_review_instance_status(
-            review_instances.get_review_instance(record.review_instance_id),
+            review_infrastructure_instance_rows.get_review_instance(record.review_instance_id),
         )
         record.refresh_from_db()
         self.assertEqual(record.status, CoachCalendarEvent.STATUS_AWAITING_SIGNATURE)
@@ -167,8 +182,8 @@ class ReopenReviewInstanceTestCase(TestCase):
 
     def _completed(self):
         record, review_id, field_id = self._awaiting_signature()
-        instance = review_instances.get_review_instance(record.review_instance_id)
-        review_instances.record_review_instance_signature(
+        instance = review_infrastructure_instance_rows.get_review_instance(record.review_instance_id)
+        review_application_instance_signatures.record_review_instance_signature(
             instance, 'advisor', signed_by=COACH_EMAIL, signed_name='Coach One',
             signature=SIGNATURE_IMAGE, actor=COACH_EMAIL,
         )
@@ -176,10 +191,10 @@ class ReopenReviewInstanceTestCase(TestCase):
         return record, review_id, field_id
 
     def _instance(self, record):
-        return review_instances.get_review_instance(record.review_instance_id)
+        return review_infrastructure_instance_rows.get_review_instance(record.review_instance_id)
 
     def _reopens(self, record):
-        return review_instances.list_review_instance_reopens(record.review_instance_id)
+        return review_infrastructure_instance_rows.list_review_instance_reopens(record.review_instance_id)
 
     def _call(self, instance_id, *, body=None, coach_email=COACH_EMAIL, view_as=False, admin=None):
         request = RequestFactory().post(
@@ -196,20 +211,20 @@ class ReopenReviewInstanceTestCase(TestCase):
     def test_reopening_a_completed_review_clears_signatures_and_completed_at(self):
         record, _review_id, _field_id = self._completed()
         instance = self._instance(record)
-        self.assertEqual(instance['status'], review_instances.STATUS_COMPLETED)
+        self.assertEqual(instance['status'], review_domain_instance_rules.STATUS_COMPLETED)
         self.assertIsNotNone(instance['completed_at'])
-        signed = review_instances.get_review_instance_signatures(instance['id'])
+        signed = review_infrastructure_instance_rows.get_review_instance_signatures(instance['id'])
         self.assertIsNotNone(signed['advisor']['signed_at'])
 
-        ok, row = review_instances.reopen_review_instance_for_editing(
+        ok, row = review_application_instance_reopening.reopen_review_instance_for_editing(
             instance, reason_code='correction-required', actor=COACH_EMAIL,
         )
         self.assertTrue(ok, row)
-        self.assertEqual(row['status'], review_instances.STATUS_IN_PROGRESS)
+        self.assertEqual(row['status'], review_domain_instance_rules.STATUS_IN_PROGRESS)
         self.assertIsNone(row['completed_at'])
 
         # The signature row survives, blanked to the unsigned shape -- not deleted.
-        cleared = review_instances.get_review_instance_signatures(instance['id'])
+        cleared = review_infrastructure_instance_rows.get_review_instance_signatures(instance['id'])
         self.assertEqual(set(cleared), {'advisor'})
         self.assertIsNone(cleared['advisor']['signed_at'])
         self.assertEqual(cleared['advisor']['signature'], '')
@@ -220,7 +235,7 @@ class ReopenReviewInstanceTestCase(TestCase):
         record, _review_id, field_id = self._completed()
         instance = self._instance(record)
 
-        ok, _row = review_instances.reopen_review_instance_for_editing(
+        ok, _row = review_application_instance_reopening.reopen_review_instance_for_editing(
             instance, reason_code='signature-error', note='Wrong signatory.', actor=COACH_EMAIL,
         )
         self.assertTrue(ok)
@@ -229,15 +244,15 @@ class ReopenReviewInstanceTestCase(TestCase):
         self.assertEqual(len(rows), 1)
         entry = rows[0]
         self.assertEqual(entry['review_instance_id'], instance['id'])
-        self.assertEqual(entry['previous_status'], review_instances.STATUS_COMPLETED)
-        self.assertEqual(entry['new_status'], review_instances.STATUS_IN_PROGRESS)
+        self.assertEqual(entry['previous_status'], review_domain_instance_rules.STATUS_COMPLETED)
+        self.assertEqual(entry['new_status'], review_domain_instance_rules.STATUS_IN_PROGRESS)
         self.assertEqual(entry['reason_code'], 'signature-error')
         self.assertEqual(entry['note'], 'Wrong signatory.')
         self.assertEqual(entry['changed_by'], COACH_EMAIL)
         self.assertEqual(entry['calendar_event_id'], record.pk)
 
         snapshot = curriculum_views.as_json_value(entry['previous_state_snapshot'], {})
-        self.assertEqual(snapshot['instance']['status'], review_instances.STATUS_COMPLETED)
+        self.assertEqual(snapshot['instance']['status'], review_domain_instance_rules.STATUS_COMPLETED)
         self.assertIsNotNone(snapshot['instance']['completedAt'])
 
         # The answers as they stood before the reopen.
@@ -258,18 +273,18 @@ class ReopenReviewInstanceTestCase(TestCase):
     def test_reopening_an_awaiting_signature_review_succeeds(self):
         record, _review_id, _field_id = self._awaiting_signature()
         instance = self._instance(record)
-        self.assertEqual(instance['status'], review_instances.STATUS_AWAITING_SIGNATURE)
+        self.assertEqual(instance['status'], review_domain_instance_rules.STATUS_AWAITING_SIGNATURE)
 
-        ok, row = review_instances.reopen_review_instance_for_editing(
+        ok, row = review_application_instance_reopening.reopen_review_instance_for_editing(
             instance, reason_code='incorrect-answer', actor=COACH_EMAIL,
         )
         self.assertTrue(ok, row)
-        self.assertEqual(row['status'], review_instances.STATUS_IN_PROGRESS)
+        self.assertEqual(row['status'], review_domain_instance_rules.STATUS_IN_PROGRESS)
         self.assertIsNone(row['completed_at'])
 
         rows = self._reopens(record)
         self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]['previous_status'], review_instances.STATUS_AWAITING_SIGNATURE)
+        self.assertEqual(rows[0]['previous_status'], review_domain_instance_rules.STATUS_AWAITING_SIGNATURE)
 
     # -------------------------------------------- (c) every other status
 
@@ -279,18 +294,18 @@ class ReopenReviewInstanceTestCase(TestCase):
         # rows are Django-managed rather than part of _clear()'s curriculum
         # sweep, so reusing one learner here would collide on event_key.
         for learner_id, status in enumerate((
-            review_instances.STATUS_NOT_SCHEDULED,
-            review_instances.STATUS_SCHEDULED,
-            review_instances.STATUS_IN_PROGRESS,
+            review_domain_instance_rules.STATUS_NOT_SCHEDULED,
+            review_domain_instance_rules.STATUS_SCHEDULED,
+            review_domain_instance_rules.STATUS_IN_PROGRESS,
         ), start=940):
             with self.subTest(status=status):
                 record, _review_id = self._linked_row(learner_id=learner_id)
-                review_instances.force_review_instance_status_for_tests(
+                review_infrastructure_instance_rows.force_review_instance_status_for_tests(
                     record.review_instance_id, status, actor='test',
                 )
                 instance = self._instance(record)
 
-                ok, errors = review_instances.reopen_review_instance_for_editing(
+                ok, errors = review_application_instance_reopening.reopen_review_instance_for_editing(
                     instance, reason_code='correction-required', actor=COACH_EMAIL,
                 )
                 self.assertFalse(ok)
@@ -303,20 +318,20 @@ class ReopenReviewInstanceTestCase(TestCase):
         record, _review_id, _field_id = self._completed()
         instance = self._instance(record)
 
-        ok, errors = review_instances.reopen_review_instance_for_editing(
+        ok, errors = review_application_instance_reopening.reopen_review_instance_for_editing(
             instance, reason_code='graph-unavailable', actor=COACH_EMAIL,
         )
         self.assertFalse(ok)
         self.assertIn('reason', errors)
 
-        ok, errors = review_instances.reopen_review_instance_for_editing(
+        ok, errors = review_application_instance_reopening.reopen_review_instance_for_editing(
             instance, reason_code='other', note='', actor=COACH_EMAIL,
         )
         self.assertFalse(ok)
         self.assertIn('note', errors)
 
         self.assertEqual(self._reopens(record), [])
-        self.assertEqual(self._instance(record)['status'], review_instances.STATUS_COMPLETED)
+        self.assertEqual(self._instance(record)['status'], review_domain_instance_rules.STATUS_COMPLETED)
 
     # ------------------------------------------------ (d) Calendar mirror
 
@@ -326,7 +341,7 @@ class ReopenReviewInstanceTestCase(TestCase):
         self.assertEqual(record.status, CoachCalendarEvent.STATUS_COMPLETED)
         self.assertIsNotNone(record.review_completed_at)
 
-        ok, _row = review_instances.reopen_review_instance_for_editing(
+        ok, _row = review_application_instance_reopening.reopen_review_instance_for_editing(
             self._instance(record), reason_code='correction-required', actor=COACH_EMAIL,
         )
         self.assertTrue(ok)
@@ -347,19 +362,19 @@ class ReopenReviewInstanceTestCase(TestCase):
         }
         mismatches = {
             'does not point back': SimpleNamespace(
-                review_instance_id='REVI-SOMETHING-ELSE', learner_id=901,
+                review_instance_id='REVI-SOMETHING-ELSE', learner_profile_id=901,
                 review_template_id='REV-STUB', owner_email=COACH_EMAIL,
             ),
             'different learner': SimpleNamespace(
-                review_instance_id='REVI-STUB', learner_id=999,
+                review_instance_id='REVI-STUB', learner_profile_id=999,
                 review_template_id='REV-STUB', owner_email=COACH_EMAIL,
             ),
             'different Review template': SimpleNamespace(
-                review_instance_id='REVI-STUB', learner_id=901,
+                review_instance_id='REVI-STUB', learner_profile_id=901,
                 review_template_id='REV-OTHER', owner_email=COACH_EMAIL,
             ),
             'different coach': SimpleNamespace(
-                review_instance_id='REVI-STUB', learner_id=901,
+                review_instance_id='REVI-STUB', learner_profile_id=901,
                 review_template_id='REV-STUB', owner_email='someone-else@example.com',
             ),
         }
@@ -372,7 +387,7 @@ class ReopenReviewInstanceTestCase(TestCase):
                 )
                 with patch.object(CoachCalendarEvent, 'objects', qs):
                     with self.assertRaises(ValueError) as caught:
-                        review_instances._locked_linked_calendar_for_mirror(instance)
+                        review_infrastructure_instance_calendar._locked_linked_calendar_for_mirror(instance)
                 self.assertIn(expected, str(caught.exception))
                 self.assertIn('reconciliation', str(caught.exception).lower())
 
@@ -386,16 +401,16 @@ class ReopenReviewInstanceTestCase(TestCase):
         record.save(update_fields=['review_instance_id', 'updated_at'])
 
         with self.assertRaises(ValueError):
-            review_instances.reopen_review_instance_for_editing(
+            review_application_instance_reopening.reopen_review_instance_for_editing(
                 instance, reason_code='correction-required', actor=COACH_EMAIL,
             )
 
         # Looked up by the real instance id: `record` now deliberately points
         # at a different one.
-        reloaded = review_instances.get_review_instance(instance['id'])
-        self.assertEqual(reloaded['status'], review_instances.STATUS_COMPLETED)
-        self.assertEqual(review_instances.list_review_instance_reopens(instance['id']), [])
-        signed = review_instances.get_review_instance_signatures(instance['id'])
+        reloaded = review_infrastructure_instance_rows.get_review_instance(instance['id'])
+        self.assertEqual(reloaded['status'], review_domain_instance_rules.STATUS_COMPLETED)
+        self.assertEqual(review_infrastructure_instance_rows.list_review_instance_reopens(instance['id']), [])
+        signed = review_infrastructure_instance_rows.get_review_instance_signatures(instance['id'])
         self.assertIsNotNone(signed['advisor']['signed_at'])
 
     def test_the_mirror_accepts_only_finished_calendar_states(self):
@@ -421,10 +436,10 @@ class ReopenReviewInstanceTestCase(TestCase):
             with self.subTest(calendar_status=refused):
                 calendar = SimpleNamespace(status=refused, review_completed_at='x', saved=False)
                 with patch.object(
-                    review_instances, '_locked_linked_calendar_for_mirror', return_value=calendar,
+                    instance_calendar, '_locked_linked_calendar_for_mirror', return_value=calendar,
                 ):
                     with self.assertRaises(ValueError) as caught:
-                        review_instances._mirror_linked_calendar_after_reopen(instance)
+                        review_infrastructure_instance_calendar._mirror_linked_calendar_after_reopen(instance)
                 message = str(caught.exception).lower()
                 self.assertIn('reconciliation', message)
                 self.assertIn(refused, message)
@@ -443,9 +458,9 @@ class ReopenReviewInstanceTestCase(TestCase):
                     save=lambda **kw: saves.append(kw),
                 )
                 with patch.object(
-                    review_instances, '_locked_linked_calendar_for_mirror', return_value=calendar,
+                    instance_calendar, '_locked_linked_calendar_for_mirror', return_value=calendar,
                 ):
-                    review_instances._mirror_linked_calendar_after_reopen(instance)
+                    review_infrastructure_instance_calendar._mirror_linked_calendar_after_reopen(instance)
                 self.assertEqual(calendar.status, CoachCalendarEvent.STATUS_IN_PROGRESS)
                 self.assertIsNone(calendar.review_completed_at)
                 self.assertEqual(
@@ -458,34 +473,34 @@ class ReopenReviewInstanceTestCase(TestCase):
         record, _review_id, field_id = self._completed()
         instance = self._instance(record)
 
-        ok, row = review_instances.reopen_review_instance_for_editing(
+        ok, row = review_application_instance_reopening.reopen_review_instance_for_editing(
             instance, reason_code='incorrect-answer', actor=COACH_EMAIL,
         )
         self.assertTrue(ok, row)
 
         # Edit the answer that was wrong.
         instance = self._instance(record)
-        review_instances.save_review_instance_answers(
+        review_application_instance_answers.save_review_instance_answers(
             instance, {field_id: 'Corrected answer.'}, actor=COACH_EMAIL,
         )
         instance = self._instance(record)
 
         # Re-complete exactly as if it were the first time: the template still
         # requires an advisor signature, so this lands on awaiting-signature.
-        ok, errors = review_instances.complete_review_instance(instance, actor=COACH_EMAIL)
+        ok, errors = review_application_instance_lifecycle.complete_review_instance(instance, actor=COACH_EMAIL)
         self.assertTrue(ok, errors)
-        self.assertEqual(self._instance(record)['status'], review_instances.STATUS_AWAITING_SIGNATURE)
+        self.assertEqual(self._instance(record)['status'], review_domain_instance_rules.STATUS_AWAITING_SIGNATURE)
 
         # And a fresh signature completes it again.
-        review_instances.record_review_instance_signature(
+        review_application_instance_signatures.record_review_instance_signature(
             self._instance(record), 'advisor', signed_by=COACH_EMAIL, signed_name='Coach One',
             signature=SIGNATURE_IMAGE, actor=COACH_EMAIL,
         )
         final = self._instance(record)
-        self.assertEqual(final['status'], review_instances.STATUS_COMPLETED)
+        self.assertEqual(final['status'], review_domain_instance_rules.STATUS_COMPLETED)
         self.assertIsNotNone(final['completed_at'])
 
-        answers = review_instances.get_review_instance_answers(final['id'])
+        answers = review_infrastructure_instance_rows.get_review_instance_answers(final['id'])
         self.assertEqual(
             curriculum_views.as_json_value(answers[field_id]['answer'], None),
             'Corrected answer.',
@@ -507,7 +522,7 @@ class ReopenReviewInstanceTestCase(TestCase):
         record, _review_id, _field_id = self._completed()
         stale = self._instance(record)
 
-        ok, _row = review_instances.reopen_review_instance_for_editing(
+        ok, _row = review_application_instance_reopening.reopen_review_instance_for_editing(
             stale, reason_code='correction-required', actor=COACH_EMAIL,
         )
         self.assertTrue(ok)
@@ -515,7 +530,7 @@ class ReopenReviewInstanceTestCase(TestCase):
         # `stale` still claims status=completed, exactly as a second browser tab
         # or a double submit would. The re-check under the row lock must reject
         # it rather than reopening an already-in-progress review a second time.
-        ok, errors = review_instances.reopen_review_instance_for_editing(
+        ok, errors = review_application_instance_reopening.reopen_review_instance_for_editing(
             stale, reason_code='correction-required', actor=COACH_EMAIL,
         )
         self.assertFalse(ok)
@@ -529,7 +544,7 @@ class ReopenReviewInstanceTestCase(TestCase):
         response = self._call(record.review_instance_id, body={'reasonCode': 'correction-required'})
         self.assertEqual(response.status_code, 200)
         payload = json.loads(response.content)
-        self.assertEqual(payload['instance']['status'], review_instances.STATUS_IN_PROGRESS)
+        self.assertEqual(payload['instance']['status'], review_domain_instance_rules.STATUS_IN_PROGRESS)
         self.assertEqual(len(self._reopens(record)), 1)
 
     def test_the_endpoint_refuses_a_coach_who_does_not_own_the_instance(self):
@@ -540,7 +555,7 @@ class ReopenReviewInstanceTestCase(TestCase):
         )
         self.assertEqual(response.status_code, 404)
         self.assertEqual(self._reopens(record), [])
-        self.assertEqual(self._instance(record)['status'], review_instances.STATUS_COMPLETED)
+        self.assertEqual(self._instance(record)['status'], review_domain_instance_rules.STATUS_COMPLETED)
 
     def test_the_endpoint_rejects_a_bad_reason_with_400(self):
         record, _review_id, _field_id = self._completed()

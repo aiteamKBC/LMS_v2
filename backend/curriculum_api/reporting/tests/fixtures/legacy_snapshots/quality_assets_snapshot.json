@@ -1,0 +1,1041 @@
+{
+  "functions": {
+    "quality.window_limit": {
+      "source": "def window_limit(workspace):\n    \"\"\"The longest window a workspace's page activity (People) may read, in days.\"\"\"\n    return UNLIMITED_WINDOW_DAYS if workspace in UNLIMITED_WORKSPACES else MAX_WINDOW_DAYS",
+      "owner": "curriculum_api.reporting.domain.history_values",
+      "dependencies": [
+        "MAX_WINDOW_DAYS",
+        "UNLIMITED_WINDOW_DAYS",
+        "UNLIMITED_WORKSPACES"
+      ],
+      "attributes": {},
+      "local_imports": [],
+      "decorators": []
+    },
+    "quality.change_window_limit": {
+      "source": "def change_window_limit(workspace):\n    \"\"\"The longest window a workspace's Changes feed may read, in days.\"\"\"\n    return UNLIMITED_WINDOW_DAYS if workspace in UNLIMITED_WORKSPACES else MAX_CHANGE_WINDOW_DAYS",
+      "owner": "curriculum_api.reporting.domain.history_values",
+      "dependencies": [
+        "MAX_CHANGE_WINDOW_DAYS",
+        "UNLIMITED_WINDOW_DAYS",
+        "UNLIMITED_WORKSPACES"
+      ],
+      "attributes": {},
+      "local_imports": [],
+      "decorators": []
+    },
+    "quality.source_label": {
+      "source": "def source_label(value):\n    text = curriculum_views.clean_str(value)\n    return SOURCE_LABELS.get(text, text.replace('-', ' ').capitalize() if text else '')",
+      "owner": "curriculum_api.reporting.domain.history_values",
+      "dependencies": [
+        "SOURCE_LABELS",
+        "curriculum_views_clean_str"
+      ],
+      "attributes": {
+        "curriculum_views.clean_str": "curriculum_views_clean_str"
+      },
+      "local_imports": [],
+      "decorators": []
+    },
+    "quality.cause_label": {
+      "source": "def cause_label(reason):\n    \"\"\"The handler code as the cause phrase a reader can use, or ''.\n\n    Empty for an unmapped code: \"as part of ksb-mapping-patch\" explains nothing,\n    and the raw handler is still on the event as ``reason`` for anyone auditing\n    it. Saying nothing is better than dressing a code up as an explanation.\n    \"\"\"\n    return REASON_LABELS.get(curriculum_views.clean_str(reason), '')",
+      "owner": "curriculum_api.reporting.domain.history_values",
+      "dependencies": [
+        "REASON_LABELS",
+        "curriculum_views_clean_str"
+      ],
+      "attributes": {
+        "curriculum_views.clean_str": "curriculum_views_clean_str"
+      },
+      "local_imports": [],
+      "decorators": []
+    },
+    "quality.field_label": {
+      "source": "def field_label(field):\n    name = curriculum_views.clean_str(field)\n    if name in FIELD_LABELS:\n        return FIELD_LABELS[name]\n    if name.startswith('settings.'):\n        tail = name.split('.', 1)[1]\n        # camelCase settings keys read as words: contentHtml -> Content html.\n        spaced = ''.join(f' {ch.lower()}' if ch.isupper() else ch for ch in tail).strip()\n        return spaced[:1].upper() + spaced[1:]\n    spaced = name.replace('_', ' ').strip()\n    return spaced[:1].upper() + spaced[1:]",
+      "owner": "curriculum_api.reporting.domain.history_values",
+      "dependencies": [
+        "FIELD_LABELS",
+        "curriculum_views_clean_str"
+      ],
+      "attributes": {
+        "curriculum_views.clean_str": "curriculum_views_clean_str"
+      },
+      "local_imports": [],
+      "decorators": []
+    },
+    "quality.split_reason": {
+      "source": "def split_reason(reason):\n    \"\"\"The handler code, save source, actor kind and trigger out of one column.\n\n    Until the Phase 2 columns existed, ``reason`` was the only free column this\n    table had, so it was written as\n    ``component-delete; source=auto-save; actor=system; by=someone@example.com``\n    -- the handler code it always carried, with tags appended. Every one of the\n    1.15M rows written that way is still here and still has to be readable, so\n    this stays as the fallback for a row whose structured columns are empty. It\n    is no longer how new rows are written.\n    \"\"\"\n    text = curriculum_views.clean_str(reason)\n    handler, source, actor_kind, triggered_by = '', '', '', ''\n    for part in text.split(';'):\n        part = part.strip()\n        if not part:\n            continue\n        if part.startswith('source='):\n            source = part[len('source='):].strip()\n        elif part.startswith('actor='):\n            actor_kind = part[len('actor='):].strip()\n        elif part.startswith('by='):\n            triggered_by = part[len('by='):].strip()\n        elif not handler:\n            handler = part\n    return handler, source, actor_kind, triggered_by",
+      "owner": "curriculum_api.reporting.domain.history_values",
+      "dependencies": [
+        "curriculum_views_clean_str"
+      ],
+      "attributes": {
+        "curriculum_views.clean_str": "curriculum_views_clean_str"
+      },
+      "local_imports": [],
+      "decorators": []
+    },
+    "quality.revision_attribution": {
+      "source": "def revision_attribution(row):\n    \"\"\"Actor kind, source and trigger for one revision, newest shape winning.\n\n    The order is the whole backwards-compatibility story: a structured column\n    when the row has one, the parsed legacy tag when it does not, and an honest\n    default when neither says anything. Nothing is rewritten to make this\n    simpler -- a row written in September must still read correctly in a year,\n    and the only way to guarantee that is to keep being able to read both.\n    \"\"\"\n    handler, tag_source, tag_kind, tag_trigger = split_reason(row.get('reason'))\n    kind = curriculum_views.clean_str(row.get('actor_type')) or tag_kind\n    if kind not in versioning.ACTOR_TYPES:\n        # Rows older than any of this carry nothing. They were written by the\n        # signed-in account the middleware supplied, so `user` is the reading\n        # the data supports -- and where even the actor is empty the UI shows\n        # no name rather than inventing one.\n        kind = versioning.ACTOR_USER\n    source = curriculum_views.clean_str(row.get('source')) or tag_source\n    trigger_email = curriculum_views.clean_str(row.get('triggered_by_email')) or tag_trigger\n    trigger_name = curriculum_views.clean_str(row.get('triggered_by_name')) or trigger_email\n    return handler, kind, source, trigger_email, trigger_name",
+      "owner": "curriculum_api.reporting.domain.history_values",
+      "dependencies": [
+        "curriculum_views_clean_str",
+        "split_reason",
+        "versioning_ACTOR_TYPES",
+        "versioning_ACTOR_USER"
+      ],
+      "attributes": {
+        "versioning.ACTOR_TYPES": "versioning_ACTOR_TYPES",
+        "versioning.ACTOR_USER": "versioning_ACTOR_USER",
+        "curriculum_views.clean_str": "curriculum_views_clean_str"
+      },
+      "local_imports": [],
+      "decorators": []
+    },
+    "quality.parse_bounded_int": {
+      "source": "def parse_bounded_int(value, default, minimum, maximum):\n    try:\n        parsed = int(str(value).strip())\n    except (TypeError, ValueError):\n        return default\n    return max(minimum, min(maximum, parsed))",
+      "owner": "curriculum_api.reporting.domain.history_values",
+      "dependencies": [],
+      "attributes": {},
+      "local_imports": [],
+      "decorators": []
+    },
+    "quality.iso": {
+      "source": "def iso(value):\n    \"\"\"A timestamp as a sortable ISO string, or '' when there is none.\"\"\"\n    if isinstance(value, datetime):\n        return value.isoformat()\n    text = curriculum_views.clean_str(value)\n    if not text:\n        return ''\n    return text.replace(' ', 'T', 1)",
+      "owner": "curriculum_api.reporting.domain.history_values",
+      "dependencies": [
+        "curriculum_views_clean_str",
+        "datetime"
+      ],
+      "attributes": {
+        "curriculum_views.clean_str": "curriculum_views_clean_str"
+      },
+      "local_imports": [],
+      "decorators": []
+    },
+    "quality.merge_actors": {
+      "source": "def merge_actors(logged, recovered):\n    \"\"\"One author list over both readings, so its counts match the feed.\n\n    A recovered event names an author only where the row recorded an email.\n    The log's spelling of a name wins; the counts add, because the two readings\n    never hold the same event.\n    \"\"\"\n    merged = {}\n    for row in logged:\n        email = curriculum_views.clean_str(row.get('email')).lower()\n        if email:\n            merged[email] = {'email': email, 'name': row.get('name') or '', 'changes': int(row.get('changes') or 0)}\n    for row in recovered:\n        email = curriculum_views.clean_str(row.get('email')).lower()\n        if not email:\n            continue\n        entry = merged.setdefault(email, {'email': email, 'name': '', 'changes': 0})\n        entry['name'] = entry['name'] or curriculum_views.clean_str(row.get('name'))\n        entry['changes'] += int(row.get('changes') or 0)\n    return sorted(merged.values(), key=lambda entry: (-entry['changes'], entry['email']))[:100]",
+      "owner": "curriculum_api.reporting.domain.history_values",
+      "dependencies": [
+        "curriculum_views_clean_str"
+      ],
+      "attributes": {
+        "curriculum_views.clean_str": "curriculum_views_clean_str"
+      },
+      "local_imports": [],
+      "decorators": []
+    },
+    "quality.context_line": {
+      "source": "def context_line(entity_type, context):\n    \"\"\"The entity's ancestry as one readable line, from the names it was saved with.\n\n    The curriculum's ancestry is a programme tree and reads in that order. The\n    rest of the LMS does not have one -- a coaching meeting is placed by whose\n    it is and when, a learner by their programme, cohort and group -- so those\n    record types declare their own order at registration and it is read back\n    here. Without this every non-curriculum row fell through to an empty line,\n    which the page then filled with the words \"Curriculum record\".\n    \"\"\"\n    registered = versioning.ENTITY_CONTEXT_FIELDS.get(entity_type)\n    order = registered or ('programme_name', 'cohort_name', 'group_name', 'module_name')\n    parts = [curriculum_views.clean_str(context.get(key)) for key in order]\n    return ' \u00e2\u20ac\u00ba '.join(part for part in parts if part)",
+      "owner": "curriculum_api.reporting.domain.history_values",
+      "dependencies": [
+        "curriculum_views_clean_str",
+        "versioning_ENTITY_CONTEXT_FIELDS"
+      ],
+      "attributes": {
+        "versioning.ENTITY_CONTEXT_FIELDS": "versioning_ENTITY_CONTEXT_FIELDS",
+        "curriculum_views.clean_str": "curriculum_views_clean_str"
+      },
+      "local_imports": [],
+      "decorators": []
+    },
+    "quality.coverage_keys": {
+      "source": "def coverage_keys(workspaces, *, revision, derived):\n    \"\"\"Return canonical revision coverage; derived timestamp history is retired.\"\"\"\n    covered = sorted(set(revision) | set(derived))\n    return {\n        'changeWorkspaces': covered,\n        'revisionWorkspaces': sorted(revision),\n        'derivedWorkspaces': sorted(derived),\n        'uncoveredWorkspaces': [entry['value'] for entry in workspaces if entry['value'] not in covered],\n    }",
+      "owner": "curriculum_api.reporting.domain.history_values",
+      "dependencies": [],
+      "attributes": {},
+      "local_imports": [],
+      "decorators": []
+    },
+    "quality.entity_type_options": {
+      "source": "def entity_type_options(workspace):\n    \"\"\"Every audited record type in this workspace, as ``{value, label}``.\n\n    Derived from what is registered, so a newly-wired record type is offered on\n    the day it starts being recorded rather than on the day somebody remembers\n    to edit a list in the browser.\n    \"\"\"\n    from system_audit import writes as system_writes\n    options = []\n    for entity_type in system_writes.entity_types_for_workspace(workspace):\n        label = (\n            ENTITY_LABELS.get(entity_type)\n            or system_writes.ENTITY_LABELS.get(entity_type)\n            or (entity_type.replace('_', ' ').capitalize(),)\n        )[0]\n        options.append({'value': entity_type, 'label': label})\n    return sorted(options, key=lambda option: option['label'].lower())",
+      "owner": "curriculum_api.reporting.application.history_projection",
+      "dependencies": [
+        "ENTITY_LABELS",
+        "system_writes_ENTITY_LABELS",
+        "system_writes_entity_types_for_workspace"
+      ],
+      "attributes": {
+        "system_writes.entity_types_for_workspace": "system_writes_entity_types_for_workspace",
+        "system_writes.ENTITY_LABELS": "system_writes_ENTITY_LABELS"
+      },
+      "local_imports": [
+        "from system_audit import writes as system_writes"
+      ],
+      "decorators": []
+    },
+    "quality.revision_event": {
+      "source": "def revision_event(row):\n    \"\"\"One revision as the trail's event shape.\"\"\"\n    entity_type = curriculum_views.clean_str(row.get('entity_type'))\n    # Curriculum's own types first, then whatever `system_audit` registered for\n    # the rest of the LMS. The last fallback keeps `/curriculum` only for a type\n    # nothing claims, which by then is a bug rather than a record to link to.\n    from system_audit import pages as audit_pages, writes as system_writes\n    label, href = ENTITY_LABELS.get(entity_type) or system_writes.ENTITY_LABELS.get(entity_type) or (\n        entity_type.replace('_', ' ').title() or 'Record', '/curriculum',\n    )\n    action = curriculum_views.clean_str(row.get('action')) or 'updated'\n    entity_id = curriculum_views.clean_str(row.get('entity_id'))\n    # A record with a page of its own opens at that record. Curriculum's rows\n    # are refined further by the browser, which knows how to open a component\n    # at its week inside Module Builder; the rest are resolved here because the\n    # path is a plain function of the id.\n    href = system_writes.record_href(entity_type, entity_id, fallback=href)\n    snapshot = {key: versioning.audit_display_value(entity_type, key, value)\n                for key, value in versioning.as_dict(row.get('snapshot')).items()}\n    context = snapshot.get(versioning.CONTEXT_KEY) or {}\n    if not isinstance(context, dict):\n        context = {}\n    handler, actor_kind, source, trigger_email, trigger_name = revision_attribution(row)\n    metadata = versioning.as_dict(row.get('metadata'))\n    workspace = curriculum_views.clean_str(metadata.get('page_workspace')) or system_writes.workspace_for_entity(entity_type) or ''\n    changes = [\n        change for change in (revision_change(entity_type, item) for item in versioning.as_list(row.get('changed_fields')))\n        if change is not None\n    ]\n    return {\n        'id': f'rev:{row.get(\"id\")}',\n        # Where this event comes from. The log saw this save happen.\n        'provenance': 'revision',\n        'provenanceLabel': PROVENANCE_LABELS['revision'],\n        'at': iso(row.get('created_at')),\n        'action': action,\n        'actionLabel': ACTION_LABELS.get(action, action.title()),\n        'entity': entity_type,\n        'entityLabel': label,\n        'workspace': workspace,\n        'workspaceLabel': audit_pages.WORKSPACES.get(workspace, workspace.title() if workspace else ''),\n        'entityId': entity_id,\n        'revisionNo': int(row.get('revision_no') or 0),\n        'title': (curriculum_views.clean_str(snapshot.get('reason_code')) or entity_id\n                  if entity_type == 'learner_review_addition' else curriculum_views.clean_str(row.get('title')) or entity_id),\n        'context': context_line(entity_type, context),\n        'parents': context,\n        'moduleCatalogueId': curriculum_views.clean_str(row.get('module_catalogue_id')),\n        'parentId': curriculum_views.clean_str(row.get('parent_id')),\n        'versionLabel': curriculum_views.clean_str(row.get('version_label')),\n        'contentStatus': curriculum_views.clean_str(row.get('content_status')),\n        'actorName': curriculum_views.clean_str(row.get('actor_name')),\n        'actorEmail': curriculum_views.clean_str(row.get('actor_email')),\n        # `system` is a write no person directly made: a cascade, a recalculation,\n        # a management command or a scheduled job. Never a guess.\n        'actorType': actor_kind,\n        'actorTypeLabel': ACTOR_TYPE_LABELS.get(actor_kind, actor_kind.title()),\n        # Who caused a system action. Empty for a person's own edit -- they are\n        # the actor, not the trigger -- and empty for a scheduled run, where\n        # there is no person and naming one would be a fabrication.\n        'triggeredByEmail': trigger_email,\n        'triggeredByName': trigger_name,\n        # Auto-save is a source, not an action: the event is still the edit.\n        'source': source,\n        'sourceLabel': source_label(source),\n        'metadata': metadata,\n        'reason': handler,\n        # The handler in words, for the sentence a row leads with. Empty when the\n        # code has no mapped meaning, so a reader is never shown a guess.\n        'causeLabel': cause_label(handler),\n        # The page name recorded with the write. `page_path` is still in\n        # `metadata` for anyone who wants the URL; this is the one to show.\n        'pageLabel': curriculum_views.clean_str(metadata.get('page_label')),\n        'changes': changes,\n        # A created record's \"after\" and a deleted record's \"before\" are the same\n        # stored snapshot; which one it is, is the action. Carried inline for\n        # those two because for a deleted record there is nowhere else left to\n        # read it from.\n        'snapshot': (\n            {key: value for key, value in snapshot.items() if not key.startswith('_')}\n            if action in {'created', 'deleted'} else None\n        ),\n        'href': href,\n    }",
+      "owner": "curriculum_api.reporting.application.history_projection",
+      "dependencies": [
+        "ACTION_LABELS",
+        "ACTOR_TYPE_LABELS",
+        "ENTITY_LABELS",
+        "PROVENANCE_LABELS",
+        "audit_pages_WORKSPACES",
+        "cause_label",
+        "context_line",
+        "curriculum_views_clean_str",
+        "iso",
+        "revision_attribution",
+        "revision_change",
+        "source_label",
+        "system_writes_ENTITY_LABELS",
+        "system_writes_record_href",
+        "system_writes_workspace_for_entity",
+        "versioning_CONTEXT_KEY",
+        "versioning_as_dict",
+        "versioning_as_list",
+        "versioning_audit_display_value"
+      ],
+      "attributes": {
+        "curriculum_views.clean_str": "curriculum_views_clean_str",
+        "system_writes.record_href": "system_writes_record_href",
+        "versioning.as_dict": "versioning_as_dict",
+        "versioning.audit_display_value": "versioning_audit_display_value",
+        "versioning.CONTEXT_KEY": "versioning_CONTEXT_KEY",
+        "system_writes.workspace_for_entity": "system_writes_workspace_for_entity",
+        "system_writes.ENTITY_LABELS": "system_writes_ENTITY_LABELS",
+        "audit_pages.WORKSPACES": "audit_pages_WORKSPACES",
+        "versioning.as_list": "versioning_as_list"
+      },
+      "local_imports": [
+        "from system_audit import pages as audit_pages, writes as system_writes"
+      ],
+      "decorators": []
+    },
+    "quality.revision_change": {
+      "source": "def revision_change(entity_type, change):\n    \"\"\"One entry of a revision's ``changed_fields``, as the trail shows it.\n\n    Revisions written by an older version of the log stored the names of the\n    fields that moved and nothing else (``[\"orientation_ksb_mappings\"]``). The\n    field is still listed, and its values are reported as not recorded --\n    ``None``, shown as a dash -- never as empty, which would be a claim about\n    what the field held. Anything else unreadable is skipped, not raised.\n    \"\"\"\n    if isinstance(change, str):\n        field = curriculum_views.clean_str(change)\n        if not field:\n            return None\n        return {'field': field, 'label': field_label(field), 'before': None, 'after': None,\n                'truncated': False, 'valuesRecorded': False}\n    if not isinstance(change, dict):\n        return None\n    field = curriculum_views.clean_str(change.get('field'))\n    return {\n        'field': field,\n        'label': field_label(change.get('field')),\n        'before': versioning.audit_display_value(entity_type, field, change.get('from')),\n        'after': versioning.audit_display_value(entity_type, field, change.get('to')),\n        'truncated': bool(change.get('truncated')),\n    }",
+      "owner": "curriculum_api.reporting.application.history_projection",
+      "dependencies": [
+        "curriculum_views_clean_str",
+        "field_label",
+        "versioning_audit_display_value"
+      ],
+      "attributes": {
+        "curriculum_views.clean_str": "curriculum_views_clean_str",
+        "versioning.audit_display_value": "versioning_audit_display_value"
+      },
+      "local_imports": [],
+      "decorators": []
+    },
+    "quality.revision_row": {
+      "source": "def revision_row(row):\n    return {\n        'id': row.get('id'),\n        'entityType': curriculum_views.clean_str(row.get('entity_type')),\n        'entityId': curriculum_views.clean_str(row.get('entity_id')),\n        'revisionNo': int(row.get('revision_no') or 0),\n        'action': curriculum_views.clean_str(row.get('action')),\n        'moduleCatalogueId': curriculum_views.clean_str(row.get('module_catalogue_id')),\n        'parentId': curriculum_views.clean_str(row.get('parent_id')),\n        'title': curriculum_views.clean_str(row.get('title')),\n        'versionLabel': curriculum_views.clean_str(row.get('version_label')),\n        'contentStatus': curriculum_views.clean_str(row.get('content_status')),\n        'changedFields': versioning.as_list(row.get('changed_fields')),\n        'actorName': curriculum_views.clean_str(row.get('actor_name')),\n        'actorEmail': curriculum_views.clean_str(row.get('actor_email')),\n        'reason': curriculum_views.clean_str(row.get('reason')),\n        'at': iso(row.get('created_at')),\n    }",
+      "owner": "curriculum_api.reporting.application.history_projection",
+      "dependencies": [
+        "curriculum_views_clean_str",
+        "iso",
+        "versioning_as_list"
+      ],
+      "attributes": {
+        "curriculum_views.clean_str": "curriculum_views_clean_str",
+        "versioning.as_list": "versioning_as_list"
+      },
+      "local_imports": [],
+      "decorators": []
+    },
+    "quality._scope_clause": {
+      "source": "def _scope_clause(scope, scope_id):\n    \"\"\"Match a programme / cohort / group id against the snapshot's own ancestry.\n\n    Scoping reads the snapshot rather than joining back to the live records on\n    purpose: it answers \"what changed under this programme *at the time*\", and a\n    module that has since moved elsewhere must still appear under the programme\n    it was in when the change happened.\n    \"\"\"\n    column = {'programme': 'programme_id', 'cohort': 'cohort_id', 'group': 'group_id'}[scope]\n    if connection.vendor == 'postgresql':\n        # Either the entity's own column or the ancestry recorded beside it.\n        return (\n            f\"(snapshot ->> '{column}' = %s or snapshot -> '{versioning.CONTEXT_KEY}' ->> '{column}' = %s)\",\n            [scope_id, scope_id],\n        )\n    # sqlite keeps the snapshot as text, so this is a containment test. Only the\n    # local suites run this branch; Postgres answers it properly above.\n    return ('snapshot like %s', [f'%\"{column}\": \"{scope_id}\"%'])",
+      "owner": "curriculum_api.reporting.infrastructure.history_reads",
+      "dependencies": [
+        "connection",
+        "versioning_CONTEXT_KEY"
+      ],
+      "attributes": {
+        "versioning.CONTEXT_KEY": "versioning_CONTEXT_KEY"
+      },
+      "local_imports": [],
+      "decorators": []
+    },
+    "quality.revision_actors": {
+      "source": "def revision_actors(since, workspace='', entity='', action='', source='', actor_type=''):\n    \"\"\"Who has changed anything in this window, for the filter.\n\n    Scoped to one workspace and the active non-person filters, because the count travels: it is both the \"Who\"\n    filter's label and the Changes column on the People list. One revision log\n    now holds every workspace's saves, so an unscoped count against a scoped\n    door reported changes the door itself will not show -- a person with three\n    coaching saves and no curriculum ones appeared in Curriculum Studio's list\n    as having changed three things there.\n    \"\"\"\n    revisions_table = versioning.qualified(versioning.REVISIONS_TABLE)\n    where = ['created_at >= %s', 'coalesce(actor_email, %s) <> %s']\n    params = [since, '', '']\n    from system_audit import writes as system_writes\n    clause, scope_params = system_writes.revision_workspace_clause(workspace)\n    where.append(clause)\n    params.extend(scope_params)\n    if entity and entity != 'all' and entity in versioning.ENTITY_TYPES:\n        where.append('entity_type = %s')\n        params.append(entity)\n    if action and action != 'all' and action in ACTIONS:\n        where.append('action = %s')\n        params.append(action)\n    if versioning.metadata_columns_available():\n        if source and source != 'all' and source in versioning.SOURCES:\n            where.append('source = %s')\n            params.append(source)\n        if actor_type and actor_type != 'all' and actor_type in versioning.ACTOR_TYPES:\n            where.append('actor_type = %s')\n            params.append(actor_type)\n    try:\n        rows = curriculum_views.fetch_all(\n            'select actor_email, max(actor_name) as actor_name, count(*) as changes '\n            f'from {revisions_table} where {\" and \".join(where)} '\n            'group by actor_email order by count(*) desc limit 100',\n            params,\n        )\n    except Exception:\n        return []\n    return [\n        {\n            'email': curriculum_views.clean_str(row.get('actor_email')),\n            'name': curriculum_views.clean_str(row.get('actor_name')),\n            'changes': int(row.get('changes') or 0),\n        }\n        for row in rows\n    ]",
+      "owner": "curriculum_api.reporting.infrastructure.history_reads",
+      "dependencies": [
+        "ACTIONS",
+        "curriculum_views_clean_str",
+        "curriculum_views_fetch_all",
+        "system_writes_revision_workspace_clause",
+        "versioning_ACTOR_TYPES",
+        "versioning_ENTITY_TYPES",
+        "versioning_REVISIONS_TABLE",
+        "versioning_SOURCES",
+        "versioning_metadata_columns_available",
+        "versioning_qualified"
+      ],
+      "attributes": {
+        "versioning.qualified": "versioning_qualified",
+        "versioning.REVISIONS_TABLE": "versioning_REVISIONS_TABLE",
+        "system_writes.revision_workspace_clause": "system_writes_revision_workspace_clause",
+        "versioning.metadata_columns_available": "versioning_metadata_columns_available",
+        "versioning.ENTITY_TYPES": "versioning_ENTITY_TYPES",
+        "curriculum_views.fetch_all": "curriculum_views_fetch_all",
+        "versioning.SOURCES": "versioning_SOURCES",
+        "versioning.ACTOR_TYPES": "versioning_ACTOR_TYPES",
+        "curriculum_views.clean_str": "curriculum_views_clean_str"
+      },
+      "local_imports": [
+        "from system_audit import writes as system_writes"
+      ],
+      "decorators": []
+    },
+    "quality.latest_revision_by_entity": {
+      "source": "def latest_revision_by_entity(keys):\n    \"\"\"The newest revision for each (type, id), in one read.\"\"\"\n    if not keys:\n        return {}\n    revisions_table = versioning.qualified(versioning.REVISIONS_TABLE)\n    clauses = ' or '.join(['(entity_type = %s and entity_id = %s)'] * len(keys))\n    params = [value for key in keys for value in key]\n    columns = (\n        'entity_type, entity_id, id, revision_no, action, module_catalogue_id, parent_id, '\n        'title, version_label, content_status, actor_name, created_at'\n    )\n    if connection.vendor == 'postgresql':\n        query = (\n            f'select distinct on (entity_type, entity_id) {columns} from {revisions_table} '\n            f'where {clauses} order by entity_type, entity_id, revision_no desc'\n        )\n    else:\n        query = f'select {columns} from {revisions_table} where {clauses} order by revision_no'\n    rows = curriculum_views.fetch_all(query, params)\n    result = {}\n    for row in rows:\n        key = (curriculum_views.clean_str(row.get('entity_type')), curriculum_views.clean_str(row.get('entity_id')))\n        existing = result.get(key)\n        if existing and int(existing.get('revision_no') or 0) >= int(row.get('revision_no') or 0):\n            continue\n        result[key] = row\n    return result",
+      "owner": "curriculum_api.reporting.infrastructure.history_reads",
+      "dependencies": [
+        "connection",
+        "curriculum_views_clean_str",
+        "curriculum_views_fetch_all",
+        "versioning_REVISIONS_TABLE",
+        "versioning_qualified"
+      ],
+      "attributes": {
+        "versioning.qualified": "versioning_qualified",
+        "versioning.REVISIONS_TABLE": "versioning_REVISIONS_TABLE",
+        "curriculum_views.fetch_all": "curriculum_views_fetch_all",
+        "curriculum_views.clean_str": "curriculum_views_clean_str"
+      },
+      "local_imports": [],
+      "decorators": []
+    },
+    "quality.named_version_counts": {
+      "source": "def named_version_counts(keys):\n    if not keys:\n        return {}\n    versions_table = versioning.qualified(versioning.VERSIONS_TABLE)\n    clauses = ' or '.join(['(entity_type = %s and entity_id = %s)'] * len(keys))\n    params = [value for key in keys for value in key]\n    query = (\n        f'select entity_type, entity_id, count(*) as total from {versions_table} '\n        f'where {clauses} group by entity_type, entity_id'\n    )\n    try:\n        rows = curriculum_views.fetch_all(query, params)\n    except Exception:\n        return {}\n    return {\n        (curriculum_views.clean_str(row.get('entity_type')), curriculum_views.clean_str(row.get('entity_id'))):\n            int(row.get('total') or 0)\n        for row in rows\n    }",
+      "owner": "curriculum_api.reporting.infrastructure.history_reads",
+      "dependencies": [
+        "curriculum_views_clean_str",
+        "curriculum_views_fetch_all",
+        "versioning_VERSIONS_TABLE",
+        "versioning_qualified"
+      ],
+      "attributes": {
+        "versioning.qualified": "versioning_qualified",
+        "versioning.VERSIONS_TABLE": "versioning_VERSIONS_TABLE",
+        "curriculum_views.fetch_all": "curriculum_views_fetch_all",
+        "curriculum_views.clean_str": "curriculum_views_clean_str"
+      },
+      "local_imports": [],
+      "decorators": []
+    },
+    "quality.curriculum_quality_audit_trail": {
+      "source": "def curriculum_quality_audit_trail(request):\n    \"\"\"What changed in the curriculum: who, when, what, and from what to what.\n\n    Answered from ``curriculum.record_revisions`` -- the log the write helpers\n    fill -- whenever those tables exist, which is what lets the trail name an\n    actor and show a before and an after. If the log is not installed, the API\n    reports that explicitly rather than reading legacy timestamp tables.\n\n    ``authorRecorded`` on the response says which of the two the caller is\n    looking at, so the page can report honestly rather than showing an empty\n    column. Rows written before the log existed keep no actor and are never\n    given a plausible one.\n\n    ``?days=`` window (default 30), ``?limit=`` events returned (default 200),\n    ``?entity=`` / ``?action=`` / ``?actor=`` filter, ``?search=`` matches\n    title/context/id, ``?scope=`` + ``?scopeId=`` narrow to one programme,\n    cohort, group or module.\n    \"\"\"\n    if not versioning.history_available():\n        return history_off_response()\n    try:\n        return revision_trail(request)\n    except Exception:\n        logger.warning('Could not read the revision audit trail.', exc_info=True)\n        return JsonResponse({'error': 'Audit history could not be read. Please retry.'}, status=503)",
+      "owner": "curriculum_api.reporting.api.history",
+      "dependencies": [
+        "JsonResponse",
+        "history_off_response",
+        "logger",
+        "revision_trail",
+        "versioning_history_available"
+      ],
+      "attributes": {
+        "versioning.history_available": "versioning_history_available"
+      },
+      "local_imports": [],
+      "decorators": [
+        "require_GET",
+        "never_cache"
+      ]
+    },
+    "quality.revision_trail": {
+      "source": "def revision_trail(request):\n    \"\"\"The audit trail read from the revision log.\"\"\"\n    days = parse_bounded_int(\n        request.GET.get('days'), DEFAULT_WINDOW_DAYS, 1,\n        change_window_limit(curriculum_views.clean_str(request.GET.get('workspace')).lower()),\n    )\n    limit = parse_bounded_int(request.GET.get('limit'), DEFAULT_PAGE_SIZE, 1, MAX_LIMIT)\n    page = parse_bounded_int(request.GET.get('page'), 1, 1, 10_000)\n    entity_filter = curriculum_views.clean_str(request.GET.get('entity')).lower()\n    action_filter = curriculum_views.clean_str(request.GET.get('action')).lower()\n    actor_filter = curriculum_views.clean_str(request.GET.get('actor')).lower()\n    source_filter = curriculum_views.clean_str(request.GET.get('source')).lower()\n    actor_type_filter = curriculum_views.clean_str(request.GET.get('actorType')).lower()\n    search = curriculum_views.clean_str(request.GET.get('search')).lower()\n    scope = curriculum_views.clean_str(request.GET.get('scope')).lower()\n    scope_id = curriculum_views.clean_str(request.GET.get('scopeId'))\n    workspace = curriculum_views.clean_str(request.GET.get('workspace')).lower()\n\n    since = datetime.utcnow() - timedelta(days=days)\n    where = ['created_at >= %s']\n    params = [since]\n    # One revision log for the whole LMS, read through a workspace's door. The\n    # scoped door at /curriculum/audit-trail must keep showing curriculum and\n    # nothing else now that learner, staff and coaching saves land in the same\n    # table -- so the workspace narrows the record types rather than the page\n    # filtering afterwards and reporting a total that counts what it hid.\n    from system_audit import pages as audit_pages, writes as system_writes\n    clause, scope_params = system_writes.revision_workspace_clause(workspace)\n    where.append(clause)\n    params.extend(scope_params)\n    if entity_filter and entity_filter != 'all' and entity_filter in versioning.ENTITY_TYPES:\n        where.append('entity_type = %s')\n        params.append(entity_filter)\n    if action_filter and action_filter != 'all' and action_filter in ACTIONS:\n        where.append('action = %s')\n        params.append(action_filter)\n    if actor_filter:\n        where.append('lower(actor_email) = %s')\n        params.append(actor_filter)\n    # Both of these live in columns that only exist once the Phase 2 SQL has\n    # run. Offering the filter against a column that is not there would turn one\n    # unrecognised query string into a 500, so they are simply not applied until\n    # there is something to apply them to -- and the page only offers them when\n    # the response says the structured fields are available.\n    structured = versioning.metadata_columns_available()\n    if structured and source_filter and source_filter != 'all' and source_filter in versioning.SOURCES:\n        where.append('source = %s')\n        params.append(source_filter)\n    if structured and actor_type_filter and actor_type_filter != 'all' and actor_type_filter in versioning.ACTOR_TYPES:\n        where.append('actor_type = %s')\n        params.append(actor_type_filter)\n    # Module scope rides the dedicated index; the wider scopes are answered from\n    # the ancestry stored on the snapshot, which is the only place a component\n    # records which programme it was under at the time.\n    if scope_id and scope == 'module':\n        where.append('module_catalogue_id = %s')\n        params.append(scope_id)\n    elif scope_id and scope in {'programme', 'cohort', 'group'}:\n        clause, clause_params = _scope_clause(scope, scope_id)\n        where.append(clause)\n        params.extend(clause_params)\n    # Answered in SQL rather than over the rows that came back, now that the feed\n    # is paged: filtering afterwards would search one page and report the result\n    # as the whole window, and the count beside it would not agree with it.\n    # `context` is not searchable here -- it is derived from the snapshot's\n    # ancestry as each event is built, so it is not a column to match on.\n    if search:\n        where.append(\n            '(lower(title) like %s or lower(entity_id) like %s '\n            'or lower(actor_name) like %s or lower(actor_email) like %s)'\n        )\n        params.extend([f'%{search}%'] * 4)\n\n    revisions_table = versioning.qualified(versioning.REVISIONS_TABLE)\n    columns = [\n        'id', 'entity_type', 'entity_id', 'revision_no', 'action', 'module_catalogue_id', 'parent_id',\n        'title', 'version_label', 'content_status', 'changed_fields', 'snapshot', 'actor_name', 'actor_email',\n        'reason', 'created_at',\n    ]\n    if structured:\n        columns += ['actor_type', 'triggered_by_email', 'triggered_by_name', 'source', 'metadata']\n\n    # Quality history is canonical-only. Never supplement it from timestamp\n    # scans of legacy schemas; those rows cannot be safely reconstructed as\n    # Quality revisions.\n    from system_audit import derived\n    hybrid = {\n        'since': since,\n        'revision_table': revisions_table,\n        'revision_where': ' and '.join(where),\n        'revision_params': params,\n        'revision_columns': columns,\n        'workspace': workspace,\n        'entity': entity_filter if entity_filter in versioning.ENTITY_TYPES else '',\n        'action': action_filter if action_filter in ACTIONS else '',\n        'search': search,\n        'actor': actor_filter,\n        'limit': limit,\n        'page': page,\n    }\n    with transaction.atomic():\n        result = derived.read_hybrid(recover=False, **hybrid)\n\n    total = result['total']\n    page = result['page']\n    pages_total = result['pages']\n    truncated = total > limit\n\n    # The page's revisions arrive in full -- snapshot, changes, metadata --\n    # joined on in the same statement, in the order the combined feed put them.\n    events = []\n    for row in result['rows']:\n        events.append(revision_event({column: row.get(f'rev_{column}') for column in columns}))\n\n    # Counted in SQL over the whole combined window rather than over the page,\n    # so the headline figures answer \"what happened in this period\" and do not\n    # change as somebody pages through it.\n    action_counts = {action: 0 for action in ACTIONS}\n    action_counts.update(result['action_counts'])\n    entity_counts = result['entity_counts']\n    return JsonResponse({\n        'generatedAt': datetime.utcnow().isoformat(),\n        'windowDays': days,\n        'since': since.isoformat(),\n        'limit': limit,\n        'page': page,\n        'pageSize': limit,\n        'pages': pages_total,\n        'total': total,\n        'truncated': truncated,\n        'actionCounts': action_counts,\n        'entityCounts': entity_counts,\n        'unreadable': sorted(set(result['unreadable'])),\n        # How much of this window is the log's and how much was recovered from\n        # timestamps, so the page can say so instead of letting a recovered\n        # event read as though the log had seen it.\n        'provenanceCounts': {\n            derived.PROVENANCE_REVISION: int(result['provenance_counts'].get(derived.PROVENANCE_REVISION, 0)),\n            derived.PROVENANCE_TIMESTAMPS: 0,\n        },\n        # Whether older, timestamp-recovered history was read into this feed.\n        # False for a filter only the log can answer, and when it failed.\n        'recoveredHistory': False,\n        'recoveryFailed': False,\n        # Where each record type's revision history begins. Recovered events of\n        # that type stop strictly before it; null means the log has none yet.\n        'revisionStartedAt': {\n            entity: (moment.isoformat() if moment is not None else None)\n            for entity, moment in sorted(result['boundaries'].items())\n        },\n        # The log records the signed-in account on every write, so the trail can\n        # name one. Rows older than the log still carry none, and are shown as\n        # such rather than attributed to whoever happens to be nearby.\n        'authorRecorded': True,\n        'source': 'revisions',\n        # Whether this response can answer \"was that a person or the system?\"\n        # from a column rather than from a parsed string. The page uses it to\n        # decide which filters it can honestly offer.\n        'structuredMetadata': structured,\n        'workspaces': audit_pages.workspace_options(),\n        # Only the canonical revision log is reported here.\n        **coverage_keys(\n            audit_pages.workspace_options(),\n            revision=system_writes.change_workspaces(),\n            derived=[],\n        ),\n        'sources': sorted(versioning.SOURCES),\n        'actorTypes': sorted(versioning.ACTOR_TYPES),\n        # The record types this door can actually show, named by the server.\n        # The page used to hold its own list, which was the curriculum's ten\n        # types -- so the system-wide Audit Trail offered a Record type filter\n        # that could not name a learner, a coaching meeting or an employer, and\n        # read as though the curriculum were the only thing being audited.\n        'entityTypes': entity_type_options('' if structured else workspace),\n        # The Who list is a facet of the other filters, not a global directory\n        # of everybody who changed anything in the window. Otherwise choosing\n        # a person from the unfiltered list can legitimately return zero rows\n        # once Action or Record type has narrowed the feed.\n        'actors': merge_actors(revision_actors(\n            since, workspace, entity_filter, action_filter, source_filter, actor_type_filter,\n        ), []),\n        'events': events,\n    })",
+      "owner": "curriculum_api.reporting.api.history",
+      "dependencies": [
+        "ACTIONS",
+        "DEFAULT_PAGE_SIZE",
+        "DEFAULT_WINDOW_DAYS",
+        "JsonResponse",
+        "MAX_LIMIT",
+        "_scope_clause",
+        "audit_pages_workspace_options",
+        "change_window_limit",
+        "coverage_keys",
+        "curriculum_views_clean_str",
+        "datetime",
+        "derived_PROVENANCE_REVISION",
+        "derived_PROVENANCE_TIMESTAMPS",
+        "derived_read_hybrid",
+        "entity_type_options",
+        "merge_actors",
+        "parse_bounded_int",
+        "revision_actors",
+        "revision_event",
+        "system_writes_change_workspaces",
+        "system_writes_revision_workspace_clause",
+        "timedelta",
+        "transaction",
+        "versioning_ACTOR_TYPES",
+        "versioning_ENTITY_TYPES",
+        "versioning_REVISIONS_TABLE",
+        "versioning_SOURCES",
+        "versioning_metadata_columns_available",
+        "versioning_qualified"
+      ],
+      "attributes": {
+        "curriculum_views.clean_str": "curriculum_views_clean_str",
+        "system_writes.revision_workspace_clause": "system_writes_revision_workspace_clause",
+        "versioning.metadata_columns_available": "versioning_metadata_columns_available",
+        "versioning.qualified": "versioning_qualified",
+        "versioning.REVISIONS_TABLE": "versioning_REVISIONS_TABLE",
+        "versioning.ENTITY_TYPES": "versioning_ENTITY_TYPES",
+        "versioning.SOURCES": "versioning_SOURCES",
+        "versioning.ACTOR_TYPES": "versioning_ACTOR_TYPES",
+        "derived.read_hybrid": "derived_read_hybrid",
+        "derived.PROVENANCE_REVISION": "derived_PROVENANCE_REVISION",
+        "derived.PROVENANCE_TIMESTAMPS": "derived_PROVENANCE_TIMESTAMPS",
+        "audit_pages.workspace_options": "audit_pages_workspace_options",
+        "system_writes.change_workspaces": "system_writes_change_workspaces"
+      },
+      "local_imports": [
+        "from system_audit import pages as audit_pages, writes as system_writes",
+        "from system_audit import derived"
+      ],
+      "decorators": []
+    },
+    "quality.history_off_response": {
+      "source": "def history_off_response():\n    \"\"\"The one honest answer when the history tables are not there.\n\n    A 200 carrying ``available: false`` rather than a 404: the feature exists,\n    the store behind it has not been created yet, and the page has to be able to\n    say which of those it is looking at.\n    \"\"\"\n    return JsonResponse({\n        'available': False,\n        'reason': (\n            'Version history is not switched on. Run '\n            'backend/sql/2026-09-09_curriculum_record_versions.sql against the database '\n            'to create curriculum.record_revisions and curriculum.record_versions.'\n        ),\n        'totalRevisions': 0,\n        'totalNamedVersions': 0,\n        'count': 0,\n        'entities': [],\n        'versions': [],\n        'revisions': [],\n    })",
+      "owner": "curriculum_api.reporting.api.history",
+      "dependencies": [
+        "JsonResponse"
+      ],
+      "attributes": {},
+      "local_imports": [],
+      "decorators": []
+    },
+    "quality.curriculum_quality_versions": {
+      "source": "def curriculum_quality_versions(request):\n    \"\"\"Versioned records, most recently changed first.\n\n    ``?module=`` narrows to one module's whole tree, ``?entity_type=`` to one\n    kind of record, ``?search=`` matches the title or the id.\n    \"\"\"\n    if not versioning.history_available():\n        return history_off_response()\n\n    module = curriculum_views.clean_str(request.GET.get('module'))\n    entity_type = curriculum_views.clean_str(request.GET.get('entity_type')).lower()\n    search = curriculum_views.clean_str(request.GET.get('search')).lower()\n    limit = parse_bounded_int(request.GET.get('limit'), 200, 1, 1000)\n\n    where = ['1 = 1']\n    params = []\n    if module:\n        where.append('module_catalogue_id = %s')\n        params.append(module)\n    if entity_type and entity_type != 'all' and entity_type in versioning.ENTITY_TYPES:\n        where.append('entity_type = %s')\n        params.append(entity_type)\n\n    revisions_table = versioning.qualified(versioning.REVISIONS_TABLE)\n    versions_table = versioning.qualified(versioning.VERSIONS_TABLE)\n\n    # One row per versioned record: how many revisions it has and when it last\n    # moved. Aggregated in SQL because components run to thousands, and reading\n    # every revision back to count them in Python is the one thing this page\n    # must not do.\n    query = (\n        'select entity_type, entity_id, '\n        'max(revision_no) as revisions, '\n        'max(created_at) as last_change, '\n        'min(created_at) as first_change '\n        f'from {revisions_table} where {\" and \".join(where)} '\n        'group by entity_type, entity_id '\n        f'order by max(created_at) desc limit {int(limit)}'\n    )\n    try:\n        summary_rows = curriculum_views.fetch_all(query, params)\n    except Exception:\n        logger.warning('Could not read curriculum version summaries.', exc_info=True)\n        return history_off_response()\n\n    keys = [\n        (curriculum_views.clean_str(row.get('entity_type')), curriculum_views.clean_str(row.get('entity_id')))\n        for row in summary_rows\n    ]\n    latest = latest_revision_by_entity(keys)\n    named = named_version_counts(keys)\n\n    entities = []\n    for row in summary_rows:\n        row_type = curriculum_views.clean_str(row.get('entity_type'))\n        entity_id = curriculum_views.clean_str(row.get('entity_id'))\n        head = latest.get((row_type, entity_id)) or {}\n        title = curriculum_views.clean_str(head.get('title'))\n        if search and search not in title.lower() and search not in entity_id.lower():\n            continue\n        entities.append({\n            'entityType': row_type,\n            'entityId': entity_id,\n            'title': title,\n            'moduleCatalogueId': curriculum_views.clean_str(head.get('module_catalogue_id')),\n            'parentId': curriculum_views.clean_str(head.get('parent_id')),\n            'versionLabel': curriculum_views.clean_str(head.get('version_label')),\n            'contentStatus': curriculum_views.clean_str(head.get('content_status')),\n            'action': curriculum_views.clean_str(head.get('action')),\n            'revisions': int(row.get('revisions') or 0),\n            'namedVersions': named.get((row_type, entity_id), 0),\n            'lastChangeAt': iso(row.get('last_change')),\n            'firstChangeAt': iso(row.get('first_change')),\n            'lastActorName': curriculum_views.clean_str(head.get('actor_name')),\n        })\n\n    try:\n        totals = curriculum_views.fetch_all(\n            f'select (select count(*) from {revisions_table}) as revisions, '\n            f'(select count(*) from {versions_table}) as versions'\n        )\n        total_revisions = int((totals[0] if totals else {}).get('revisions') or 0)\n        total_versions = int((totals[0] if totals else {}).get('versions') or 0)\n    except Exception:\n        total_revisions = total_versions = 0\n\n    return JsonResponse({\n        'available': True,\n        'generatedAt': datetime.utcnow().isoformat(),\n        'totalRevisions': total_revisions,\n        'totalNamedVersions': total_versions,\n        'count': len(entities),\n        'entities': entities,\n    })",
+      "owner": "curriculum_api.reporting.api.history",
+      "dependencies": [
+        "JsonResponse",
+        "curriculum_views_clean_str",
+        "curriculum_views_fetch_all",
+        "datetime",
+        "history_off_response",
+        "iso",
+        "latest_revision_by_entity",
+        "logger",
+        "named_version_counts",
+        "parse_bounded_int",
+        "versioning_ENTITY_TYPES",
+        "versioning_REVISIONS_TABLE",
+        "versioning_VERSIONS_TABLE",
+        "versioning_history_available",
+        "versioning_qualified"
+      ],
+      "attributes": {
+        "curriculum_views.clean_str": "curriculum_views_clean_str",
+        "versioning.qualified": "versioning_qualified",
+        "versioning.REVISIONS_TABLE": "versioning_REVISIONS_TABLE",
+        "versioning.VERSIONS_TABLE": "versioning_VERSIONS_TABLE",
+        "versioning.history_available": "versioning_history_available",
+        "versioning.ENTITY_TYPES": "versioning_ENTITY_TYPES",
+        "curriculum_views.fetch_all": "curriculum_views_fetch_all"
+      },
+      "local_imports": [],
+      "decorators": [
+        "require_GET",
+        "never_cache"
+      ]
+    },
+    "quality.curriculum_quality_record_history": {
+      "source": "def curriculum_quality_record_history(request, entity_type, entity_id):\n    \"\"\"One record's timeline: its named versions, and every revision beneath them.\n\n    Revisions come back newest first with their diffs. ``?snapshot=<n>`` also\n    returns the stored content of revision ``n`` -- what the record actually held\n    at that point, which is the question a version number exists to answer.\n    \"\"\"\n    if not versioning.history_available():\n        return history_off_response()\n    entity_type = curriculum_views.clean_str(entity_type).lower()\n    entity_id = curriculum_views.clean_str(entity_id)\n    if entity_type not in versioning.ENTITY_TYPES:\n        return curriculum_views.json_error(f'Unknown record type \"{entity_type}\".', status=404)\n\n    revisions_table = versioning.qualified(versioning.REVISIONS_TABLE)\n    versions_table = versioning.qualified(versioning.VERSIONS_TABLE)\n    limit = parse_bounded_int(request.GET.get('limit'), 200, 1, 1000)\n\n    try:\n        revisions = curriculum_views.fetch_all(\n            'select id, entity_type, entity_id, revision_no, action, module_catalogue_id, parent_id, title, '\n            'version_label, content_status, changed_fields, actor_name, actor_email, reason, created_at '\n            f'from {revisions_table} where entity_type = %s and entity_id = %s '\n            f'order by revision_no desc limit {int(limit)}',\n            [entity_type, entity_id],\n        )\n    except Exception:\n        logger.warning('Could not read the revision timeline for %s %s.', entity_type, entity_id, exc_info=True)\n        return history_off_response()\n\n    if not revisions:\n        return JsonResponse({\n            'available': True,\n            'entityType': entity_type,\n            'entityId': entity_id,\n            'title': '',\n            'moduleCatalogueId': '',\n            'versions': [],\n            'revisions': [],\n            'snapshot': None,\n        })\n\n    versions = curriculum_views.fetch_all(\n        'select v.id, v.version_label, v.revision_id, v.content_status, v.note, v.actor_name, '\n        'v.actor_email, v.created_at, r.revision_no '\n        f'from {versions_table} v join {revisions_table} r on r.id = v.revision_id '\n        'where v.entity_type = %s and v.entity_id = %s order by v.created_at desc',\n        [entity_type, entity_id],\n    )\n\n    snapshot = None\n    wanted = curriculum_views.clean_str(request.GET.get('snapshot'))\n    if wanted:\n        rows = curriculum_views.fetch_all(\n            f'select revision_no, snapshot, created_at from {revisions_table} '\n            'where entity_type = %s and entity_id = %s and revision_no = %s',\n            [entity_type, entity_id, parse_bounded_int(wanted, 1, 1, 10_000_000)],\n        )\n        if rows:\n            snapshot = {\n                'revisionNo': int(rows[0].get('revision_no') or 0),\n                'at': iso(rows[0].get('created_at')),\n                'content': versioning.as_dict(rows[0].get('snapshot')),\n            }\n\n    return JsonResponse({\n        'available': True,\n        'entityType': entity_type,\n        'entityId': entity_id,\n        'title': curriculum_views.clean_str(revisions[0].get('title')),\n        'moduleCatalogueId': curriculum_views.clean_str(revisions[0].get('module_catalogue_id')),\n        'versions': [\n            {\n                'id': row.get('id'),\n                'versionLabel': curriculum_views.clean_str(row.get('version_label')),\n                'revisionNo': int(row.get('revision_no') or 0),\n                'contentStatus': curriculum_views.clean_str(row.get('content_status')),\n                'note': curriculum_views.clean_str(row.get('note')),\n                'actorName': curriculum_views.clean_str(row.get('actor_name')),\n                'at': iso(row.get('created_at')),\n            }\n            for row in versions\n        ],\n        'revisions': [revision_row(row) for row in revisions],\n        'snapshot': snapshot,\n    })",
+      "owner": "curriculum_api.reporting.api.history",
+      "dependencies": [
+        "JsonResponse",
+        "curriculum_views_clean_str",
+        "curriculum_views_fetch_all",
+        "curriculum_views_json_error",
+        "history_off_response",
+        "iso",
+        "logger",
+        "parse_bounded_int",
+        "revision_row",
+        "versioning_ENTITY_TYPES",
+        "versioning_REVISIONS_TABLE",
+        "versioning_VERSIONS_TABLE",
+        "versioning_as_dict",
+        "versioning_history_available",
+        "versioning_qualified"
+      ],
+      "attributes": {
+        "curriculum_views.clean_str": "curriculum_views_clean_str",
+        "versioning.ENTITY_TYPES": "versioning_ENTITY_TYPES",
+        "versioning.qualified": "versioning_qualified",
+        "versioning.REVISIONS_TABLE": "versioning_REVISIONS_TABLE",
+        "versioning.VERSIONS_TABLE": "versioning_VERSIONS_TABLE",
+        "curriculum_views.fetch_all": "curriculum_views_fetch_all",
+        "versioning.history_available": "versioning_history_available",
+        "curriculum_views.json_error": "curriculum_views_json_error",
+        "versioning.as_dict": "versioning_as_dict"
+      },
+      "local_imports": [],
+      "decorators": [
+        "require_GET",
+        "never_cache"
+      ]
+    },
+    "programme_audit.clean": {
+      "source": "def clean(value, fallback=''):\n    text = str(value if value is not None else '').strip()\n    return text or fallback",
+      "owner": "curriculum_api.catalogue.domain.asset_values",
+      "dependencies": [],
+      "attributes": {},
+      "local_imports": [],
+      "decorators": []
+    },
+    "programme_audit.normalise": {
+      "source": "def normalise(value):\n    return clean(value).lower().replace('_', '-').strip()",
+      "owner": "curriculum_api.catalogue.domain.asset_values",
+      "dependencies": [
+        "clean"
+      ],
+      "attributes": {},
+      "local_imports": [],
+      "decorators": []
+    },
+    "programme_audit.read_json_value": {
+      "source": "def read_json_value(value, fallback):\n    if value is None:\n        return fallback\n    if isinstance(value, (dict, list)):\n        return value\n    if isinstance(value, str):\n        try:\n            loaded = json.loads(value)\n        except ValueError:\n            return fallback\n        return loaded\n    return fallback",
+      "owner": "curriculum_api.catalogue.domain.asset_values",
+      "dependencies": [
+        "json"
+      ],
+      "attributes": {},
+      "local_imports": [],
+      "decorators": []
+    },
+    "programme_audit.parse_int": {
+      "source": "def parse_int(value, default=None):\n    if value in (None, ''):\n        return default\n    try:\n        return int(float(value))\n    except (TypeError, ValueError):\n        return default",
+      "owner": "curriculum_api.catalogue.domain.asset_values",
+      "dependencies": [],
+      "attributes": {},
+      "local_imports": [],
+      "decorators": []
+    },
+    "programme_audit.parse_float": {
+      "source": "def parse_float(value, default=None):\n    if value in (None, ''):\n        return default\n    try:\n        return float(value)\n    except (TypeError, ValueError):\n        return default",
+      "owner": "curriculum_api.catalogue.domain.asset_values",
+      "dependencies": [],
+      "attributes": {},
+      "local_imports": [],
+      "decorators": []
+    },
+    "programme_audit.first_value": {
+      "source": "def first_value(mapping, *keys, fallback=''):\n    if not isinstance(mapping, dict):\n        return fallback\n    for key in keys:\n        value = mapping.get(key)\n        if value not in (None, ''):\n            return value\n    return fallback",
+      "owner": "curriculum_api.catalogue.domain.asset_values",
+      "dependencies": [],
+      "attributes": {},
+      "local_imports": [],
+      "decorators": []
+    },
+    "programme_audit.first_clean": {
+      "source": "def first_clean(mapping, *keys, fallback=''):\n    return clean(first_value(mapping, *keys, fallback=fallback), fallback)",
+      "owner": "curriculum_api.catalogue.domain.asset_values",
+      "dependencies": [
+        "clean",
+        "first_value"
+      ],
+      "attributes": {},
+      "local_imports": [],
+      "decorators": []
+    },
+    "programme_audit.iframe_src": {
+      "source": "def iframe_src(value):\n    text = clean(value)\n    if '<' not in text:\n        return ''\n    match = re.search(r'\\bsrc\\s*=\\s*[\"\\']([^\"\\']+)[\"\\']', text, re.I)\n    if not match:\n        return ''\n    return match.group(1).replace('&amp;', '&').strip()",
+      "owner": "curriculum_api.catalogue.domain.asset_values",
+      "dependencies": [
+        "clean",
+        "re"
+      ],
+      "attributes": {},
+      "local_imports": [],
+      "decorators": []
+    },
+    "programme_audit.is_http_url": {
+      "source": "def is_http_url(value):\n    parsed = urlparse(clean(value))\n    return parsed.scheme in {'http', 'https'} and bool(parsed.netloc)",
+      "owner": "curriculum_api.catalogue.domain.asset_values",
+      "dependencies": [
+        "clean",
+        "urlparse"
+      ],
+      "attributes": {},
+      "local_imports": [],
+      "decorators": []
+    },
+    "programme_audit.youtube_embed_url": {
+      "source": "def youtube_embed_url(url):\n    parsed = urlparse(clean(url))\n    host = (parsed.hostname or '').lower()\n    video_id = ''\n    if host.endswith('youtu.be'):\n        video_id = parsed.path.strip('/').split('/')[0]\n    elif host.endswith('youtube.com') or host.endswith('youtube-nocookie.com'):\n        if parsed.path.startswith('/embed/'):\n            return clean(url)\n        video_id = parse_qs(parsed.query).get('v', [''])[0]\n        if not video_id and parsed.path.startswith('/shorts/'):\n            video_id = parsed.path.split('/shorts/', 1)[1].split('/')[0]\n    return f'https://www.youtube.com/embed/{video_id}' if video_id else ''",
+      "owner": "curriculum_api.catalogue.domain.asset_values",
+      "dependencies": [
+        "clean",
+        "parse_qs",
+        "urlparse"
+      ],
+      "attributes": {},
+      "local_imports": [],
+      "decorators": []
+    },
+    "programme_audit.vimeo_embed_url": {
+      "source": "def vimeo_embed_url(url):\n    parsed = urlparse(clean(url))\n    host = (parsed.hostname or '').lower()\n    if not host.endswith('vimeo.com'):\n        return ''\n    if parsed.path.startswith('/video/'):\n        return clean(url)\n    match = re.search(r'/(\\d+)', parsed.path)\n    return f'https://player.vimeo.com/video/{match.group(1)}' if match else ''",
+      "owner": "curriculum_api.catalogue.domain.asset_values",
+      "dependencies": [
+        "clean",
+        "re",
+        "urlparse"
+      ],
+      "attributes": {},
+      "local_imports": [],
+      "decorators": []
+    },
+    "programme_audit.google_embed_url": {
+      "source": "def google_embed_url(url):\n    text = clean(url)\n    slides = re.search(r'docs\\.google\\.com/presentation/d/([^/?#]+)', text)\n    if slides:\n        return f'https://docs.google.com/presentation/d/{slides.group(1)}/embed'\n    docs = re.search(r'docs\\.google\\.com/document/d/([^/?#]+)', text)\n    if docs:\n        return f'https://docs.google.com/document/d/{docs.group(1)}/preview'\n    return ''",
+      "owner": "curriculum_api.catalogue.domain.asset_values",
+      "dependencies": [
+        "clean",
+        "re"
+      ],
+      "attributes": {},
+      "local_imports": [],
+      "decorators": []
+    },
+    "programme_audit.file_extension": {
+      "source": "def file_extension(url):\n    path = urlparse(clean(url)).path\n    if '.' not in path:\n        return ''\n    return path.rsplit('.', 1)[1].lower()",
+      "owner": "curriculum_api.catalogue.domain.asset_values",
+      "dependencies": [
+        "clean",
+        "urlparse"
+      ],
+      "attributes": {},
+      "local_imports": [],
+      "decorators": []
+    },
+    "programme_audit.render_target": {
+      "source": "def render_target(source_url='', embed_code='', content_kind=''):\n    embedded = iframe_src(embed_code)\n    if embedded:\n        return embedded, 'iframe'\n\n    source_url = clean(source_url)\n    if not source_url:\n        return '', 'lms_native'\n\n    google = google_embed_url(source_url)\n    if google:\n        return google, 'iframe'\n    youtube = youtube_embed_url(source_url)\n    if youtube:\n        return youtube, 'iframe'\n    vimeo = vimeo_embed_url(source_url)\n    if vimeo:\n        return vimeo, 'iframe'\n\n    extension = file_extension(source_url)\n    if source_url.startswith(UPLOAD_URL_PREFIX):\n        return source_url, 'same_origin'\n    if extension == 'pdf':\n        return source_url, 'iframe'\n    if extension in {'doc', 'docx', 'ppt', 'pptx', 'pps', 'ppsx', 'xls', 'xlsx'} and is_http_url(source_url):\n        return f'https://view.officeapps.live.com/op/embed.aspx?src={urlencode({\"\": source_url})[1:]}', 'office'\n    if content_kind in {'audio', 'video'}:\n        return source_url, 'media'\n    if is_http_url(source_url):\n        return source_url, 'link'\n    return source_url, 'link'",
+      "owner": "curriculum_api.catalogue.domain.asset_values",
+      "dependencies": [
+        "UPLOAD_URL_PREFIX",
+        "clean",
+        "file_extension",
+        "google_embed_url",
+        "iframe_src",
+        "is_http_url",
+        "urlencode",
+        "vimeo_embed_url",
+        "youtube_embed_url"
+      ],
+      "attributes": {},
+      "local_imports": [],
+      "decorators": []
+    },
+    "programme_audit.content_kind_for_component": {
+      "source": "def content_kind_for_component(component_type):\n    component_type = normalise(component_type)\n    if component_type == 'podcast':\n        return 'audio'\n    if component_type == 'powerpoint':\n        return 'presentation'\n    if component_type == 'recording-placeholder':\n        return 'recording'\n    if component_type == 'live-session':\n        return 'live_session'\n    return component_type or 'activity'",
+      "owner": "curriculum_api.catalogue.domain.asset_values",
+      "dependencies": [
+        "normalise"
+      ],
+      "attributes": {},
+      "local_imports": [],
+      "decorators": []
+    },
+    "programme_audit.component_settings": {
+      "source": "def component_settings(component):\n    settings = first_value(component, 'settings', 'settings_json', fallback={})\n    settings = read_json_value(settings, {})\n    return settings if isinstance(settings, dict) else {}",
+      "owner": "curriculum_api.catalogue.domain.asset_values",
+      "dependencies": [
+        "first_value",
+        "read_json_value"
+      ],
+      "attributes": {},
+      "local_imports": [],
+      "decorators": []
+    },
+    "programme_audit.normalised_component_type": {
+      "source": "def normalised_component_type(component):\n    raw_type = first_clean(component, 'componentType', 'component_type', 'type', 'activityType', fallback='activity')\n    component_type = normalise(raw_type)\n    if component_type not in {'self-study', 'self study', 'activity'}:\n        return component_type\n    settings = component_settings(component)\n    if any(clean(settings.get(key)) for key in ('videoUrl', 'videoURL')) or clean(settings.get('sourceType')):\n        return 'video'\n    if any(clean(settings.get(key)) for key in ('podcastUrl', 'podcastEmbedCode')) or clean(settings.get('podcastSource')):\n        return 'podcast'\n    if any(clean(settings.get(key)) for key in ('presentationUrl', 'fileName', 'slideRange')):\n        return 'powerpoint'\n    if any(clean(settings.get(key)) for key in ('readingContent', 'resourceUrl', 'readingSource', 'estimatedReadingTime')):\n        return 'reading'\n    if any(clean(settings.get(key)) for key in ('minimumWordCount', 'learnerGuidance', 'tutorReviewGuidance')):\n        return 'reflection'\n    return component_type",
+      "owner": "curriculum_api.catalogue.domain.asset_values",
+      "dependencies": [
+        "clean",
+        "component_settings",
+        "first_clean",
+        "normalise"
+      ],
+      "attributes": {},
+      "local_imports": [],
+      "decorators": []
+    },
+    "programme_audit.primary_source_for_component": {
+      "source": "def primary_source_for_component(component, settings, component_type):\n    if component_type == 'video':\n        return first_clean(settings, 'videoUrl', 'uploadedFileUrl', 'resourceUrl'), first_clean(settings, 'embedCode')\n    if component_type == 'podcast':\n        return first_clean(settings, 'podcastUrl', 'uploadedFileUrl'), first_clean(settings, 'embedCode', 'podcastEmbedCode')\n    if component_type == 'reading':\n        return first_clean(settings, 'resourceUrl', 'uploadedFileUrl'), ''\n    if component_type == 'powerpoint':\n        return first_clean(settings, 'presentationUrl', 'uploadedFileUrl'), ''\n    if component_type == 'assignment':\n        return first_clean(settings, 'assignmentFileUrl', 'uploadedFileUrl'), ''\n    if component_type == 'live-session':\n        return first_clean(settings, 'liveSessionUrl', 'teamsMeetingUrl'), ''\n    if component_type == 'recording-placeholder':\n        return first_clean(settings, 'recordingUrl'), ''\n    return first_clean(settings, 'resourceUrl', 'uploadedFileUrl', 'url', 'link'), first_clean(settings, 'embedCode')",
+      "owner": "curriculum_api.catalogue.domain.asset_values",
+      "dependencies": [
+        "first_clean"
+      ],
+      "attributes": {},
+      "local_imports": [],
+      "decorators": []
+    },
+    "programme_audit.stable_asset_id": {
+      "source": "def stable_asset_id(asset):\n    source = '|'.join([\n        clean(asset.get('programme_id')),\n        clean(asset.get('component_id')),\n        clean(asset.get('content_kind')),\n        clean(asset.get('source_url') or asset.get('embed_url') or asset.get('title')),\n    ])\n    return hashlib.sha256(source.encode('utf-8')).hexdigest()",
+      "owner": "curriculum_api.catalogue.domain.asset_values",
+      "dependencies": [
+        "clean",
+        "hashlib"
+      ],
+      "attributes": {},
+      "local_imports": [],
+      "decorators": []
+    },
+    "programme_audit.is_component_like": {
+      "source": "def is_component_like(value):\n    if not isinstance(value, dict):\n        return False\n    has_title = any(clean(value.get(key)) for key in ('title', 'name', 'componentTitle'))\n    has_type = any(clean(value.get(key)) for key in ('type', 'componentType', 'component_type', 'activityType'))\n    has_component_id = any(clean(value.get(key)) for key in ('componentId', 'component_id'))\n    return has_type and (has_title or has_component_id)",
+      "owner": "curriculum_api.catalogue.domain.asset_values",
+      "dependencies": [
+        "clean"
+      ],
+      "attributes": {},
+      "local_imports": [],
+      "decorators": []
+    },
+    "programme_audit.context_with": {
+      "source": "def context_with(context, key, value):\n    updated = dict(context)\n    if isinstance(value, dict):\n        updated[key] = value\n    return updated",
+      "owner": "curriculum_api.catalogue.domain.asset_values",
+      "dependencies": [],
+      "attributes": {},
+      "local_imports": [],
+      "decorators": []
+    },
+    "programme_audit.scope_assets_to_ui_material": {
+      "source": "def scope_assets_to_ui_material(material, source_assets):\n    \"\"\"Label authored-module assets with their learner-facing material name.\"\"\"\n    assets = []\n    for source_asset in source_assets:\n        asset = dict(source_asset)\n        settings = dict(read_json_value(asset.get('settings'), {}))\n        settings.setdefault('sourceModuleTitle', clean(asset.get('module_title')))\n        asset['programme_source_id'] = clean(\n            source_asset.get('programme_source_id'),\n            clean(source_asset.get('programme_id')),\n        )\n        asset['programme_id'] = clean(material.get('programme_id'))\n        asset['programme_name'] = clean(material.get('programme_name'))\n        asset['module_title'] = clean(material.get('name'))\n        asset['settings'] = settings\n        asset['raw_payload'] = {\n            'uiMaterialKey': clean(material.get('key')),\n            'uiMaterialName': clean(material.get('name')),\n            'sourceModuleId': clean(asset.get('module_catalogue_id')),\n            'sourceModuleTitle': settings.get('sourceModuleTitle', ''),\n        }\n        assets.append(asset)\n    return assets",
+      "owner": "curriculum_api.catalogue.application.audit_assets",
+      "dependencies": [
+        "clean",
+        "read_json_value"
+      ],
+      "attributes": {},
+      "local_imports": [],
+      "decorators": []
+    },
+    "programme_audit.base_asset": {
+      "source": "def base_asset(component, context, raw_payload, imported_from):\n    settings = component_settings(component)\n    programme = context.get('programme') if isinstance(context.get('programme'), dict) else {}\n    module = context.get('module') if isinstance(context.get('module'), dict) else {}\n    week = context.get('week') if isinstance(context.get('week'), dict) else {}\n    component_type = normalised_component_type(component)\n    programme_id = clean(\n        first_value(programme, 'id', 'sourceId', 'source_id', 'programmeId', 'programme_id')\n        or context.get('programme_id')\n        or first_value(component, 'programmeId', 'programme_id')\n        or first_value(module, 'programmeId', 'programme_id')\n        or first_value(component, 'programme', 'programmeName', 'programme_name')\n        or first_value(module, 'programme', 'programmeName', 'programme_name'),\n        'unassigned-programme',\n    )\n    programme_name = clean(\n        first_value(programme, 'name', 'programme', 'programmeName', 'programme_name')\n        or context.get('programme_name')\n        or first_value(component, 'programme', 'programmeName', 'programme_name')\n        or first_value(module, 'programme', 'programmeName', 'programme_name'),\n        programme_id,\n    )\n    return {\n        'programme_id': programme_id,\n        'programme_source_id': clean(first_value(programme, 'sourceId', 'source_id'), programme_id),\n        'programme_name': programme_name,\n        'module_catalogue_id': clean(\n            first_value(component, 'moduleCatalogueId', 'module_catalogue_id', 'moduleId', 'module_id')\n            or first_value(module, 'moduleCatalogueId', 'module_catalogue_id', 'catalogueId', 'id')\n            or context.get('module_catalogue_id')\n        ),\n        'module_title': clean(\n            first_value(component, 'module', 'moduleTitle', 'module_title')\n            or first_value(module, 'name', 'title', 'moduleTitle', 'module_title')\n            or context.get('module_title')\n        ),\n        'week_id': clean(first_value(component, 'weekId', 'week_id') or first_value(week, 'id', 'weekId', 'week_id') or context.get('week_id')),\n        'week_number': parse_int(first_value(component, 'weekNumber', 'week_number') or first_value(week, 'weekNumber', 'week_number')),\n        'week_title': clean(\n            first_value(component, 'weekTitle', 'week_title', 'week')\n            or first_value(week, 'title', 'weekTitle', 'week_title', 'week')\n            or context.get('week_title')\n        ),\n        'component_id': clean(first_value(component, 'id', 'componentId', 'component_id')),\n        'component_type': component_type,\n        'title': first_clean(component, 'title', 'name', 'componentTitle', fallback=content_kind_for_component(component_type).replace('_', ' ').title()),\n        'description': first_clean(component, 'description', 'summary', 'shortDescription'),\n        'file_name': first_clean(settings, 'uploadedFileName', 'fileName', 'assignmentFileName'),\n        'content_type': first_clean(settings, 'uploadedFileContentType', 'contentType', 'mimeType'),\n        'file_size': parse_int(first_value(settings, 'uploadedFileSize', 'fileSize', 'size')),\n        'duration_minutes': parse_int(first_value(settings, 'durationMinutes', 'estimatedReadingTime')),\n        'expected_otjh': parse_float(first_value(component, 'expectedOtjh', 'expected_otjh')),\n        'points': parse_int(first_value(component, 'points')),\n        'status': first_clean(settings, 'contentStatus', 'componentBuilderStatus') or first_clean(component, 'status'),\n        'ksb_mappings': read_json_value(first_value(component, 'ksbMappings', 'ksb_mappings', fallback=[]), []),\n        'settings': settings,\n        'raw_component': component,\n        'raw_payload': raw_payload if isinstance(raw_payload, dict) else {'payload': raw_payload},\n        'imported_from': imported_from,\n    }",
+      "owner": "curriculum_api.catalogue.application.audit_assets",
+      "dependencies": [
+        "clean",
+        "component_settings",
+        "content_kind_for_component",
+        "first_clean",
+        "first_value",
+        "normalised_component_type",
+        "parse_float",
+        "parse_int",
+        "read_json_value"
+      ],
+      "attributes": {},
+      "local_imports": [],
+      "decorators": []
+    },
+    "programme_audit.component_assets": {
+      "source": "def component_assets(component, context, raw_payload, imported_from='curriculum'):\n    settings = component_settings(component)\n    component_type = normalised_component_type(component)\n    kind = content_kind_for_component(component_type)\n    source_url, embed_code = primary_source_for_component(component, settings, component_type)\n    base = base_asset(component, context, raw_payload, imported_from)\n    embed_url, render_mode = render_target(source_url, embed_code, kind)\n    assets = [{\n        **base,\n        'content_kind': kind,\n        'source_url': source_url,\n        'embed_url': embed_url,\n        'embed_code': embed_code,\n        'render_mode': render_mode,\n    }]\n    audio_url = first_clean(settings, 'audioUrl')\n    if component_type == 'reading' and audio_url:\n        audio_embed_url, audio_render_mode = render_target(audio_url, '', 'audio')\n        assets.append({\n            **base,\n            'content_kind': 'audio',\n            'title': f'{base[\"title\"]} audio',\n            'source_url': audio_url,\n            'embed_url': audio_embed_url,\n            'embed_code': '',\n            'render_mode': audio_render_mode,\n        })\n    return [stamp_asset(asset) for asset in assets]",
+      "owner": "curriculum_api.catalogue.application.audit_assets",
+      "dependencies": [
+        "base_asset",
+        "component_settings",
+        "content_kind_for_component",
+        "first_clean",
+        "normalised_component_type",
+        "primary_source_for_component",
+        "render_target",
+        "stamp_asset"
+      ],
+      "attributes": {},
+      "local_imports": [],
+      "decorators": []
+    },
+    "programme_audit.stamp_asset": {
+      "source": "def stamp_asset(asset):\n    source_key = stable_asset_id(asset)\n    now = timezone.now()\n    return {\n        **asset,\n        'id': source_key,\n        'source_key': source_key,\n        'imported_at': now,\n        'updated_at': now,\n    }",
+      "owner": "curriculum_api.catalogue.application.audit_assets",
+      "dependencies": [
+        "stable_asset_id",
+        "timezone"
+      ],
+      "attributes": {},
+      "local_imports": [],
+      "decorators": []
+    },
+    "programme_audit.iter_components": {
+      "source": "def iter_components(payload, context=None):\n    context = context or {}\n    if isinstance(payload, list):\n        for item in payload:\n            yield from iter_components(item, context)\n        return\n    if not isinstance(payload, dict):\n        return\n\n    if isinstance(payload.get('programme'), dict):\n        context = context_with(context, 'programme', payload['programme'])\n    elif any(payload.get(key) for key in ('programmeId', 'programme_id', 'programmeName', 'programme_name')):\n        context = {\n            **context,\n            'programme_id': first_clean(payload, 'programmeId', 'programme_id'),\n            'programme_name': first_clean(payload, 'programmeName', 'programme_name', 'programme'),\n        }\n\n    if isinstance(payload.get('module'), dict):\n        context = context_with(context, 'module', payload['module'])\n    if isinstance(payload.get('week'), dict):\n        context = context_with(context, 'week', payload['week'])\n\n    flat = payload.get('flat')\n    if isinstance(flat, dict) and isinstance(flat.get('components'), list):\n        modules_by_id = {}\n        for module in flat.get('modules') or []:\n            module_id = clean(first_value(module, 'moduleCatalogueId', 'catalogueId', 'moduleId', 'id'))\n            if module_id:\n                modules_by_id[module_id] = module\n        for component in flat['components']:\n            module_id = clean(first_value(component, 'moduleCatalogueId', 'moduleId', 'module_catalogue_id'))\n            item_context = context_with(context, 'module', modules_by_id.get(module_id, {}))\n            yield component, item_context\n        return\n\n    if is_component_like(payload):\n        yield payload, context\n\n    child_context = context\n    if any(clean(payload.get(key)) for key in ('moduleCatalogueId', 'catalogueId', 'moduleId', 'module_catalogue_id')):\n        child_context = context_with(child_context, 'module', payload)\n    if any(clean(payload.get(key)) for key in ('weekId', 'week_id', 'weekNumber', 'week_number')) and not is_component_like(payload):\n        child_context = context_with(child_context, 'week', payload)\n\n    for key in ('components', 'items', 'activities', 'lessons', 'resources'):\n        if isinstance(payload.get(key), list):\n            for child in payload[key]:\n                yield from iter_components(child, child_context)\n    for key in ('modules', 'courses', 'weeks', 'weekStructure', 'data', 'results', 'programmeStructure'):\n        if isinstance(payload.get(key), (list, dict)):\n            yield from iter_components(payload[key], child_context)",
+      "owner": "curriculum_api.catalogue.application.audit_assets",
+      "dependencies": [
+        "clean",
+        "context_with",
+        "first_clean",
+        "first_value",
+        "is_component_like",
+        "iter_components"
+      ],
+      "attributes": {},
+      "local_imports": [],
+      "decorators": []
+    },
+    "programme_audit.assets_from_payload": {
+      "source": "def assets_from_payload(payload, imported_from='payload'):\n    assets = []\n    seen = set()\n    for component, context in iter_components(payload):\n        for asset in component_assets(component, context, payload, imported_from):\n            if asset['id'] in seen:\n                continue\n            seen.add(asset['id'])\n            assets.append(asset)\n    return assets",
+      "owner": "curriculum_api.catalogue.application.audit_assets",
+      "dependencies": [
+        "component_assets",
+        "iter_components"
+      ],
+      "attributes": {},
+      "local_imports": [],
+      "decorators": []
+    },
+    "programme_audit.assets_from_curriculum_programme": {
+      "source": "def assets_from_curriculum_programme(programme_identifier):\n    payload = curriculum_views.build_curriculum_programme_tree_detail_payload(programme_identifier, 'all')\n    if not payload:\n        raise ProgrammeAuditNotFound('Programme not found.')\n    return assets_from_payload(payload, imported_from='curriculum'), payload",
+      "owner": "curriculum_api.catalogue.application.audit_assets",
+      "dependencies": [
+        "ProgrammeAuditNotFound",
+        "assets_from_payload",
+        "curriculum_views_build_curriculum_programme_tree_detail_payload"
+      ],
+      "attributes": {
+        "curriculum_views.build_curriculum_programme_tree_detail_payload": "curriculum_views_build_curriculum_programme_tree_detail_payload"
+      },
+      "local_imports": [],
+      "decorators": []
+    },
+    "programme_audit.kbc_wordpress_activity_asset": {
+      "source": "def kbc_wordpress_activity_asset(group, activity):\n    \"\"\"Map one WordPress KBC-LMS ``groups[].activities[]`` entry to an asset row.\n\n    The source endpoint is paginated by student (not by programme/material), so\n    every activity payload it returns is plain course-material data with no\n    student identifiers in it - see ``sync_kbc_wordpress_all_programmes``.\n    \"\"\"\n    activity_type = normalise(clean(activity.get('activity_type')))\n    video = activity.get('video') if isinstance(activity.get('video'), dict) else None\n    audio = activity.get('audio') if isinstance(activity.get('audio'), dict) else None\n    reading = activity.get('reading') if isinstance(activity.get('reading'), dict) else None\n    quiz = activity.get('quiz') if isinstance(activity.get('quiz'), dict) else None\n\n    if video is not None:\n        kind = 'video'\n        source_url = clean(video.get('iframe_url'))\n        duration = parse_float(video.get('configured_duration_min'))\n    elif audio is not None:\n        kind = 'audio'\n        source_url = clean(audio.get('iframe_url'))\n        duration = parse_float(audio.get('configured_duration_min'))\n    elif reading is not None:\n        kind = 'reading'\n        source_url = clean(reading.get('iframe_url'))\n        duration = None\n    elif quiz is not None:\n        kind = 'quiz'\n        source_url = ''\n        duration = None\n    else:\n        kind = activity_type or 'activity'\n        source_url = ''\n        duration = None\n\n    embed_url, render_mode = render_target(source_url, '', kind)\n    programme_id = clean(group.get('group_id'))\n    programme_name = clean(group.get('group_name'), programme_id)\n    component_id = clean(activity.get('activity_id'))\n\n    asset = {\n        'programme_id': programme_id,\n        'programme_source_id': programme_id,\n        'programme_name': programme_name,\n        'module_catalogue_id': '',\n        'module_title': '',\n        'week_id': '',\n        'week_number': None,\n        'week_title': '',\n        'component_id': component_id,\n        'component_type': clean(activity.get('activity_type')),\n        'content_kind': kind,\n        'title': first_clean(activity, 'title', fallback=kind.title()),\n        'description': '',\n        'source_url': source_url,\n        'embed_url': embed_url,\n        'embed_code': '',\n        'render_mode': render_mode,\n        'file_name': '',\n        'content_type': '',\n        'file_size': None,\n        'duration_minutes': parse_int(duration),\n        'expected_otjh': None,\n        'points': parse_int((quiz or {}).get('maximum_score')),\n        'status': '',\n        'ksb_mappings': [],\n        'settings': {'activity_date': clean(activity.get('activity_date'))},\n        'raw_component': activity,\n        'raw_payload': {'group_id': group.get('group_id'), 'group_name': group.get('group_name')},\n        'imported_from': 'kbc-wordpress',\n    }\n    return stamp_asset(asset)",
+      "owner": "curriculum_api.catalogue.application.audit_assets",
+      "dependencies": [
+        "clean",
+        "first_clean",
+        "normalise",
+        "parse_float",
+        "parse_int",
+        "render_target",
+        "stamp_asset"
+      ],
+      "attributes": {},
+      "local_imports": [],
+      "decorators": []
+    },
+    "programme_audit.serialise_asset_row": {
+      "source": "def serialise_asset_row(row):\n    for column in JSON_COLUMNS:\n        row[column] = read_json_value(row.get(column), [] if column == 'ksb_mappings' else {})\n    for column in ('imported_at', 'updated_at'):\n        if row.get(column) is not None and hasattr(row[column], 'isoformat'):\n            row[column] = row[column].isoformat()\n    if row.get('expected_otjh') is not None:\n        row['expected_otjh'] = float(row['expected_otjh'])\n    return row",
+      "owner": "curriculum_api.catalogue.application.audit_assets",
+      "dependencies": [
+        "JSON_COLUMNS",
+        "read_json_value"
+      ],
+      "attributes": {},
+      "local_imports": [],
+      "decorators": []
+    },
+    "programme_audit.quote_ident": {
+      "source": "def quote_ident(value):\n    return '\"' + str(value).replace('\"', '\"\"') + '\"'",
+      "owner": "curriculum_api.catalogue.infrastructure.audit_asset_reads",
+      "dependencies": [],
+      "attributes": {},
+      "local_imports": [],
+      "decorators": []
+    },
+    "programme_audit.asset_table_name": {
+      "source": "def asset_table_name():\n    if connection.vendor == 'postgresql':\n        return f'{quote_ident(PROGRAMME_AUDIT_SCHEMA)}.{quote_ident(PROGRAMME_AUDIT_TABLE)}'\n    return quote_ident('programme_audit_assets')",
+      "owner": "curriculum_api.catalogue.infrastructure.audit_asset_reads",
+      "dependencies": [
+        "PROGRAMME_AUDIT_SCHEMA",
+        "PROGRAMME_AUDIT_TABLE",
+        "connection",
+        "quote_ident"
+      ],
+      "attributes": {},
+      "local_imports": [],
+      "decorators": []
+    },
+    "programme_audit.rows_as_dicts": {
+      "source": "def rows_as_dicts(cursor):\n    columns = [column[0] for column in cursor.description]\n    return [dict(zip(columns, row)) for row in cursor.fetchall()]",
+      "owner": "curriculum_api.catalogue.infrastructure.audit_asset_reads",
+      "dependencies": [],
+      "attributes": {},
+      "local_imports": [],
+      "decorators": []
+    },
+    "programme_audit.ui_material_table_exists": {
+      "source": "def ui_material_table_exists(table):\n    if connection.vendor != 'postgresql':\n        return False\n    with connection.cursor() as cursor:\n        cursor.execute(\n            'SELECT 1 FROM information_schema.tables '\n            'WHERE table_schema = %s AND table_name = %s LIMIT 1',\n            [PROGRAMME_AUDIT_SCHEMA, table],\n        )\n        return cursor.fetchone() is not None",
+      "owner": "curriculum_api.catalogue.infrastructure.audit_asset_reads",
+      "dependencies": [
+        "PROGRAMME_AUDIT_SCHEMA",
+        "connection"
+      ],
+      "attributes": {},
+      "local_imports": [],
+      "decorators": []
+    },
+    "programme_audit.fetch_ui_material": {
+      "source": "def fetch_ui_material(key, include_results=False):\n    definition = UI_MATERIAL_TABLES.get(clean(key))\n    if not definition:\n        raise ProgrammeAuditNotFound('Material not found.')\n    table_ident = definition['table']\n    if not ui_material_table_exists(table_ident):\n        return {**definition, 'key': key, 'ready': False, 'count': 0, 'expectedMinutes': 0, 'firstWeekTitle': '', 'results': []}\n\n    table = f'{quote_ident(PROGRAMME_AUDIT_SCHEMA)}.{quote_ident(table_ident)}'\n    with connection.cursor() as cursor:\n        cursor.execute(\n            f'''SELECT count(*),\n                       coalesce(sum(\n                           CASE WHEN expected_otjh IS NOT NULL AND expected_otjh > 0\n                                THEN expected_otjh * 60\n                                ELSE coalesce(duration_minutes, 0) END\n                       ), 0)\n                FROM {table}'''\n        )\n        count, expected_minutes = cursor.fetchone()\n        cursor.execute(\n            f'''SELECT week_title FROM {table}\n                WHERE coalesce(week_title, '') <> ''\n                ORDER BY week_number NULLS LAST, week_title, title LIMIT 1'''\n        )\n        first_week = cursor.fetchone()\n        results = []\n        if include_results:\n            columns = (\n                'id', 'module_catalogue_id', 'module_title', 'week_id', 'week_number',\n                'week_title', 'component_id', 'component_type', 'content_kind',\n                'title', 'description', 'source_url', 'embed_url', 'render_mode',\n                'duration_minutes', 'expected_otjh', 'points', 'status',\n            )\n            cursor.execute(\n                f'''SELECT {\", \".join(quote_ident(column) for column in columns)}\n                    FROM {table}\n                    ORDER BY week_number NULLS LAST, week_title, title, id'''\n            )\n            results = rows_as_dicts(cursor)\n            for row in results:\n                if row.get('expected_otjh') is not None:\n                    row['expected_otjh'] = float(row['expected_otjh'])\n    return {\n        **definition,\n        'key': key,\n        'ready': True,\n        'count': int(count),\n        'expectedMinutes': int(round(float(expected_minutes or 0))),\n        'firstWeekTitle': first_week[0] if first_week else '',\n        'results': results,\n    }",
+      "owner": "curriculum_api.catalogue.infrastructure.audit_asset_reads",
+      "dependencies": [
+        "PROGRAMME_AUDIT_SCHEMA",
+        "ProgrammeAuditNotFound",
+        "UI_MATERIAL_TABLES",
+        "clean",
+        "connection",
+        "quote_ident",
+        "rows_as_dicts",
+        "ui_material_table_exists"
+      ],
+      "attributes": {},
+      "local_imports": [],
+      "decorators": []
+    },
+    "programme_audit.table_exists": {
+      "source": "def table_exists():\n    try:\n        with connection.cursor() as cursor:\n            if connection.vendor == 'postgresql':\n                cursor.execute(\n                    'select 1 from information_schema.tables where table_schema = %s and table_name = %s limit 1',\n                    [PROGRAMME_AUDIT_SCHEMA, PROGRAMME_AUDIT_TABLE],\n                )\n            else:\n                cursor.execute(\n                    \"select 1 from sqlite_master where type='table' and name = %s limit 1\",\n                    ['programme_audit_assets'],\n                )\n            return cursor.fetchone() is not None\n    except Exception:\n        logger.debug('Could not verify programme audit table.', exc_info=True)\n        return False",
+      "owner": "curriculum_api.catalogue.infrastructure.audit_asset_reads",
+      "dependencies": [
+        "PROGRAMME_AUDIT_SCHEMA",
+        "PROGRAMME_AUDIT_TABLE",
+        "connection",
+        "logger"
+      ],
+      "attributes": {},
+      "local_imports": [],
+      "decorators": []
+    },
+    "programme_audit.fetch_assets": {
+      "source": "def fetch_assets(programme_id, kind=''):\n    require_programme_audit_table()\n    where = ['programme_id = %s']\n    params = [programme_id]\n    if kind:\n        where.append('content_kind = %s')\n        params.append(kind)\n    kind_order = \"\"\"\n        case content_kind\n            when 'live_session' then 1\n            when 'recording' then 2\n            when 'video' then 3\n            when 'presentation' then 4\n            when 'reading' then 5\n            when 'audio' then 6\n            when 'quiz' then 7\n            when 'reflection' then 8\n            else 99\n        end\n    \"\"\"\n    if connection.vendor == 'postgresql':\n        sql = (\n            f'select {\", \".join(quote_ident(column) for column in ASSET_COLUMNS)} '\n            f'from {asset_table_name()} where {\" and \".join(where)} '\n            f'order by module_title, week_number nulls last, week_title, {kind_order}, title'\n        )\n    else:\n        sql = (\n            f'select {\", \".join(quote_ident(column) for column in ASSET_COLUMNS)} '\n            f'from {asset_table_name()} where {\" and \".join(where)} '\n            f'order by module_title, week_number, week_title, {kind_order}, title'\n        )\n    with connection.cursor() as cursor:\n        cursor.execute(sql, params)\n        return [serialise_asset_row(row) for row in rows_as_dicts(cursor)]",
+      "owner": "curriculum_api.catalogue.infrastructure.audit_asset_reads",
+      "dependencies": [
+        "ASSET_COLUMNS",
+        "asset_table_name",
+        "connection",
+        "quote_ident",
+        "require_programme_audit_table",
+        "rows_as_dicts",
+        "serialise_asset_row"
+      ],
+      "attributes": {},
+      "local_imports": [],
+      "decorators": []
+    },
+    "programme_audit.programme_audit_status": {
+      "source": "def programme_audit_status(request):\n    exists = table_exists()\n    return JsonResponse({\n        'schema': PROGRAMME_AUDIT_SCHEMA,\n        'table': PROGRAMME_AUDIT_TABLE,\n        'ready': exists,\n    })",
+      "owner": "curriculum_api.catalogue.api.audit_assets",
+      "dependencies": [
+        "JsonResponse",
+        "PROGRAMME_AUDIT_SCHEMA",
+        "PROGRAMME_AUDIT_TABLE",
+        "table_exists"
+      ],
+      "attributes": {},
+      "local_imports": [],
+      "decorators": [
+        "require_GET"
+      ]
+    },
+    "programme_audit.programme_audit_materials": {
+      "source": "def programme_audit_materials(request):\n    programme = clean(request.GET.get('programme')).upper()\n    account = getattr(request, 'login_account', None)\n    if account is not None and clean(getattr(account, 'role', '')).lower() == 'learner':\n        return JsonResponse({'error': 'Programme audit materials are not available to learners.'}, status=403)\n    keys = [\n        key for key, definition in UI_MATERIAL_TABLES.items()\n        if not programme or definition['programme'] == programme\n    ]\n    results = [fetch_ui_material(key, include_results=False) for key in keys]\n    return JsonResponse({'programme': programme, 'count': len(results), 'results': results})",
+      "owner": "curriculum_api.catalogue.api.audit_assets",
+      "dependencies": [
+        "JsonResponse",
+        "UI_MATERIAL_TABLES",
+        "clean",
+        "fetch_ui_material"
+      ],
+      "attributes": {},
+      "local_imports": [],
+      "decorators": [
+        "require_GET",
+        "never_cache"
+      ]
+    },
+    "programme_audit.programme_audit_material": {
+      "source": "def programme_audit_material(request, material_key):\n    account = getattr(request, 'login_account', None)\n    if account is not None and clean(getattr(account, 'role', '')).lower() == 'learner':\n        return JsonResponse({'error': 'Programme audit materials are not available to learners.'}, status=403)\n    try:\n        material = fetch_ui_material(material_key, include_results=True)\n    except ProgrammeAuditNotFound as exc:\n        return JsonResponse({'error': str(exc)}, status=404)\n    if not material['ready']:\n        return JsonResponse({'error': 'Material table is not available.'}, status=404)\n    return JsonResponse(material)",
+      "owner": "curriculum_api.catalogue.api.audit_assets",
+      "dependencies": [
+        "JsonResponse",
+        "ProgrammeAuditNotFound",
+        "clean",
+        "fetch_ui_material"
+      ],
+      "attributes": {},
+      "local_imports": [],
+      "decorators": [
+        "require_GET",
+        "never_cache"
+      ]
+    }
+  },
+  "constants": {
+    "quality.DEFAULT_WINDOW_DAYS": {
+      "source": "DEFAULT_WINDOW_DAYS = 7",
+      "owner": "curriculum_api.reporting.domain.history_labels"
+    },
+    "quality.MAX_WINDOW_DAYS": {
+      "source": "MAX_WINDOW_DAYS = 7",
+      "owner": "curriculum_api.reporting.domain.history_labels"
+    },
+    "quality.UNLIMITED_WORKSPACES": {
+      "source": "UNLIMITED_WORKSPACES = frozenset({'curriculum'})",
+      "owner": "curriculum_api.reporting.domain.history_labels"
+    },
+    "quality.UNLIMITED_WINDOW_DAYS": {
+      "source": "UNLIMITED_WINDOW_DAYS = 3650",
+      "owner": "curriculum_api.reporting.domain.history_labels"
+    },
+    "quality.MAX_CHANGE_WINDOW_DAYS": {
+      "source": "MAX_CHANGE_WINDOW_DAYS = 60",
+      "owner": "curriculum_api.reporting.domain.history_labels"
+    },
+    "quality.DEFAULT_LIMIT": {
+      "source": "DEFAULT_LIMIT = 200",
+      "owner": "curriculum_api.reporting.domain.history_labels"
+    },
+    "quality.MAX_LIMIT": {
+      "source": "MAX_LIMIT = 1000",
+      "owner": "curriculum_api.reporting.domain.history_labels"
+    },
+    "quality.DEFAULT_PAGE_SIZE": {
+      "source": "DEFAULT_PAGE_SIZE = 50",
+      "owner": "curriculum_api.reporting.domain.history_labels"
+    },
+    "quality.ENTITY_LABELS": {
+      "source": "ENTITY_LABELS = {\n    'programme': ('Programme', '/curriculum/programmes'),\n    'cohort': ('Cohort', '/curriculum/cohorts'),\n    'group': ('Group', '/curriculum/groups'),\n    'module': ('Module', '/curriculum/module-builder'),\n    'module_details': ('Module detail', '/curriculum/module-builder'),\n    'module_completion': ('Module completion rule', '/curriculum/module-builder'),\n    'week': ('Week', '/curriculum/week-builder'),\n    'component': ('Component', '/curriculum/module-builder'),\n    'ksb_mapping': ('KSB mapping', '/curriculum/ksb-coverage'),\n    'live_session': ('Live session', '/curriculum/teams-meetings'),\n    'holiday': ('Holiday', '/curriculum/holidays'),\n    'week_template': ('Week template', '/curriculum/week-builder'),\n    'week_template_component': ('Week template component', '/curriculum/week-builder'),\n}",
+      "owner": "curriculum_api.reporting.domain.history_labels"
+    },
+    "quality.FIELD_LABELS": {
+      "source": "FIELD_LABELS = {\n    'coach_name': 'Coach',\n    'tutor_name': 'Tutor',\n    'display_order': 'Position',\n    'week_number': 'Week number',\n    'week_id': 'Week',\n    'module_catalogue_id': 'Module',\n    'programme_id': 'Programme',\n    'cohort_id': 'Cohort',\n    'group_id': 'Group',\n    'ksb_mappings': 'KSBs',\n    'expected_otjh': 'Expected OTJH',\n    'total_otjh': 'Total OTJH',\n    'required_otjh': 'Required OTJH',\n    'settings_json': 'Content settings',\n    'deleted_at': 'Archived on',\n    'deleted_by': 'Archived by handler',\n    'Reflection_Question': 'Reflection question',\n    'ksb_code': 'KSB code',\n    # Learner and staff records. The underscore fallback below already reads\n    # most of these correctly; named here are the ones where it does not, and\n    # the handful where the column name is not what the LMS calls the field.\n    'uuid': 'Internal reference',\n    'aptem_id': 'Aptem id',\n    'username': 'Name',\n    'access': 'Access level',\n    'access_extra': 'Extra access',\n    'organization': 'Organisation',\n    'programme_status': 'Programme status',\n    'learner_type': 'Learner type',\n    'case_owner': 'Case owner',\n    'learning_provider': 'Learning provider',\n    'rpl_hours': 'RPL hours',\n    'minimum_required_hours': 'Minimum required hours',\n    'national_insurance_number': 'National insurance number',\n    'invite_to_platform': 'Invited to the platform',\n    'allow_access_to_checkpoint': 'Checkpoint access',\n    'allow_access_to_console': 'Console access',\n    'allow_access_to_classic': 'Classic access',\n    'onboarding_completed': 'Onboarding completed',\n    'practical_period_end_date': 'Practical period end date',\n    'apprenticeship_end_date': 'Apprenticeship end date',\n    # Employers and organisations.\n    'edrs_ern_number': 'EDRS / ERN number',\n    'apprenticeship_agreement_id': 'Apprenticeship agreement',\n    'levy_payer': 'Levy payer',\n    'approx_no_of_employees': 'Approximate employees',\n    'health_and_safety': 'Health and safety',\n    'send_hours_verification_emails': 'Sends hours verification emails',\n    'post_code': 'Postcode',\n    'town_city': 'Town / city',\n    'city_town': 'Town / city',\n    # Coaching meetings and absence reports.\n    'event_key': 'Meeting reference',\n    'event_type': 'Meeting type',\n    'owner_email': 'Coach email',\n    'owner_name': 'Coach',\n    'learner_name': 'Learner',\n    'learner_email': 'Learner email',\n    'learner_id': 'Learner',\n    'occurrence_number': 'Occurrence',\n    'duration_minutes': 'Duration (minutes)',\n    'meeting_provider': 'Meeting provider',\n    'graph_event_id': 'Teams event id',\n    'graph_organizer_email': 'Teams organiser',\n    'review_template_id': 'Review template',\n    'review_instance_id': 'Review instance',\n    'review_completed_at': 'Review completed',\n    'review_responses': 'Review answers',\n    'manager_signed_at': 'Manager signed on',\n    'manager_signed_by': 'Manager signed by',\n    'sync_state': 'Teams sync state',\n    'attendance_id': 'Attendance record',\n    'reason_category': 'Reason category',\n    'evidence_provided': 'Evidence provided',\n    'evidence_kind': 'Evidence type',\n    'evidence_text': 'Evidence',\n    'coach_note': 'Coach note',\n    'previous_absences': 'Previous absences',\n    'attendance_rate': 'Attendance rate',\n    'recovery_method': 'Recovery method',\n    'catchup_event_key': 'Catch-up meeting',\n}",
+      "owner": "curriculum_api.reporting.domain.history_labels"
+    },
+    "quality.PROVENANCE_LABELS": {
+      "source": "PROVENANCE_LABELS = {\n    'revision': 'Revision history',\n    'timestamps': 'Recovered from timestamps',\n}",
+      "owner": "curriculum_api.reporting.domain.history_labels"
+    },
+    "quality.ACTION_LABELS": {
+      "source": "ACTION_LABELS = {\n    'created': 'Created',\n    'updated': 'Edited',\n    'archived': 'Archived',\n    'restored': 'Restored',\n    'deleted': 'Deleted',\n    'moved': 'Moved',\n    'reordered': 'Reordered',\n    # Not \"Created\": this record already existed when history started, and its\n    # real author is unknown rather than assumed.\n    'recorded': 'First recorded',\n    'file_uploaded': 'Uploaded file',\n    'file_replaced': 'Replaced file',\n    'file_removed': 'Removed file',\n    # Said plainly so a reader is not left thinking a person retyped this.\n    'recalculated': 'Recalculated',\n    'imported': 'Imported',\n}",
+      "owner": "curriculum_api.reporting.domain.history_labels"
+    },
+    "quality.SOURCE_LABELS": {
+      "source": "SOURCE_LABELS = {\n    'manual': 'Manual save',\n    'auto-save': 'Auto-save',\n    'module-builder': 'Module builder',\n    'tree-save': 'Programme tree save',\n    'import': 'Import',\n    'upload': 'File upload',\n    'duplicate': 'Duplicate',\n    'wizard': 'Wizard',\n    'recalculation': 'Recalculation',\n    'scheduled-job': 'Scheduled job',\n    'system': 'System',\n    'api': 'API',\n}",
+      "owner": "curriculum_api.reporting.domain.history_labels"
+    },
+    "quality.REASON_LABELS": {
+      "source": "REASON_LABELS = {\n    'hard-delete': 'a cleanup sweep',\n    'bulk-delete': 'a bulk delete',\n    'module-save': 'a module save',\n    'component-save': 'a component save',\n    'programme-tree-save': 'a programme tree save',\n    'module-delete': 'its module being deleted',\n    'week-delete': 'its week being deleted',\n    'component-delete': 'its component being deleted',\n    'programme-delete': 'its programme being deleted',\n    'cohort-delete': 'its cohort being deleted',\n    'group-delete': 'its group being deleted',\n    'week-template-delete': 'its week template being deleted',\n    'programme-archive': 'its programme being archived',\n    'ksb-mapping-delete': 'a KSB mapping being removed',\n    'ksb-mapping-patch': 'a KSB mapping update',\n    'component-ksb-sync': 'a KSB sync',\n    'component-ksb-post': 'a KSB update',\n}",
+      "owner": "curriculum_api.reporting.domain.history_labels"
+    },
+    "programme_audit.PROGRAMME_AUDIT_SCHEMA": {
+      "source": "PROGRAMME_AUDIT_SCHEMA = 'programme_audit'",
+      "owner": "curriculum_api.catalogue.domain.asset_contracts"
+    },
+    "programme_audit.PROGRAMME_AUDIT_TABLE": {
+      "source": "PROGRAMME_AUDIT_TABLE = 'assets'",
+      "owner": "curriculum_api.catalogue.domain.asset_contracts"
+    },
+    "programme_audit.UPLOAD_URL_PREFIX": {
+      "source": "UPLOAD_URL_PREFIX = '/curriculum_api/curriculum/uploads/'",
+      "owner": "curriculum_api.catalogue.domain.asset_contracts"
+    },
+    "programme_audit.JSON_COLUMNS": {
+      "source": "JSON_COLUMNS = {'ksb_mappings', 'settings', 'raw_component', 'raw_payload'}",
+      "owner": "curriculum_api.catalogue.domain.asset_contracts"
+    },
+    "programme_audit.UI_MATERIAL_TABLES": {
+      "source": "UI_MATERIAL_TABLES = {\n    'impact-planning': {'table': 'impact_planning', 'name': 'Impact Planning', 'programme': 'ME'},\n    'social-media': {'table': 'social_media', 'name': 'Social Media', 'programme': 'ME'},\n    'marketing-technology': {'table': 'marketing_technology', 'name': 'Marketing Technology', 'programme': 'ME'},\n    'strategy-planning': {'table': 'strategy_planning', 'name': 'Strategy Planning', 'programme': 'MM'},\n    'customer-journey': {'table': 'customer_journey', 'name': 'Customer Journey', 'programme': 'MM'},\n    'commercial-intelligence': {'table': 'commercial_intelligence', 'name': 'Commercial Intelligence', 'programme': 'MM'},\n    'ai-in-marketing': {'table': 'ai_in_marketing', 'name': 'AI in Marketing', 'programme': 'MM'},\n    'project-management-professional': {'table': 'project_management_professional', 'name': 'Project Management Professional', 'programme': 'PCP'},\n    'msp-scheduling-professional': {'table': 'managing_successful_programmes_scheduling_professional', 'name': 'Managing Successful Programmes / Scheduling Professional', 'programme': 'PCP'},\n    'risk-management': {'table': 'risk_management', 'name': 'Risk Management', 'programme': 'PCP'},\n    'evm-portfolio-management': {'table': 'earned_value_management_portfolio_management', 'name': 'Earned Value Management / Portfolio Management', 'programme': 'PCP'},\n    'ppc-pmo': {'table': 'project_planning_control_project_management_office', 'name': 'Project Planning Control / Project Management Office', 'programme': 'PCP'},\n}",
+      "owner": "curriculum_api.catalogue.domain.asset_contracts"
+    },
+    "programme_audit.ASSET_COLUMNS": {
+      "source": "ASSET_COLUMNS = (\n    'id',\n    'programme_id',\n    'programme_source_id',\n    'programme_name',\n    'module_catalogue_id',\n    'module_title',\n    'week_id',\n    'week_number',\n    'week_title',\n    'component_id',\n    'component_type',\n    'content_kind',\n    'title',\n    'description',\n    'source_url',\n    'embed_url',\n    'embed_code',\n    'render_mode',\n    'file_name',\n    'content_type',\n    'file_size',\n    'duration_minutes',\n    'expected_otjh',\n    'points',\n    'status',\n    'ksb_mappings',\n    'settings',\n    'raw_component',\n    'raw_payload',\n    'imported_from',\n    'source_key',\n    'imported_at',\n    'updated_at',\n)",
+      "owner": "curriculum_api.catalogue.domain.asset_contracts"
+    },
+    "programme_audit.KBC_WORDPRESS_SCHEMA_URL": {
+      "source": "KBC_WORDPRESS_SCHEMA_URL = 'https://kentbusinesscollege.org/wp-json/kbc-lms/v1/all-students-schema'",
+      "owner": "curriculum_api.catalogue.domain.asset_contracts"
+    }
+  },
+  "coverage_source": "from collections import Counter, defaultdict\nfrom decimal import Decimal, InvalidOperation\nimport json\n\n\nSUPPORTED_CLASSIFICATIONS = {'main', 'secondary', 'possible'}\nLEGACY_CLASSIFICATION_MAP = {'practice': 'possible'}\nSUPPORTED_WEIGHT_CLASSES = {'hard', 'soft', 'possible'}\n\n\ndef clean(value):\n    return str(value or '').strip()\n\n\ndef unique_clean(values):\n    seen = set()\n    result = []\n    for value in values or []:\n        text = clean(value)\n        key = text.lower()\n        if not key or key in seen:\n            continue\n        seen.add(key)\n        result.append(text)\n    return result\n\n\ndef component_group_names(component=None, module=None):\n    component = component or {}\n    module = module or {}\n    settings = component.get('settings_json') or {}\n    if isinstance(settings, str):\n        try:\n            settings = json.loads(settings) if settings else {}\n        except (TypeError, ValueError):\n            settings = {}\n    if not isinstance(settings, dict):\n        settings = {}\n    names = settings.get('selectedGroupNames') if isinstance(settings.get('selectedGroupNames'), list) else []\n    keys = settings.get('selectedGroupKeys') if isinstance(settings.get('selectedGroupKeys'), list) else []\n    fallback = [module.get('group_name'), module.get('group_id')]\n    return unique_clean([*names, *(keys if not names else []), *(fallback if not names and not keys else [])])\n\n\ndef normalise_code(value):\n    return clean(value).upper()\n\n\ndef normalise_classification(value):\n    raw = clean(value).lower()\n    raw = LEGACY_CLASSIFICATION_MAP.get(raw, raw)\n    return raw if raw in SUPPORTED_CLASSIFICATIONS else 'secondary'\n\n\ndef normalise_weight_class(value, classification=''):\n    raw = clean(value).lower()\n    if raw in SUPPORTED_WEIGHT_CLASSES:\n        return raw\n    classification = normalise_classification(classification)\n    if classification == 'main':\n        return 'hard'\n    if classification == 'possible':\n        return 'possible'\n    return 'soft'\n\n\ndef decimal_weight(value):\n    try:\n        parsed = Decimal(str(value))\n    except (InvalidOperation, TypeError, ValueError):\n        return Decimal('0')\n    return parsed.quantize(Decimal('0.01'))\n\n\ndef float_weight(value):\n    parsed = decimal_weight(value)\n    if parsed == parsed.to_integral():\n        return int(parsed)\n    return float(parsed)\n\n\ndef ksb_type_from_value(value, code=''):\n    raw = clean(value).lower()\n    if raw in {'knowledge', 'k'}:\n        return 'knowledge'\n    if raw in {'skill', 'skills', 's'}:\n        return 'skill'\n    if raw in {'behaviour', 'behaviours', 'behavior', 'behaviors', 'b'}:\n        return 'behaviour'\n    prefix = normalise_code(code)[:1]\n    if prefix == 'S':\n        return 'skill'\n    if prefix == 'B':\n        return 'behaviour'\n    return 'knowledge'\n\n\ndef default_summary_bucket():\n    # Coverage is reported as weight only. `mapped` counts the KSBs that carry\n    # any weight at all; `total_weight` is the sum across the bucket. There is\n    # deliberately no fully/partially-covered verdict: the weight is the fact,\n    # and any threshold on top of it would be an assumption.\n    return {\n        'required': 0,\n        'mapped': 0,\n        'unmapped': 0,\n        'total_weight': 0,\n    }\n\n\ndef classification_summary(mappings):\n    counts = Counter(mapping['classification'] for mapping in mappings)\n    weights = defaultdict(Decimal)\n    for mapping in mappings:\n        weights[mapping['classification']] += decimal_weight(mapping.get('weight'))\n    return {\n        key: {\n            'count': counts.get(key, 0),\n            'weight': float_weight(weights.get(key, 0)),\n        }\n        for key in ('main', 'secondary', 'possible')\n        if counts.get(key, 0) or weights.get(key, 0)\n    }\n\n\ndef serialise_mapping(row, module=None, week=None, component=None):\n    module = module or {}\n    week = week or {}\n    component = component or {}\n    groups = component_group_names(component, module)\n    mapping_level = 'component' if clean(row.get('component_id') or component.get('id')) else 'week' if clean(row.get('week_id') or week.get('id')) else 'module'\n    return {\n        'mapping_id': clean(row.get('id')),\n        'mappingId': clean(row.get('id')),\n        'programme_id': clean(module.get('programme_id')),\n        'programmeId': clean(module.get('programme_id')),\n        'programme_name': clean(module.get('programme_name')),\n        'programmeName': clean(module.get('programme_name')),\n        'module_id': clean(row.get('module_catalogue_id') or module.get('module_catalogue_id')),\n        'moduleId': clean(row.get('module_catalogue_id') or module.get('module_catalogue_id')),\n        'module_name': clean(module.get('title')),\n        'moduleName': clean(module.get('title')),\n        'group_id': clean(module.get('group_id')),\n        'groupId': clean(module.get('group_id')),\n        'group_name': clean(module.get('group_name')),\n        'groupName': clean(module.get('group_name')),\n        'groups': groups,\n        'week_id': clean(row.get('week_id') or week.get('id')),\n        'weekId': clean(row.get('week_id') or week.get('id')),\n        'week_name': clean(week.get('title')) or (f\"Week {week.get('week_number')}\" if week.get('week_number') else ''),\n        'weekName': clean(week.get('title')) or (f\"Week {week.get('week_number')}\" if week.get('week_number') else ''),\n        'component_id': clean(row.get('component_id') or component.get('id')),\n        'componentId': clean(row.get('component_id') or component.get('id')),\n        'component_name': clean(component.get('title')),\n        'componentName': clean(component.get('title')),\n        'component_type': clean(component.get('type')),\n        'componentType': clean(component.get('type')),\n        # The OTJH the component this mapping sits on is expected to take. Only\n        # component-level mappings carry it; week/module-level mappings are not\n        # attached to a single component, so they report 0.\n        'component_otjh': float_weight(component.get('expected_otjh')),\n        'componentOtjh': float_weight(component.get('expected_otjh')),\n        'ksb_id': clean(row.get('ksb_id') or row.get('ksb_code')),\n        'ksbId': clean(row.get('ksb_id') or row.get('ksb_code')),\n        'code': normalise_code(row.get('ksb_code')),\n        'description': clean(row.get('ksb_description')),\n        'source_type': clean(row.get('source_type')),\n        'sourceType': clean(row.get('source_type')),\n        'source_id': clean(row.get('source_id')),\n        'sourceId': clean(row.get('source_id')),\n        'classification': normalise_classification(row.get('classification')),\n        'weight_class': normalise_weight_class(row.get('weight_class'), row.get('classification')),\n        'weightClass': normalise_weight_class(row.get('weight_class'), row.get('classification')),\n        'mapping_level': mapping_level,\n        'mappingLevel': mapping_level,\n        'weight': float_weight(row.get('weight')),\n    }\n\n\ndef required_definition_from_mapping(mapping):\n    return {\n        'ksb_id': mapping.get('ksb_id') or mapping.get('code'),\n        'ksbId': mapping.get('ksb_id') or mapping.get('code'),\n        'code': mapping.get('code'),\n        'title': mapping.get('code'),\n        'description': mapping.get('description') or '',\n        'ksb_type': ksb_type_from_value('', mapping.get('code')),\n        'ksbType': ksb_type_from_value('', mapping.get('code')),\n        'source_type': mapping.get('source_type') or '',\n        'sourceType': mapping.get('source_type') or '',\n        'source_id': mapping.get('source_id') or '',\n        'sourceId': mapping.get('source_id') or '',\n    }\n\n\ndef normalise_required_definition(item):\n    code = normalise_code(item.get('code') or item.get('fullCode') or item.get('full_code'))\n    ksb_type = ksb_type_from_value(item.get('ksb_type') or item.get('ksbType') or item.get('type'), code)\n    return {\n        'ksb_id': clean(item.get('ksb_id') or item.get('ksbId') or item.get('id') or code),\n        'ksbId': clean(item.get('ksb_id') or item.get('ksbId') or item.get('id') or code),\n        'code': code,\n        'title': clean(item.get('title')) or code,\n        'description': clean(item.get('description')),\n        'ksb_type': ksb_type,\n        'ksbType': ksb_type,\n        'source_type': clean(item.get('source_type') or item.get('sourceType')),\n        'sourceType': clean(item.get('source_type') or item.get('sourceType')),\n        'source_id': clean(item.get('source_id') or item.get('sourceId')),\n        'sourceId': clean(item.get('source_id') or item.get('sourceId')),\n    }\n\n\ndef coverage_identity(item):\n    return (\n        clean(item.get('source_type') or item.get('sourceType')).lower(),\n        clean(item.get('source_id') or item.get('sourceId')).lower(),\n        normalise_code(item.get('code')),\n    )\n\n\ndef coverage_sort_key(identity):\n    source_type, source_id, code = identity\n    return (ksb_sort_key(code), source_type, source_id)\n\n\ndef build_coverage_summary(required_ksbs, mapping_rows, include_mapping_only=True):\n    \"\"\"The same per-source KSB weights/counts without evidence or module cells.\"\"\"\n    definitions = {}\n    for item in required_ksbs:\n        definition = normalise_required_definition(item)\n        if definition['code']:\n            definitions[coverage_identity(definition)] = definition\n    weights = defaultdict(Decimal)\n    counts = Counter()\n    for row in mapping_rows:\n        mapping = {\n            'code': normalise_code(row.get('ksb_code')),\n            'source_type': clean(row.get('source_type')),\n            'source_id': clean(row.get('source_id')),\n        }\n        identity = coverage_identity(mapping)\n        count = row.get('_stats_count', 1)\n        weights[identity] += decimal_weight(float_weight(row.get('weight'))) * count\n        counts[identity] += count\n        if include_mapping_only and mapping['code'] and identity not in definitions:\n            definitions[identity] = required_definition_from_mapping(mapping)\n    return {\n        'view': 'summary',\n        'items': [\n            {**definitions[identity], 'coverage_key': '|'.join(identity),\n             'raw_total_weight': float_weight(weights[identity]), 'occurrence_count': counts[identity]}\n            for identity in sorted(definitions, key=coverage_sort_key)\n        ],\n    }\n\n\ndef build_coverage(required_ksbs, mapping_rows, module_rows, week_rows, component_rows, include_mapping_only=True, *, totals_only=False):\n    modules_by_id = {clean(row.get('module_catalogue_id')): row for row in module_rows}\n    module_authoring_weeks_by_id = {clean(row.get('id')): row for row in week_rows}\n    components_by_id = {clean(row.get('id')): row for row in component_rows}\n\n    serialised_mappings = []\n    for row in mapping_rows:\n        if not clean(row.get('module_catalogue_id')):\n            continue\n        if totals_only:\n            # Same identity and per-mapping rounding as serialise_mapping. The\n            # stats reader needs weights only, not mapping labels or a heatmap.\n            serialised_mappings.append({\n                'code': normalise_code(row.get('ksb_code')),\n                'source_type': clean(row.get('source_type')),\n                'source_id': clean(row.get('source_id')),\n                'weight': float_weight(row.get('weight')),\n                '_stats_count': row.get('_stats_count', 1),\n            })\n            continue\n        module = modules_by_id.get(clean(row.get('module_catalogue_id')), {})\n        week = module_authoring_weeks_by_id.get(clean(row.get('week_id')), {})\n        component = components_by_id.get(clean(row.get('component_id')), {})\n        serialised_mappings.append(serialise_mapping(row, module, week, component))\n\n    definitions_by_identity = {}\n    for item in required_ksbs:\n        definition = normalise_required_definition(item)\n        if definition['code']:\n            definitions_by_identity[coverage_identity(definition)] = definition\n\n    if include_mapping_only:\n        for mapping in serialised_mappings:\n            identity = coverage_identity(mapping)\n            if mapping['code'] and identity not in definitions_by_identity:\n                definitions_by_identity[identity] = required_definition_from_mapping(mapping)\n\n    by_identity = defaultdict(list)\n    for mapping in serialised_mappings:\n        by_identity[coverage_identity(mapping)].append(mapping)\n\n    items = []\n    summary = {\n        'overall': default_summary_bucket(),\n        'knowledge': default_summary_bucket(),\n        'skills': default_summary_bucket(),\n        'behaviours': default_summary_bucket(),\n    }\n\n    for identity in sorted(definitions_by_identity, key=coverage_sort_key):\n        definition = definitions_by_identity[identity]\n        mappings = by_identity.get(identity, [])\n        raw_total = sum(decimal_weight(mapping.get('weight')) * (\n            mapping['_stats_count'] if totals_only else 1\n        ) for mapping in mappings)\n        if totals_only:\n            items.append({'code': definition['code'], 'raw_total_weight': float_weight(raw_total)})\n            continue\n        module_ids = {mapping.get('module_id') for mapping in mappings if mapping.get('module_id')}\n        week_ids = {mapping.get('week_id') for mapping in mappings if mapping.get('week_id')}\n        component_ids = {mapping.get('component_id') for mapping in mappings if mapping.get('component_id')}\n        occurrence_count = len(mappings)\n        component_count = len(component_ids)\n        item = {\n            **definition,\n            'coverage_key': '|'.join(identity),\n            'coverageKey': '|'.join(identity),\n            'raw_total_weight': float_weight(raw_total),\n            'rawTotalWeight': float_weight(raw_total),\n            'coverage_percentage': float_weight(raw_total),\n            'coveragePercentage': float_weight(raw_total),\n            'progress_bar_percentage': min(float(raw_total), 100),\n            'progressBarPercentage': min(float(raw_total), 100),\n            'occurrence_count': occurrence_count,\n            'occurrenceCount': occurrence_count,\n            'mapping_count': len(mappings),\n            'mappingCount': len(mappings),\n            'module_count': len(module_ids),\n            'moduleCount': len(module_ids),\n            'week_count': len(week_ids),\n            'weekCount': len(week_ids),\n            'component_count': component_count,\n            'componentCount': component_count,\n            'classification_summary': classification_summary(mappings),\n            'classificationSummary': classification_summary(mappings),\n            'mappings': mappings,\n        }\n        items.append(item)\n\n        bucket_name = {\n            'knowledge': 'knowledge',\n            'skill': 'skills',\n            'behaviour': 'behaviours',\n        }.get(definition['ksb_type'], 'knowledge')\n        for bucket in (summary['overall'], summary[bucket_name]):\n            bucket['required'] += 1\n            if raw_total > 0:\n                bucket['mapped'] += 1\n            else:\n                bucket['unmapped'] += 1\n            bucket['total_weight'] = float_weight(\n                decimal_weight(bucket['total_weight']) + raw_total\n            )\n\n    if totals_only:\n        return {'items': items}\n\n    heatmap_modules = [\n        {\n            'module_id': clean(row.get('module_catalogue_id')),\n            'moduleId': clean(row.get('module_catalogue_id')),\n            'module_name': clean(row.get('title')),\n            'moduleName': clean(row.get('title')),\n        }\n        for row in module_rows\n    ]\n    heatmap = []\n    for item in items:\n        module_weights = defaultdict(Decimal)\n        module_breakdown = defaultdict(list)\n        for mapping in item['mappings']:\n            module_id = mapping.get('module_id')\n            if not module_id:\n                continue\n            module_weights[module_id] += decimal_weight(mapping.get('weight'))\n            module_breakdown[module_id].append(mapping)\n        heatmap.append({\n            'ksb_id': item['ksb_id'],\n            'ksbId': item['ksb_id'],\n            'coverage_key': item['coverage_key'],\n            'coverageKey': item['coverage_key'],\n            'code': item['code'],\n            'title': item['title'],\n            'ksb_type': item['ksb_type'],\n            'ksbType': item['ksb_type'],\n            'source_type': item['source_type'],\n            'sourceType': item['source_type'],\n            'source_id': item['source_id'],\n            'sourceId': item['source_id'],\n            'total': item['raw_total_weight'],\n            'modules': [\n                {\n                    **module,\n                    'weight': float_weight(module_weights.get(module['module_id'], 0)),\n                    'mappings': module_breakdown.get(module['module_id'], []),\n                }\n                for module in heatmap_modules\n            ],\n        })\n\n    return {\n        'summary': summary,\n        'items': items,\n        'heatmap': {\n            'modules': heatmap_modules,\n            'rows': heatmap,\n        },\n    }\n\n\ndef ksb_sort_key(code):\n    text = normalise_code(code)\n    prefix_order = {'K': 0, 'S': 1, 'B': 2}\n    prefix = prefix_order.get(text[:1], 9)\n    numbers = []\n    for part in text[1:].replace('-', '.').split('.'):\n        try:\n            numbers.append(int(part))\n        except ValueError:\n            numbers.append(0)\n    return (prefix, numbers, text)\n"
+}

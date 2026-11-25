@@ -1,5 +1,5 @@
 """Topic identity and sequential submissions within one curriculum component."""
-from curriculum_api.learning_storage import read_sql
+from curriculum_api.catalogue.infrastructure.course_storage_reads import read_sql
 import json
 import re
 

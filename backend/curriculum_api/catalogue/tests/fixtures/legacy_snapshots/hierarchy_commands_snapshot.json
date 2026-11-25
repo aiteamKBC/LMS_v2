@@ -1,0 +1,860 @@
+{
+  "views_ast_sha256": "c3bf0b4891b1f84d399385629fc3c0c64a452db6ff38bab2bc222c18e990acbc",
+  "functions": {
+    "curriculum_programmes": {
+      "source": "def curriculum_programmes(request):\n    visibility = curriculum_visibility(request)\n    force = request_bypasses_curriculum_cache(request)\n    if not force and getattr(settings, 'CURRICULUM_HOME_SHARED_READ_MODEL_ENABLED', False):\n        from .read_model import enqueue_curriculum_home_refresh, get_curriculum_home\n        shared = get_curriculum_home(visibility)\n        if (\n            shared is not None\n            and isinstance(shared.payload.get('overview'), dict)\n            and isinstance(shared.payload.get('programmes'), list)\n        ):\n            response = curriculum_collection_response(\n                shared.payload['overview'], 'programmes', shared.payload['programmes'],\n            )\n            response['X-LMS-Cache'] = 'READ-MODEL-STALE' if shared.stale else 'READ-MODEL-HIT'\n            if shared.stale:\n                enqueue_curriculum_home_refresh(visibility, reason='stale-read')\n            return response\n    # Consult the list cache before doing any source work. A programme cache hit\n    # must not first rebuild a missing/expired overview and its unrelated trees.\n    programmes = cached_curriculum_value(\n        f'programmes:{visibility}:with-module-counts',\n        lambda: build_programme_list(visibility, force=force),\n        force=force,\n    )\n    response = curriculum_collection_response(\n        {'schema': CURRICULUM_SCHEMA},\n        'programmes',\n        programmes,\n    )\n    if getattr(settings, 'CURRICULUM_HOME_SHARED_READ_MODEL_ENABLED', False):\n        from .read_model import enqueue_curriculum_home_refresh\n        enqueue_curriculum_home_refresh(\n            visibility, reason='forced-read' if force else 'missing-read-model',\n        )\n        response['X-LMS-Cache'] = 'READ-MODEL-MISS'\n    return response",
+      "decorators": [
+        "require_GET"
+      ],
+      "owner": "curriculum_api.catalogue.api.programme_commands",
+      "deps": [
+        "CURRICULUM_SCHEMA",
+        "build_programme_list",
+        "cached_curriculum_value",
+        "curriculum_collection_response",
+        "curriculum_visibility",
+        "enqueue_curriculum_home_refresh",
+        "get_curriculum_home",
+        "request_bypasses_curriculum_cache",
+        "settings"
+      ],
+      "callbacks": {
+        "enqueue_curriculum_home_refresh": {
+          "module": "read_model",
+          "level": 1
+        },
+        "get_curriculum_home": {
+          "module": "read_model",
+          "level": 1
+        }
+      }
+    },
+    "curriculum_programme_reorder": {
+      "source": "def curriculum_programme_reorder(request):\n    \"\"\"Save the order the programme cards were dragged into.\n\n    The body is the ids in the order they should read, top-left first. Only the\n    programmes named are renumbered, and they are renumbered from 1 upward in\n    the order given, so a partial list (one page of the grid) still lands in a\n    stable order relative to itself. 0 stays reserved for \"never ordered\", which\n    keeps untouched programmes ahead of nothing and still alphabetical among\n    themselves.\n    \"\"\"\n    if request.method != 'POST':\n        return json_error('Method not allowed.', status=405)\n\n    payload = json_body(request)\n    if payload is None:\n        return json_error('Invalid JSON body.')\n    raw_order = payload.get('order')\n    if not isinstance(raw_order, list):\n        return json_error('Missing required fields.', fields=['order'])\n\n    ensure_program_config_archive_columns()\n    if not has_column('programmes', 'display_order'):\n        return json_error(\n            'This database has no programme display_order column yet. Apply '\n            'backend/sql/2026-09-22_programme_display_order.sql first.',\n            status=409,\n        )\n\n    programme_ids = unique(clean_str(value) for value in raw_order if clean_str(value))\n    if not programme_ids:\n        return json_error('No programmes were given to order.')\n\n    configs = get_program_config_rows()\n    configs_by_id = {programme_config_identity(config): config for config in configs}\n    unknown = [programme_id for programme_id in programme_ids if programme_id not in configs_by_id]\n    if unknown:\n        return json_error('Unknown programmes in the order.', fields=unknown, status=404)\n\n    key_column = programme_config_key_column()\n    with transaction.atomic():\n        for position, programme_id in enumerate(programme_ids, start=1):\n            key_value = configs_by_id[programme_id].get(key_column)\n            update_rows(\n                'programmes',\n                f'{quote_ident(key_column)} = %s',\n                [key_value],\n                {'display_order': position, 'updated_at': datetime.utcnow()},\n            )\n    invalidate_curriculum_cache()\n    log_curriculum_decision('programme.reorder', outcome='saved', entity_id=','.join(programme_ids[:10]))\n    return JsonResponse({'saved': True, 'order': programme_ids})",
+      "decorators": [
+        "csrf_exempt"
+      ],
+      "owner": "curriculum_api.catalogue.api.programme_commands",
+      "deps": [
+        "JsonResponse",
+        "clean_str",
+        "datetime",
+        "ensure_program_config_archive_columns",
+        "get_program_config_rows",
+        "has_column",
+        "invalidate_curriculum_cache",
+        "json_body",
+        "json_error",
+        "log_curriculum_decision",
+        "programme_config_identity",
+        "programme_config_key_column",
+        "quote_ident",
+        "transaction",
+        "unique",
+        "update_rows"
+      ],
+      "callbacks": {}
+    },
+    "curriculum_programme_restore": {
+      "source": "def curriculum_programme_restore(request, identifier):\n    \"\"\"Take a programme back out of the archive, children included.\"\"\"\n    if request.method != 'POST':\n        return json_error('Method not allowed.', status=405)\n\n    ensure_program_config_archive_columns()\n    config = programme_config_by_identifier(identifier)\n    programme = programme_response(identifier) if not config else {\n        'id': programme_config_identity(config),\n        'sourceId': programme_config_identity(config),\n        'name': config.get('name'),\n    }\n    if not programme and not config:\n        return json_error('Programme not found.', status=404)\n\n    archived = is_archived_program_config(config) or programme_status_is_archived(\n        (programme or {}).get('status')\n    )\n    if not archived:\n        return json_error('Programme is not archived.', status=409)\n\n    with transaction.atomic():\n        restored = restore_programme_authoring_structure(identifier, programme, config)\n    log_curriculum_decision('programme.restore', outcome='restored', entity_id=identifier)\n    return JsonResponse({\n        'restored': True,\n        'id': identifier,\n        'programme': programme_response(identifier),\n        'details': restored,\n        'message': 'Programme and the rows archived with it were restored.',\n    })",
+      "decorators": [
+        "csrf_exempt"
+      ],
+      "owner": "curriculum_api.catalogue.api.programme_commands",
+      "deps": [
+        "JsonResponse",
+        "ensure_program_config_archive_columns",
+        "is_archived_program_config",
+        "json_error",
+        "log_curriculum_decision",
+        "programme_config_by_identifier",
+        "programme_config_identity",
+        "programme_response",
+        "programme_status_is_archived",
+        "restore_programme_authoring_structure",
+        "transaction"
+      ],
+      "callbacks": {}
+    },
+    "curriculum_programme_detail": {
+      "source": "def curriculum_programme_detail(request, identifier):\n    if request.method not in {'PATCH', 'DELETE'}:\n        return json_error('Method not allowed.', status=405)\n\n    if request.method == 'DELETE':\n        ensure_program_config_archive_columns()\n        config = programme_config_by_identifier(identifier)\n        programme = programme_response(identifier) if not config else {\n            'id': programme_config_identity(config),\n            'sourceId': programme_config_identity(config),\n            'name': config.get('name'),\n            'standard': config.get('standard'),\n        }\n        if not programme and not config:\n            return json_error('Programme not found.', status=404)\n\n        # An archived programme can be removed for good, with everything beneath it.\n        # Archiving stays the default so a delete is never irreversible by accident.\n        if request_wants_permanent_programme_delete(request):\n            log_curriculum_decision(\n                'programme.delete', outcome='permanent_requested', entity_id=identifier,\n            )\n            return permanent_programme_delete_response(\n                identifier,\n                programme,\n                config,\n                force_content=request_wants_forced_programme_delete(request),\n            )\n\n        with transaction.atomic():\n            soft_deleted = soft_delete_programme_authoring_structure(identifier, programme, config)\n        # After the commit as well as inside it, for the same reason the permanent\n        # delete does: a read that lands mid-transaction caches the pre-archive rows.\n        invalidate_curriculum_cache()\n        log_curriculum_decision(\n            'programme.archive', outcome='soft_deleted', entity_id=identifier,\n            # The cascade's own per-table counts; the tables it took down with it.\n            reason=','.join(f'{table}:{count}' for table, count in sorted((soft_deleted or {}).items())),\n        )\n        return JsonResponse({\n            'deleted': True,\n            'permanent': False,\n            'archived': True,\n            'id': identifier,\n            'softDeleted': soft_deleted,\n            'message': 'Programme and linked curriculum rows were soft-deleted.',\n        })\n\n    payload = json_body(request)\n    if payload is None:\n        return json_error('Invalid JSON body.')\n\n    name = clean_str(payload.get('name'))\n    ensure_program_config_archive_columns()\n    # programmes.structure_type was dropped; everything is scheduled now.\n    structure_type = 'scheduled'\n    config = programme_config_by_identifier(identifier)\n    # rows_for_programme() assembles the whole 'all' curriculum payload, which is\n    # only needed for the legacy fallback below (a delivery-row programme with no\n    # programmes config yet). Skipping it when a config exists keeps the common\n    # update path off a full payload build.\n    programme = None\n    if not config:\n        programme, _rows = rows_for_programme(identifier, 'all')\n        if not programme:\n            return json_error('Programme not found.', status=404)\n    if not config and programme:\n        source_id = unique_program_id(programme.get('sourceId') or name or programme.get('name'), get_program_config_rows())\n        programme_status = programme_status_from_payload(payload, programme)\n        config = insert_row('programmes', {\n            'programme_id': source_id,\n            'id': source_id,\n            'program_id': source_id,\n            'name': name or programme.get('name'),\n            'level': payload.get('level') or programme.get('level'),\n            'color': payload.get('color') or programme.get('color') or '#6941c6',\n            'description': payload.get('description') or programme.get('description') or '',\n            'ksb_profile_source_id': normalise_ksb_profile_source_value(payload.get('ksbProfileSourceId') or payload.get('ksb_profile_source_id') or programme.get('ksbProfileSourceId') or ''),\n            'required_otjh': payload_required_otjh(payload, programme),\n            'status': programme_status,\n            'created_at': datetime.utcnow(),\n            'updated_at': datetime.utcnow(),\n        })\n\n    # Optimistic concurrency, opt-in, as on the module structure PATCH. The\n    # drawer sends every field it renders, so a save built before a colleague's\n    # would put their work back to what it was -- silently, because nothing here\n    # compared the two. The check and the write share one transaction, and the\n    # lock is taken first; see lock_record_row.\n    expected_revision = requested_expected_revision(request, payload)\n    if config:\n        with transaction.atomic():\n            if expected_revision:\n                # Same tolerance as the update below: a key column that cannot\n                # be resolved is retried once rather than failing the request.\n                try:\n                    lock_column = programme_config_key_column()\n                except Exception:\n                    lock_column = programme_config_key_column()\n                lock_record_row(\n                    'programmes',\n                    quote_ident(lock_column) + ' = %s',\n                    [config.get(lock_column)],\n                )\n                current_revision = programme_record_revision(identifier)\n                if current_revision != expected_revision:\n                    return record_conflict_response(\n                        expected_revision, current_revision,\n                        programme=programme_conflict_record(identifier),\n                    )\n            programme_status = programme_status_from_payload(payload, config)\n            updates = {\n                'name': name or config.get('name'),\n                'level': payload.get('level'),\n                'color': payload.get('color') or config.get('color'),\n                'description': payload.get('description'),\n                'ksb_profile_source_id': normalise_ksb_profile_source_value(payload.get('ksbProfileSourceId') if 'ksbProfileSourceId' in payload else payload.get('ksb_profile_source_id') if 'ksb_profile_source_id' in payload else config.get('ksb_profile_source_id')),\n                'required_otjh': payload_required_otjh(payload, config),\n                'status': programme_status,\n                'updated_at': datetime.utcnow(),\n            }\n            if curriculum_name_only_patch(payload):\n                updates = {'name': name, 'updated_at': updates['updated_at']}\n            try:\n                key_column = programme_config_key_column()\n            except Exception:\n                key_column = programme_config_key_column()\n            key_value = config.get(key_column)\n            update_rows('programmes', f'{quote_ident(key_column)} = %s', [key_value], updates, allow_null_columns=['required_otjh'])\n            if 'ksbProfileSourceId' in payload or 'ksb_profile_source_id' in payload:\n                set_programme_modules_ksb_source(\n                    unique([identifier, key_value, config.get('program_id'), config.get('name'), name]),\n                    updates.get('ksb_profile_source_id') or '',\n                )\n\n            # Learner records carry the name too; renamed through their profile's\n            # programme id, never moved. See placement_rename.\n            from .placement_rename import propagate_programme_name_to_learners\n            propagate_programme_name_to_learners(\n                programme_config_id(config) or clean_str(key_value), clean_str(config.get('name')), name,\n            )\n\n    invalidate_curriculum_cache()\n    # Read after the commit, so the token handed back is the one a reader would\n    # fingerprint now rather than one a rollback could take away.\n    saved_revision = programme_record_revision(identifier)\n    payload_keys = set(payload.keys())\n    if payload_keys and payload_keys.issubset({'ksbProfileSourceId', 'ksb_profile_source_id'}):\n        return JsonResponse({\n            'updated': True,\n            'revision': saved_revision,\n            'programme': {\n                'id': identifier,\n                'sourceId': identifier,\n                'ksbProfileSourceId': normalise_ksb_profile_source_value(payload.get('ksbProfileSourceId') if 'ksbProfileSourceId' in payload else payload.get('ksb_profile_source_id') or ''),\n            },\n        })\n    return JsonResponse({\n        'updated': True,\n        'revision': saved_revision,\n        'programme': first_programme_response(identifier, name) or {'id': identifier},\n    })",
+      "decorators": [
+        "csrf_exempt"
+      ],
+      "owner": "curriculum_api.catalogue.api.programme_commands",
+      "deps": [
+        "JsonResponse",
+        "clean_str",
+        "curriculum_name_only_patch",
+        "datetime",
+        "ensure_program_config_archive_columns",
+        "first_programme_response",
+        "get_program_config_rows",
+        "insert_row",
+        "invalidate_curriculum_cache",
+        "json_body",
+        "json_error",
+        "lock_record_row",
+        "log_curriculum_decision",
+        "normalise_ksb_profile_source_value",
+        "payload_required_otjh",
+        "permanent_programme_delete_response",
+        "programme_config_by_identifier",
+        "programme_config_id",
+        "programme_config_identity",
+        "programme_config_key_column",
+        "programme_conflict_record",
+        "programme_record_revision",
+        "programme_response",
+        "programme_status_from_payload",
+        "propagate_programme_name_to_learners",
+        "quote_ident",
+        "record_conflict_response",
+        "request_wants_forced_programme_delete",
+        "request_wants_permanent_programme_delete",
+        "requested_expected_revision",
+        "rows_for_programme",
+        "set_programme_modules_ksb_source",
+        "soft_delete_programme_authoring_structure",
+        "transaction",
+        "unique",
+        "unique_program_id",
+        "update_rows"
+      ],
+      "callbacks": {
+        "propagate_programme_name_to_learners": {
+          "module": "placement_rename",
+          "level": 1
+        }
+      }
+    },
+    "curriculum_programme_collection": {
+      "source": "def curriculum_programme_collection(request):\n    if request.method == 'GET':\n        return curriculum_programmes(request)\n    if request.method != 'POST':\n        return json_error('Method not allowed.', status=405)\n\n    payload = json_body(request)\n    if payload is None:\n        return json_error('Invalid JSON body.')\n    missing = require_fields(payload, ['name'])\n    if missing:\n        return json_error('Missing required fields.', fields=missing)\n\n    ensure_program_config_archive_columns()\n    name = clean_str(payload.get('name'))\n    structure_type = programme_structure_type(payload)\n    program_configs = get_program_config_rows()\n    explicit_program_id = clean_str(payload.get('programId'))\n    existing_config_by_id = next((\n        config for config in program_configs\n        if explicit_program_id and programme_config_identity(config) == explicit_program_id\n    ), None)\n    existing_config_by_name = preferred_program_config_by_name(program_configs, name)\n    existing_config = existing_config_by_id or existing_config_by_name\n    # Reusing an archived programme's name must not reuse its id. A derived id\n    # (base + '-2') reads as a variant of the archived record, so any lookup\n    # that prefix-matches or strips the suffix attaches the old programme's\n    # cohorts, modules and learners to the new one. Mint an unrelated id.\n    reusing_archived_name = bool(existing_config) and is_archived_program_config(existing_config)\n    if reusing_archived_name:\n        existing_config = None\n    if existing_config:\n        programme_status = programme_status_from_payload(payload, existing_config)\n        updates = {\n            'name': name,\n            'level': payload.get('level') or existing_config.get('level'),\n            'color': payload.get('color') or existing_config.get('color') or '#6941c6',\n            'description': payload.get('description') if 'description' in payload else existing_config.get('description'),\n            'ksb_profile_source_id': normalise_ksb_profile_source_value(payload.get('ksbProfileSourceId') if 'ksbProfileSourceId' in payload else payload.get('ksb_profile_source_id') if 'ksb_profile_source_id' in payload else existing_config.get('ksb_profile_source_id')),\n            'required_otjh': payload_required_otjh(payload, existing_config),\n            'status': programme_status,\n            'updated_at': datetime.utcnow(),\n        }\n        try:\n            key_column = programme_config_key_column()\n        except Exception:\n            key_column = programme_config_key_column()\n        key_value = existing_config.get(key_column)\n        update_rows('programmes', f'{quote_ident(key_column)} = %s', [key_value], updates, allow_null_columns=['required_otjh'])\n        invalidate_curriculum_cache()\n        return JsonResponse({'created': False, 'programme': first_programme_response(key_value, name) or {'sourceId': key_value, 'name': name}})\n\n    source_id = unique_program_id('' if reusing_archived_name else (explicit_program_id or name), program_configs)\n    programme_status = programme_status_from_payload(payload, default='active')\n    insert_payload = {\n        'programme_id': source_id,\n        'id': source_id,\n        'program_id': source_id,\n        'name': name,\n        'sub': payload.get('standard') or payload.get('sub') or name,\n        'standard': payload.get('standard') or payload.get('sub') or name,\n        'level': payload.get('level') or '',\n        'owner': payload.get('owner') or '',\n        'created_by': payload.get('owner') or '',\n        'color': payload.get('color') or '#6941c6',\n        'description': payload.get('description') or '',\n        'structure_type': structure_type,\n        'ksb_profile_source_id': normalise_ksb_profile_source_value(payload.get('ksbProfileSourceId') or payload.get('ksb_profile_source_id') or ''),\n        'required_otjh': payload_required_otjh(payload),\n        'status': programme_status,\n        'created_at': datetime.utcnow(),\n        'updated_at': datetime.utcnow(),\n    }\n    row = insert_row('programmes', insert_payload)\n    invalidate_curriculum_cache()\n    source_id = programme_config_id(row) or source_id\n    return JsonResponse({'created': True, 'programme': programme_response(source_id) or {'sourceId': source_id, 'name': row.get('name')}}, status=201)",
+      "decorators": [
+        "csrf_exempt"
+      ],
+      "owner": "curriculum_api.catalogue.api.programme_commands",
+      "deps": [
+        "JsonResponse",
+        "clean_str",
+        "curriculum_programmes",
+        "datetime",
+        "ensure_program_config_archive_columns",
+        "first_programme_response",
+        "get_program_config_rows",
+        "insert_row",
+        "invalidate_curriculum_cache",
+        "is_archived_program_config",
+        "json_body",
+        "json_error",
+        "normalise_ksb_profile_source_value",
+        "payload_required_otjh",
+        "preferred_program_config_by_name",
+        "programme_config_id",
+        "programme_config_identity",
+        "programme_config_key_column",
+        "programme_response",
+        "programme_status_from_payload",
+        "programme_structure_type",
+        "quote_ident",
+        "require_fields",
+        "unique_program_id",
+        "update_rows"
+      ],
+      "callbacks": {}
+    },
+    "curriculum_programme_tree_save": {
+      "source": "def curriculum_programme_tree_save(request):\n    if request.method != 'POST':\n        return json_error('Method not allowed.', status=405)\n    payload = json_body(request)\n    if payload is None:\n        return json_error('Invalid JSON body.')\n    try:\n        # Labels every revision this save produces as coming from the tree save,\n        # which is the one caller that legitimately rewrites a whole programme's\n        # structure in one request. Without it a reader cannot tell a person\n        # editing one cohort from the tree rewriting forty.\n        with transaction.atomic(), versioning.source('tree-save'):\n            programme = upsert_programme_for_tree(payload.get('programme') or payload)\n            programme_id = clean_str(programme.get('sourceId') or programme.get('id') or payload.get('programmeId'))\n            programme_name = clean_str(programme.get('name') or (payload.get('programme') or {}).get('name'))\n            saved_cohorts = []\n            saved_groups = []\n            saved_modules = []\n            saved_cohort_ids = set()\n            saved_group_ids = set()\n            removed_module_ids = []\n            removed_group_ids = []\n            removed_cohort_ids = []\n            partial_tree = bool_payload(payload.get('partialTree'))\n            remove_missing = bool_payload(payload.get('removeMissing')) and bool_payload(payload.get('hydrationComplete'))\n            for cohort_payload in payload.get('cohorts') or []:\n                cohort = save_tree_cohort(cohort_payload, programme_id, programme_name, preserve_missing_groups=partial_tree)\n                saved_cohorts.append(cohort)\n                saved_cohort_ids.add(cohort['id'])\n                cohort_row = fetch_cohort_row(cohort['id'])\n                for group_payload in cohort_payload.get('groups') or []:\n                    group = save_tree_group(group_payload, cohort_row)\n                    saved_groups.append(group)\n                    saved_group_ids.add(group['id'])\n                    if not partial_tree or 'modules' in group_payload:\n                        modules, removed = save_tree_group_modules(\n                            group,\n                            cohort,\n                            group_payload.get('modules') or [],\n                            preserve_missing=partial_tree and bool_payload(group_payload.get('modulesPartial')),\n                        )\n                        saved_modules.extend(modules)\n                        removed_module_ids.extend(removed)\n\n            explicit_module_ids = clean_tree_remove_ids(payload, 'removeModuleIds', 'removedModuleIds', 'deleteModuleIds', 'deletedModuleIds')\n            explicit_group_ids = clean_tree_remove_ids(payload, 'removeGroupIds', 'removedGroupIds', 'deleteGroupIds', 'deletedGroupIds')\n            explicit_cohort_ids = clean_tree_remove_ids(payload, 'removeCohortIds', 'removedCohortIds', 'deleteCohortIds', 'deletedCohortIds')\n\n            for module_id in explicit_module_ids:\n                module_row = authoring_fetch_all(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_id])\n                if not module_row or clean_str((module_row[0] or {}).get('programme_id')) != programme_id:\n                    continue\n                update_authoring_rows(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_id], {\n                    'cohort_id': None,\n                    'group_id': None,\n                })\n                removed_module_ids.append(module_id)\n\n            for group_id in explicit_group_ids:\n                if group_id in saved_group_ids:\n                    continue\n                group_row = fetch_group_row(group_id) or {}\n                if clean_str(group_row.get('programme_id')) != programme_id:\n                    continue\n                removed_module_ids.extend(unassign_authoring_modules_from_group(group_id))\n                authoring_soft_delete(GROUPS_TABLE, 'group_id = %s', [group_id], via_parent=programme_id, deleted_by='programme-tree-save')\n                removed_group_ids.append(group_id)\n\n            for cohort_id in explicit_cohort_ids:\n                if cohort_id in saved_cohort_ids:\n                    continue\n                cohort_row = fetch_cohort_row(cohort_id) or {}\n                if clean_str(cohort_row.get('programme_id')) != programme_id:\n                    continue\n                for group_row in authoring_fetch_all(GROUPS_TABLE, 'cohort_id = %s', [cohort_id]):\n                    group_id = clean_str(group_row.get('group_id'))\n                    if group_id and group_id not in saved_group_ids:\n                        removed_module_ids.extend(unassign_authoring_modules_from_group(group_id))\n                        authoring_soft_delete(GROUPS_TABLE, 'group_id = %s', [group_id], via_parent=cohort_id, deleted_by='programme-tree-save')\n                        removed_group_ids.append(group_id)\n                authoring_soft_delete(COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id = %s', [cohort_id], via_parent=programme_id, deleted_by='programme-tree-save')\n                removed_cohort_ids.append(cohort_id)\n\n            if remove_missing:\n                for group_row in authoring_fetch_all(GROUPS_TABLE, 'programme_id = %s', [programme_id]):\n                    group_id = clean_str(group_row.get('group_id'))\n                    if group_id and group_id not in saved_group_ids:\n                        removed_module_ids.extend(unassign_authoring_modules_from_group(group_id))\n                        authoring_soft_delete(GROUPS_TABLE, 'group_id = %s', [group_id], via_parent=programme_id, deleted_by='programme-tree-save')\n                        removed_group_ids.append(group_id)\n                for cohort_row in authoring_fetch_all(COHORT_AUTHORING_DETAILS_TABLE, 'programme_id = %s', [programme_id]):\n                    cohort_id = clean_str(cohort_row.get('cohort_id'))\n                    if cohort_id and cohort_id not in saved_cohort_ids:\n                        authoring_soft_delete(COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id = %s', [cohort_id], via_parent=programme_id, deleted_by='programme-tree-save')\n                        removed_cohort_ids.append(cohort_id)\n\n            repair_curriculum_parent_links(programme_id)\n            invalidate_curriculum_cache()\n    except (TutorScheduleConflictError, TutorAssignmentDeliveryDayError, StaleModuleStructureWrite) as exc:\n        return exc.as_response()\n    except ModuleAuthoringValidationError as exc:\n        return json_error(str(exc), status=400, validationErrors=exc.errors)\n    except ValueError as exc:\n        return json_error(str(exc), status=400)\n    except Exception as exc:\n        logger.exception('Programme tree save failed.')\n        return json_error('Unable to save programme tree.', status=500, detail=str(exc))\n\n    return JsonResponse({\n        'saved': True,\n        'programme': programme,\n        'cohorts': saved_cohorts,\n        'groups': saved_groups,\n        'modules': saved_modules,\n        'removedModuleIds': unique(removed_module_ids),\n        'removedGroupIds': unique(removed_group_ids),\n        'removedCohortIds': unique(removed_cohort_ids),\n        'removedMissing': remove_missing,\n    })",
+      "decorators": [
+        "csrf_exempt"
+      ],
+      "owner": "curriculum_api.catalogue.api.programme_commands",
+      "deps": [
+        "AUTHORING_MODULES_TABLE",
+        "COHORT_AUTHORING_DETAILS_TABLE",
+        "GROUPS_TABLE",
+        "JsonResponse",
+        "ModuleAuthoringValidationError",
+        "StaleModuleStructureWrite",
+        "TutorAssignmentDeliveryDayError",
+        "TutorScheduleConflictError",
+        "authoring_fetch_all",
+        "authoring_soft_delete",
+        "bool_payload",
+        "clean_str",
+        "clean_tree_remove_ids",
+        "fetch_cohort_row",
+        "fetch_group_row",
+        "invalidate_curriculum_cache",
+        "json_body",
+        "json_error",
+        "logger",
+        "repair_curriculum_parent_links",
+        "save_tree_cohort",
+        "save_tree_group",
+        "save_tree_group_modules",
+        "transaction",
+        "unassign_authoring_modules_from_group",
+        "unique",
+        "update_authoring_rows",
+        "upsert_programme_for_tree",
+        "versioning"
+      ],
+      "callbacks": {}
+    },
+    "curriculum_programme_cohort_collection": {
+      "source": "def curriculum_programme_cohort_collection(request, programme_id):\n    if request.method == 'GET':\n        payload = get_cached_payload(request)\n        programme = find_programme(payload, programme_id)\n        if not programme:\n            return json_error('Programme not found.', status=404)\n        results = [\n            cohort for cohort in payload['cohorts']\n            if matches_curriculum_identifier(cohort.get('programmeId'), programme.get('id'))\n            or matches_curriculum_identifier(cohort.get('programme'), programme.get('name'))\n        ]\n        return curriculum_collection_response(payload, 'cohorts', results)\n\n    if request.method != 'POST':\n        return json_error('Method not allowed.', status=405)\n\n    body = json_body(request)\n    if body is None:\n        return json_error('Invalid JSON body.')\n    programme = find_programme(build_curriculum_payload('all', force=True), programme_id)\n    if not programme:\n        return json_error('Programme not found.', status=404)\n    body['programme'] = programme.get('name') or programme_id\n    return create_curriculum_cohort(body)",
+      "decorators": [
+        "csrf_exempt"
+      ],
+      "owner": "curriculum_api.catalogue.api.programme_commands",
+      "deps": [
+        "build_curriculum_payload",
+        "create_curriculum_cohort",
+        "curriculum_collection_response",
+        "find_programme",
+        "get_cached_payload",
+        "json_body",
+        "json_error",
+        "matches_curriculum_identifier"
+      ],
+      "callbacks": {}
+    },
+    "create_curriculum_cohort": {
+      "source": "def create_curriculum_cohort(payload):\n    \"\"\"Create a cohort directly in ``curriculum.cohorts`` (normalized only).\"\"\"\n    calendar_update = {}\n    if 'calendarPolicy' in payload:\n        from curriculum_api.delivery_calendar import policy_write\n        try:\n            calendar_update = policy_write(payload, None, COHORT_AUTHORING_DETAILS_TABLE)\n        except ValueError as exc:\n            return json_error(str(exc), fields=['calendarPolicy'])\n    missing = require_fields(payload, ['name', 'programme'])\n    if missing:\n        log_curriculum_decision('cohort.create', outcome='rejected', reason='missing-fields')\n        return json_error('Missing required fields.', fields=missing)\n    programme = clean_str(payload.get('programme'))\n    programme_id = canonical_programme_id(\n        payload.get('programmeId') or payload.get('programme_id') or payload.get('programId') or payload.get('program_id'),\n        programme,\n    )\n    name = clean_str(payload.get('name'))\n    cohort_id = unique_cohort_id(payload.get('id') or payload.get('cohortId') or payload.get('cohort_id'))\n    duration_months = payload.get('durationMonths') or 24\n    # Same rule as the editor's preview: cohort contract dates are fixed.\n    # Applied holidays are stored for module session planning, not folded into\n    # the cohort practical end date.\n    end_date = payload.get('endDate') or format_date(cohort_practical_end_date(\n        payload.get('startDate'),\n        duration_months,\n        payload.get('holidayIds') or payload.get('holiday_ids'),\n        payload.get('holidays') or payload.get('holidayDetails'),\n    ))\n    epa_months = payload_epa_months(payload)\n    apprenticeship_end_override = format_date(payload_apprenticeship_end_override(payload))\n    apprenticeship_end_date = format_date(\n        cohort_apprenticeship_end_date(end_date, epa_months, apprenticeship_end_override)\n    )\n    holiday_ids = parse_notes_id_list(payload.get('holidayIds') or payload.get('holiday_ids'))\n    # The holidays unticked in the cohort drawer -- explicit key presence, not\n    # ``or``, so an explicit empty list (nothing excluded, i.e. select all) is\n    # never confused with the key simply being absent from an older caller.\n    excluded_holiday_ids_sent = 'excludedHolidayIds' in payload or 'excluded_holiday_ids' in payload\n    excluded_holiday_ids = parse_notes_id_list(\n        payload.get('excludedHolidayIds') if 'excludedHolidayIds' in payload else payload.get('excluded_holiday_ids')\n    ) if excluded_holiday_ids_sent else []\n\n    # A cohort with the same canonical id, or the same name within the same\n    # programme, is treated as the same cohort. Rather than failing the save,\n    # update it in place and report created=False — mirroring the idempotent\n    # programme create handler. This keeps wizard re-saves and retries safe:\n    # a POST that repeats an already-persisted cohort (e.g. because the freshly\n    # minted id was not written back into the client draft) updates the stored\n    # row instead of forking a duplicate or dying with a user-facing 409.\n    # An archived cohort is a soft-deleted row, not a missing one. It must not\n    # answer the duplicate question, or recreating a cohort under a name that\n    # was archived earlier would silently update the tombstone. Same rule, and\n    # same reason, as create_curriculum_group.\n    archived_cohort_ids = archived_authoring_ids(COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id')\n    if clean_str(cohort_id) in archived_cohort_ids:\n        update_authoring_rows(\n            COHORT_AUTHORING_DETAILS_TABLE,\n            'cohort_id = %s',\n            [clean_str(cohort_id)],\n            restore_soft_delete_payload(COHORT_AUTHORING_DETAILS_TABLE),\n        )\n        archived_cohort_ids.discard(clean_str(cohort_id))\n        log_curriculum_decision(\n            'cohort.create', outcome='revived_archived', entity_id=cohort_id,\n            parent_id=programme_id, reason='explicit-id-names-archived-row',\n        )\n\n    duplicate = next((\n        detail for detail in cohort_authoring_detail_rows()\n        if clean_str(detail.get('cohortId')) not in archived_cohort_ids\n        and (\n            clean_str(detail.get('cohortId')) == clean_str(cohort_id)\n            or (\n                normalise(detail.get('programmeId') or detail.get('programmeName')) in {normalise(programme_id), normalise(programme)}\n                and normalise(detail.get('cohortName')) == normalise(name)\n            )\n        )\n    ), None)\n    if duplicate:\n        existing_id = clean_str(duplicate.get('cohortId')) or cohort_id\n        updates = {\n            'cohort_name': name,\n            'programme_id': programme_id or None,\n            'start_date': payload.get('startDate') or None,\n            'end_date': end_date or None,\n            'duration_months': parse_int(duration_months, duplicate.get('durationMonths') or 0),\n            'epa_months': epa_months if epa_months is not None else parse_epa_months(duplicate.get('epaMonths')),\n            # An unsent apprenticeship end date leaves the stored override alone;\n            # an explicit blank clears it and restores the calculated date.\n            'apprenticeship_end_override': (\n                apprenticeship_end_override or None\n                if apprenticeship_end_override_sent(payload)\n                else format_date(duplicate.get('apprenticeshipEndOverride')) or None\n            ),\n            'color': payload.get('color') or None,\n            'status': title_case_status(\n                normalise(duplicate.get('status')) == 'archived',\n                payload.get('startDate'),\n                end_date,\n            ),\n        }\n        # Recomputed from the end date being written, not from the payload, so a\n        # POST that only moves the end date still lands a matching EPA window --\n        # unless an authored apprenticeship end date stands, which wins outright.\n        updates['apprenticeship_end_date'] = format_date(\n            cohort_apprenticeship_end_date(\n                end_date,\n                updates['epa_months'],\n                updates['apprenticeship_end_override'],\n            )\n        ) or None\n        if 'holidayIds' in payload or 'holiday_ids' in payload:\n            updates['holiday_ids'] = json_db_value(holiday_ids)\n        if excluded_holiday_ids_sent:\n            updates['excluded_holiday_ids'] = json_db_value(excluded_holiday_ids)\n        nullable = ['apprenticeship_end_date', 'apprenticeship_end_override']\n        if 'epaMonths' in payload or 'epa_months' in payload:\n            nullable.append('epa_months')\n        log_curriculum_decision(\n            'cohort.create', outcome='matched_existing', entity_id=existing_id,\n            parent_id=programme_id, matched_id=existing_id,\n            reason='live-namesake-in-same-programme' if existing_id != clean_str(cohort_id) else 'same-id',\n        )\n        updates.update(calendar_update)\n        nullable.append('calendar_policy')\n        update_cohort_fields(existing_id, updates, allow_null_columns=tuple(nullable))\n        invalidate_curriculum_cache()\n        return JsonResponse({'created': False, 'cohort': curriculum_cohort_from_authoring_detail({\n            'cohortId': existing_id,\n            'cohortName': name,\n            'programmeId': programme_id,\n            'programmeName': programme,\n            'startDate': payload.get('startDate'),\n            'endDate': end_date,\n            'epaMonths': updates['epa_months'],\n            'apprenticeshipEndDate': updates['apprenticeship_end_date'] or '',\n            'apprenticeshipEndOverride': updates['apprenticeship_end_override'] or '',\n            'durationMonths': duration_months,\n            'color': payload.get('color') or '',\n            'holidayIds': holiday_ids,\n            'excludedHolidayIds': excluded_holiday_ids if excluded_holiday_ids_sent else (duplicate.get('excludedHolidayIds') or []),\n            'status': updates['status'],\n        })})\n\n    cohort = {\n        'id': cohort_id,\n        'name': name,\n        'programme': programme,\n        'programmeId': programme_id,\n        'startDate': payload.get('startDate'),\n        'endDate': end_date,\n        'epaMonths': epa_months,\n        'apprenticeshipEndDate': apprenticeship_end_override,\n        'status': title_case_status(False, payload.get('startDate'), end_date),\n        'color': payload.get('color') or '',\n        'holidayIds': holiday_ids,\n        'excludedHolidayIds': excluded_holiday_ids,\n        **({'calendarPolicy': payload['calendarPolicy']} if 'calendarPolicy' in payload else {}),\n        'groups': [],\n        'modules': [],\n    }\n    # The write is confirmed before this reports success, both ways it can fail\n    # quietly. persist_* swallowed its exception and returned None, so a failed\n    # insert used to answer 201 with a freshly minted id and no row behind it:\n    # the wizard put that phantom cohort in its rail and its picker, and the next\n    # step died on \"Parent cohort not found\" -- naming the step that could not\n    # see the cohort rather than the one that failed to store it.\n    try:\n        persist_cohort_authoring_detail(\n            cohort,\n            [],\n            [],\n            payload.get('holidays') or payload.get('holidayDetails') or payload.get('linkedHolidays') or get_holiday_rows(),\n            {'source_type': 'module_authoring', 'source_id': cohort_id},\n            raise_on_error=True,\n        )\n    except (Exception, AssertionError) as exc:\n        log_curriculum_decision(\n            'cohort.create', outcome='failed', entity_id=cohort_id,\n            parent_id=programme_id, reason='write-failed',\n        )\n        invalidate_curriculum_cache()\n        return json_error(f'The cohort could not be stored: {exc}', status=500)\n    # And read back, because a write can report success and still leave nothing\n    # the id lookup behind every child create can find.\n    if not fetch_cohort_row(cohort_id):\n        log_curriculum_decision(\n            'cohort.create', outcome='failed', entity_id=cohort_id,\n            parent_id=programme_id, reason='row-not-stored',\n        )\n        invalidate_curriculum_cache()\n        return json_error('The cohort could not be stored. Nothing was saved.', status=500)\n    # Logged here rather than before the write, so the decision log cannot claim\n    # a cohort was created and then report the same one failed.\n    log_curriculum_decision(\n        'cohort.create', outcome='created', entity_id=cohort_id, parent_id=programme_id,\n        reason='archived-namesake-ignored' if archived_cohort_ids else '',\n    )\n    invalidate_curriculum_cache()\n    return JsonResponse({'created': True, 'cohort': curriculum_cohort_from_authoring_detail({\n        'cohortId': cohort_id,\n        'cohortName': name,\n        'programmeId': programme_id,\n        'programmeName': programme,\n        'startDate': payload.get('startDate'),\n        'endDate': end_date,\n        'epaMonths': epa_months,\n        'apprenticeshipEndDate': apprenticeship_end_date,\n        'apprenticeshipEndOverride': apprenticeship_end_override,\n        'durationMonths': duration_months,\n        'color': payload.get('color') or '',\n        'holidayIds': holiday_ids,\n        'excludedHolidayIds': excluded_holiday_ids,\n        **({'calendarPolicy': payload['calendarPolicy']} if 'calendarPolicy' in payload else {}),\n        'status': cohort['status'],\n    })}, status=201)",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.api.cohort_commands",
+      "deps": [
+        "COHORT_AUTHORING_DETAILS_TABLE",
+        "JsonResponse",
+        "apprenticeship_end_override_sent",
+        "archived_authoring_ids",
+        "canonical_programme_id",
+        "clean_str",
+        "cohort_apprenticeship_end_date",
+        "cohort_authoring_detail_rows",
+        "cohort_practical_end_date",
+        "curriculum_cohort_from_authoring_detail",
+        "fetch_cohort_row",
+        "format_date",
+        "get_holiday_rows",
+        "invalidate_curriculum_cache",
+        "json_db_value",
+        "json_error",
+        "log_curriculum_decision",
+        "normalise",
+        "parse_epa_months",
+        "parse_int",
+        "parse_notes_id_list",
+        "payload_apprenticeship_end_override",
+        "payload_epa_months",
+        "persist_cohort_authoring_detail",
+        "policy_write",
+        "require_fields",
+        "restore_soft_delete_payload",
+        "title_case_status",
+        "unique_cohort_id",
+        "update_authoring_rows",
+        "update_cohort_fields"
+      ],
+      "callbacks": {
+        "policy_write": {
+          "module": "curriculum_api.delivery_calendar",
+          "level": 0
+        }
+      }
+    },
+    "curriculum_cohort_collection": {
+      "source": "def curriculum_cohort_collection(request):\n    if request.method != 'POST':\n        return json_error('Method not allowed.', status=405)\n    payload = json_body(request)\n    if payload is None:\n        return json_error('Invalid JSON body.')\n    return create_curriculum_cohort(payload)",
+      "decorators": [
+        "csrf_exempt"
+      ],
+      "owner": "curriculum_api.catalogue.api.cohort_commands",
+      "deps": [
+        "create_curriculum_cohort",
+        "json_body",
+        "json_error"
+      ],
+      "callbacks": {}
+    },
+    "curriculum_cohort_detail": {
+      "source": "def curriculum_cohort_detail(request, identifier):\n    if request.method not in {'PATCH', 'DELETE'}:\n        return json_error('Method not allowed.', status=405)\n\n    # Look the cohort up by its stored canonical id in curriculum.cohorts. This\n    # row is the only source of truth; updates target it in place so the\n    # canonical cohort_id and every unrelated column are preserved.\n    cohort_row = resolve_cohort_row(identifier)\n    if not cohort_row:\n        log_curriculum_decision(\n            f'cohort.{request.method.lower()}', outcome='rejected',\n            reason='not-found', entity_id=identifier,\n        )\n        return json_error('Cohort not found.', status=404)\n    cohort_id = clean_str(cohort_row.get('cohort_id'))\n\n    if request.method == 'DELETE':\n        # An archived cohort can be removed for good, with the groups archived\n        # alongside it. Archiving stays the default so a delete is never\n        # irreversible by accident -- see permanent_cohort_delete_response.\n        if request_wants_permanent_delete(request):\n            log_curriculum_decision(\n                'cohort.delete', outcome='permanent_requested', entity_id=cohort_id,\n            )\n            return permanent_cohort_delete_response(cohort_row)\n\n        for stored_group in authoring_fetch_all(GROUPS_TABLE, 'cohort_id = %s', [cohort_id]):\n            stored_group_id = clean_str(stored_group.get('group_id'))\n            if not stored_group_id:\n                continue\n            unassign_authoring_modules_from_group(stored_group_id)\n            authoring_soft_delete(GROUPS_TABLE, 'group_id = %s', [stored_group_id], via_parent=cohort_id, deleted_by='cohort-delete')\n        # Any module row still naming this cohort directly, rather than through\n        # one of its groups, is detached too: it has to be given a new cohort and\n        # group from the module drawer, never left on an archived cohort.\n        update_authoring_rows(AUTHORING_MODULES_TABLE, 'cohort_id = %s', [cohort_id], {\n            'cohort_id': None,\n            'group_id': None,\n        })\n        authoring_soft_delete(COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id = %s', [cohort_id], deleted_by='cohort-delete')\n        log_curriculum_decision(\n            'cohort.archive', outcome='soft_deleted', entity_id=cohort_id,\n            parent_id=clean_str(cohort_row.get('programme_id')),\n        )\n        invalidate_curriculum_cache()\n        return JsonResponse({'deleted': True, 'permanent': False, 'id': cohort_id})\n\n    payload = json_body(request)\n    if payload is None:\n        return json_error('Invalid JSON body.')\n\n    duration_months = payload.get('durationMonths')\n    start_date = payload.get('startDate') if 'startDate' in payload else format_date(cohort_row.get('start_date'))\n    # An unsent holiday selection keeps the stored one. The selection is used by\n    # module session planning; it does not change the cohort contract dates.\n    patch_holiday_ids = (\n        payload.get('holidayIds') if 'holidayIds' in payload\n        else payload.get('holiday_ids') if 'holiday_ids' in payload\n        else parse_json_value(cohort_row.get('holiday_ids'), [])\n    )\n    computed_end = (\n        format_date(cohort_practical_end_date(start_date, duration_months, patch_holiday_ids))\n        if duration_months else ''\n    )\n    end_date = payload.get('endDate') or computed_end or format_date(cohort_row.get('end_date'))\n    # end_date is the practical period end; the apprenticeship end date is\n    # re-derived from it on every PATCH so moving one moves the other.\n    epa_months = payload_epa_months(payload, cohort_row)\n    epa_sent = 'epaMonths' in payload or 'epa_months' in payload\n    # An authored apprenticeship end date overrides that derivation. Unsent keeps\n    # the stored one; an explicit blank clears it and the EPA rule takes over.\n    override = format_date(payload_apprenticeship_end_override(payload, cohort_row))\n    override_sent = apprenticeship_end_override_sent(payload)\n\n    # Build a targeted update: only columns explicitly present in the payload\n    # (or derived from them) are written. programme_id / group_ids / source_type\n    # are never rebuilt from name-derived data.\n    updates = {}\n    if 'calendarPolicy' in payload:\n        from curriculum_api.delivery_calendar import policy_write\n        try:\n            updates.update(policy_write(payload, cohort_row, COHORT_AUTHORING_DETAILS_TABLE))\n        except ValueError as exc:\n            return json_error(str(exc), fields=['calendarPolicy'])\n    if 'name' in payload and clean_str(payload.get('name')):\n        updates['cohort_name'] = clean_str(payload.get('name'))\n    if 'startDate' in payload:\n        updates['start_date'] = payload.get('startDate') or None\n    if end_date:\n        updates['end_date'] = end_date or None\n    if duration_months is not None:\n        updates['duration_months'] = parse_int(duration_months, cohort_row.get('duration_months') or 0)\n    if epa_sent:\n        updates['epa_months'] = epa_months\n    if override_sent:\n        updates['apprenticeship_end_override'] = override or None\n    if end_date or epa_sent or override_sent:\n        updates['apprenticeship_end_date'] = format_date(\n            cohort_apprenticeship_end_date(end_date, epa_months, override)\n        ) or None\n    if 'color' in payload and clean_str(payload.get('color')):\n        updates['color'] = payload.get('color')\n    if 'holidayIds' in payload or 'holiday_ids' in payload:\n        updates['holiday_ids'] = json_db_value(parse_notes_id_list(\n            payload.get('holidayIds') if 'holidayIds' in payload else payload.get('holiday_ids')\n        ))\n    # The holidays unticked in the cohort drawer. Unsent leaves the stored\n    # exclusions alone -- checked the same way as holidayIds above, by key\n    # presence rather than truthiness, so an explicit empty list (nothing\n    # excluded, i.e. \"Select all\") is written rather than ignored.\n    if 'excludedHolidayIds' in payload or 'excluded_holiday_ids' in payload:\n        updates['excluded_holiday_ids'] = json_db_value(parse_notes_id_list(\n            payload.get('excludedHolidayIds') if 'excludedHolidayIds' in payload else payload.get('excluded_holiday_ids')\n        ))\n    # Programme reassignment is only honoured when an explicit canonical id or a\n    # resolvable programme name is supplied; otherwise the stored parent stands.\n    explicit_programme_id = clean_str(payload.get('programmeId') or payload.get('programme_id'))\n    if explicit_programme_id or clean_str(payload.get('programme')):\n        resolved = canonical_programme_id(explicit_programme_id, clean_str(payload.get('programme')))\n        if resolved:\n            updates['programme_id'] = resolved\n            if clean_str(payload.get('programme')):\n                updates['programme_name'] = clean_str(payload.get('programme'))\n    updates['status'] = title_case_status(\n        clean_str(cohort_row.get('status')) == 'archived',\n        start_date,\n        end_date,\n    )\n    if curriculum_name_only_patch(payload):\n        # Stored dates, EPA boundaries and status are not authored by a rename.\n        updates = {'cohort_name': updates['cohort_name']}\n\n    nullable = ['apprenticeship_end_date', 'calendar_policy']\n    if epa_sent:\n        nullable.append('epa_months')\n    if override_sent:\n        nullable.append('apprenticeship_end_override')\n    # Optimistic concurrency, opt-in, as on the module structure PATCH. The\n    # drawer sends every field it renders, including the ones this reader never\n    # touched, so a save built before a colleague's would put their work back to\n    # what it was -- silently, because nothing here compared the two.\n    expected_revision = requested_expected_revision(request, payload)\n    # One transaction around the check and the write; see lock_record_row.\n    from .cohort_rename import CohortRenameConflict, propagate_cohort_name\n    try:\n        with transaction.atomic():\n            if expected_revision or 'cohort_name' in updates:\n                lock_record_row(COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id = %s', [cohort_id])\n            if expected_revision:\n                current_revision = cohort_record_revision(cohort_id)\n                if current_revision != expected_revision:\n                    return record_conflict_response(\n                        expected_revision, current_revision, cohort=cohort_conflict_record(cohort_id),\n                    )\n            if 'cohort_name' in updates:\n                propagate_cohort_name(fetch_cohort_row(cohort_id), updates['cohort_name'])\n            update_cohort_fields(cohort_id, updates, allow_null_columns=tuple(nullable))\n    except CohortRenameConflict as exc:\n        return json_error(str(exc), status=409)\n    invalidate_curriculum_cache()\n    # Read after the commit, so the token handed back is the one a reader would\n    # fingerprint now rather than one a rollback could take away.\n    return JsonResponse({'updated': True, 'id': cohort_id, 'revision': cohort_record_revision(cohort_id)})",
+      "decorators": [
+        "csrf_exempt"
+      ],
+      "owner": "curriculum_api.catalogue.api.cohort_commands",
+      "deps": [
+        "AUTHORING_MODULES_TABLE",
+        "COHORT_AUTHORING_DETAILS_TABLE",
+        "GROUPS_TABLE",
+        "JsonResponse",
+        "apprenticeship_end_override_sent",
+        "authoring_fetch_all",
+        "authoring_soft_delete",
+        "canonical_programme_id",
+        "clean_str",
+        "cohort_apprenticeship_end_date",
+        "cohort_conflict_record",
+        "cohort_practical_end_date",
+        "cohort_record_revision",
+        "cohort_rename_bindings",
+        "curriculum_name_only_patch",
+        "fetch_cohort_row",
+        "format_date",
+        "invalidate_curriculum_cache",
+        "json_body",
+        "json_db_value",
+        "json_error",
+        "lock_record_row",
+        "log_curriculum_decision",
+        "parse_int",
+        "parse_json_value",
+        "parse_notes_id_list",
+        "payload_apprenticeship_end_override",
+        "payload_epa_months",
+        "permanent_cohort_delete_response",
+        "policy_write",
+        "record_conflict_response",
+        "request_wants_permanent_delete",
+        "requested_expected_revision",
+        "resolve_cohort_row",
+        "title_case_status",
+        "transaction",
+        "unassign_authoring_modules_from_group",
+        "update_authoring_rows",
+        "update_cohort_fields"
+      ],
+      "callbacks": {
+        "cohort_rename_bindings": {
+          "module": "cohort_rename",
+          "level": 1,
+          "names": [
+            "CohortRenameConflict",
+            "propagate_cohort_name"
+          ]
+        },
+        "policy_write": {
+          "module": "curriculum_api.delivery_calendar",
+          "level": 0
+        }
+      }
+    },
+    "curriculum_cohort_restore": {
+      "source": "def curriculum_cohort_restore(request, identifier):\n    \"\"\"Take a cohort back out of the archive, with the groups archived with it.\"\"\"\n    if request.method != 'POST':\n        return json_error('Method not allowed.', status=405)\n\n    cohort_row = fetch_cohort_row(identifier) or resolve_cohort_row(identifier)\n    if not cohort_row:\n        log_curriculum_decision('cohort.restore', outcome='rejected', reason='not-found', entity_id=identifier)\n        return json_error('Cohort not found.', status=404)\n    cohort_id = clean_str(cohort_row.get('cohort_id'))\n    if not curriculum_row_is_archived(cohort_row):\n        return json_error(\n            'Cohort is not archived.', status=409,\n            reason='cohort-not-archived', restored=False, id=cohort_id,\n        )\n\n    programme_id = clean_str(cohort_row.get('programme_id'))\n    archived_programme = archived_parent_programme(programme_id)\n    if archived_programme:\n        name = clean_str(archived_programme.get('name')) or 'The programme'\n        return json_error(\n            f'{name} is archived, so this cohort has no programme to come back to. Restore the '\n            'programme instead - it brings back everything archived with it, this cohort included.',\n            status=409, reason='programme-archived', restored=False, id=cohort_id,\n        )\n\n    with transaction.atomic():\n        payload = restore_soft_delete_payload(COHORT_AUTHORING_DETAILS_TABLE)\n        if has_column(COHORT_AUTHORING_DETAILS_TABLE, 'status'):\n            # Back to whatever the dates say it is now, not to a blanket\n            # 'active': a cohort archived before it started is still planned.\n            payload['status'] = title_case_status(\n                False, cohort_row.get('start_date'), cohort_row.get('end_date'),\n            )\n        update_rows(\n            COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id = %s', [cohort_id], payload,\n            allow_null_columns=RESTORE_NULLABLE_COLUMNS,\n        )\n        # Only the groups this cohort's own archive took down carry it as their\n        # parent marker. A group archived on its own carries none and stays\n        # archived - the same rule ``restore_rows_via_parent`` applies to a\n        # programme, so restoring is never a way to resurrect an unrelated\n        # deletion.\n        groups = restore_rows_via_parent(GROUPS_TABLE, cohort_id)\n    invalidate_curriculum_cache()\n    log_curriculum_decision('cohort.restore', outcome='restored', entity_id=cohort_id, parent_id=programme_id)\n    return JsonResponse({\n        'restored': True,\n        'id': cohort_id,\n        'details': {'groups': len(groups)},\n        'message': f'Cohort restored. {ARCHIVE_MODULE_REATTACH_NOTE}',\n    })",
+      "decorators": [
+        "csrf_exempt"
+      ],
+      "owner": "curriculum_api.catalogue.api.cohort_commands",
+      "deps": [
+        "ARCHIVE_MODULE_REATTACH_NOTE",
+        "COHORT_AUTHORING_DETAILS_TABLE",
+        "GROUPS_TABLE",
+        "JsonResponse",
+        "RESTORE_NULLABLE_COLUMNS",
+        "archived_parent_programme",
+        "clean_str",
+        "curriculum_row_is_archived",
+        "fetch_cohort_row",
+        "has_column",
+        "invalidate_curriculum_cache",
+        "json_error",
+        "log_curriculum_decision",
+        "resolve_cohort_row",
+        "restore_rows_via_parent",
+        "restore_soft_delete_payload",
+        "title_case_status",
+        "transaction",
+        "update_rows"
+      ],
+      "callbacks": {}
+    },
+    "permanent_cohort_delete_response": {
+      "source": "def permanent_cohort_delete_response(cohort_row):\n    \"\"\"HTTP outcome of a permanent cohort delete: the row and its archived groups.\n\n    Module rows are never deleted with a cohort. Module content outlives the\n    delivery it was scheduled into - that is what the plain archive already\n    promises - so only the delivery link is cleared here.\n    \"\"\"\n    cohort_id = clean_str(cohort_row.get('cohort_id'))\n    if not curriculum_row_is_archived(cohort_row):\n        return json_error(\n            'Archive the cohort before deleting it permanently.',\n            status=409, reason='cohort-not-archived', deleted=False, permanent=False, id=cohort_id,\n        )\n\n    learners = archived_cohort_learners(cohort_row)\n    if learners:\n        return json_error(\n            f'{learners} active learner{\"\" if learners == 1 else \"s\"} are still placed in this cohort, '\n            'so it cannot be deleted permanently. Move them to another cohort first.',\n            status=409, reason='cohort-has-learner-delivery', deleted=False, permanent=False,\n            id=cohort_id, blockers={'learners': learners},\n        )\n\n    group_rows = authoring_fetch_all(GROUPS_TABLE, 'cohort_id = %s', [cohort_id])\n    live_groups = [row for row in group_rows if not curriculum_row_is_archived(row)]\n    if live_groups:\n        return json_error(\n            f'{len(live_groups)} group{\"\" if len(live_groups) == 1 else \"s\"} under this cohort '\n            'are still active, so it cannot be deleted permanently. Archive them first.',\n            status=409, reason='cohort-has-live-groups', deleted=False, permanent=False,\n            id=cohort_id, blockers={'groups': len(live_groups)},\n        )\n    blocked = permanent_delete_reference_refusal('cohort', cohort_id)\n    if blocked is not None:\n        return blocked\n\n    try:\n        with transaction.atomic():\n            for group in group_rows:\n                unassign_authoring_modules_from_group(clean_str(group.get('group_id')))\n            # Any module row still naming this cohort directly, rather than\n            # through one of its groups.\n            update_authoring_rows(AUTHORING_MODULES_TABLE, 'cohort_id = %s', [cohort_id], {\n                'cohort_id': None,\n            })\n            # Its holiday choices reference it with RESTRICT on the normalised\n            # schema: they go with it (authoring_delete does the same).\n            calendar_holidays.release_cohorts('cohort_id = %s', [cohort_id])\n            removed = {\n                'groups': len(delete_rows(GROUPS_TABLE, 'cohort_id = %s', [cohort_id])),\n                'cohorts': len(delete_rows(COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id = %s', [cohort_id])),\n            }\n    except (IntegrityError, DatabaseError) as exc:\n        logger.warning('Permanent delete of cohort %s was refused: %s', cohort_id, exc)\n        return json_error(\n            'The database refused the permanent delete because other rows still reference this cohort.',\n            status=409, reason='cohort-delete-restricted', deleted=False, permanent=False,\n            id=cohort_id, detail=clean_str(str(exc)),\n        )\n\n    invalidate_curriculum_cache()\n    log_curriculum_decision(\n        'cohort.delete', outcome='permanent', entity_id=cohort_id,\n        parent_id=clean_str(cohort_row.get('programme_id')),\n        reason=','.join(f'{table}:{count}' for table, count in sorted(removed.items())),\n    )\n    return JsonResponse({\n        'deleted': True,\n        'permanent': True,\n        'id': cohort_id,\n        'removed': removed,\n        'message': 'Cohort and the groups archived with it were removed from the database. Module content was kept.',\n    })",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.api.cohort_commands",
+      "deps": [
+        "AUTHORING_MODULES_TABLE",
+        "COHORT_AUTHORING_DETAILS_TABLE",
+        "DatabaseError",
+        "GROUPS_TABLE",
+        "IntegrityError",
+        "JsonResponse",
+        "archived_cohort_learners",
+        "authoring_fetch_all",
+        "calendar_holidays",
+        "clean_str",
+        "curriculum_row_is_archived",
+        "delete_rows",
+        "invalidate_curriculum_cache",
+        "json_error",
+        "log_curriculum_decision",
+        "logger",
+        "permanent_delete_reference_refusal",
+        "transaction",
+        "unassign_authoring_modules_from_group",
+        "update_authoring_rows"
+      ],
+      "callbacks": {}
+    },
+    "curriculum_groups": {
+      "source": "def curriculum_groups(request):\n    # The groups only (see delivery_scope_lists): building the whole curriculum\n    # payload for them took 34-49 s cold on the new database.\n    payload = {'schema': CURRICULUM_SCHEMA, 'groups': delivery_scope_lists(request)['groups']}\n    cohort_id = request.GET.get('cohort_id') or request.GET.get('cohortId') or request.GET.get('cohort')\n    results = payload['groups']\n    if cohort_id:\n        results = [\n            group for group in results\n            if matches_curriculum_identifier(group.get('cohortId'), cohort_id)\n            or matches_curriculum_identifier(group.get('cohort'), cohort_id)\n        ]\n    return curriculum_collection_response(payload, 'groups', results)",
+      "decorators": [
+        "require_GET"
+      ],
+      "owner": "curriculum_api.catalogue.api.group_commands",
+      "deps": [
+        "CURRICULUM_SCHEMA",
+        "curriculum_collection_response",
+        "delivery_scope_lists",
+        "matches_curriculum_identifier"
+      ],
+      "callbacks": {}
+    },
+    "create_curriculum_group": {
+      "source": "def create_curriculum_group(payload):\n    \"\"\"Create a group directly in ``curriculum.groups`` (normalized only).\n\n    The parent cohort is resolved from ``curriculum.cohorts`` and the new group\n    inherits the cohort's stored canonical programme_id/cohort_id. The cohort's\n    ``group_ids`` array is updated to include the new group.\n    \"\"\"\n    missing = require_fields(payload, ['name', 'cohortId'])\n    if missing:\n        log_curriculum_decision('group.create', outcome='rejected', reason='missing-fields')\n        return json_error('Missing required fields.', fields=missing)\n    cohort_row = resolve_cohort_row(payload.get('cohortId'))\n    if not cohort_row:\n        log_curriculum_decision(\n            'group.create', outcome='rejected', reason='parent-cohort-not-found',\n            parent_id=payload.get('cohortId'),\n        )\n        return json_error(\n            f'Parent cohort not found: {clean_str(payload.get(\"cohortId\")) or \"(blank)\"}.',\n            status=404,\n        )\n\n    cohort_id = clean_str(cohort_row.get('cohort_id'))\n    cohort_name = clean_str(cohort_row.get('cohort_name'))\n    programme_id = clean_str(cohort_row.get('programme_id'))\n    programme = clean_str(cohort_row.get('programme_name'))\n    group_name = clean_str(payload.get('name'))\n    group_id = unique_group_id(payload.get('id') or payload.get('groupId') or payload.get('group_id'))\n    requested_week_day = clean_str(payload.get('weekDays') or payload.get('deliveryDays') or payload.get('sessionWeekDay') or payload.get('session_week_day'))\n    requested_start_time = clean_str(payload.get('startTime') or payload.get('start_time') or payload.get('sessionStartTime') or payload.get('session_start_time'))\n    requested_end_time = clean_str(payload.get('endTime') or payload.get('end_time') or payload.get('sessionEndTime') or payload.get('session_end_time'))\n\n    # Archiving a group soft-deletes its row rather than removing it, so the\n    # archived group is still in group_authoring_detail_rows(). Only a surviving\n    # row counts as a duplicate: matching the tombstone used to turn \"create the\n    # same group again\" into an update of the archived row, which is why the\n    # group never reappeared in the list.\n    archived_group_ids = archived_authoring_ids(GROUPS_TABLE, 'group_id')\n    if clean_str(group_id) in archived_group_ids:\n        # An explicit id naming an archived group is the caller asserting that\n        # identity, so bring the row back rather than writing into the tombstone\n        # or forking a second row under a minted id.\n        update_authoring_rows(\n            GROUPS_TABLE, 'group_id = %s', [clean_str(group_id)], restore_soft_delete_payload(GROUPS_TABLE),\n        )\n        archived_group_ids.discard(clean_str(group_id))\n        log_curriculum_decision(\n            'group.create', outcome='revived_archived', entity_id=group_id,\n            parent_id=cohort_id, reason='explicit-id-names-archived-row',\n        )\n\n    duplicate = next((\n        detail for detail in group_authoring_detail_rows()\n        if clean_str(detail.get('id')) not in archived_group_ids\n        and (\n            clean_str(detail.get('id')) == clean_str(group_id)\n            or (\n                clean_str(detail.get('cohortId')) == cohort_id\n                and normalise(detail.get('name')) == normalise(group_name)\n            )\n        )\n    ), None)\n    if duplicate:\n        existing_id = clean_str(duplicate.get('id')) or group_id\n        updates = {\n            'group_name': group_name,\n            'cohort_id': cohort_id,\n            'programme_id': programme_id,\n            'coach_name': canonical_group_coaches(payload.get('coach')) if 'coach' in payload else clean_str(duplicate.get('coach')),\n            'session_week_day': requested_week_day if any(key in payload for key in ('weekDays', 'deliveryDays', 'sessionWeekDay', 'session_week_day')) else clean_str(duplicate.get('weekDays') or duplicate.get('session_week_day')),\n            'session_start_time': requested_start_time if any(key in payload for key in ('startTime', 'start_time', 'sessionStartTime', 'session_start_time')) else clean_str(duplicate.get('startTime') or duplicate.get('session_start_time')),\n            'session_end_time': requested_end_time if any(key in payload for key in ('endTime', 'end_time', 'sessionEndTime', 'session_end_time')) else clean_str(duplicate.get('endTime') or duplicate.get('session_end_time')),\n            'color': clean_str(payload.get('color')) if 'color' in payload else clean_str(duplicate.get('color')),\n            'status': clean_str(duplicate.get('status')) or 'planned',\n        }\n        log_curriculum_decision(\n            'group.create', outcome='matched_existing', entity_id=existing_id,\n            parent_id=cohort_id, matched_id=existing_id,\n            reason='live-namesake-in-same-cohort' if existing_id != clean_str(group_id) else 'same-id',\n        )\n        update_group_fields(existing_id, updates)\n        module_assignment_ids = [\n            clean_str(row.get('module_catalogue_id'))\n            for row in safe_authoring_module_rows()\n            if clean_str(row.get('group_id')) == existing_id and row.get('module_catalogue_id')\n        ]\n        notify_staff_assignment_change()\n        invalidate_curriculum_cache()\n        return JsonResponse({'created': False, 'group': curriculum_group_from_authoring_detail({\n            'id': existing_id,\n            'name': group_name,\n            'cohortId': cohort_id,\n            'cohort': cohort_name,\n            'programmeId': programme_id,\n            'programme': programme,\n            'coach': updates['coach_name'],\n            'tutor': duplicate.get('tutor') or 'Unassigned',\n            'weekDays': updates['session_week_day'],\n            'startTime': updates['session_start_time'],\n            'endTime': updates['session_end_time'],\n            'schedule': build_group_schedule(updates['session_week_day'], updates['session_start_time'], updates['session_end_time']),\n            'color': updates.get('color') or '',\n            'status': updates['status'],\n            'modules': parse_notes_id_list(duplicate.get('modules') or duplicate.get('moduleNames')),\n        })})\n\n    group = {\n        'id': group_id,\n        'name': group_name,\n        'cohortId': cohort_id,\n        'cohort': cohort_name,\n        'programmeId': programme_id,\n        'programme': programme,\n        'coach': canonical_group_coaches(payload.get('coach')),\n        'weekDays': requested_week_day,\n        'startTime': requested_start_time,\n        'endTime': requested_end_time,\n        'color': payload.get('color') or '',\n        'status': 'planned',\n        'modules': [payload.get('moduleName')] if clean_str(payload.get('moduleName')) else [],\n    }\n    # Confirmed before reporting success, and before the cohort is told to point\n    # at the group. See create_curriculum_cohort: a swallowed write here would\n    # otherwise leave the cohort's group_ids naming a group that does not exist.\n    try:\n        persist_group_authoring_detail(\n            group, [], safe_authoring_module_rows(),\n            {'source_type': 'module_authoring', 'source_id': group_id},\n            raise_on_error=True,\n        )\n    except (Exception, AssertionError) as exc:\n        log_curriculum_decision(\n            'group.create', outcome='failed', entity_id=group_id,\n            parent_id=cohort_id, reason='write-failed',\n        )\n        invalidate_curriculum_cache()\n        return json_error(f'The group could not be stored: {exc}', status=500)\n    if not fetch_group_row(group_id):\n        log_curriculum_decision(\n            'group.create', outcome='failed', entity_id=group_id,\n            parent_id=cohort_id, reason='row-not-stored',\n        )\n        invalidate_curriculum_cache()\n        return json_error('The group could not be stored. Nothing was saved.', status=500)\n    # Logged once the row is confirmed, for the reason given in the cohort create.\n    log_curriculum_decision(\n        'group.create', outcome='created', entity_id=group_id, parent_id=cohort_id,\n        # Says out loud that an archived namesake was correctly stepped over,\n        # which is the branch that used to silently swallow the create.\n        reason='archived-namesake-ignored' if archived_group_ids else '',\n    )\n    notify_staff_assignment_change()\n    invalidate_curriculum_cache()\n    return JsonResponse({'created': True, 'group': curriculum_group_from_authoring_detail({\n        'id': group_id,\n        'name': group_name,\n        'cohortId': cohort_id,\n        'cohort': cohort_name,\n        'programmeId': programme_id,\n        'programme': programme,\n        'coach': group['coach'],\n        'tutor': 'Unassigned',\n        'weekDays': group['weekDays'],\n        'startTime': group['startTime'],\n        'endTime': group['endTime'],\n        'schedule': build_group_schedule(group['weekDays'], group['startTime'], group['endTime']),\n        'color': group['color'],\n        'status': group['status'],\n        'modules': group['modules'],\n    })}, status=201)",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.api.group_commands",
+      "deps": [
+        "GROUPS_TABLE",
+        "JsonResponse",
+        "archived_authoring_ids",
+        "build_group_schedule",
+        "canonical_group_coaches",
+        "clean_str",
+        "curriculum_group_from_authoring_detail",
+        "fetch_group_row",
+        "group_authoring_detail_rows",
+        "invalidate_curriculum_cache",
+        "json_error",
+        "log_curriculum_decision",
+        "normalise",
+        "notify_staff_assignment_change",
+        "parse_notes_id_list",
+        "persist_group_authoring_detail",
+        "require_fields",
+        "resolve_cohort_row",
+        "restore_soft_delete_payload",
+        "safe_authoring_module_rows",
+        "unique_group_id",
+        "update_authoring_rows",
+        "update_group_fields"
+      ],
+      "callbacks": {}
+    },
+    "curriculum_group_collection": {
+      "source": "def curriculum_group_collection(request):\n    if request.method == 'GET':\n        return curriculum_groups(request)\n    if request.method != 'POST':\n        return json_error('Method not allowed.', status=405)\n    payload = json_body(request)\n    if payload is None:\n        return json_error('Invalid JSON body.')\n    return create_curriculum_group(with_group_coaches(payload))",
+      "decorators": [
+        "csrf_exempt"
+      ],
+      "owner": "curriculum_api.catalogue.api.group_commands",
+      "deps": [
+        "create_curriculum_group",
+        "curriculum_groups",
+        "json_body",
+        "json_error",
+        "with_group_coaches"
+      ],
+      "callbacks": {}
+    },
+    "curriculum_cohort_group_collection": {
+      "source": "def curriculum_cohort_group_collection(request, cohort_id):\n    if request.method != 'POST':\n        return json_error('Method not allowed.', status=405)\n\n    payload = json_body(request)\n    if payload is None:\n        return json_error('Invalid JSON body.')\n    payload['cohortId'] = cohort_id\n    return create_curriculum_group(with_group_coaches(payload))",
+      "decorators": [
+        "csrf_exempt"
+      ],
+      "owner": "curriculum_api.catalogue.api.group_commands",
+      "deps": [
+        "create_curriculum_group",
+        "json_body",
+        "json_error",
+        "with_group_coaches"
+      ],
+      "callbacks": {}
+    },
+    "curriculum_group_detail": {
+      "source": "def curriculum_group_detail(request, identifier):\n    if request.method not in {'PATCH', 'DELETE'}:\n        return json_error('Method not allowed.', status=405)\n\n    # Resolve the group by its stored canonical id in curriculum.groups. Updates\n    # target this row in place, preserving group_id, cohort_id, programme_id,\n    # module relationships, status and any staff assignment not being explicitly\n    # changed.\n    group_row = resolve_group_row(identifier)\n    if not group_row:\n        log_curriculum_decision(\n            f'group.{request.method.lower()}', outcome='rejected',\n            reason='not-found', entity_id=identifier,\n        )\n        return json_error('Group not found.', status=404)\n    group_id = clean_str(group_row.get('group_id'))\n\n    if request.method == 'DELETE':\n        # Same two operations behind one verb as the cohort above: archive by\n        # default, remove for good only when the caller asks and the group is\n        # already archived.\n        if request_wants_permanent_delete(request):\n            log_curriculum_decision(\n                'group.delete', outcome='permanent_requested', entity_id=group_id,\n            )\n            return permanent_group_delete_response(group_row)\n\n        cohort_id = clean_str(group_row.get('cohort_id'))\n        unassign_authoring_modules_from_group(group_id)\n        authoring_soft_delete(GROUPS_TABLE, 'group_id = %s', [group_id], deleted_by='group-delete')\n        log_curriculum_decision(\n            'group.archive', outcome='soft_deleted', entity_id=group_id, parent_id=cohort_id,\n        )\n        invalidate_curriculum_cache()\n        return JsonResponse({'deleted': True, 'permanent': False, 'id': group_id})\n\n    payload = with_group_coaches(json_body(request))\n    if payload is None:\n        return json_error('Invalid JSON body.')\n\n    previous_coach = clean_str(group_row.get('coach_name'))\n    stored_coach = clean_str(group_row.get('coach_name'))\n\n    # Checked before the first write: a group tutor is pushed onto every module\n    # in the group further down, and the group's own fields are updated before\n    # that happens, so refusing later would leave a half-applied PATCH.\n    if 'tutor' in payload:\n        delivery_day_error = group_tutor_assignment_delivery_day_error(\n            group_id,\n            canonical_staff_assignment_name('tutor', payload.get('tutor')),\n            next_week_day=payload.get('weekDays') or payload.get('deliveryDays')\n            or payload.get('sessionWeekDay') or payload.get('session_week_day'),\n        )\n        if delivery_day_error:\n            log_curriculum_decision(\n                'group.patch', outcome='rejected', reason='missing-delivery-day', entity_id=group_id,\n            )\n            return delivery_day_error\n    if 'tutor' in payload and not tutor_conflict_override_requested(payload):\n        candidate, conflicts = group_tutor_assignment_conflict(\n            group_id,\n            canonical_staff_assignment_name('tutor', payload.get('tutor')),\n        )\n        if conflicts:\n            log_curriculum_decision(\n                'group.patch', outcome='rejected', reason='tutor-conflict', entity_id=group_id,\n            )\n            return tutor_conflict_error(candidate, conflicts)\n\n    updates = {}\n    if 'name' in payload and clean_str(payload.get('name')):\n        updates['group_name'] = clean_str(payload.get('name'))\n    if 'coach' in payload:\n        updates['coach_name'] = canonical_group_coaches(payload.get('coach'))\n    if any(key in payload for key in ('weekDays', 'deliveryDays', 'sessionWeekDay', 'session_week_day')):\n        updates['session_week_day'] = clean_str(payload.get('weekDays') or payload.get('deliveryDays') or payload.get('sessionWeekDay') or payload.get('session_week_day'))\n    if any(key in payload for key in ('startTime', 'start_time', 'sessionStartTime', 'session_start_time')):\n        updates['session_start_time'] = clean_str(payload.get('startTime') or payload.get('start_time') or payload.get('sessionStartTime') or payload.get('session_start_time'))\n    if any(key in payload for key in ('endTime', 'end_time', 'sessionEndTime', 'session_end_time')):\n        updates['session_end_time'] = clean_str(payload.get('endTime') or payload.get('end_time') or payload.get('sessionEndTime') or payload.get('session_end_time'))\n    if 'color' in payload:\n        updates['color'] = clean_str(payload.get('color'))\n    if 'status' in payload and clean_str(payload.get('status')):\n        updates['status'] = clean_str(payload.get('status'))\n    previous_cohort_id = clean_str(group_row.get('cohort_id'))\n    target_cohort = None\n    # Parent reassignment only on explicit, resolvable input.\n    if clean_str(payload.get('cohortId') or payload.get('cohort_id')):\n        target_cohort = resolve_cohort_row(payload.get('cohortId') or payload.get('cohort_id'))\n        if target_cohort:\n            updates['cohort_id'] = clean_str(target_cohort.get('cohort_id'))\n            updates['cohort_name'] = clean_str(target_cohort.get('cohort_name'))\n            updates['programme_id'] = clean_str(target_cohort.get('programme_id'))\n            updates['programme_name'] = clean_str(target_cohort.get('programme_name'))\n    explicit_programme_id = clean_str(payload.get('programmeId') or payload.get('programme_id'))\n    if explicit_programme_id and 'programme_id' not in updates:\n        resolved = canonical_programme_id(explicit_programme_id, clean_str(payload.get('programme')))\n        if resolved:\n            updates['programme_id'] = resolved\n            if clean_str(payload.get('programme')):\n                updates['programme_name'] = clean_str(payload.get('programme'))\n\n    # Optimistic concurrency, opt-in, as on the module structure PATCH. The\n    # check sits inside the transaction that already wraps this save, and takes\n    # the row lock before the first write -- see lock_record_row. Placing it any\n    # later would leave a half-applied PATCH, which is the same reason the tutor\n    # conflict above is checked before anything is written.\n    expected_revision = requested_expected_revision(request, payload)\n    with transaction.atomic():\n        if expected_revision:\n            lock_record_row(GROUPS_TABLE, 'group_id = %s', [group_id])\n            current_revision = group_record_revision(group_id)\n            if current_revision != expected_revision:\n                return record_conflict_response(\n                    expected_revision, current_revision, group=group_conflict_record(group_id),\n                )\n        updated_group = update_group_fields(group_id, updates) or group_row\n        if 'group_name' in updates:\n            # Inside this save's transaction, from the row as it was before it.\n            from .placement_rename import propagate_group_name_to_learners\n            propagate_group_name_to_learners(group_row, updates['group_name'])\n        module_delivery_updates = {\n            key: updates[key]\n            for key in ('session_week_day', 'session_start_time', 'session_end_time')\n            if key in updates\n        }\n        # Read before the write: the session count is re-derived from the week\n        # count these rows carried under the *old* delivery pattern.\n        previous_module_rows = (\n            authoring_fetch_all(AUTHORING_MODULES_TABLE, \"group_id = %s and coalesce(schedule_mode, 'group') <> 'custom'\", [group_id])\n            if module_delivery_updates else []\n        )\n        if module_delivery_updates:\n            module_delivery_updates['weekly_schedule'] = json_db_value([])\n            module_delivery_updates['updated_at'] = datetime.utcnow()\n            # Module rows are the source used to derive the session calendar.\n            # They inherit the group's slot when attached, so a later group edit\n            # must move those inherited copies too or the calendar stays on the\n            # day/time chosen when the group was first created.\n            update_authoring_rows(\n                AUTHORING_MODULES_TABLE,\n                \"group_id = %s and coalesce(schedule_mode, 'group') <> 'custom'\",\n                [group_id],\n                module_delivery_updates,\n            )\n            # Adding a delivery day adds sessions -- it does not compress the\n            # module into fewer weeks -- so the count derived from the old day\n            # list has to be re-derived before anything reads the calendar off\n            # these rows.\n            if 'session_week_day' in module_delivery_updates:\n                resync_group_module_delivery_counts(previous_module_rows, {\n                    'session_week_day': module_delivery_updates['session_week_day'],\n                })\n            # The module row now owns the new plan, but learner delivery reads\n            # each component's concrete date.  Persist the planner's answer for\n            # unbooked sessions now; confirmed Teams occurrences are left for\n            # the explicit calendar-update flow advertised in this response.\n            persist_group_module_session_dates(\n                authoring_fetch_all(AUTHORING_MODULES_TABLE, \"group_id = %s and coalesce(schedule_mode, 'group') <> 'custom'\", [group_id]),\n                updated_group,\n            )\n        next_cohort_id = clean_str(updated_group.get('cohort_id'))\n        if next_cohort_id and next_cohort_id != previous_cohort_id:\n            for module in authoring_fetch_all(AUTHORING_MODULES_TABLE, 'group_id = %s', [group_id]):\n                update_authoring_rows(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module.get('module_catalogue_id')], {\n                    'cohort_id': next_cohort_id,\n                    'programme_id': clean_str(updated_group.get('programme_id')),\n                })\n        if not curriculum_name_only_patch(payload):\n            repair_curriculum_parent_links(clean_str(updated_group.get('programme_id')))\n\n    if 'coach' in payload or 'tutor' in payload:\n        next_group_id = clean_str(updated_group.get('group_id')) or group_id\n        module_assignment_ids = [\n            clean_str(row.get('module_catalogue_id'))\n            for row in safe_authoring_module_rows()\n            if clean_str(row.get('group_id')) == next_group_id and row.get('module_catalogue_id')\n        ]\n        next_tutor = canonical_staff_assignment_name('tutor', payload.get('tutor')) if 'tutor' in payload else ''\n        if next_tutor or 'tutor' in payload:\n            for module_id in module_assignment_ids:\n                update_authoring_rows(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_id], {\n                    'tutor_name': next_tutor or None,\n                    'updated_at': datetime.utcnow(),\n                })\n        notify_staff_assignment_change()\n    log_curriculum_decision(\n        'group.patch', outcome='updated', entity_id=group_id,\n        parent_id=clean_str(updated_group.get('cohort_id')),\n        # The columns that changed, never their values: a column list is enough\n        # to see what a request touched without logging anyone's name.\n        reason=','.join(sorted(updates)) or 'no-columns',\n    )\n    invalidate_curriculum_cache()\n    # The slot moved, so every Teams calendar under this group is now on the old\n    # days. Named back to the caller so the drawer that made the change can send\n    # the reader to update them rather than leaving it to be discovered.\n    return JsonResponse({\n        'updated': True,\n        'id': group_id,\n        # Read after the commit, so the token handed back is the one a reader\n        # would fingerprint now rather than one a rollback could take away.\n        'revision': group_record_revision(group_id),\n        'teamsCalendarsToUpdate': stale_teams_calendar_modules([\n            clean_str(row.get('module_catalogue_id')) for row in previous_module_rows\n        ]) if module_delivery_updates else [],\n    })",
+      "decorators": [
+        "csrf_exempt"
+      ],
+      "owner": "curriculum_api.catalogue.api.group_commands",
+      "deps": [
+        "AUTHORING_MODULES_TABLE",
+        "GROUPS_TABLE",
+        "JsonResponse",
+        "authoring_fetch_all",
+        "authoring_soft_delete",
+        "canonical_group_coaches",
+        "canonical_programme_id",
+        "canonical_staff_assignment_name",
+        "clean_str",
+        "curriculum_name_only_patch",
+        "datetime",
+        "group_conflict_record",
+        "group_record_revision",
+        "group_tutor_assignment_conflict",
+        "group_tutor_assignment_delivery_day_error",
+        "invalidate_curriculum_cache",
+        "json_body",
+        "json_db_value",
+        "json_error",
+        "lock_record_row",
+        "log_curriculum_decision",
+        "notify_staff_assignment_change",
+        "permanent_group_delete_response",
+        "persist_group_module_session_dates",
+        "propagate_group_name_to_learners",
+        "record_conflict_response",
+        "repair_curriculum_parent_links",
+        "request_wants_permanent_delete",
+        "requested_expected_revision",
+        "resolve_cohort_row",
+        "resolve_group_row",
+        "resync_group_module_delivery_counts",
+        "safe_authoring_module_rows",
+        "stale_teams_calendar_modules",
+        "transaction",
+        "tutor_conflict_error",
+        "tutor_conflict_override_requested",
+        "unassign_authoring_modules_from_group",
+        "update_authoring_rows",
+        "update_group_fields",
+        "with_group_coaches"
+      ],
+      "callbacks": {
+        "propagate_group_name_to_learners": {
+          "module": "placement_rename",
+          "level": 1
+        }
+      }
+    },
+    "curriculum_group_restore": {
+      "source": "def curriculum_group_restore(request, identifier):\n    \"\"\"Take a group back out of the archive and back onto its cohort.\"\"\"\n    if request.method != 'POST':\n        return json_error('Method not allowed.', status=405)\n\n    group_row = fetch_group_row(identifier) or resolve_group_row(identifier)\n    if not group_row:\n        log_curriculum_decision('group.restore', outcome='rejected', reason='not-found', entity_id=identifier)\n        return json_error('Group not found.', status=404)\n    group_id = clean_str(group_row.get('group_id'))\n    if not curriculum_row_is_archived(group_row):\n        return json_error(\n            'Group is not archived.', status=409,\n            reason='group-not-archived', restored=False, id=group_id,\n        )\n\n    cohort_id = clean_str(group_row.get('cohort_id'))\n    cohort_row = fetch_cohort_row(cohort_id) if cohort_id else None\n    if cohort_id and (not cohort_row or curriculum_row_is_archived(cohort_row)):\n        name = clean_str(group_row.get('cohort_name')) or 'The cohort'\n        return json_error(\n            f'{name} is archived, so this group has no cohort to come back to. Restore the cohort '\n            'first - it brings back the groups archived with it.',\n            status=409, reason='cohort-archived', restored=False, id=group_id,\n        )\n\n    with transaction.atomic():\n        payload = restore_soft_delete_payload(GROUPS_TABLE)\n        update_rows(\n            GROUPS_TABLE, 'group_id = %s', [group_id], payload,\n            allow_null_columns=RESTORE_NULLABLE_COLUMNS,\n        )\n    invalidate_curriculum_cache()\n    log_curriculum_decision('group.restore', outcome='restored', entity_id=group_id, parent_id=cohort_id)\n    return JsonResponse({\n        'restored': True,\n        'id': group_id,\n        'message': f'Group restored. {ARCHIVE_MODULE_REATTACH_NOTE}',\n    })",
+      "decorators": [
+        "csrf_exempt"
+      ],
+      "owner": "curriculum_api.catalogue.api.group_commands",
+      "deps": [
+        "ARCHIVE_MODULE_REATTACH_NOTE",
+        "GROUPS_TABLE",
+        "JsonResponse",
+        "RESTORE_NULLABLE_COLUMNS",
+        "clean_str",
+        "curriculum_row_is_archived",
+        "fetch_cohort_row",
+        "fetch_group_row",
+        "invalidate_curriculum_cache",
+        "json_error",
+        "log_curriculum_decision",
+        "resolve_group_row",
+        "restore_soft_delete_payload",
+        "transaction",
+        "update_rows"
+      ],
+      "callbacks": {}
+    },
+    "permanent_group_delete_response": {
+      "source": "def permanent_group_delete_response(group_row):\n    \"\"\"HTTP outcome of a permanent group delete. Module content is kept.\"\"\"\n    group_id = clean_str(group_row.get('group_id'))\n    if not curriculum_row_is_archived(group_row):\n        return json_error(\n            'Archive the group before deleting it permanently.',\n            status=409, reason='group-not-archived', deleted=False, permanent=False, id=group_id,\n        )\n\n    learners = archived_group_learners(group_row)\n    if learners:\n        return json_error(\n            f'{learners} active learner{\"\" if learners == 1 else \"s\"} are still placed in this group, '\n            'so it cannot be deleted permanently. Move them to another group first.',\n            status=409, reason='group-has-learner-delivery', deleted=False, permanent=False,\n            id=group_id, blockers={'learners': learners},\n        )\n\n    blocked = permanent_delete_reference_refusal('group', group_id)\n    if blocked is not None:\n        return blocked\n\n    cohort_id = clean_str(group_row.get('cohort_id'))\n    try:\n        with transaction.atomic():\n            unassign_authoring_modules_from_group(group_id)\n            removed = {'groups': len(delete_rows(GROUPS_TABLE, 'group_id = %s', [group_id]))}\n    except (IntegrityError, DatabaseError) as exc:\n        logger.warning('Permanent delete of group %s was refused: %s', group_id, exc)\n        return json_error(\n            'The database refused the permanent delete because other rows still reference this group.',\n            status=409, reason='group-delete-restricted', deleted=False, permanent=False,\n            id=group_id, detail=clean_str(str(exc)),\n        )\n\n    invalidate_curriculum_cache()\n    log_curriculum_decision(\n        'group.delete', outcome='permanent', entity_id=group_id, parent_id=cohort_id,\n        reason=','.join(f'{table}:{count}' for table, count in sorted(removed.items())),\n    )\n    return JsonResponse({\n        'deleted': True,\n        'permanent': True,\n        'id': group_id,\n        'removed': removed,\n        'message': 'Group was removed from the database. Module content was kept.',\n    })",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.api.group_commands",
+      "deps": [
+        "DatabaseError",
+        "GROUPS_TABLE",
+        "IntegrityError",
+        "JsonResponse",
+        "archived_group_learners",
+        "clean_str",
+        "curriculum_row_is_archived",
+        "delete_rows",
+        "invalidate_curriculum_cache",
+        "json_error",
+        "log_curriculum_decision",
+        "logger",
+        "permanent_delete_reference_refusal",
+        "transaction",
+        "unassign_authoring_modules_from_group"
+      ],
+      "callbacks": {}
+    },
+    "curriculum_group_modules": {
+      "source": "def curriculum_group_modules(request, identifier):\n    if request.method == 'GET':\n        from .catalogue.api.module_reads import curriculum_group_modules_get\n        return curriculum_group_modules_get(\n            request, identifier,\n            get_cached_payload=get_cached_payload,\n            matches_curriculum_identifier=matches_curriculum_identifier,\n            module_belongs_to_group=module_belongs_to_group,\n            curriculum_collection_response=curriculum_collection_response,\n            json_error=json_error,\n        )\n\n    if request.method not in {'POST', 'PATCH'}:\n        return json_error('Method not allowed.', status=405)\n\n    payload = json_body(request)\n    if payload is None:\n        return json_error('Invalid JSON body.')\n\n    modules = payload.get('modules') if isinstance(payload.get('modules'), list) else [payload]\n    if not isinstance(modules, list):\n        return json_error('At least one module is required.', fields=['modules'])\n    for item in modules:\n        if not isinstance(item, dict):\n            return json_error('Each module attachment must be an object.', status=400)\n        try:\n            module_week_starts_on(item)\n        except ValueError as exc:\n            return json_error(str(exc), fields=['weekStartsOn'])\n        try:\n            module_weekly_schedule(item)\n        except ValueError as exc:\n            return json_error(str(exc), fields=['weeklySchedule'])\n\n    # Resolve group and parent cohort from the normalized tables only.\n    group_row = resolve_group_row(identifier)\n    if not group_row:\n        return json_error('Group not found.', status=404)\n    group = curriculum_group_from_authoring_detail(serialize_group_authoring_detail(group_row))\n    cohort_row = resolve_cohort_row(group_row.get('cohort_id'))\n    cohort = curriculum_cohort_from_authoring_detail(serialize_cohort_authoring_detail(cohort_row)) if cohort_row else None\n    if not cohort:\n        return json_error('Parent cohort not found.', status=404)\n\n    # Existing module attachments for this group come from curriculum.modules.\n    existing_rows = [row for row in safe_authoring_module_rows() if clean_str(row.get('group_id')) == clean_str(group_row.get('group_id'))]\n    existing_names = {normalise(row.get('title')) for row in existing_rows if row.get('title')}\n    existing_catalogue_ids = {clean_str(row.get('module_catalogue_id')) for row in existing_rows if row.get('module_catalogue_id')}\n    created_rows = []\n    skipped = []\n    allow_tutor_conflict = tutor_conflict_override_requested(payload)\n    # Read once for the whole request; each attachment is compared against the\n    # same snapshot plus the attachments accepted before it.\n    stored_module_rows = safe_authoring_module_rows()\n    pending_candidates = []\n\n    try:\n        with transaction.atomic():\n            created_modules = []\n            updated_modules = []\n            saved_catalogue_ids = set()\n            for item in modules:\n                if not isinstance(item, dict):\n                    return json_error('Each module attachment must be an object.', status=400)\n                module_name = clean_str(item.get('moduleName') or item.get('name'))\n                if not module_name:\n                    return json_error('Module name is required for each attachment.', fields=['moduleName'])\n                explicit_catalogue_value = clean_str(item.get('moduleCatalogueId'))\n                if explicit_catalogue_value and not is_canonical_module_catalogue_id(explicit_catalogue_value):\n                    return json_error('moduleCatalogueId must be a valid MOD-... canonical module ID.', fields=['moduleCatalogueId'])\n                requested_value = clean_str(explicit_catalogue_value or item.get('catalogueId') or item.get('moduleId'))\n                requested_catalogue_id = requested_value if is_canonical_module_catalogue_id(requested_value) else ''\n\n                try:\n                    weekly = module_weekly_schedule(item)\n                except ValueError as exc:\n                    return json_error(str(exc), fields=['weeklySchedule'])\n                start_date = item.get('startDate') or cohort.get('startDate')\n                start_error = module_cohort_date_error(module_name, start_date, None, cohort)\n                if start_error:\n                    return json_error(start_error[0], fields=[start_error[1]], status=400)\n\n                delivery_days = ', '.join(slot['day'] for slot in weekly) or item.get('weekDays') or group.get('weekDays') or group.get('schedule')\n                session_count = attachment_session_count(item)\n                item_weeks = parse_int(item.get('weeksNumber') or item.get('weeks'), 0)\n                end_date = item.get('endDate') or module_calendar_end_date(start_date, item_weeks) or cohort.get('endDate')\n                # Checked after the plan is generated, so a start date that sits\n                # inside the cohort but whose sessions run past its end is caught\n                # too -- whether the end date was sent or calculated here.\n                end_error = module_cohort_date_error(module_name, start_date, end_date, cohort)\n                if end_error:\n                    return json_error(end_error[0], fields=[end_error[1]], status=400)\n                catalogue_id = contentful_catalogue_id_for_attachment(\n                    item,\n                    group,\n                    cohort,\n                    module_name,\n                    requested_catalogue_id,\n                ) or unique_module_catalogue_id(item.get('catalogueId') or item.get('moduleId') or module_name)\n                current_structure = locked_attachment_structure(item, catalogue_id)\n                is_duplicate = (\n                    bool(requested_catalogue_id and requested_catalogue_id in existing_catalogue_ids)\n                    or bool(not requested_catalogue_id and normalise(module_name) in existing_names)\n                )\n                # An attachment that carries authored weeks must persist them here and\n                # now; module_attachment_authoring_payload otherwise falls back to the\n                # stored structure and the new content would need a manual Save.\n                structure_payload = module_attachment_authoring_payload(\n                    {**item, 'weekStructure': attachment_week_structure({**item, 'startDate': start_date, 'endDate': end_date}, current_structure, session_count=session_count, schedule=delivery_days)},\n                    group,\n                    cohort,\n                    catalogue_id,\n                    module_name,\n                    session_count,\n                    start_date,\n                    end_date,\n                    current_structure,\n                )\n                # Checked against what this save is about to produce, not against\n                # what is stored: `pending_candidates` carries the attachments\n                # already accepted in this request, so two new modules that clash\n                # with each other are caught as well as one that clashes with an\n                # existing booking. An attachment is appended either way -- a later\n                # one still has to be compared against it.\n                candidate = module_schedule_view(structure_payload)\n                # The group's own delivery day is what dates these modules -- a\n                # day sent for the module alone is the copy that has no effect --\n                # so a tutor cannot be put against one until the group has it.\n                if not clean_str(group.get('weekDays') or group.get('deliveryDays') or schedule_day_part(group.get('schedule'))):\n                    delivery_day_error = tutor_assignment_delivery_day_error(\n                        candidate, before=module_schedule_view(current_structure or {}),\n                    )\n                    if delivery_day_error:\n                        raise TutorAssignmentDeliveryDayError(delivery_day_error)\n                if not allow_tutor_conflict and module_schedule_assignment_changed(\n                    module_schedule_view(current_structure or {}), candidate\n                ):\n                    conflicts = tutor_schedule_conflicts_created(\n                        module_schedule_view(current_structure or {}),\n                        candidate,\n                        module_rows=stored_module_rows,\n                        exclude_catalogue_ids=[catalogue_id],\n                        pending=pending_candidates,\n                    )\n                    if conflicts:\n                        raise TutorScheduleConflictError(candidate, conflicts)\n                pending_candidates.append(candidate)\n                saved = save_module_authoring_structure(catalogue_id, structure_payload)\n                notify_staff_assignment_change()\n                saved_catalogue_ids.add(catalogue_id)\n                if is_duplicate:\n                    skipped.append(module_name)\n                    updated_modules.append(saved)\n                else:\n                    created_modules.append(saved)\n                existing_names.add(normalise(module_name))\n                existing_catalogue_ids.add(catalogue_id)\n\n            # PATCH from the structure wizard represents the group's complete\n            # module list, so omitted modules should be unassigned. POST is an\n            # append-style endpoint used by createGroupModule(); it must not detach\n            # existing modules that were not included in the request.\n            removed_module_ids = (\n                unassign_authoring_modules_from_group(group_row.get('group_id'), saved_catalogue_ids)\n                if request.method == 'PATCH'\n                else []\n            )\n            repair_curriculum_parent_links(clean_str(group.get('programmeId') or group.get('programme_id')))\n            invalidate_curriculum_cache()\n            return JsonResponse({\n                'updated': True,\n                'groupId': identifier,\n                'created': created_modules,\n                'updatedModules': updated_modules,\n                'removedModuleIds': removed_module_ids,\n                'skippedDuplicates': skipped,\n            })\n    except ModuleAuthoringValidationError as exc:\n        return json_error(\n            str(exc),\n            fields=list(dict.fromkeys(error['path'] for error in exc.errors)),\n            validationErrors=exc.errors,\n        )\n    except (TutorScheduleConflictError, TutorAssignmentDeliveryDayError, StaleModuleStructureWrite) as exc:\n        # Raised mid-loop, so the attachments already written in this\n        # request roll back with it and the group is left as it was.\n        return exc.as_response()",
+      "decorators": [
+        "csrf_exempt"
+      ],
+      "owner": "curriculum_api.catalogue.api.group_commands",
+      "deps": [
+        "JsonResponse",
+        "ModuleAuthoringValidationError",
+        "StaleModuleStructureWrite",
+        "TutorAssignmentDeliveryDayError",
+        "TutorScheduleConflictError",
+        "attachment_session_count",
+        "attachment_week_structure",
+        "clean_str",
+        "contentful_catalogue_id_for_attachment",
+        "curriculum_cohort_from_authoring_detail",
+        "curriculum_collection_response",
+        "curriculum_group_from_authoring_detail",
+        "get_cached_payload",
+        "invalidate_curriculum_cache",
+        "is_canonical_module_catalogue_id",
+        "json_body",
+        "json_error",
+        "locked_attachment_structure",
+        "matches_curriculum_identifier",
+        "module_attachment_authoring_payload",
+        "module_belongs_to_group",
+        "module_calendar_end_date",
+        "module_cohort_date_error",
+        "module_schedule_assignment_changed",
+        "module_schedule_view",
+        "module_week_starts_on",
+        "module_weekly_schedule",
+        "normalise",
+        "notify_staff_assignment_change",
+        "parse_int",
+        "repair_curriculum_parent_links",
+        "resolve_cohort_row",
+        "resolve_group_row",
+        "safe_authoring_module_rows",
+        "save_module_authoring_structure",
+        "schedule_day_part",
+        "serialize_cohort_authoring_detail",
+        "serialize_group_authoring_detail",
+        "transaction",
+        "tutor_assignment_delivery_day_error",
+        "tutor_conflict_override_requested",
+        "tutor_schedule_conflicts_created",
+        "unassign_authoring_modules_from_group",
+        "unique_module_catalogue_id"
+      ],
+      "callbacks": {}
+    },
+    "upsert_programme_for_tree": {
+      "source": "def upsert_programme_for_tree(payload):\n    missing = require_fields(payload, ['name'])\n    if missing:\n        raise ValueError('Programme name is required.')\n    ensure_program_config_archive_columns()\n    name = clean_str(payload.get('name'))\n    requested_id = clean_str(payload.get('id') or payload.get('sourceId') or payload.get('programmeId') or payload.get('programId'))\n    # programmes.structure_type was dropped; everything is scheduled now.\n    structure_type = 'scheduled'\n    config = programme_config_by_identifier(requested_id) if requested_id else None\n    if not config:\n        config = preferred_program_config_by_name(get_program_config_rows(), name)\n    # The caller still echoes a `standard` back to the client; it is derived\n    # from the request/name rather than persisted (column dropped).\n    standard = payload.get('standard') or payload.get('sub') or name\n    programme_status = programme_status_from_payload(payload, config)\n    updates = {\n        'name': name,\n        'level': payload.get('level') or '',\n        'color': payload.get('color') or '#6941c6',\n        'description': payload.get('description') or '',\n        'ksb_profile_source_id': normalise_ksb_profile_source_value(payload.get('ksbProfileSourceId') or payload.get('ksb_profile_source_id') or (config or {}).get('ksb_profile_source_id') or ''),\n        'required_otjh': payload_required_otjh(payload, config),\n        'status': programme_status,\n        'updated_at': datetime.utcnow(),\n    }\n    if config:\n        key_column = programme_config_key_column()\n        key_value = config.get(key_column)\n        update_rows('programmes', f'{quote_ident(key_column)} = %s', [key_value], updates, allow_null_columns=['required_otjh'])\n        source_id = programme_config_id(config) or clean_str(key_value)\n        from .placement_rename import propagate_programme_name_to_learners\n        propagate_programme_name_to_learners(source_id, clean_str(config.get('name')), name)\n        return {\n            'id': source_id,\n            'sourceId': source_id,\n            'name': name,\n            'standard': standard,\n            'level': updates['level'],\n            'status': programme_status,\n            'color': updates['color'],\n            'description': updates['description'],\n            'structureType': structure_type,\n            'ksbProfileSourceId': normalise_ksb_profile_source_value(updates.get('ksb_profile_source_id') or ''),\n            'requiredOtjh': updates.get('required_otjh'),\n        }\n\n    source_id = unique_program_id(requested_id or name, get_program_config_rows())\n    row = insert_row('programmes', {\n        **updates,\n        'programme_id': source_id,\n        'id': source_id,\n        'program_id': source_id,\n        'created_at': datetime.utcnow(),\n    })\n    source_id = programme_config_id(row) or source_id\n    return {\n        'id': source_id,\n        'sourceId': source_id,\n        'name': row.get('name') or name,\n        'standard': standard,\n        'level': row.get('level') or updates['level'],\n        'status': programme_status,\n        'color': row.get('color') or updates['color'],\n        'description': row.get('description') or updates['description'],\n        'structureType': structure_type,\n        'ksbProfileSourceId': normalise_ksb_profile_source_value(row.get('ksb_profile_source_id') or updates.get('ksb_profile_source_id') or ''),\n        'requiredOtjh': parse_required_otjh(row.get('required_otjh')) if row.get('required_otjh') is not None else updates.get('required_otjh'),\n    }",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.application.hierarchy_commands",
+      "deps": [
+        "clean_str",
+        "datetime",
+        "ensure_program_config_archive_columns",
+        "get_program_config_rows",
+        "insert_row",
+        "normalise_ksb_profile_source_value",
+        "parse_required_otjh",
+        "payload_required_otjh",
+        "preferred_program_config_by_name",
+        "programme_config_by_identifier",
+        "programme_config_id",
+        "programme_config_key_column",
+        "programme_status_from_payload",
+        "propagate_programme_name_to_learners",
+        "quote_ident",
+        "require_fields",
+        "unique_program_id",
+        "update_rows"
+      ],
+      "callbacks": {
+        "propagate_programme_name_to_learners": {
+          "module": "placement_rename",
+          "level": 1
+        }
+      }
+    },
+    "save_tree_cohort": {
+      "source": "def save_tree_cohort(cohort, programme_id, programme_name, preserve_missing_groups=False):\n    name = clean_str(cohort.get('name'))\n    if not name:\n        raise ValueError('Cohort name is required.')\n    cohort_id = unique_cohort_id(cohort.get('id') or cohort.get('cohortId') or cohort.get('sourceId'))\n    duration_months = cohort.get('durationMonths') or 24\n    # Cohort contract dates are fixed. Applied holidays are stored for module\n    # session planning, where clashing sessions extend the module plan instead.\n    end_date = cohort.get('endDate') or format_date(cohort_practical_end_date(\n        cohort.get('startDate'),\n        duration_months,\n        cohort.get('holidayIds') or cohort.get('holiday_ids'),\n        cohort.get('holidays') or cohort.get('holidayDetails'),\n    ))\n    existing = fetch_cohort_row(cohort_id) or {}\n    if existing and curriculum_row_effectively_deleted(existing):\n        logger.warning(\n            'Tree save addressed deleted cohort %s; saving as a new cohort instead.', cohort_id\n        )\n        cohort_id = unique_cohort_id()\n        existing = {}\n    # The stored period stands in for an omitted one so a partial tree save\n    # cannot silently drop it, but it is always re-derived against the end date\n    # being written — the apprenticeship end date moves with the practical\n    # one, unless an authored apprenticeship end date has been set for the cohort.\n    # The authored date is guarded the same way: unsent keeps the stored one.\n    epa_months = payload_epa_months(cohort, existing)\n    apprenticeship_end_override = format_date(payload_apprenticeship_end_override(cohort, existing))\n    holiday_ids = parse_notes_id_list(cohort.get('holidayIds') or cohort.get('holiday_ids'))\n    group_ids = [clean_str(group.get('id') or group.get('groupId') or group.get('sourceId')) for group in cohort.get('groups') or []]\n    if preserve_missing_groups:\n        group_ids = unique([*parse_json_value(existing.get('group_ids'), []), *group_ids])\n    payload = {\n        'id': cohort_id,\n        'name': name,\n        'programme': programme_name,\n        'programmeId': programme_id,\n        'startDate': cohort.get('startDate'),\n        'endDate': end_date,\n        'epaMonths': epa_months,\n        'apprenticeshipEndOverride': apprenticeship_end_override,\n        'status': title_case_status(clean_str(existing.get('status')) == 'archived', cohort.get('startDate'), end_date),\n        'color': cohort.get('color') or existing.get('color') or '',\n        'holidayIds': holiday_ids,\n        'groups': group_ids,\n    }\n    # Only set when the tree save actually carries an opinion: an omitted key\n    # leaves cohort_authoring_payload to keep whatever exclusions are already\n    # stored, the same as an unsent EPA period or apprenticeship override above.\n    if 'calendarPolicy' in cohort or 'calendar_policy' in cohort:\n        payload['calendarPolicy'] = cohort.get('calendarPolicy') if 'calendarPolicy' in cohort else cohort.get('calendar_policy')\n    if 'excludedHolidayIds' in cohort or 'excluded_holiday_ids' in cohort:\n        payload['excludedHolidayIds'] = parse_notes_id_list(\n            cohort.get('excludedHolidayIds') if 'excludedHolidayIds' in cohort else cohort.get('excluded_holiday_ids')\n        )\n    holiday_rows = cohort.get('holidays') or cohort.get('holidayDetails')\n    if holiday_rows is None:\n        try:\n            holiday_rows = [] if not holiday_table_name() else get_holiday_rows()\n        except (Exception, AssertionError):\n            holiday_rows = []\n    row = persist_cohort_authoring_detail(\n        payload,\n        [],\n        [{'id': item} for item in payload['groups'] if item],\n        holiday_rows,\n        {\n            'programme_id': programme_id,\n            'duration_months': parse_int(duration_months, existing.get('duration_months') or 0),\n            'source_type': 'module_authoring',\n            'source_id': cohort_id,\n        },\n    )\n    if not row:\n        raise ValueError(f'Could not save cohort \"{name}\".')\n    return curriculum_cohort_from_authoring_detail(serialize_cohort_authoring_detail(row))",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.application.hierarchy_commands",
+      "deps": [
+        "clean_str",
+        "cohort_practical_end_date",
+        "curriculum_cohort_from_authoring_detail",
+        "curriculum_row_effectively_deleted",
+        "fetch_cohort_row",
+        "format_date",
+        "get_holiday_rows",
+        "holiday_table_name",
+        "logger",
+        "parse_int",
+        "parse_json_value",
+        "parse_notes_id_list",
+        "payload_apprenticeship_end_override",
+        "payload_epa_months",
+        "persist_cohort_authoring_detail",
+        "serialize_cohort_authoring_detail",
+        "title_case_status",
+        "unique",
+        "unique_cohort_id"
+      ],
+      "callbacks": {}
+    },
+    "save_tree_group": {
+      "source": "def save_tree_group(group, cohort_row):\n    group = with_group_coaches(group)\n    name = clean_str(group.get('name'))\n    if not name:\n        raise ValueError('Group name is required.')\n    group_id = unique_group_id(group.get('id') or group.get('groupId') or group.get('sourceId'))\n    cohort = serialize_cohort_authoring_detail(cohort_row)\n    existing = fetch_group_row(group_id) or {}\n    if existing and curriculum_row_effectively_deleted(existing):\n        logger.warning(\n            'Tree save addressed deleted group %s; saving as a new group instead.', group_id\n        )\n        group_id = unique_group_id()\n        existing = {}\n    group_payload = {\n        'id': group_id,\n        'name': name,\n        'cohortId': cohort['cohortId'],\n        'cohort': cohort['cohortName'],\n        'programmeId': cohort['programmeId'],\n        'programme': cohort['programmeName'],\n        'coach': canonical_group_coaches(group.get('coach')) if 'coach' in group else clean_str(existing.get('coach_name')),\n        'weekDays': group.get('weekDays') or group.get('deliveryDays') or existing.get('session_week_day') or schedule_day_part(existing.get('schedule')),\n        'startTime': group.get('startTime') or existing.get('session_start_time') or schedule_time_parts(existing.get('schedule'))[0],\n        'endTime': group.get('endTime') or existing.get('session_end_time') or schedule_time_parts(existing.get('schedule'))[1],\n        'color': group.get('color') or existing.get('color') or '',\n        'status': group.get('status') or existing.get('status') or 'planned',\n    }\n    row = persist_group_authoring_detail(group_payload, [], safe_authoring_module_rows(), {'source_type': 'module_authoring', 'source_id': group_id})\n    if not row:\n        raise ValueError(f'Could not save group \"{name}\".')\n    notify_staff_assignment_change()\n    return curriculum_group_from_authoring_detail(serialize_group_authoring_detail(row))",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.application.hierarchy_commands",
+      "deps": [
+        "canonical_group_coaches",
+        "clean_str",
+        "curriculum_group_from_authoring_detail",
+        "curriculum_row_effectively_deleted",
+        "fetch_group_row",
+        "logger",
+        "notify_staff_assignment_change",
+        "persist_group_authoring_detail",
+        "safe_authoring_module_rows",
+        "schedule_day_part",
+        "schedule_time_parts",
+        "serialize_cohort_authoring_detail",
+        "serialize_group_authoring_detail",
+        "unique_group_id",
+        "with_group_coaches"
+      ],
+      "callbacks": {}
+    },
+    "save_tree_group_modules": {
+      "source": "def save_tree_group_modules(group, cohort, modules, preserve_missing=False):\n    saved_catalogue_ids = set()\n    saved_modules = []\n    # Snapshot taken before the loop writes anything, so a module is never\n    # compared against the half-saved state of its own group.\n    stored_module_rows = safe_authoring_module_rows()\n    pending_candidates = []\n    for module in modules or []:\n        module_name = clean_str(module.get('moduleName') or module.get('name') or module.get('title'))\n        if not module_name:\n            raise ValueError('Module name is required for each attachment.')\n        requested_catalogue_id = clean_str(module.get('moduleCatalogueId') or module.get('catalogueId') or module.get('moduleId'))\n        if requested_catalogue_id and not is_canonical_module_catalogue_id(requested_catalogue_id):\n            requested_catalogue_id = ''\n        catalogue_id = contentful_catalogue_id_for_attachment(module, group, cohort, module_name, requested_catalogue_id) or unique_module_catalogue_id(requested_catalogue_id or module_name)\n        current_structure = locked_attachment_structure(module, catalogue_id)\n        start_date = module.get('startDate') or cohort.get('startDate')\n        # `weeks` is overloaded in the attachment payload: the wizard's catalogue\n        # shape sends it as an integer session count, while older tree payloads\n        # sent it as a list of authored weeks. Only accept the list form as a\n        # structure, otherwise an integer silently becomes the week structure and\n        # every authored week (and its components) is dropped on save.\n        module_schedule = module.get('weekDays') or group.get('weekDays') or group.get('schedule')\n        attachment_weeks = attachment_week_structure({**module, 'startDate': start_date}, current_structure, schedule=module_schedule)\n        session_count = attachment_session_count(module, attachment_weeks)\n        attachment_weeks_count = parse_int(module.get('weeksNumber') or module.get('weeks'), 0) or len(attachment_weeks)\n        end_date = module.get('endDate') or module_calendar_end_date(start_date, attachment_weeks_count) or cohort.get('endDate')\n        # Same cohort window the group-modules endpoint enforces: the tree save\n        # writes the same module rows, so it cannot be the way around the rule.\n        date_error = module_cohort_date_error(module_name, start_date, end_date, cohort)\n        if date_error:\n            raise ValueError(date_error[0])\n        structure_payload = module_attachment_authoring_payload(\n            {\n                **module,\n                'weekStructure': attachment_weeks,\n                'moduleKsbMappings': module.get('moduleKsbMappings') or module.get('ksbMappings') or (current_structure or {}).get('moduleKsbMappings') or [],\n            },\n            group,\n            cohort,\n            catalogue_id,\n            module_name,\n            session_count,\n            start_date,\n            end_date,\n            current_structure,\n        )\n        structure_payload['weekStructure'] = attachment_weeks\n        structure_payload['moduleKsbMappings'] = module.get('moduleKsbMappings') or module.get('ksbMappings') or (current_structure or {}).get('moduleKsbMappings') or []\n        candidate = module_schedule_view(structure_payload)\n        # This save can give the group its delivery day in the same request, so\n        # the day it is writing counts before the stored one does.\n        if not clean_str(group.get('weekDays') or group.get('deliveryDays') or schedule_day_part(group.get('schedule'))):\n            delivery_day_error = tutor_assignment_delivery_day_error(\n                candidate, before=module_schedule_view(current_structure or {}),\n            )\n            if delivery_day_error:\n                raise TutorAssignmentDeliveryDayError(delivery_day_error)\n        if module_schedule_assignment_changed(module_schedule_view(current_structure or {}), candidate):\n            conflicts = tutor_schedule_conflicts_created(\n                module_schedule_view(current_structure or {}),\n                candidate,\n                module_rows=stored_module_rows,\n                exclude_catalogue_ids=[catalogue_id],\n                pending=pending_candidates,\n            )\n            if conflicts:\n                raise TutorScheduleConflictError(candidate, conflicts)\n        pending_candidates.append(candidate)\n        if module.get('completionCriteria'):\n            structure_payload['completionCriteria'] = module.get('completionCriteria')\n        if module.get('advancedDetails'):\n            structure_payload['advancedDetails'] = module.get('advancedDetails')\n        # The tree save repairs the programme's parent links once, after every\n        # cohort, group and module is written.\n        saved = save_module_authoring_structure(catalogue_id, structure_payload, repair_links=False)\n        saved_catalogue_ids.add(catalogue_id)\n        saved_modules.append(saved)\n    removed = [] if preserve_missing else unassign_authoring_modules_from_group(group.get('id'), saved_catalogue_ids)\n    notify_staff_assignment_change()\n    return saved_modules, removed",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.application.hierarchy_commands",
+      "deps": [
+        "TutorAssignmentDeliveryDayError",
+        "TutorScheduleConflictError",
+        "attachment_session_count",
+        "attachment_week_structure",
+        "clean_str",
+        "contentful_catalogue_id_for_attachment",
+        "is_canonical_module_catalogue_id",
+        "locked_attachment_structure",
+        "module_attachment_authoring_payload",
+        "module_calendar_end_date",
+        "module_cohort_date_error",
+        "module_schedule_assignment_changed",
+        "module_schedule_view",
+        "notify_staff_assignment_change",
+        "parse_int",
+        "safe_authoring_module_rows",
+        "save_module_authoring_structure",
+        "schedule_day_part",
+        "tutor_assignment_delivery_day_error",
+        "tutor_schedule_conflicts_created",
+        "unassign_authoring_modules_from_group",
+        "unique_module_catalogue_id"
+      ],
+      "callbacks": {}
+    },
+    "locked_attachment_structure": {
+      "source": "def locked_attachment_structure(item, catalogue_id):\n    \"\"\"The stored structure an attachment save builds on, read under the module's lock.\n\n    The tree save and the group-modules save rebuild a module's whole payload\n    from what is stored and then write it back. Read without the lock, a\n    Builder save landing between the read and the write was reverted. A\n    caller that brings its own week list for an existing module must also say\n    which version that list was made from (``structureRevision``), or it is\n    refused: nothing on screen sends one any more, and an old copy replacing\n    a module's weeks is exactly the overwrite this guards against.\n    \"\"\"\n    if not authoring_module_exists(catalogue_id):\n        return None\n    lock_module_structure_row(catalogue_id)\n    if payload_week_list((item or {}).get('weekStructure')) or payload_week_list((item or {}).get('weeks')):\n        expected = clean_str((item or {}).get('structureRevision') or (item or {}).get('expectedRevision'))\n        current = module_structure_revision(catalogue_id)\n        if not expected or expected != current:\n            raise StaleModuleStructureWrite(catalogue_id, expected, current)\n    return get_authoring_structure_payload(catalogue_id)",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.application.hierarchy_commands",
+      "deps": [
+        "StaleModuleStructureWrite",
+        "authoring_module_exists",
+        "clean_str",
+        "get_authoring_structure_payload",
+        "lock_module_structure_row",
+        "module_structure_revision",
+        "payload_week_list"
+      ],
+      "callbacks": {}
+    },
+    "resync_group_module_delivery_counts": {
+      "source": "def resync_group_module_delivery_counts(previous_rows, delivery_updates):\n    \"\"\"Re-derive session counts and end dates after a group's delivery days change.\n\n    ``sessions_number`` is the authored week count times the delivery days: a\n    group that starts running Mon+Thu delivers two sessions of every authored\n    week, not the same total squeezed into half the calendar. Pushing the new day\n    list onto the module rows without re-deriving the count left the figure from\n    the old one-day pattern in place, so the generated plan -- and the Teams\n    calendar fed from it -- still produced one date per authored week.\n\n    The end date is re-derived too, from the start date and the same\n    ``weeks`` this reads -- it is the module's calendar span, not a date the\n    delivery pattern decides, so a delivery-day change never moves it; this\n    only self-heals a stored value that had drifted from that formula.\n\n    ``previous_rows`` are the module rows as they stood *before* the new delivery\n    days were written. Week counts are fetched live from ``curriculum.weeks``\n    so the resync always reflects the current authored structure.\n    \"\"\"\n    if not previous_rows:\n        return\n    catalogue_ids = [clean_str(r.get('module_catalogue_id')) for r in previous_rows if r.get('module_catalogue_id')]\n    live_week_counts = {}\n    if catalogue_ids:\n        week_rows = [\n            row for row in active_week_rows(authoring_fetch_all(\n                AUTHORING_WEEKS_TABLE, 'module_catalogue_id = ANY(%s)', [catalogue_ids],\n                columns=['module_catalogue_id', 'status'],\n            ))\n            if clean_str(row.get('status')).lower() not in ('inactive',)\n        ]\n        for row in week_rows:\n            mid = clean_str(row.get('module_catalogue_id'))\n            if mid:\n                live_week_counts[mid] = live_week_counts.get(mid, 0) + 1\n    for previous_row in previous_rows or []:\n        catalogue_id = clean_str(previous_row.get('module_catalogue_id'))\n        weeks = live_week_counts.get(catalogue_id, 0)\n        if not catalogue_id or weeks <= 0:\n            continue\n        module_row = {**previous_row, **delivery_updates}\n        sessions = weeks * delivery_days_per_week(module_row)\n        end_date = module_calendar_end_date(module_row.get('start_date'), weeks) or format_date(module_row.get('end_date'))\n        if (\n            sessions == parse_int(previous_row.get('sessions_number'), 0)\n            and end_date == format_date(previous_row.get('end_date'))\n        ):\n            continue\n        update_authoring_rows(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [catalogue_id], {\n            'sessions_number': sessions,\n            'end_date': end_date or None,\n            'updated_at': datetime.utcnow(),\n        })",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.application.hierarchy_commands",
+      "deps": [
+        "AUTHORING_MODULES_TABLE",
+        "AUTHORING_WEEKS_TABLE",
+        "active_week_rows",
+        "authoring_fetch_all",
+        "clean_str",
+        "datetime",
+        "delivery_days_per_week",
+        "format_date",
+        "module_calendar_end_date",
+        "parse_int",
+        "update_authoring_rows"
+      ],
+      "callbacks": {}
+    },
+    "update_cohort_fields": {
+      "source": "def update_cohort_fields(cohort_id, fields, allow_null_columns=None):\n    \"\"\"Apply a targeted field update to a single normalized cohort row.\n\n    Only the provided columns are written; the canonical ``cohort_id`` and all\n    unrelated columns (programme_id, group_ids, dates, status, …) are preserved.\n    ``None`` means \"leave this column alone\" unless the column is named in\n    ``allow_null_columns``, which lets a value be cleared outright.\n    \"\"\"\n    ident = clean_str(cohort_id)\n    if not ident:\n        return None\n    nullable = set(allow_null_columns or ())\n    values = {key: value for key, value in fields.items() if value is not None or key in nullable}\n    if not values:\n        return fetch_cohort_row(ident)\n    values['updated_at'] = datetime.utcnow()\n    rows = update_authoring_rows(COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id = %s', [ident], values)\n    return rows[0] if rows else fetch_cohort_row(ident)",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.infrastructure.hierarchy_writes",
+      "deps": [
+        "COHORT_AUTHORING_DETAILS_TABLE",
+        "clean_str",
+        "datetime",
+        "fetch_cohort_row",
+        "update_authoring_rows"
+      ],
+      "callbacks": {}
+    },
+    "persist_cohort_authoring_detail": {
+      "source": "def persist_cohort_authoring_detail(cohort, rows=None, groups=None, holiday_rows=None, extra=None, *, raise_on_error=False):\n    \"\"\"Store one cohort's authoring row.\n\n    Failure is swallowed by default because most callers are sync/repair passes\n    rebuilding rows in bulk, where one bad row must not abandon the rest.\n    ``raise_on_error`` is for the create endpoints, where the caller is a person\n    waiting on an answer: they need the reason, not a warning in a log they\n    cannot read.\n    \"\"\"\n    payload = cohort_authoring_payload(cohort, rows, groups, holiday_rows, extra)\n    if not payload.get('cohort_id'):\n        return None\n    try:\n        return authoring_upsert(\n            COHORT_AUTHORING_DETAILS_TABLE,\n            ['cohort_id'],\n            payload,\n            # Clearing the EPA period or the authored apprenticeship end date has\n            # to reach the database; the keys are only present when the caller\n            # sent one (see cohort_authoring_payload).\n            allow_null_columns=('epa_months', 'apprenticeship_end_date', 'apprenticeship_end_override'),\n        )\n    except (Exception, AssertionError) as exc:\n        logger.warning(\n            'Could not persist cohort authoring details for %s: %s',\n            payload.get('cohort_id'), exc, exc_info=True,\n        )\n        if raise_on_error:\n            raise\n        return None",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.infrastructure.hierarchy_writes",
+      "deps": [
+        "COHORT_AUTHORING_DETAILS_TABLE",
+        "authoring_upsert",
+        "cohort_authoring_payload",
+        "logger"
+      ],
+      "callbacks": {}
+    },
+    "update_group_fields": {
+      "source": "def update_group_fields(group_id, fields):\n    \"\"\"Apply a targeted field update to a single normalized group row.\"\"\"\n    ident = clean_str(group_id)\n    if not ident:\n        return None\n    values = {key: value for key, value in fields.items() if value is not None}\n    if not values:\n        return fetch_group_row(ident)\n    values['updated_at'] = datetime.utcnow()\n    rows = update_authoring_rows(GROUPS_TABLE, 'group_id = %s', [ident], values)\n    return rows[0] if rows else fetch_group_row(ident)",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.infrastructure.hierarchy_writes",
+      "deps": [
+        "GROUPS_TABLE",
+        "clean_str",
+        "datetime",
+        "fetch_group_row",
+        "update_authoring_rows"
+      ],
+      "callbacks": {}
+    },
+    "persist_group_authoring_detail": {
+      "source": "def persist_group_authoring_detail(group, rows=None, module_rows=None, extra=None, *, raise_on_error=False):\n    \"\"\"Store one group's authoring row. See persist_cohort_authoring_detail\n    for why failure is swallowed by default and what ``raise_on_error`` is for.\"\"\"\n    payload = group_authoring_payload(group, rows, module_rows, extra)\n    if not payload.get('group_id'):\n        return None\n    try:\n        return authoring_upsert(GROUPS_TABLE, ['group_id'], payload)\n    except (Exception, AssertionError) as exc:\n        logger.warning(\n            'Could not persist group authoring details for %s: %s',\n            payload.get('group_id'), exc, exc_info=True,\n        )\n        if raise_on_error:\n            raise\n        return None",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.infrastructure.hierarchy_writes",
+      "deps": [
+        "GROUPS_TABLE",
+        "authoring_upsert",
+        "group_authoring_payload",
+        "logger"
+      ],
+      "callbacks": {}
+    },
+    "clean_tree_remove_ids": {
+      "source": "def clean_tree_remove_ids(payload, *keys):\n    ids = []\n    for key in keys:\n        value = payload.get(key)\n        if isinstance(value, str):\n            ids.extend(parse_notes_id_list(value))\n        elif isinstance(value, (list, tuple, set)):\n            ids.extend(value)\n    return unique([clean_str(item) for item in ids if clean_str(item)])",
+      "decorators": [],
+      "owner": "curriculum_api.catalogue.domain.hierarchy_values",
+      "deps": [
+        "clean_str",
+        "parse_notes_id_list",
+        "unique"
+      ],
+      "callbacks": {}
+    }
+  },
+  "tree_application_deps": [
+    "AUTHORING_MODULES_TABLE",
+    "COHORT_AUTHORING_DETAILS_TABLE",
+    "GROUPS_TABLE",
+    "authoring_fetch_all",
+    "authoring_soft_delete",
+    "bool_payload",
+    "clean_str",
+    "clean_tree_remove_ids",
+    "fetch_cohort_row",
+    "fetch_group_row",
+    "invalidate_curriculum_cache",
+    "repair_curriculum_parent_links",
+    "save_tree_cohort",
+    "save_tree_group",
+    "save_tree_group_modules",
+    "transaction",
+    "unassign_authoring_modules_from_group",
+    "update_authoring_rows",
+    "upsert_programme_for_tree",
+    "versioning"
+  ]
+}

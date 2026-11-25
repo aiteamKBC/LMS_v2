@@ -77,13 +77,14 @@ def scoped_transcript(record, rows):
 
 def template_references(record, *, bounded=True):
     # These helpers SELECT only; deliberately do not call ensure/provision APIs.
-    from curriculum_api import reviews, review_types
+    import curriculum_api.review_management.infrastructure.template_rows as review_infrastructure_template_rows
+    import curriculum_api.review_management.infrastructure.type_rows as review_infrastructure_type_rows
     learner = LearnerProfile.objects.filter(pk=record.learner_id).values('programme_id').first()
     programme = (learner or {}).get('programme_id')
     if not programme:
         raise QualityUnavailable('The learner programme is required to select the review templates.')
-    index = review_types.review_type_index()
-    templates = reviews.get_review_template_rows('programme_id = %s and enabled = true', [programme])
+    index = review_infrastructure_type_rows.review_type_index()
+    templates = review_infrastructure_template_rows.get_review_template_rows('programme_id = %s and enabled = true', [programme])
     linked = getattr(record, 'review_template_id', '')
     if linked and not any(row['id'] == linked for row in templates):
         raise QualityUnavailable('The linked review template is not an active template for this learner programme.')
@@ -93,8 +94,8 @@ def template_references(record, *, bounded=True):
         family = families.get((index.get(row.get('review_type_id')) or {}).get('code'))
         if not family:
             continue
-        sections = reviews.get_review_section_rows(row['id'])
-        fields = reviews.get_review_field_rows(row['id'])
+        sections = review_infrastructure_template_rows.get_review_section_rows(row['id'])
+        fields = review_infrastructure_template_rows.get_review_field_rows(row['id'])
         active_sections = {section['id'] for section in sections if section.get('enabled')}
         prompts = [str(section.get('title') or '').strip() for section in sections if section['id'] in active_sections]
         prompts += [str(field.get('title') or '').strip() for field in fields if field.get('section_id') in active_sections]

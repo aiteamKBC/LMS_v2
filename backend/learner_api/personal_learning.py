@@ -70,7 +70,7 @@ def body(request):
 def module_row(module_id):
     # Direct SELECT: never invoke the authoring schema-repair helpers on a read.
     with connections['enrolment'].cursor() as cursor:
-        from curriculum_api.learning_storage import read_table
+        from curriculum_api.catalogue.infrastructure.learning_read_routes import read_table
         cursor.execute(f"SELECT row_to_json(m) FROM {read_table('modules', cursor.db)} m WHERE module_catalogue_id=%s AND deleted_at IS NULL", [module_id])
         row = cursor.fetchone()
     if not row:

@@ -1,0 +1,112 @@
+{
+  "fetch_cohort_row": {
+    "source": "def fetch_cohort_row(cohort_id):\n    \"\"\"Return the raw normalized ``curriculum.cohorts`` row for a canonical id.\"\"\"\n    ident = clean_str(cohort_id)\n    if not ident:\n        return None\n    rows = authoring_fetch_all(COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id = %s', [ident])\n    return rows[0] if rows else None",
+    "module": "curriculum_api.catalogue.infrastructure.placement_records",
+    "deps": [
+      "clean_str",
+      "authoring_fetch_all",
+      "COHORT_AUTHORING_DETAILS_TABLE"
+    ],
+    "bindings": {
+      "clean_str": "clean_str",
+      "authoring_fetch_all": "authoring_fetch_all",
+      "COHORT_AUTHORING_DETAILS_TABLE": "COHORT_AUTHORING_DETAILS_TABLE"
+    },
+    "decorators": []
+  },
+  "fetch_group_row": {
+    "source": "def fetch_group_row(group_id):\n    \"\"\"Return the raw normalized ``curriculum.groups`` row for a canonical id.\"\"\"\n    ident = clean_str(group_id)\n    if not ident:\n        return None\n    rows = authoring_fetch_all(GROUPS_TABLE, 'group_id = %s', [ident])\n    return rows[0] if rows else None",
+    "module": "curriculum_api.catalogue.infrastructure.placement_records",
+    "deps": [
+      "clean_str",
+      "authoring_fetch_all",
+      "GROUPS_TABLE"
+    ],
+    "bindings": {
+      "clean_str": "clean_str",
+      "authoring_fetch_all": "authoring_fetch_all",
+      "GROUPS_TABLE": "GROUPS_TABLE"
+    },
+    "decorators": []
+  },
+  "resolve_cohort_row": {
+    "source": "def resolve_cohort_row(identifier):\n    \"\"\"Look up a cohort row by canonical id first, then fall back to name match.\n\n    Name matching is used only for validation/lookup tolerance (e.g. legacy\n    clients passing a name); the returned row always carries its stored\n    canonical ``cohort_id``, which is what callers use for updates.\n    \"\"\"\n    ident = clean_str(identifier)\n    if not ident:\n        return None\n    row = fetch_cohort_row(ident)\n    if row:\n        return row\n    for candidate in authoring_fetch_all(COHORT_AUTHORING_DETAILS_TABLE):\n        if matches_curriculum_identifier(candidate.get('cohort_id'), ident):\n            return candidate\n    # A name can now be shared by a live cohort and an archived namesake, so\n    # the live one wins; the tombstone is only returned when nothing else holds\n    # the name.\n    name_matches = [\n        candidate for candidate in authoring_fetch_all(COHORT_AUTHORING_DETAILS_TABLE)\n        if normalise(candidate.get('cohort_name')) == normalise(ident)\n    ]\n    surviving = [row for row in name_matches if not curriculum_row_effectively_deleted(row)]\n    for candidate in surviving or name_matches:\n        return candidate\n    return None",
+    "module": "curriculum_api.catalogue.application.placement_records",
+    "deps": [
+      "clean_str",
+      "fetch_cohort_row",
+      "authoring_fetch_all",
+      "COHORT_AUTHORING_DETAILS_TABLE",
+      "matches_curriculum_identifier",
+      "normalise",
+      "curriculum_row_effectively_deleted"
+    ],
+    "bindings": {
+      "clean_str": "clean_str",
+      "fetch_cohort_row": "fetch_cohort_row",
+      "authoring_fetch_all": "authoring_fetch_all",
+      "COHORT_AUTHORING_DETAILS_TABLE": "COHORT_AUTHORING_DETAILS_TABLE",
+      "matches_curriculum_identifier": "matches_curriculum_identifier",
+      "normalise": "normalise",
+      "curriculum_row_effectively_deleted": "curriculum_row_effectively_deleted"
+    },
+    "decorators": []
+  },
+  "resolve_group_row": {
+    "source": "def resolve_group_row(identifier):\n    \"\"\"Look up a group row by canonical id first, then fall back to name match.\"\"\"\n    ident = clean_str(identifier)\n    if not ident:\n        return None\n    row = fetch_group_row(ident)\n    if row:\n        return row\n    for candidate in authoring_fetch_all(GROUPS_TABLE):\n        if matches_curriculum_identifier(candidate.get('group_id'), ident):\n            return candidate\n    # Group names are only unique within a cohort, so a bare-name lookup can be\n    # ambiguous. Returning an arbitrary match writes modules into whichever row\n    # the scan happened to reach first; refuse instead and let the caller supply\n    # a canonical id (or a cohort-scoped lookup).\n    # Archived namesakes do not make a name ambiguous: recreating a group under\n    # an archived group's name is legal, and the live row is unmistakably the\n    # one meant. Only fall back to the archived rows when no live row holds the\n    # name at all.\n    name_matches = [\n        candidate for candidate in authoring_fetch_all(GROUPS_TABLE)\n        if normalise(candidate.get('group_name')) == normalise(ident)\n    ]\n    surviving = [row for row in name_matches if not curriculum_row_effectively_deleted(row)]\n    name_matches = surviving or name_matches\n    if len(name_matches) == 1:\n        return name_matches[0]\n    if len(name_matches) > 1:\n        logger.warning(\n            'Ambiguous group name %r matches %d rows (%s); refusing to guess.',\n            ident,\n            len(name_matches),\n            ', '.join(clean_str(row.get('group_id')) for row in name_matches),\n        )\n    return None",
+    "module": "curriculum_api.catalogue.application.placement_records",
+    "deps": [
+      "clean_str",
+      "fetch_group_row",
+      "authoring_fetch_all",
+      "GROUPS_TABLE",
+      "matches_curriculum_identifier",
+      "normalise",
+      "curriculum_row_effectively_deleted",
+      "logger"
+    ],
+    "bindings": {
+      "clean_str": "clean_str",
+      "fetch_group_row": "fetch_group_row",
+      "authoring_fetch_all": "authoring_fetch_all",
+      "GROUPS_TABLE": "GROUPS_TABLE",
+      "matches_curriculum_identifier": "matches_curriculum_identifier",
+      "normalise": "normalise",
+      "curriculum_row_effectively_deleted": "curriculum_row_effectively_deleted",
+      "logger": "logger"
+    },
+    "decorators": []
+  },
+  "curriculum_cohort_from_authoring_detail": {
+    "source": "def curriculum_cohort_from_authoring_detail(detail):\n    detail = detail or {}\n    epa_months = parse_epa_months(\n        detail.get('epaMonths') if detail.get('epaMonths') is not None else detail.get('epa_months')\n    )\n    override = format_date(\n        detail.get('apprenticeshipEndOverride')\n        if detail.get('apprenticeshipEndOverride') is not None\n        else detail.get('apprenticeship_end_override')\n    )\n    practical_end_date, apprenticeship_end_date = cohort_epa_dates(\n        detail.get('endDate') or detail.get('end_date') or detail.get('practicalEndDate') or '',\n        epa_months,\n        override,\n    )\n    return {\n        'id': detail.get('cohortId') or detail.get('id') or detail.get('cohort_id'),\n        'name': detail.get('cohortName') or detail.get('name') or detail.get('cohort_name') or '',\n        'programmeId': detail.get('programmeId') or detail.get('programme_id') or '',\n        'programme': detail.get('programmeName') or detail.get('programme') or detail.get('programme_name') or '',\n        'startDate': detail.get('startDate') or detail.get('start_date') or '',\n        'endDate': practical_end_date,\n        'practicalEndDate': practical_end_date,\n        'epaMonths': epa_months,\n        'apprenticeshipEndDate': apprenticeship_end_date,\n        'apprenticeshipEndOverride': override,\n        'durationMonths': detail.get('durationMonths') or detail.get('duration_months') or 0,\n        'color': detail.get('color') or '',\n        'holidayIds': detail.get('holidayIds') or detail.get('holiday_ids') or [],\n        'excludedHolidayIds': detail.get('excludedHolidayIds') or detail.get('excluded_holiday_ids') or [],\n        'calendarPolicy': parse_json_value(detail.get('calendarPolicy') if 'calendarPolicy' in detail else detail.get('calendar_policy'), None),\n        'status': detail.get('status') or 'planned',\n        'createdAt': detail.get('createdAt') or detail.get('created_at') or '',\n        'updatedAt': detail.get('updatedAt') or detail.get('updated_at') or '',\n    }",
+    "module": "curriculum_api.catalogue.application.placement_records",
+    "deps": [
+      "parse_epa_months",
+      "format_date",
+      "cohort_epa_dates",
+      "parse_json_value"
+    ],
+    "bindings": {
+      "parse_epa_months": "parse_epa_months",
+      "format_date": "format_date",
+      "cohort_epa_dates": "cohort_epa_dates",
+      "parse_json_value": "parse_json_value"
+    },
+    "decorators": []
+  },
+  "curriculum_group_from_authoring_detail": {
+    "source": "def curriculum_group_from_authoring_detail(detail):\n    detail = detail or {}\n    return {\n        'id': detail.get('id') or detail.get('groupId') or detail.get('group_id'),\n        'name': detail.get('name') or detail.get('groupName') or detail.get('group_name') or '',\n        'cohortId': detail.get('cohortId') or detail.get('cohort_id') or '',\n        'cohort': detail.get('cohort') or detail.get('cohortName') or detail.get('cohort_name') or '',\n        'programmeId': detail.get('programmeId') or detail.get('programme_id') or '',\n        'programme': detail.get('programme') or detail.get('programmeName') or detail.get('programme_name') or '',\n        'coach': detail.get('coach') or detail.get('coach_name') or '',\n        # Every coach of the group; `coach` above is the same names joined.\n        'coaches': group_coaches.split_names(\n            detail.get('coaches') or detail.get('coach_names') or detail.get('coach') or detail.get('coach_name')\n        ),\n        'tutor': detail.get('tutor') or '',\n        'startDate': detail.get('startDate') or detail.get('start_date') or '',\n        'endDate': detail.get('endDate') or detail.get('end_date') or '',\n        # The delivery slot in its own fields, not only folded into `schedule`.\n        # The group form edits these three directly, so a create response that\n        # carried the schedule sentence alone came back to the form as no\n        # delivery days and the default 09:00-11:00 -- losing what was just\n        # saved. Parsed back out of `schedule` when a caller only has that.\n        'weekDays': (\n            detail.get('weekDays') or detail.get('week_days') or detail.get('session_week_day')\n            or schedule_day_part(detail.get('schedule')) or ''\n        ),\n        'startTime': (\n            detail.get('startTime') or detail.get('start_time') or detail.get('session_start_time')\n            or schedule_time_parts(detail.get('schedule'))[0]\n        ),\n        'endTime': (\n            detail.get('endTime') or detail.get('end_time') or detail.get('session_end_time')\n            or schedule_time_parts(detail.get('schedule'))[1]\n        ),\n        'schedule': detail.get('schedule') or '',\n        'color': detail.get('color') or '',\n        'mode': detail.get('mode') or 'Live',\n        'status': detail.get('status') or 'planned',\n        'modules': detail.get('modules') or detail.get('module_names') or [],\n        'moduleIds': detail.get('moduleIds') or detail.get('module_ids') or [],\n        'createdAt': detail.get('createdAt') or detail.get('created_at') or '',\n        'updatedAt': detail.get('updatedAt') or detail.get('updated_at') or '',\n    }",
+    "module": "curriculum_api.catalogue.application.placement_records",
+    "deps": [
+      "split_coach_names",
+      "schedule_day_part",
+      "schedule_time_parts"
+    ],
+    "bindings": {
+      "split_coach_names": "group_coaches.split_names",
+      "schedule_day_part": "schedule_day_part",
+      "schedule_time_parts": "schedule_time_parts"
+    },
+    "decorators": []
+  }
+}

@@ -100,4 +100,3 @@ class KsbDefinitionLinkTests(SimpleTestCase):
         self.assertEqual(field.column, 'standard_ksb_id')
         self.assertTrue(field.null)
         self.assertEqual(field.remote_field.model._meta.db_table, 'curriculum"."ksb_standard_definitions')
-

@@ -13,7 +13,12 @@ from zoneinfo import ZoneInfo
 from django.conf import settings
 from django.db import connections
 
-from curriculum_api import review_instances, review_types, schema_gate
+from curriculum_api import schema_gate
+import curriculum_api.review_management.application.learner_occurrences as review_application_learner_occurrences
+import curriculum_api.review_management.domain.instance_rules as review_domain_instance_rules
+import curriculum_api.review_management.domain.occurrence_identity as review_domain_occurrence_identity
+import curriculum_api.review_management.infrastructure.instance_rows as review_infrastructure_instance_rows
+import curriculum_api.review_management.infrastructure.type_rows as review_infrastructure_type_rows
 from learner_api.review_history import REVIEW_TYPES, _serialize_review
 
 from .models import CoachCalendarEvent
@@ -479,7 +484,7 @@ def classify_aptem_review_preview(
             row.review_instance_id in {record["id"] for record in matches}
             or row.id in {record.get("calendar_event_id") for record in matches}
             or (row.review_template_id, row.occurrence_number) == identity
-            or row.event_key == review_instances.review_calendar_event_key(learner.id, *identity)
+            or row.event_key == review_domain_occurrence_identity.review_calendar_event_key(learner.id, *identity)
         )]
         conflict = len(matches) > 1 or len(calendars) > 1 or any(
             row.owner_email.casefold() != owner for row in calendars
@@ -607,8 +612,8 @@ def build_aptem_review_reconciliation_preview(learner, owner_email, *, today=Non
     occurrences = []
     template_family_counts = Counter()
     if programme_id:
-        all_templates = review_instances.list_enabled_review_templates(programme_id)
-        type_index = review_types.review_type_index()
+        all_templates = review_application_learner_occurrences.list_enabled_review_templates(programme_id)
+        type_index = review_infrastructure_type_rows.review_type_index()
         scope = {"cohort_id": getattr(learner, "cohort_id", None),
                  "cohort": getattr(learner, "cohort", None),
                  "group_id": getattr(learner, "group_id", None),
@@ -616,15 +621,15 @@ def build_aptem_review_reconciliation_preview(learner, owner_email, *, today=Non
         status = getattr(learner, "programme_status", None) or getattr(learner, "status", None)
         templates = [row for row in all_templates if
                      (type_index.get(row.get("review_type_id")) or {}).get("code") in {PR, MCM}
-                     and review_instances.review_applies_to_placement(row, scope)
-                     and review_instances.learner_is_eligible(row, status)]
+                     and review_application_learner_occurrences.review_applies_to_placement(row, scope)
+                     and review_domain_instance_rules.learner_is_eligible(row, status)]
         template_family_counts.update(
             (type_index.get(row.get("review_type_id")) or {}).get("code") for row in templates
         )
         if not templates:
             missing_reason = missing_reason or "no_applicable_native_review_template"
         if anchor and window_start and window_end and window_end > window_start and templates:
-            occurrences = review_instances.resolve_programme_review_occurrences(
+            occurrences = review_application_learner_occurrences.resolve_programme_review_occurrences(
                 programme_id, learner.id, status, anchor,
                 anchor, max(today, window_end),
                 template_cache={programme_id: all_templates}, learner_scope=scope,
@@ -641,7 +646,7 @@ def build_aptem_review_reconciliation_preview(learner, owner_email, *, today=Non
         ''', [learner.id])
         columns = [col[0] for col in cursor.description]
         imported_rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
-    native_rows = review_instances.list_review_instances_for_learner(learner.id)
+    native_rows = review_infrastructure_instance_rows.list_review_instances_for_learner(learner.id)
     calendar_rows = list(CoachCalendarEvent.objects.filter(learner_profile_id=learner.id))
     return classify_aptem_review_preview(
         learner=learner, imported_rows=imported_rows, occurrences=occurrences,

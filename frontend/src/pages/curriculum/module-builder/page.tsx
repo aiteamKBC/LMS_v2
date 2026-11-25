@@ -1,4 +1,59 @@
-import { LoadingControl, LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
+import {
+  type ModuleBuilderListItem,
+  type ModuleDeliveryUsage,
+} from '@/features/curriculum/module-authoring/model/catalogueTypes';
+import {
+  normaliseDeepLinkValue,
+  normaliseComponentTitles,
+  moveById,
+  readableComponentTitle,
+} from '@/features/curriculum/module-authoring/model/draftTransforms';
+import {
+  cleanKsbSourceId,
+  ksbSourceIdsMatch,
+  ksbSetSourceId,
+  ksbStandardSourceId,
+  standardToKsbOptions,
+  ksbSourceMatchesModule,
+  ksbSetForModule,
+  standardForModule,
+  ksbSourceLabelMap,
+  ksbSourceOptions,
+  ksbSourceLabel,
+} from '@/features/curriculum/module-authoring/model/ksbSources';
+import {
+  type KsbTarget,
+  removeKsbMapping,
+  updateKsbMappingWeight,
+  updateKsbMappingWeightClass,
+  addKsbMapping,
+  uniqueMappings,
+} from '@/features/curriculum/module-authoring/model/ksbMappings';
+import {
+  type WorkspaceSaveFailure,
+  workspaceSaveStatus as deriveWorkspaceSaveStatus,
+  ARCHIVED_PROGRAMME_BUILDER_NOTICE,
+} from '@/features/curriculum/module-authoring/model/saveState';
+import {
+  SaveStatusPanel,
+  ArchivedProgrammeBuilderNotice,
+  WorkspaceActionFooter,
+} from '@/features/curriculum/module-authoring/components/SaveStatus';
+import { SessionKsbMappingModal } from '@/features/curriculum/module-authoring/components/SessionKsbMappingModal';
+import { ComponentTypeModal } from '@/features/curriculum/module-authoring/components/ComponentTypeModal';
+import { KsbSelectorModal } from '@/features/curriculum/module-authoring/components/KsbSelectorModal';
+import {
+  ModuleKsbMapModal,
+  ProgrammeKsbMapModal,
+} from '@/features/curriculum/module-authoring/components/KsbCoverageDialogs';
+import { componentToneClasses } from '@/features/curriculum/module-authoring/model/componentSelection';
+import { EmptyState } from '@/features/curriculum/module-authoring/components/EditorPrimitives';
+import { ksbWeightSummary } from '@/features/curriculum/module-authoring/model/ksbWeights';
+import {
+  KsbWeightSummary,
+  WeekKsbCodeSection,
+  KsbCards,
+} from '@/features/curriculum/module-authoring/components/KsbCards';
 import { AssignedLearners, LearnerDirectoryProvider } from '../shared/entities/AssignedLearners';
 import { useWeekPointDrafts, type WeekPointDrafts } from './useWeekPointDrafts';
 import { WebWeekPointsEditor } from './WebWeekPointsEditor';
@@ -17,7 +72,8 @@ import { dirtyFields, projectAvailable } from './collaborationProtocol';
 import { ModuleEditReservedError } from './moduleAuthoringData';
 import { confirmModuleSave, sameAuthoredModule } from './confirmModuleSave';
 import { AssignmentTopicsEditor } from '../shared/AssignmentTopicsEditor';
-import { Fragment, Suspense, lazy, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { Fragment, Suspense, lazy, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode
+} from 'react';
 import { createPortal } from 'react-dom';
 import catalogueStyles from './ModuleCatalogue.module.css';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -55,7 +111,7 @@ import {
   type CurriculumStaffProfile,
   type CurriculumStandard,
   type CurriculumTeamsMeetingSummary,
-  fetchFreeCourseAuthoringCatalogue,
+  fetchFreeCourseAuthoringCatalogue
 } from '@/lib/curriculumApi';
 // The Free courses tab hosts the free-course catalogue (curriculum.free_courses)
 // that used to live under Library. Loaded on first use; it carries its own
@@ -73,13 +129,13 @@ import {
   formatDateTimeLabel,
   moduleIdentity,
   namedCurriculumWorkspacePath,
-  sortEntities,
-  workspaceEditPath,
-  MODULE_SORT_OPTIONS,
+  workspaceEditPath
 } from '../shared/entities/model';
-import { COMPONENT_UPLOAD_MAX_LABEL } from '../shared/componentUploadPolicy';
 import { CurriculumVideoUpload } from '../shared/CurriculumVideoUpload';
 import { PendingVideoFilesContext, usePendingVideoFiles, withUploadedVideo } from '../shared/pendingVideoFiles';
+// Creating a module and moving it between programmes, cohorts and groups is one
+// dedicated form, shared with the Group and Module workspaces. It replaced the
+// six-step structure wizard this page used to open for both jobs.
 // Creating a module and moving it between programmes, cohorts and groups is one
 // dedicated form, shared with the Group and Module workspaces. It replaced the
 // six-step structure wizard this page used to open for both jobs.
@@ -91,101 +147,45 @@ import { LearnerAssignmentDrawer } from '../shared/entities/LearnerAssignmentDra
 import { PersonalLearningEntry } from '@/components/feature/PersonalLearningEntry';
 import { useAuth } from "@/hooks/useAuth";
 import { SessionResultsDialog } from '../module-workspace/ModuleSessions';
-import { ModuleFormDrawer, ModuleSessionPreview, type ModuleFormTarget, type SavedModuleRef } from '../shared/entities/moduleForm';
+import { ModuleFormDrawer, type ModuleFormTarget, type SavedModuleRef } from '../shared/entities/moduleForm';
+// The holiday notice, shared with the module workspace so a week touched by a
+// ticked holiday reads the same wherever the curriculum is shown.
 // The holiday notice, shared with the module workspace so a week touched by a
 // ticked holiday reads the same wherever the curriculum is shown.
 import { WeekHolidayNotice } from '../shared/entities/sessionShiftPreview';
 import { showFullTextWhenTruncated } from '../shared/entities/truncationTitle';
 import { moduleCountForGroup, moduleMatchesGroup } from '../shared/entities/groupModuleMatch';
-import { CoverImageControl, EntityDrawer } from '../shared/entities/ui';
 import { mergeModuleStructures } from '../shared/entities/mergeModuleStructure';
 import { ComponentLibraryModal } from './ComponentLibraryModal';
-import { isSelfStudyComponent, requireSelfStudyContent } from './freeCoursePolicy';
+import { requireSelfStudyContent } from './freeCoursePolicy';
 import { PlaceWeekDrawer } from './PlaceWeekDrawer';
 import { ModuleConflictPanel } from './ModuleConflictPanel';
-import { applyTheirs, conflictsFromCollisions, conflictsFromServer, mergeConflictLists, type ModuleConflict } from './moduleConflicts';
+import { applyTheirs, conflictsFromCollisions, conflictsFromServer, mergeConflictLists, type ModuleConflict
+} from './moduleConflicts';
 import { announceModuleWrite, useModuleLiveSync } from './useModuleLiveSync';
-import {
-  calculateQualityChecklist,
-  componentTypeGroups,
-  componentTypes,
-  copyComponentIntoWeek,
-  createEmptyComponent,
-  createEmptyWeek,
-  createNewModule,
-  groupWeeksByMonth,
-  moduleWeekDeliveryDate,
-  deleteModuleStructure,
-  curriculumModuleToCatalogue,
-  duplicateModuleStructure,
-  duplicateWeekInModule,
-  cloneComponentToWeek,
-  isUnbookedCopiedLiveSession,
-  flattenKsbEntries,
-  getDefaultStructure,
-  getDefaultComponentSettings,
-  loadModuleStructure,
-  loadModuleWeekSessionPlan,
-  applyModuleWeekSessionPlan,
-  // The live-session title each planned date carries, keyed by session number.
-  // Read from the weeks in the editor, so the timeline names a session the way
-  // the rail behind it does.
-  liveSessionNamesByNumber,
-  // The one walk that pairs weeks with planned dates. A week owns a RUN of
-  // dates, not one date, the moment a group delivers more than once a week.
-  moduleWeekSessionDates,
-  moduleWeekLiveSessionDates,
-  moduleUsesSessionRows,
-  // Every live session the module delivers: one entry per live-session
-  // component, which is what the count in the rail and the Teams series are
-  // both built from.
-  moduleAuthoredLiveSessions,
-  applyLiveSessionLinkToComponents,
-  replaceModuleTeamsLinks,
-  applyModuleComponentUpdate,
-  // Which authored weeks a ticked holiday falls on. States the fact only --
-  // the plan is unchanged, and what the week becomes is the author's call.
-  weeksTouchedByHoliday,
-  // Live sessions left behind on an old date when their week was re-planned.
-  // States the fact; the correction is a button the author presses.
-  moduleLiveSessionDateDrift,
-  // Adding more live sessions to a week than its group has delivery days for.
-  // The extras are allowed, they simply have no date to run on -- so the
-  // author is told before it happens rather than finding "No date yet" later.
-  liveSessionSlotOverflow,
-  liveSessionSlotOverflowNotice,
-  weekDeliverySlotCapacity,
-  type LiveSessionSlotOverflow,
-  resequenceWeekSessionDates,
-  makeAuthoringId,
-  recalculateModule,
-  restoreModuleTeamsMeeting,
-  ModuleStructureConflictError,
-  CurriculumRequestTimeout,
-  loadModuleStructureChanges,
-  saveModuleStructure,
-  serverCopyOf,
-  type ServerStructureCopy,
-  uploadComponentResource,
-  utcIsoToCalendarParts,
-  weekExpectedOtjhTotal,
-  weekPlacementLabel,
-  type AdvancedModuleDetails,
-  type CompletionCriteria,
-  type KsbMapping,
-  type DuplicateKsbSource,
-  type KsbRemapReport,
-  type KsbMappingType,
-  type KsbWeightClass,
-  type KsbOption,
-  type ModuleCatalogueItem,
-  type ModuleComponent,
-  type ModuleComponentType,
-  type ModuleWeek,
-  type ModuleWeekSessionPlan,
-  type TeamsMeetingInput,
-  type TeamsMeetingResult,
-} from './moduleAuthoringData';
+import { calculateQualityChecklist, componentTypes, copyComponentIntoWeek, createEmptyComponent, createEmptyWeek, groupWeeksByMonth, moduleWeekDeliveryDate, deleteModuleStructure, curriculumModuleToCatalogue, duplicateModuleStructure, duplicateWeekInModule, cloneComponentToWeek, isUnbookedCopiedLiveSession, flattenKsbEntries, getDefaultStructure, loadModuleStructure, loadModuleWeekSessionPlan, applyModuleWeekSessionPlan,
+// The one walk that pairs weeks with planned dates. A week owns a RUN of
+// dates, not one date, the moment a group delivers more than once a week.
+moduleWeekSessionDates, moduleWeekLiveSessionDates, moduleUsesSessionRows,
+// Every live session the module delivers: one entry per live-session
+// component, which is what the count in the rail and the Teams series are
+// both built from.
+moduleAuthoredLiveSessions, applyLiveSessionLinkToComponents, replaceModuleTeamsLinks, applyModuleComponentUpdate,
+// Which authored weeks a ticked holiday falls on. States the fact only --
+// the plan is unchanged, and what the week becomes is the author's call.
+weeksTouchedByHoliday,
+// Live sessions left behind on an old date when their week was re-planned.
+// States the fact; the correction is a button the author presses.
+moduleLiveSessionDateDrift,
+// Adding more live sessions to a week than its group has delivery days for.
+// The extras are allowed, they simply have no date to run on -- so the
+// author is told before it happens rather than finding "No date yet" later.
+liveSessionSlotOverflow, liveSessionSlotOverflowNotice, weekDeliverySlotCapacity, type LiveSessionSlotOverflow, resequenceWeekSessionDates, recalculateModule, restoreModuleTeamsMeeting, ModuleStructureConflictError, CurriculumRequestTimeout, loadModuleStructureChanges, saveModuleStructure, serverCopyOf, type ServerStructureCopy, uploadComponentResource, weekExpectedOtjhTotal, type AdvancedModuleDetails, type CompletionCriteria, type DuplicateKsbSource, type KsbRemapReport, type KsbWeightClass, type ModuleCatalogueItem, type ModuleComponent, type ModuleComponentType, type ModuleWeek, type ModuleWeekSessionPlan } from './moduleAuthoringData';
+// The shared week-authoring UI arrives through curriculum/shared/components rather
+// than from week-builder/page directly: these three components only render once a
+// week is expanded, so the lazy wrappers keep Week Builder's ~159 kB chunk (dnd-kit
+// and the RichTextEditor included) off the initial Module Builder load. Types come
+// from the non-lazy barrel — type imports are erased and pull in no runtime code.
 // The shared week-authoring UI arrives through curriculum/shared/components rather
 // than from week-builder/page directly: these three components only render once a
 // week is expanded, so the lazy wrappers keep Week Builder's ~159 kB chunk (dnd-kit
@@ -199,12 +199,20 @@ import { appendWeekTemplateCopies } from './weekTemplateImport';
 // Round-trip the module's components to Excel so KSBs can be filled in ChatGPT
 // and imported back. xlsx is dynamically imported inside these helpers, so it
 // stays off this page's initial bundle.
-import { buildKsbMappingPrompt, ksbImportNotice, exportModuleKsbWorkbook, importModuleKsbWorkbook, type KsbImportSource, type KsbProfileEntry } from './ksbExcel';
+// Round-trip the module's components to Excel so KSBs can be filled in ChatGPT
+// and imported back. xlsx is dynamically imported inside these helpers, so it
+// stays off this page's initial bundle.
+import { buildKsbMappingPrompt, ksbImportNotice, exportModuleKsbWorkbook, importModuleKsbWorkbook, type KsbImportSource, type KsbProfileEntry
+} from './ksbExcel';
 import { reviewKsbImport } from './ksbImportReview';
 // Shared labelled form atoms and the Teams meeting modal live in their own files
 // so the modal (rendered by the shared week editor, which the Week Builder also
 // uses) can reuse them without importing this page.
-import { Checkbox, DurationInput, NumberInput, ReadOnlyInput, SelectInput, TextArea, TextInput } from './formInputs';
+// Shared labelled form atoms and the Teams meeting modal live in their own files
+// so the modal (rendered by the shared week editor, which the Week Builder also
+// uses) can reuse them without importing this page.
+import { Checkbox, NumberInput, ReadOnlyInput, SelectInput, TextArea, TextInput
+} from './formInputs';
 import { TeamsMeetingModal } from './TeamsMeetingModal';
 import { ReplaceTeamsLinksDialog } from './ReplaceTeamsLinksDialog';
 import { RestoreTeamsDataDialog } from './RestoreTeamsDataDialog';
@@ -219,7 +227,7 @@ import {
   normaliseVideoSourceType,
   providerForVideoSourceType,
   validateComponentAuthoring,
-  validateModuleAuthoringStructure,
+  validateModuleAuthoringStructure
 } from './componentAuthoringModel';
 import { RichTextDraft } from './RichTextEditor';
 import { componentTypeCounts, mergeFilteredComponents } from './courseStructureFilter';
@@ -228,7 +236,9 @@ import { offScheduleRunLabel } from '../teams-meetings/offScheduleRuns';
 import { OffScheduleRunDetails } from '../teams-meetings/OffScheduleRunDetails';
 import { KsbRemapNotice } from './KsbRemapNotice';
 import { reviewDateLabel } from '../teams-meetings/calendarTime';
-import { linkedRecordingsOf, moveComponentToWeek, relinkCopiedComponents, withLinkedRecordings, withRecordingLink, type RecordingLinkContext } from '../shared/entities/liveSessionRecordingLink';
+import { linkedRecordingsOf, moveComponentToWeek, relinkCopiedComponents, withLinkedRecordings, withRecordingLink, type RecordingLinkContext
+} from '../shared/entities/liveSessionRecordingLink';
+import { LoadingControl, LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 
 // Course structure accordion: whether expanding a week collapses the others.
 // false = classic single-open accordion (the current default look/feel).
@@ -254,50 +264,6 @@ const AUTO_SAVE_QUIET_MS = 1000;
  * catalogue lookup entirely -- see the mount effect below.
  */
 const MODULE_CATALOGUE_ID_PATTERN = /^MOD-[A-Z0-9][A-Z0-9_-]*$/i;
-
-/**
- * Auto save starts off, every time, on every module.
- *
- * Deliberately not remembered. A save on this endpoint replaces the whole
- * module -- every week, every component, every KSB mapping -- so the workspace
- * writing on its own is something the reader turns on for the module in front
- * of them, not a setting that follows them into the next one without being
- * asked for again.
- */
-
-/**
- * What the workspace has done with the reader's edits.
- *
- * Kept as one value rather than a pair of booleans because the states are
- * genuinely exclusive and two of them are refusals -- a footer that reads
- * "Unsaved changes" after a save was turned down says nothing about why, and
- * "Saved" must never appear for a write the backend has not confirmed.
- */
-type WorkspaceSaveStatus = 'saved' | 'pending' | 'manual' | 'saving' | 'saving-more' | 'checking' | 'unconfirmed' | 'failed' | 'conflict' | 'locked';
-
-const WORKSPACE_SAVE_STATUS: Record<WorkspaceSaveStatus, { text: string; tone: string; icon: string }> = {
-  saved: { text: 'All changes saved', tone: 'text-emerald-700', icon: 'ri-checkbox-circle-line' },
-  pending: { text: 'Unsaved changes', tone: 'text-foreground-600', icon: 'ri-edit-line' },
-  // Auto save is off, so nothing is coming to collect these edits. The sentence
-  // has to name the thing the reader must do, not just report the state.
-  manual: { text: 'Unsaved changes - press Save', tone: 'text-amber-700', icon: 'ri-edit-line' },
-  saving: { text: 'Saving module structure...', tone: 'text-amber-700', icon: 'ri-loader-4-line animate-spin' },
-  // The reader kept typing while a save was in flight. Those keystrokes are not
-  // in the request that is running, and saying "Saving..." on its own would
-  // claim they were.
-  'saving-more': { text: 'Saving... later edits still pending', tone: 'text-amber-700', icon: 'ri-loader-4-line animate-spin' },
-  failed: { text: 'Save failed - your changes are still here', tone: 'text-rose-700', icon: 'ri-error-warning-line' },
-  checking: { text: 'Checking saved changes...', tone: 'text-amber-700', icon: 'ri-loader-4-line animate-spin' },
-  unconfirmed: { text: 'Save not confirmed - your changes are still here', tone: 'text-amber-700', icon: 'ri-time-line' },
-  // Reached only when a refused save could not be merged because the stored
-  // version would not read. An ordinary conflict never gets this far: it is
-  // merged and re-sent, and the footer goes back to saying "Saving...".
-  conflict: { text: 'Not saved - the saved version could not be read', tone: 'text-rose-700', icon: 'ri-git-branch-line' },
-  locked: { text: 'Read-only - archived programme', tone: 'text-amber-700', icon: 'ri-lock-line' },
-};
-
-/** A save the backend turned down. `conflict` is never worth retrying as-is. */
-type WorkspaceSaveFailure = { kind: 'error' | 'conflict' | 'unconfirmed'; message: string };
 
 /**
  * The floor between two live reads of the open module's structure.
@@ -368,20 +334,9 @@ const MODULE_CONFLICT_BUSY_BANNER ='Your changes are all still here and were not
 
 const ALLOW_MULTIPLE_EXPANDED_WEEKS = false;
 
-const WEIGHT_CLASS_OPTIONS: SelectOption[] = [
-  { value: 'hard', label: 'Hard' },
-  { value: 'soft', label: 'Soft' },
-  { value: 'possible', label: 'Possible' },
-];
-
 type Selection =
   | { kind: 'week'; weekId: string }
   | { kind: 'component'; weekId: string; componentId: string };
-
-type KsbTarget =
-  | { scope: 'module' }
-  | { scope: 'week'; weekId: string }
-  | { scope: 'component'; weekId: string; componentId: string };
 
 type DragState = { type: 'week'; weekId: string } | null;
 
@@ -395,39 +350,6 @@ const ASSIGNMENT_FILTER_OPTIONS: SelectOption[] = [
   { value: 'needs-tutor', label: 'Needs tutor' },
   { value: 'needs-dates', label: 'Needs dates' },
 ];
-
-type ModuleDeliveryUsage = {
-  id: string;
-  moduleId: string;
-  /**
-   * The identity the per-module endpoints answer to, resolved exactly the way
-   * the entity pages resolve it. `moduleId` above keeps its own legacy order and
-   * is used for matching, so the two are deliberately separate.
-   */
-  deliveryModuleId: string;
-  sourceId: string;
-  catalogueId: string;
-  structureId: string;
-  programmeId: string;
-  programme: string;
-  moduleTitle: string;
-  cohortId?: string;
-  cohort: string;
-  groupId?: string;
-  group: string;
-  tutor: string;
-  deliveryStatus: string;
-  startDate?: string;
-  endDate?: string;
-  sessions: number;
-  weekDays?: string;
-  startTime?: string;
-  endTime?: string;
-};
-
-type ModuleBuilderListItem = ModuleCatalogueItem & {
-  deliveryUsages?: ModuleDeliveryUsage[];
-};
 
 type ProgrammeKsbMapState = {
   programmeName: string;
@@ -743,6 +665,8 @@ function ModuleBuilderContent() {
   const [groupFilter, setGroupFilter] = useState(() => searchParams.get('group') || '');
   const [tutorFilter, setTutorFilter] = useState(() => searchParams.get('tutor') || '');
   const [tutorProfiles, setTutorProfiles] = useState<CurriculumStaffProfile[]>([]);
+  const [tutorReadError, setTutorReadError] = useState<string | null>(null);
+  const [tutorReadVersion, setTutorReadVersion] = useState(0);
   const [teamsMeetings, setTeamsMeetings] = useState<CurriculumTeamsMeetingSummary[]>([]);
   // A tutor is assigned where the rest of a delivery is edited: the module form
   // behind "Edit module", and the delivery workspace each delivery row opens.
@@ -1453,13 +1377,23 @@ function ModuleBuilderContent() {
   );
 
 
-  // Staff and Teams state are additive: the catalogue must still render if either
-  // request fails, so neither is allowed to surface as a page-level error.
+  // Staff failure is visible without replacing the module catalogue or saved options.
   useEffect(() => {
     const controller = new AbortController();
-    fetchCurriculumTutors(controller.signal)
-      .then(profiles => setTutorProfiles(profiles))
-      .catch(() => {});
+    fetchCurriculumTutors(controller.signal, { revalidate: tutorReadVersion > 0 })
+      .then(profiles => {
+        if (controller.signal.aborted) return;
+        setTutorProfiles(profiles);
+        setTutorReadError(null);
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setTutorReadError('Unable to load tutors. Staff options may be incomplete or out of date.');
+      });
+    return () => controller.abort();
+  }, [tutorReadVersion]);
+
+  useEffect(() => {
+    const controller = new AbortController();
     fetchCurriculumTeamsMeetingSummaries(controller.signal)
       .then(summaries => setTeamsMeetings(summaries))
       .catch(() => {});
@@ -1681,19 +1615,9 @@ function ModuleBuilderContent() {
     workingModule && savedModuleSnapshotRef.current && workingModuleSnapshot !== savedModuleSnapshotRef.current,
   ) || videoFiles.hasPending || Boolean(pointDraftSignature);
   const workspaceSaveSnapshot = workingModuleSnapshot + pointDraftSignature;
-  const workspaceSaveStatus: WorkspaceSaveStatus = workingModuleProgrammeArchived
-    ? 'locked'
-    : saving
-      ? (confirmingSave ? 'checking' : savingSnapshot && workingModuleSnapshot !== savingSnapshot ? 'saving-more' : 'saving')
-      : saveFailure?.kind === 'conflict'
-        ? 'conflict'
-        : saveFailure?.kind === 'unconfirmed'
-          ? 'unconfirmed'
-        : saveFailure
-          ? 'failed'
-          : !hasUnsavedWorkingModuleChanges
-            ? 'saved'
-            : autoSaveEnabled ? 'pending' : 'manual';
+  const workspaceSaveStatus = deriveWorkspaceSaveStatus({
+    workingModuleProgrammeArchived, saving, confirmingSave, savingSnapshot, workingModuleSnapshot, saveFailure, hasUnsavedWorkingModuleChanges, autoSaveEnabled,
+  });
 
   const finishLoadingProgress = useCallback(async (markComplete: (value: boolean) => void) => {
     markComplete(true);
@@ -4247,6 +4171,14 @@ function ModuleBuilderContent() {
             </button>
           </div>
         )}
+        {tutorReadError && (
+          <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] text-amber-900">
+            <span>{tutorReadError}</span>
+            <button type="button" className="shrink-0 font-semibold underline" onClick={() => setTutorReadVersion(value => value + 1)}>
+              Retry staff options
+            </button>
+          </div>
+        )}
         {actionMessage && !deletingModuleId && (
           <div className="flex items-center justify-between gap-3 rounded-xl border border-red-200/60 bg-red-50 px-4 py-3 text-[12px] font-medium text-red-700">
             <span>{actionMessage}</span>
@@ -4673,55 +4605,6 @@ function ModuleBuilderContent() {
   );
 }
 
-// Only the two states worth taking space for: a save in flight, and one that
-// failed. A finished save says so in the footer and nowhere else.
-function SaveStatusPanel({ saving, confirming, unconfirmed, elapsedSeconds, error, module }: {
-  saving: boolean;
-  confirming: boolean;
-  unconfirmed: boolean;
-  elapsedSeconds: number;
-  error: string | null;
-  module: ModuleCatalogueItem;
-}) {
-  const componentCount = module.weekStructure.reduce((total, week) => total + week.components.length, 0);
-  const tone = error && !unconfirmed ? 'red' : 'amber';
-  const icon = error ? 'ri-error-warning-line' : 'ri-loader-4-line animate-spin';
-  const title = confirming ? 'Checking saved changes' : unconfirmed ? 'Save not confirmed'
-    : error ? 'Save failed' : elapsedSeconds > 8 ? 'Still saving module structure' : 'Saving module structure';
-  const message = (confirming ? 'Checking whether your changes reached the LMS. Video copying continues separately.' : error)
-    || `${module.weekStructure.length} weeks and ${componentCount} components are being written to the curriculum database. ${elapsedSeconds ? `${elapsedSeconds}s elapsed.` : ''}`;
-  const classes = {
-    amber: 'border-amber-200 bg-amber-50 text-amber-800',
-    red: 'border-red-200 bg-red-50 text-red-800',
-  }[tone];
-  const barClass = { amber: 'bg-amber-500', red: 'bg-red-500' }[tone];
-
-  return (
-    <div className={`overflow-hidden rounded-xl border ${classes}`}>
-      <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex min-w-0 items-start gap-3">
-          <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/70">
-            <AppIcon className={`${icon} text-base`}></AppIcon>
-          </span>
-          <div className="min-w-0">
-            <p className="text-[12px] font-heading font-bold">{title}</p>
-            <p className="mt-0.5 text-[11px] font-semibold opacity-85">{message}</p>
-          </div>
-        </div>
-        <div className="flex shrink-0 items-center gap-2 text-[10px] font-bold uppercase">
-          <span className="rounded-full bg-white/70 px-2.5 py-1">{module.weekStructure.length} weeks</span>
-          <span className="rounded-full bg-white/70 px-2.5 py-1">{componentCount} components</span>
-        </div>
-      </div>
-      {saving && (
-        <div className="h-1.5 bg-white/60">
-          <div className={`h-full w-2/3 animate-pulse rounded-r-full ${barClass}`} />
-        </div>
-      )}
-    </div>
-  );
-}
-
 function WorkspaceHeader({ module, programmeOptions, hierarchy, ksbProfileOptions, ksbProfileValue, scopeLock, standardsLoading, saved, onBack, onProgrammeChange, onKsbProfileChange }: {
   module: ModuleCatalogueItem;
   programmeOptions: string[];
@@ -4831,105 +4714,11 @@ function WorkspaceHeader({ module, programmeOptions, hierarchy, ksbProfileOption
   );
 }
 
-/**
- * What the Builder says, and the backend's refusal says, about an archived
- * programme. One sentence pair so the two never drift apart.
- */
-const ARCHIVED_PROGRAMME_BUILDER_NOTICE = 'This module belongs to an archived programme. Restore the programme, or move the module to a live programme, before editing its structure.';
-
-function ArchivedProgrammeBuilderNotice({ programmeName }: { programmeName?: string }) {
-  return (
-    <div role="status" className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] font-semibold text-amber-900">
-      <div className="flex items-start gap-2">
-        <AppIcon className="ri-archive-line mt-0.5 text-base"></AppIcon>
-        <div className="min-w-0">
-          <p>{ARCHIVED_PROGRAMME_BUILDER_NOTICE}</p>
-          <p className="mt-1 font-medium text-amber-800">
-            {programmeName ? `${programmeName} is archived. ` : ''}
-            Everything below stays exactly as it was authored — it is read-only until the module has a live
-            programme to belong to.
-          </p>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 /** Is this programme record archived, however the row spells it? */
 function programmeRecordArchived(programme: CurriculumProgramme | null): boolean {
   if (!programme) return false;
   if (programme.isArchived) return true;
   return String(programme.status || '').trim().toLowerCase() === 'archived';
-}
-
-function WorkspaceActionFooter({ saving, saved, status, autoSave, onToggleAutoSave, locked = false, onEditModule, onDelete, onSave }: {
-  saving: boolean;
-  saved: boolean;
-  /** What the workspace has done with the edits — the sentence in the footer. */
-  status: WorkspaceSaveStatus;
-  /** The workspace sends edits itself; off means Save is the only way out. */
-  autoSave: boolean;
-  onToggleAutoSave: () => void;
-  /** The programme is archived, so the structure is read-only and Save is off. */
-  locked?: boolean;
-  /** Name, placement, dates and tutor — the shared module form. */
-  onEditModule: () => void;
-  /** Completion criteria, advanced details and module-level KSBs. */
-  onModuleSettings: () => void;
-  onDelete: () => void;
-  onSave: () => void;
-}) {
-  const saveButtonIcon = saving ? 'ri-loader-4-line animate-spin' : saved ? 'ri-check-line' : 'ri-save-3-line';
-  // "Save now" while the workspace is saving itself, because the button is then
-  // for not waiting out the quiet period. With auto save off it is the only way
-  // the module is written at all, so it says the plain thing.
-  const saveButtonLabel = saving ? 'Saving module changes...' : saved ? 'Module saved' : autoSave ? 'Save module now' : 'Save module changes';
-  // One sentence for the whole save pipeline. "Saved" is shown only for a write
-  // the backend has confirmed — `saved` comes from the stored snapshot, which
-  // moves on a successful reply and nothing else.
-  const { text: stateText, tone: stateTone, icon: stateIcon } = WORKSPACE_SAVE_STATUS[status];
-
-  return (
-    <div className="sticky bottom-0 z-20 -mx-3 mt-2 border-t border-background-200/80 bg-background-50/95 px-3 py-3 shadow-[0_-12px_30px_rgba(15,23,42,0.08)] backdrop-blur sm:-mx-5 sm:px-5 lg:-mx-6 lg:px-6">
-      <div className="mx-auto flex w-full max-w-[1840px] flex-wrap items-center justify-between gap-3 pr-0 lg:pr-44">
-        <div className={`flex items-center gap-2 text-[12px] font-semibold ${stateTone}`}>
-          <AppIcon className={stateIcon}></AppIcon>
-          <span data-testid="module-builder-save-state">{stateText}</span>
-        </div>
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          <button
-            type="button"
-            onClick={onToggleAutoSave}
-            data-testid="module-builder-auto-save-toggle"
-            aria-pressed={autoSave}
-            disabled={locked}
-            title={locked
-              ? ARCHIVED_PROGRAMME_BUILDER_NOTICE
-              : autoSave
-                ? 'Auto save is on. Edits are saved a moment after you stop typing.'
-                : 'Auto save is off. Your edits are kept here until you press Save module changes.'}
-            className={`inline-flex h-10 items-center justify-center gap-1.5 rounded-lg border px-3 text-[12px] font-semibold transition-smooth disabled:cursor-not-allowed disabled:opacity-70 whitespace-nowrap ${autoSave
-              ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
-              : 'border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100'}`}
-          >
-            <AppIcon className={autoSave ? 'ri-toggle-fill' : 'ri-toggle-line'}></AppIcon>
-            Auto save{autoSave ? ' on' : ' off'}
-          </button>
-          <IconButton label="Edit module" icon="ri-edit-line" onClick={onEditModule} />
-          <IconButton label="Archive module" icon="ri-archive-line" tone="danger" onClick={onDelete} />
-          <button
-            onClick={onSave}
-            data-testid="module-builder-save"
-            disabled={saving || locked}
-            title={locked ? ARCHIVED_PROGRAMME_BUILDER_NOTICE : undefined}
-            className={`inline-flex h-10 min-w-[120px] items-center justify-center gap-1.5 rounded-lg px-4 text-[12px] font-semibold text-white shadow-sm transition-smooth disabled:cursor-not-allowed disabled:opacity-70 whitespace-nowrap ${saved ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-primary-500 hover:bg-primary-600'}`}
-          >
-            <AppIcon className={saveButtonIcon}></AppIcon>{saveButtonLabel}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
 }
 
 // Course structure: a week navigator whose rows double as an accordion —
@@ -5718,137 +5507,6 @@ function ModuleBuilderScrollArea({ children, className = '', contentClassName = 
       )}
       <div ref={scrollRef} onScroll={updateScrollbar} className="module-course-structure-scroll h-full min-h-0 overflow-y-scroll py-2.5 pl-4">
         <div className={contentClassName}>{children}</div>
-      </div>
-    </div>
-  );
-}
-
-function selectedComponentTypes(selectedTypes: Set<ModuleComponentType>) {
-  return componentTypes
-    .map(item => item.type)
-    .filter(type => selectedTypes.has(type));
-}
-
-function toggleComponentType(selectedTypes: Set<ModuleComponentType>, type: ModuleComponentType) {
-  const next = new Set(selectedTypes);
-  if (next.has(type)) {
-    next.delete(type);
-  } else {
-    next.add(type);
-  }
-  return next;
-}
-
-function ComponentTypeChecklist({ selectedTypes, onToggle, selfStudyOnly = false }: {
-  selectedTypes: Set<ModuleComponentType>;
-  onToggle: (type: ModuleComponentType) => void;
-  selfStudyOnly?: boolean;
-}) {
-  const availableTypes = componentTypes.filter(item => !selfStudyOnly || isSelfStudyComponent(item.type));
-  return (
-    <div className="space-y-4">
-      {componentTypeGroups.map(group => (
-        <section key={group} className="rounded-lg border border-background-200 bg-background-50 p-3">
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <p className="text-[10px] font-bold uppercase tracking-wide text-foreground-500">{group}</p>
-            <span className="rounded-md bg-background-100 px-2 py-1 text-[9px] font-bold text-foreground-400">
-              {availableTypes.filter(item => item.group === group).length}
-            </span>
-          </div>
-          <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-            {availableTypes.filter(item => item.group === group).map(item => {
-              const tone = componentToneClasses(item.tone);
-              const checked = selectedTypes.has(item.type);
-              return (
-                <label
-                  key={item.type}
-                  className={`group grid min-h-[68px] cursor-pointer grid-cols-[18px_38px_minmax(0,1fr)_18px] items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-smooth ${checked ? 'border-primary-300 bg-primary-50 text-primary-800 shadow-sm shadow-primary-100/70' : 'border-background-200 bg-background-100/40 text-foreground-700 hover:border-primary-200 hover:bg-primary-50/50'}`}
-                >
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={() => onToggle(item.type)}
-                    className="h-4 w-4 rounded border-foreground-300 accent-primary-500"
-                  />
-                  <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${tone.soft} ${tone.text}`}>
-                    <AppIcon className={`${item.icon} text-base`}></AppIcon>
-                  </span>
-                  <span className="min-w-0">
-                    <span className="block truncate text-[13px] font-bold text-foreground-900 group-hover:text-primary-800">{item.label}</span>
-                    <span className="mt-0.5 block truncate text-[11px] font-medium leading-snug text-foreground-500">{componentTypeDescription(item.type)}</span>
-                  </span>
-                  <AppIcon className={`${checked ? 'ri-checkbox-circle-fill text-primary-500' : 'ri-add-circle-line text-foreground-300 group-hover:text-primary-400'} text-base`}></AppIcon>
-                </label>
-              );
-            })}
-          </div>
-        </section>
-      ))}
-    </div>
-  );
-}
-
-function ComponentTypeModal({ onClose, onAdd, title = 'What do you want to add?', description = 'Select one or more component types. You can edit the details after.', submitLabel = 'Add', initialSelectedTypes = [], selfStudyOnly = false }: {
-  onClose: () => void;
-  onAdd: (types: ModuleComponentType[]) => void | Promise<void>;
-  title?: string;
-  description?: string;
-  submitLabel?: string;
-  initialSelectedTypes?: ModuleComponentType[];
-  selfStudyOnly?: boolean;
-}) {
-  const availableTypes = componentTypes.filter(item => !selfStudyOnly || isSelfStudyComponent(item.type));
-  const [selectedTypes, setSelectedTypes] = useState<Set<ModuleComponentType>>(() => new Set(initialSelectedTypes));
-  const selected = selectedComponentTypes(selectedTypes);
-  return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm" onClick={onClose}>
-      <div className="flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-background-200 bg-background-50 shadow-2xl" onClick={event => event.stopPropagation()}>
-        <div className="border-b border-background-200 bg-background-50 px-5 py-4">
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex min-w-0 items-start gap-3">
-              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-primary-50 text-primary-600">
-                <AppIcon className="ri-layout-grid-line text-lg"></AppIcon>
-              </span>
-              <div className="min-w-0">
-                <h3 className="text-base font-heading font-bold text-foreground-950">{title}</h3>
-                <p className="mt-1 text-[12px] font-medium text-foreground-500">{description}</p>
-              </div>
-            </div>
-            <button onClick={onClose} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-foreground-500 transition-smooth hover:bg-background-100 hover:text-foreground-900" aria-label="Close">
-              <AppIcon className="ri-close-line text-lg"></AppIcon>
-            </button>
-          </div>
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <span className="rounded-lg border border-primary-100 bg-primary-50 px-2.5 py-1 text-[11px] font-bold text-primary-700">{selected.length} selected</span>
-            <span className="rounded-lg border border-background-200 bg-background-100 px-2.5 py-1 text-[11px] font-bold text-foreground-500">{availableTypes.length} available</span>
-          </div>
-        </div>
-        <div className="min-h-0 flex-1 overflow-y-auto bg-background-100/45 p-4">
-          <ComponentTypeChecklist
-            selfStudyOnly={selfStudyOnly}
-            selectedTypes={selectedTypes}
-            onToggle={type => setSelectedTypes(current => toggleComponentType(current, type))}
-          />
-        </div>
-        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-background-200 bg-background-50 px-5 py-3">
-          <div className="flex items-center gap-2">
-            <button type="button" onClick={() => setSelectedTypes(new Set(availableTypes.map(item => item.type)))} className="h-9 rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-600 transition-smooth hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700">
-              Select all
-            </button>
-            <button type="button" onClick={() => setSelectedTypes(new Set())} disabled={!selected.length} className="h-9 rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-600 transition-smooth hover:bg-background-100 disabled:opacity-40">
-              Clear
-            </button>
-          </div>
-          <div className="flex items-center gap-2">
-            <button type="button" onClick={onClose} className="h-9 rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-700 transition-smooth hover:bg-background-100">
-              Cancel
-            </button>
-            <button type="button" onClick={() => onAdd(selected)} disabled={!selected.length} className="inline-flex h-9 min-w-[150px] items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-4 text-[11px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-50">
-              <AppIcon className="ri-add-line"></AppIcon>
-              {submitLabel} {selected.length || ''} component{selected.length === 1 ? '' : 's'}
-            </button>
-          </div>
-        </div>
       </div>
     </div>
   );
@@ -7305,959 +6963,6 @@ function ModuleSettingsModal({ module, ksbSourceLabels, saving, saved, onClose, 
   );
 }
 
-function SessionKsbMappingModal({ module, sourceLabels, onClose }: {
-  module: ModuleCatalogueItem;
-  sourceLabels: Record<string, string>;
-  onClose: () => void;
-}) {
-  const components = module.weekStructure.flatMap(week => week.components.map(component => ({ week, component })));
-  const moduleMappings = uniqueMappings([
-    ...module.moduleKsbMappings,
-    ...module.weekStructure.flatMap(week => week.ksbMappings),
-    ...components.flatMap(item => item.component.ksbMappings),
-  ]);
-  const uniqueMappedCount = moduleMappings.length;
-  const occurrenceCount = module.moduleKsbMappings.length
-    + module.weekStructure.reduce((total, week) => total + week.ksbMappings.length, 0)
-    + components.reduce((total, item) => total + item.component.ksbMappings.length, 0);
-
-  return (
-    <div className="fixed inset-0 z-[75] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm" onClick={onClose}>
-      <div className="flex max-h-[88vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-background-50 shadow-2xl" onClick={event => event.stopPropagation()}>
-        <div className="flex flex-col gap-3 bg-primary-950 px-5 py-4 text-white lg:flex-row lg:items-center lg:justify-between">
-          <div className="min-w-0">
-            <p className="text-[10px] font-bold uppercase tracking-wide text-white/60">KSB Trace</p>
-            <h3 className="mt-0.5 text-base font-heading font-bold text-white">Review Module KSBs</h3>
-            <p className="mt-1 line-clamp-1 text-[12px] font-semibold text-white/70">{module.title}</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <MetricPill label="Components" value={String(components.length)} />
-            <MetricPill label="KSB codes" value={String(uniqueMappedCount)} />
-            <MetricPill label="Mappings" value={String(occurrenceCount)} />
-            <button onClick={onClose} className="ml-1 flex h-8 w-8 items-center justify-center rounded-lg bg-white/10 text-white transition-smooth hover:bg-white/20">
-              <AppIcon className="ri-close-line"></AppIcon>
-            </button>
-          </div>
-        </div>
-
-        <div className="min-h-0 flex-1 overflow-y-auto p-5">
-          {moduleMappings.length ? (
-            <div className="space-y-4">
-              {!!module.moduleKsbMappings.length && (
-                <ReviewKsbBand title="Module-level KSBs" mappings={uniqueMappings(module.moduleKsbMappings)} sourceLabels={sourceLabels} />
-              )}
-              {module.weekStructure.map(week => (
-                <ReviewKsbWeekSection key={week.id} week={week} sourceLabels={sourceLabels} />
-              ))}
-            </div>
-          ) : (
-            <EmptyState text="No KSBs are mapped to this module yet." />
-          )}
-        </div>
-
-        <div className="flex flex-col gap-3 border-t border-background-200 bg-background-50 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-[11px] font-semibold text-foreground-500">
-            Read-only review of module, week, and component KSB coverage.
-          </p>
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            <button type="button" onClick={onClose} className="rounded-lg border border-background-200 bg-background-50 px-4 py-2 text-[12px] font-semibold text-foreground-700 transition-smooth hover:bg-background-100">
-              Done
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function MetricPill({ label, value }: { label: string; value: string }) {
-  return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-white/10 px-2.5 py-1 text-[10px] font-bold text-white">
-      <span className="text-white/60">{label}</span>
-      <span>{value}</span>
-    </span>
-  );
-}
-
-function ReviewKsbWeekSection({ week, sourceLabels }: { week: ModuleWeek; sourceLabels: Record<string, string> }) {
-  const componentMappings = week.components.flatMap(component => component.ksbMappings);
-  const weekMappedKsbs = uniqueMappings([...week.ksbMappings, ...componentMappings]);
-  return (
-    <section className="overflow-hidden rounded-2xl border border-background-200 bg-background-50">
-      <div className="flex flex-col gap-2 border-b border-background-200 bg-background-100/70 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <p className="text-[10px] font-bold uppercase text-primary-600">Week {week.weekNumber}</p>
-          <h4 className="text-sm font-heading font-bold text-foreground-950">{week.title || `Week ${week.weekNumber}`}</h4>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <span className="rounded-full bg-background-50 px-2.5 py-1 text-[10px] font-bold text-foreground-500">{week.components.length} components</span>
-          <span className="rounded-full bg-background-50 px-2.5 py-1 text-[10px] font-bold text-foreground-500">{weekMappedKsbs.length} KSBs</span>
-        </div>
-      </div>
-      <div className="space-y-3 p-4">
-        {!!week.ksbMappings.length && (
-          <ReviewKsbBand title="Week-level KSBs" mappings={uniqueMappings(week.ksbMappings)} sourceLabels={sourceLabels} />
-        )}
-        {week.components.map(component => (
-          <ReviewKsbComponentRow key={component.id} week={week} component={component} sourceLabels={sourceLabels} />
-        ))}
-        {!week.ksbMappings.length && !week.components.length && (
-          <EmptyState text="No KSBs or components in this week yet." />
-        )}
-      </div>
-    </section>
-  );
-}
-
-function ReviewKsbComponentRow({ week, component, sourceLabels }: { week: ModuleWeek; component: ModuleComponent; sourceLabels: Record<string, string> }) {
-  const meta = componentTypes.find(item => item.type === component.type);
-  const tone = componentToneClasses(meta?.tone);
-  const mappings = uniqueMappings(component.ksbMappings);
-  return (
-    <article className="rounded-xl border border-background-200 bg-background-100/35 p-3">
-      <div className="mb-3 flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
-        <div className="flex min-w-0 items-start gap-2.5">
-          <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${tone.soft} ${tone.text}`}>
-            <AppIcon className={`${meta?.icon || 'ri-file-line'} text-sm`}></AppIcon>
-          </span>
-          <div className="min-w-0">
-            <p className="truncate text-[12px] font-bold text-foreground-950">{componentSessionTitle(component, week, readableComponentTitle(component.title))}</p>
-            <p className="mt-0.5 text-[10px] font-semibold text-foreground-400">Week {week.weekNumber} - {meta?.label || component.type}</p>
-          </div>
-        </div>
-        <span className="w-fit rounded-full bg-background-50 px-2 py-0.5 text-[10px] font-bold text-foreground-500">{mappings.length} KSB{mappings.length === 1 ? '' : 's'}</span>
-      </div>
-      {mappings.length ? (
-        <div className="grid gap-2 lg:grid-cols-3">
-          {(['knowledge', 'skill', 'behaviour'] as const).map(kind => (
-            <ReviewKsbKindColumn
-              key={kind}
-              kind={kind}
-              mappings={mappings.filter(mapping => sessionKsbKind(mapping.code) === kind)}
-              sourceLabels={sourceLabels}
-            />
-          ))}
-        </div>
-      ) : (
-        <p className="rounded-lg border border-dashed border-background-300 bg-background-50 px-3 py-4 text-center text-[11px] font-semibold text-foreground-400">No KSBs mapped to this component.</p>
-      )}
-    </article>
-  );
-}
-
-function ReviewKsbBand({ title, mappings, sourceLabels }: { title: string; mappings: KsbMapping[]; sourceLabels: Record<string, string> }) {
-  return (
-    <div className="rounded-xl border border-primary-100 bg-primary-50/50 p-3">
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <p className="text-[10px] font-bold uppercase text-primary-700">{title}</p>
-        <span className="rounded-full bg-white/70 px-2 py-0.5 text-[9px] font-bold text-primary-700">{mappings.length}</span>
-      </div>
-      <div className="grid gap-2 lg:grid-cols-3">
-        {(['knowledge', 'skill', 'behaviour'] as const).map(kind => (
-          <ReviewKsbKindColumn
-            key={kind}
-            kind={kind}
-            mappings={mappings.filter(mapping => sessionKsbKind(mapping.code) === kind)}
-            sourceLabels={sourceLabels}
-          />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function ReviewKsbKindColumn({ kind, mappings, sourceLabels }: {
-  kind: 'knowledge' | 'skill' | 'behaviour';
-  mappings: KsbMapping[];
-  sourceLabels: Record<string, string>;
-}) {
-  const labels = {
-    knowledge: 'Knowledge',
-    skill: 'Skills',
-    behaviour: 'Behaviours',
-  };
-  return (
-    <div className="min-w-0 rounded-lg border border-background-200 bg-background-50 p-2">
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <p className="text-[9px] font-bold uppercase text-foreground-400">{labels[kind]}</p>
-        <span className="rounded-full bg-background-100 px-1.5 py-0.5 text-[9px] font-bold text-foreground-500">{mappings.length}</span>
-      </div>
-      <div className="space-y-1.5">
-        {mappings.map(mapping => <ReviewKsbChip key={mapping.id} mapping={mapping} sourceLabels={sourceLabels} />)}
-        {!mappings.length && <p className="text-[10px] font-semibold text-foreground-300">None</p>}
-      </div>
-    </div>
-  );
-}
-
-function ReviewKsbChip({ mapping, sourceLabels }: { mapping: KsbMapping; sourceLabels: Record<string, string> }) {
-  const sourceLabel = ksbSourceLabel(mapping, sourceLabels);
-  const classification = normaliseKsbMappingType(mapping.classification || mapping.type);
-  const weightClass = normaliseKsbWeightClass(mapping.weightClass || mapping.weight_class, classification);
-  return (
-    <div title={mapping.description || mapping.code} className={`rounded-md border px-2 py-1.5 ${ksbCodeChipClass(mapping.code)}`}>
-      <div className="flex flex-wrap items-center gap-1.5">
-        <span className="text-[10px] font-extrabold text-foreground-950">{mapping.code}</span>
-        <span className="rounded bg-white/70 px-1 py-0.5 text-[8px] font-bold">{ksbWeightClassLabel(weightClass)}</span>
-        <span className="rounded bg-white/70 px-1 py-0.5 text-[8px] font-bold">{clampKsbWeight(mapping.weight)}%</span>
-      </div>
-      {mapping.description && <p className="mt-1 line-clamp-2 text-[10px] font-semibold leading-relaxed text-foreground-700">{mapping.description}</p>}
-      {sourceLabel && <p className="mt-1 truncate text-[9px] font-bold text-foreground-400">{sourceLabel}</p>}
-    </div>
-  );
-}
-
-function sessionKsbKind(code: string): 'knowledge' | 'skill' | 'behaviour' {
-  const prefix = String(code || '').trim().toUpperCase().slice(0, 1);
-  if (prefix === 'S') return 'skill';
-  if (prefix === 'B') return 'behaviour';
-  return 'knowledge';
-}
-
-function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading, initialSourceId, lockedSourceId, onClose, onAddMany }: {
-  standards: CurriculumStandard[];
-  standardsLoading: boolean;
-  ksbSets: CurriculumKsbSet[];
-  ksbSetsLoading: boolean;
-  initialSourceId: string;
-  lockedSourceId?: string;
-  onClose: () => void;
-  onAddMany: (items: Array<{ option: KsbOption; weight: number; weightClass: KsbWeightClass }>) => void;
-}) {
-  const [weightsByKsbId, setWeightsByKsbId] = useState<Record<string, number>>({});
-  const [weightClassesByKsbId, setWeightClassesByKsbId] = useState<Record<string, KsbWeightClass>>({});
-  const [selectedKsbIds, setSelectedKsbIds] = useState<Set<string>>(new Set());
-  const [selectedSourceId, setSelectedSourceId] = useState(initialSourceId);
-  const [sourceMode, setSourceMode] = useState<'standard' | 'profile'>('profile');
-  const [addingKsbs, setAddingKsbs] = useState(false);
-  const [ksbSearch, setKsbSearch] = useState('');
-  const [ksbTypeFilter, setKsbTypeFilter] = useState<'all' | 'knowledge' | 'skill' | 'behaviour'>('all');
-  const sourceLocked = Boolean(lockedSourceId);
-  const standardSourceOptions = useMemo(() => standards.map(standard => ({
-      id: ksbStandardSourceId(standard),
-      label: `${standard.code} - ${standard.name} (${standard.total} KSBs)`,
-      options: standardToKsbOptions(standard),
-    })), [standards]);
-  const profileSourceOptions = useMemo(() => ksbSets.map(set => {
-    const sourceId = ksbSetSourceId(set);
-    const options = flattenKsbEntries(set.ksbs).map(option => ({ ...option, sourceType: 'framework', sourceId }));
-    return {
-      id: sourceId,
-      label: `${set.programmeName || set.standard || 'Profile'}${set.standard ? ` (${set.standard})` : ''} (${options.length} KSBs)`,
-      options,
-    };
-  }), [ksbSets]);
-  const sourceOptions = [...profileSourceOptions, ...standardSourceOptions];
-  useEffect(() => {
-    const preferredSourceId = lockedSourceId;
-    if (sourceLocked && preferredSourceId) {
-      setSourceMode(preferredSourceId.startsWith('standard:') ? 'standard' : 'profile');
-      setSelectedSourceId(preferredSourceId);
-    }
-  }, [lockedSourceId, sourceLocked]);
-  const selectedSource = sourceOptions.find(source => ksbSourceIdsMatch(source.id, selectedSourceId)) || null;
-  const resolvedSelectedSource = selectedSource
-    || sourceOptions.find(source => ksbSourceIdsMatch(source.id, selectedSourceId))
-    || null;
-  const selectedSourceValue = resolvedSelectedSource?.id || (sourceLocked ? selectedSourceId : '');
-  const sourceLabels = Object.fromEntries([
-    [
-      '',
-      ksbSetsLoading || standardsLoading ? 'Loading KSB sources...' : 'No source selected',
-    ],
-    ...sourceOptions.flatMap(source => ksbSourceIdAliases(source.id).map(alias => [alias, source.label])),
-  ]);
-  const sourceKsbOptions = useMemo(() => resolvedSelectedSource?.options || [], [resolvedSelectedSource]);
-  const filteredKsbOptions = useMemo(() => {
-    const query = ksbSearch.trim().toLowerCase();
-    return sourceKsbOptions.filter(option => {
-      const tone = ksbVisualTone(option.code, option.type);
-      if (ksbTypeFilter !== 'all' && tone.label.toLowerCase() !== ksbTypeFilter) return false;
-      if (!query) return true;
-      return option.code.toLowerCase().includes(query) || option.description.toLowerCase().includes(query);
-    });
-  }, [sourceKsbOptions, ksbSearch, ksbTypeFilter]);
-  const weightForOption = (option: KsbOption) => weightsByKsbId[option.id] ?? defaultKsbWeight(weightClassForOption(option));
-  const updateOptionWeight = (option: KsbOption, value: number) => {
-    setWeightsByKsbId(current => ({ ...current, [option.id]: clampKsbWeight(value) }));
-  };
-  const weightClassForOption = (option: KsbOption) => weightClassesByKsbId[option.id] ?? DEFAULT_KSB_WEIGHT_CLASS;
-  const updateOptionWeightClass = (option: KsbOption, value: string) => {
-    const nextWeightClass = normaliseKsbWeightClass(value);
-    setWeightClassesByKsbId(current => ({ ...current, [option.id]: nextWeightClass }));
-    setWeightsByKsbId(current => ({ ...current, [option.id]: defaultKsbWeight(nextWeightClass) }));
-  };
-  const toggleOption = (option: KsbOption) => {
-    setSelectedKsbIds(current => {
-      const next = new Set(current);
-      if (next.has(option.id)) next.delete(option.id);
-      else next.add(option.id);
-      return next;
-    });
-  };
-  const selectedItems = sourceKsbOptions
-    .filter(option => selectedKsbIds.has(option.id))
-    .map(option => {
-      const weightClass = weightClassForOption(option);
-      return { option, weight: clampPositiveKsbWeight(weightForOption(option), weightClass), weightClass };
-    });
-  const handleAddSelectedKsbs = () => {
-    if (!selectedItems.length || addingKsbs) return;
-    const count = selectedItems.length;
-    setAddingKsbs(true);
-    void Swal.fire({
-      title: 'Adding KSBs...',
-      text: `Mapping ${count} selected KSB${count === 1 ? '' : 's'}.`,
-      allowOutsideClick: false,
-      allowEscapeKey: false,
-      showConfirmButton: false,
-      customClass: {
-        popup: 'kbc-standard-swal-popup',
-        title: 'kbc-standard-swal-title',
-        htmlContainer: 'kbc-standard-swal-text',
-      },
-      didOpen: () => Swal.showLoading(),
-    });
-    window.setTimeout(() => {
-      onAddMany(selectedItems);
-      void Swal.fire({
-        icon: 'success',
-        title: 'KSBs added',
-        text: `${count} KSB${count === 1 ? ' has' : 's have'} been mapped successfully.`,
-        timer: 1400,
-        timerProgressBar: true,
-        showConfirmButton: false,
-        customClass: {
-          popup: 'kbc-standard-swal-popup',
-          title: 'kbc-standard-swal-title',
-          htmlContainer: 'kbc-standard-swal-text',
-        },
-      });
-    }, 250);
-  };
-  return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/45 backdrop-blur-sm p-4" onClick={onClose}>
-      <div className="w-full max-w-2xl rounded-2xl bg-background-50 shadow-2xl overflow-hidden" onClick={event => event.stopPropagation()}>
-        <div className="px-5 py-4 bg-primary-950 text-white flex items-center justify-between">
-          <h3 className="text-sm font-heading font-bold text-white">Add KSBs</h3>
-          <button onClick={onClose} className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center hover:bg-white/20"><AppIcon className="ri-close-line"></AppIcon></button>
-        </div>
-        <div className="p-5 space-y-4">
-          <div className="space-y-3">
-            {!sourceLocked ? (
-              <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3">
-                <p className="text-[10px] font-bold uppercase text-amber-700">Choose KSB source first</p>
-                <p className="mt-0.5 text-[11px] font-semibold text-amber-800">Select a KSB Source from the module-level dropdown, then click Add KSBs again.</p>
-              </div>
-            ) : (
-              <div className="rounded-xl border border-primary-100 bg-primary-50 px-3 py-2">
-                <p className="text-[10px] font-semibold uppercase text-primary-600">KSB source</p>
-                <p className="mt-0.5 truncate text-[12px] font-bold text-primary-950">{sourceLabels[selectedSourceValue] || selectedSourceValue.replace(/^(profile|standard):/, '')}</p>
-              </div>
-            )}
-          </div>
-          {resolvedSelectedSource && Boolean(sourceKsbOptions.length) && (
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <div className="relative flex-1 sm:max-w-[220px]">
-                <AppIcon className="ri-search-line absolute left-2.5 top-1/2 -translate-y-1/2 text-[12px] text-foreground-400"></AppIcon>
-                <input
-                  type="text"
-                  value={ksbSearch}
-                  onChange={event => setKsbSearch(event.target.value)}
-                  placeholder="Search KSB code or text"
-                  className="h-8 w-full rounded-md border border-foreground-200/60 bg-background-50 pl-7 pr-2 text-[11px] font-semibold text-foreground-900 outline-none focus:border-primary-300"
-                />
-              </div>
-              <div className="flex flex-wrap gap-1">
-                {(['all', 'knowledge', 'skill', 'behaviour'] as const).map(filterValue => (
-                  <button
-                    key={filterValue}
-                    type="button"
-                    onClick={() => setKsbTypeFilter(filterValue)}
-                    className={`rounded-full px-2.5 py-1 text-[10px] font-bold capitalize transition-smooth ${
-                      ksbTypeFilter === filterValue
-                        ? 'bg-primary-500 text-white'
-                        : 'bg-background-100 text-foreground-500 hover:bg-background-200'
-                    }`}
-                  >
-                    {filterValue}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-          <div className="max-h-96 overflow-y-auto space-y-2">
-            {filteredKsbOptions.map(option => {
-              const tone = ksbVisualTone(option.code, option.type);
-              const selected = selectedKsbIds.has(option.id);
-              return (
-              <div key={option.id} className={`rounded-xl border border-l-4 px-3 py-2 transition-smooth ${selected ? tone.selectedRow : tone.row}`}>
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="flex min-w-0 flex-1 items-start gap-2">
-                    <input
-                      type="checkbox"
-                      checked={selected}
-                      onChange={() => toggleOption(option)}
-                      className="mt-1 h-4 w-4 rounded border-foreground-300 text-primary-600 focus:ring-primary-300"
-                    />
-                    <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg ${tone.iconClass}`}>
-                      <AppIcon className={`${tone.icon} text-[13px]`}></AppIcon>
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <span className="text-[12px] font-bold text-foreground-900">{option.code}</span>
-                        <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${tone.badgeClass}`}>{tone.label}</span>
-                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${tone.weightClass}`}>{clampKsbWeight(weightForOption(option))}%</span>
-                      </div>
-                      <p className="mt-1 text-[11px] text-foreground-600 leading-relaxed">{option.description}</p>
-                    </div>
-                  </div>
-                  <div className="grid shrink-0 grid-cols-2 gap-2 sm:w-56">
-                    <div className="block">
-                      <span className="text-[9px] font-semibold uppercase text-foreground-400">Weight class</span>
-                      <div className="mt-1">
-                        <SelectMenu
-                          ariaLabel="Weight class"
-                          value={weightClassForOption(option)}
-                          onChange={value => updateOptionWeightClass(option, value)}
-                          options={WEIGHT_CLASS_OPTIONS}
-                          size="sm"
-                        />
-                      </div>
-                    </div>
-                    <label className="block">
-                      <span className="text-[9px] font-semibold uppercase text-foreground-400">Weight</span>
-                      <input
-                        type="number"
-                        min={1}
-                        step={1}
-                        value={clampPositiveKsbWeight(weightForOption(option), weightClassForOption(option))}
-                        onChange={event => updateOptionWeight(option, Number(event.target.value))}
-                        className="mt-1 h-8 w-full rounded-md border border-foreground-200/60 bg-background-50 px-2 text-[12px] font-bold text-foreground-900 outline-none focus:border-primary-300"
-                      />
-                    </label>
-                  </div>
-                </div>
-              </div>
-              );
-            })}
-            {!sourceLocked && !resolvedSelectedSource && <EmptyState text="Choose a KSB Source from the module-level dropdown first." />}
-            {sourceLocked && !resolvedSelectedSource && (ksbSetsLoading || standardsLoading
-              ? <LoadingSkeleton label="Loading the selected KSB Source" variant="rows" />
-              : <EmptyState text="The selected KSB Source is no longer available." />)}
-            {resolvedSelectedSource && !sourceKsbOptions.length && <EmptyState text="No KSBs are available for this selection." />}
-            {resolvedSelectedSource && Boolean(sourceKsbOptions.length) && !filteredKsbOptions.length && <EmptyState text="No KSBs match your search or filter." />}
-          </div>
-          <div className="flex items-center justify-between gap-3 border-t border-background-200 pt-3">
-            <p className="text-[11px] font-semibold text-foreground-500">{selectedItems.length} KSB{selectedItems.length === 1 ? '' : 's'} selected</p>
-            <button
-              type="button"
-              disabled={!selectedItems.length || addingKsbs}
-              onClick={handleAddSelectedKsbs}
-              className="h-9 rounded-lg bg-primary-500 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-600 disabled:cursor-not-allowed disabled:bg-foreground-200 disabled:text-foreground-400"
-            >
-              {addingKsbs ? 'Adding...' : 'Add KSBs'}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function standardToKsbOptions(standard: CurriculumStandard): KsbOption[] {
-  return (standard.ksbs || []).map(ksb => ({
-    id: `${standard.id}-${ksb.id || ksb.code}`,
-    code: ksb.code,
-    description: ksb.description,
-    type: ksb.type,
-    title: ksb.code,
-    sourceType: 'standard',
-    sourceId: ksbStandardSourceId(standard),
-  }));
-}
-
-function ksbStandardSourceId(standard: CurriculumStandard) {
-  return `standard:${standard.id}`;
-}
-
-function ksbSetSourceId(set: CurriculumKsbSet) {
-  const key = set.frameworkId || set.ksbProfileId || set.profileId || set.programmeId || set.standard || set.programmeName;
-  return String(key || 'ksb-set').trim();
-}
-
-function ksbSourceIdAliases(value?: string) {
-  const raw = String(value || '').trim();
-  const cleaned = cleanKsbSourceId(raw);
-  const aliases = new Set<string>();
-  [raw, cleaned].forEach(source => {
-    const id = String(source || '').trim();
-    if (!id) return;
-    aliases.add(id);
-    aliases.add(id.replace(/^profile:/, ''));
-    if (!id.startsWith('standard:')) aliases.add(`profile:${id.replace(/^profile:/, '')}`);
-    if (/^ksb-\d+$/i.test(id)) aliases.add(id.replace(/^ksb-/i, ''));
-    if (/^\d+$/.test(id)) {
-      aliases.add(`ksb-${id}`);
-      aliases.add(`KSBP-${id}`);
-      aliases.add(`profile:KSBP-${id}`);
-    }
-  });
-  return Array.from(aliases).filter(Boolean);
-}
-
-function ksbSourceIdsMatch(left?: string, right?: string) {
-  const leftAliases = ksbSourceIdAliases(left).map(normaliseDeepLinkValue).filter(Boolean);
-  const rightAliases = new Set(ksbSourceIdAliases(right).map(normaliseDeepLinkValue).filter(Boolean));
-  return leftAliases.some(alias => rightAliases.has(alias));
-}
-
-function ksbSetSourceAliases(set: CurriculumKsbSet) {
-  return [
-    ksbSetSourceId(set),
-    set.frameworkId,
-    set.ksbProfileId,
-    set.profileId,
-    set.profileId ? `KSBP-${set.profileId}` : '',
-    set.programmeId,
-    set.standard,
-    set.programmeName,
-    ...(set.programmeIds || []),
-  ].flatMap(value => ksbSourceIdAliases(String(value || '').trim())).filter(Boolean);
-}
-
-function cleanKsbSourceId(value?: string) {
-  const text = String(value || '').trim();
-  if (!text) return '';
-  if (text.startsWith('profile:')) return text.replace(/^profile:/, '');
-  return text;
-}
-
-function ksbSourceOptions(ksbSets: CurriculumKsbSet[], standards: CurriculumStandard[]) {
-  const seen = new Set<string>();
-  const profileOptions = ksbSets
-    .map(set => {
-      const id = ksbSetSourceId(set);
-      const title = ksbSetDisplayTitle(set);
-      return {
-        id,
-        label: title,
-      };
-    });
-  const standardOptions = standards
-    .map(standard => ({
-      id: ksbStandardSourceId(standard),
-      label: standard.name || standard.code || standard.standardRef || standard.id,
-    }));
-  return [...profileOptions, ...standardOptions].filter(option => {
-      if (seen.has(option.id)) return false;
-      seen.add(option.id);
-      return true;
-    });
-}
-
-function ksbMapSourceOptions(ksbSets: CurriculumKsbSet[], standards: CurriculumStandard[]): KsbSourceOption[] {
-  const profileOptions = ksbSets.map(set => {
-    const id = ksbSetSourceId(set);
-    const options = flattenKsbEntries(set.ksbs).map(option => ({ ...option, sourceType: 'framework', sourceId: id }));
-    const name = ksbSetDisplayTitle(set);
-    return {
-      id,
-      label: `${name} - ${options.length} KSBs`,
-      title: name,
-      subtitle: set.programmeName || set.standard || '',
-      options,
-    };
-  });
-  const standardOptions = standards.map(standard => {
-    const options = standardToKsbOptions(standard);
-    const name = `${standard.code || standard.standardRef || standard.id} - ${standard.name}`;
-    return {
-      id: ksbStandardSourceId(standard),
-      label: `Standard: ${name} - ${options.length || standard.total} KSBs`,
-      title: standard.name || standard.code || 'Standard',
-      subtitle: standard.code || standard.standardRef || '',
-      options,
-    };
-  });
-  const seen = new Set<string>();
-  return [...profileOptions, ...standardOptions].filter(option => {
-    if (seen.has(option.id)) return false;
-    seen.add(option.id);
-    return true;
-  });
-}
-
-function ksbSourceMatchesModule(sourceId: string, ksbSets: CurriculumKsbSet[], standards: CurriculumStandard[], module: ModuleCatalogueItem | null, programmes: CurriculumProgramme[]) {
-  const selectedSource = cleanKsbSourceId(sourceId);
-  if (!selectedSource) return false;
-  if (ksbSourceOptions(ksbSets, standards).some(option => ksbSourceIdsMatch(option.id, selectedSource))) return true;
-  if (ksbSets.some(set => ksbSetSourceAliases(set).some(alias => ksbSourceIdsMatch(alias, selectedSource)))) return true;
-  if (!module) return false;
-  const matchedSet = ksbSetForModule(ksbSets, module, programmes);
-  const matchedStandard = standardForModule(standards, module, programmes);
-  return Boolean(
-    (matchedSet && ksbSetSourceAliases(matchedSet).some(alias => ksbSourceIdsMatch(alias, selectedSource)))
-    || (matchedStandard && ksbSourceIdsMatch(ksbStandardSourceId(matchedStandard), selectedSource))
-  );
-}
-
-function valuesMatchAny(values: unknown[] | undefined, candidates: unknown[]) {
-  const expected = (values || []).map(normaliseDeepLinkValue).filter(Boolean);
-  if (!expected.length) return true;
-  const actual = new Set(candidates.map(normaliseDeepLinkValue).filter(Boolean));
-  return expected.some(value => actual.has(value));
-}
-
-function ksbSetMatchesModule(set: CurriculumKsbSet, module: ModuleCatalogueItem | null, programmes: CurriculumProgramme[]) {
-  if (!module) return false;
-  const programmeCandidates = Array.from(moduleStandardCandidates(module, programmes));
-  const moduleCandidates = [module.catalogueId, module.id, module.sourceId, module.sourceModule?.id, module.sourceModule?.sourceId];
-  const cohortCandidates = [module.cohortId, module.cohort];
-  const groupCandidates = [module.groupId, module.group];
-  return valuesMatchAny(set.programmeIds?.length ? set.programmeIds : [set.programmeId], programmeCandidates)
-    && valuesMatchAny(set.moduleCatalogueIds, moduleCandidates)
-    && valuesMatchAny(set.cohortIds, cohortCandidates)
-    && valuesMatchAny(set.groupIds, groupCandidates);
-}
-
-function ksbSourceLabelMap(standards: CurriculumStandard[], ksbSets: CurriculumKsbSet[]) {
-  const labels: Record<string, string> = {};
-  standards.forEach(standard => {
-    const label = `Skills standard: ${standard.code || standard.standardRef || standard.id} - ${standard.name}`;
-    labels[ksbStandardSourceId(standard)] = label;
-    labels[String(standard.id || '').trim()] = label;
-  });
-  ksbSets.forEach(set => {
-    const label = readableKsbSetLabel(set);
-    const prefixedSourceId = ksbSetSourceId(set);
-    [
-      prefixedSourceId,
-      prefixedSourceId.replace(/^profile:/, ''),
-      set.frameworkId,
-      set.profileId,
-      set.ksbProfileId,
-      set.programmeId,
-      ...(set.programmeIds || []),
-    ].forEach(value => {
-      const id = String(value || '').trim();
-      if (!id) return;
-      labels[id] = label;
-      labels[`profile:${id}`] = label;
-      const legacyNumeric = legacyKsbProfileNumericId(id);
-      if (legacyNumeric) labels[`ksb-${legacyNumeric}`] = label;
-    });
-    [set.programmeName, set.standard].forEach(value => {
-      const key = normaliseDeepLinkValue(value);
-      if (key) labels[`programme:${key}`] = label;
-    });
-  });
-  return labels;
-}
-
-function readableKsbSetLabel(set: CurriculumKsbSet) {
-  return ksbSetDisplayTitle(set);
-}
-
-function ksbSetDisplayTitle(set: CurriculumKsbSet) {
-  return String(set.standard || set.programmeName || set.ksbProfileId || set.profileId || set.frameworkId || 'KSB profile').trim();
-}
-
-function legacyKsbProfileNumericId(value: string) {
-  const match = String(value || '').match(/(?:KSBP-)?\d*?(\d{1,6})$/i);
-  if (!match) return '';
-  return String(Number(match[1]));
-}
-
-function ksbSourceLabel(mapping: KsbMapping, sourceLabels: Record<string, string> = {}, fallbackProgrammeName = '') {
-  const sourceId = String(mapping.sourceId || '').trim();
-  if (sourceId && sourceLabels[sourceId]) return sourceLabels[sourceId];
-  if (sourceId && sourceLabels[`profile:${sourceId}`]) return sourceLabels[`profile:${sourceId}`];
-  const programmeLabel = sourceLabels[`programme:${normaliseDeepLinkValue(fallbackProgrammeName)}`];
-  if (programmeLabel && /^ksb-\d+$/i.test(sourceId)) return programmeLabel;
-  const sourceType = String(mapping.sourceType || '').trim().toLowerCase();
-  if (sourceId && sourceId.startsWith('profile:')) return `KSB profile: ${sourceId.replace(/^profile:/, '')}`;
-  if (sourceId && sourceId.startsWith('standard:')) return `Skills standard: ${sourceId.replace(/^standard:/, '')}`;
-  if (sourceType === 'framework') return sourceId ? `KSB profile: ${sourceId}` : 'KSB profile';
-  if (sourceType === 'standard') return sourceId ? `Skills standard: ${sourceId}` : 'Skills standard';
-  return 'No source';
-}
-
-function conciseKsbSourceLabel(label: string) {
-  const text = String(label || '').trim();
-  if (!text || text === 'No source') return 'No source';
-  return text
-    .replace(/^KSB profile:\s*/i, 'Profile - ')
-    .replace(/^Skills standard:\s*/i, 'Standard - ');
-}
-
-function standardForModule(standards: CurriculumStandard[], module: ModuleCatalogueItem | null, programmes: CurriculumProgramme[]) {
-  if (!module || !standards.length) return null;
-  const candidates = moduleStandardCandidates(module, programmes);
-  if (!candidates.size) return null;
-  return standards.find(standard => {
-    const standardCandidates = [
-      standard.id,
-      standard.code,
-      standard.standardRef,
-      standard.name,
-      standard.larsCode,
-      `${standard.code} v${standard.version}`,
-      `${standard.standardRef} v${standard.version}`,
-    ].map(normaliseDeepLinkValue).filter(Boolean);
-    return standardCandidates.some(candidate => candidates.has(candidate));
-  }) || null;
-}
-
-function ksbSetForModule(ksbSets: CurriculumKsbSet[], module: ModuleCatalogueItem | null, programmes: CurriculumProgramme[]) {
-  if (!module || !ksbSets.length) return null;
-  const candidates = moduleStandardCandidates(module, programmes);
-  if (!candidates.size) return null;
-  return ksbSets.find(set => {
-    if (!ksbSetMatchesModule(set, module, programmes)) return false;
-    const setCandidates = [
-      set.frameworkId,
-      set.profileId,
-      set.programmeId,
-      ...(set.programmeIds || []),
-      set.programmeName,
-      set.standard,
-    ].map(normaliseDeepLinkValue).filter(Boolean);
-    return setCandidates.some(candidate => candidates.has(candidate));
-  }) || null;
-}
-
-function moduleStandardCandidates(module: ModuleCatalogueItem, programmes: CurriculumProgramme[]) {
-  const rawCandidates = [
-    module.programmeId,
-    module.programmeName,
-    module.sourceModule?.programmeId,
-    module.sourceModule?.programme,
-    ...((module as ModuleBuilderListItem).deliveryUsages || []).flatMap(usage => [usage.programmeId, usage.programme]),
-  ];
-  const moduleKeys = new Set(rawCandidates.map(normaliseDeepLinkValue).filter(Boolean));
-  programmes.forEach(programme => {
-    const programmeKeys = [programme.id, programme.sourceId, programme.name].map(normaliseDeepLinkValue).filter(Boolean);
-    if (programmeKeys.some(key => moduleKeys.has(key))) {
-      rawCandidates.push(programme.standard);
-    }
-  });
-  return new Set(rawCandidates.map(normaliseDeepLinkValue).filter(Boolean));
-}
-
-function ksbWeightSummary(mappings: KsbMapping[]) {
-  return mappings.reduce(
-    (summary, mapping) => {
-      const weight = Number(mapping.weight || 0);
-      const code = String(mapping.code || '').trim().toUpperCase();
-      if (code.startsWith('K')) summary.knowledge += weight;
-      else if (code.startsWith('S')) summary.skills += weight;
-      else if (code.startsWith('B')) summary.behaviours += weight;
-      summary.total += weight;
-      return summary;
-    },
-    { knowledge: 0, skills: 0, behaviours: 0, total: 0 },
-  );
-}
-
-function KsbWeightSummary({ summary }: { summary: ReturnType<typeof ksbWeightSummary> }) {
-  const items = [
-    ['K', summary.knowledge],
-    ['S', summary.skills],
-    ['B', summary.behaviours],
-    ['Total', summary.total],
-  ] as const;
-  return (
-    <div className="grid grid-cols-4 gap-1.5 rounded-xl border border-background-200 bg-background-100/35 p-2">
-      {items.map(([label, value]) => (
-        <div key={label} className="rounded-lg bg-background-50 px-2 py-1.5 text-center">
-          <p className="text-[9px] font-bold uppercase text-foreground-400">{label}</p>
-          <p className="text-[12px] font-heading font-bold text-foreground-900">{Number(value || 0)}%</p>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function KsbCards({ title, mappings, sourceLabels = {}, onAdd, onRemove, onWeightChange, onWeightClassChange }: { title: string; mappings: KsbMapping[]; sourceLabels?: Record<string, string>; onAdd?: () => void; onRemove?: (mappingId: string) => void; onWeightChange?: (mappingId: string, weight: number) => void; onWeightClassChange?: (mappingId: string, weightClass: KsbWeightClass) => void }) {
-  const totalWeight = mappings.reduce((total, mapping) => total + Number(mapping.weight || 0), 0);
-  return (
-    <div className="space-y-2 rounded-xl border border-background-200 bg-background-100/35 p-3">
-      <div className="flex items-center justify-between gap-2">
-        <div>
-          <p className="text-[10px] font-bold uppercase text-foreground-400">{title}</p>
-          {!!mappings.length && <p className="mt-0.5 text-[10px] font-semibold text-foreground-500">{totalWeight}% total weight</p>}
-        </div>
-        {onAdd && (
-          <button onClick={onAdd} className="inline-flex h-7 items-center justify-center gap-1 rounded-md bg-primary-500 px-2 text-[10px] font-semibold text-white transition-smooth hover:bg-primary-600">
-            <AppIcon className="ri-add-line"></AppIcon>
-            KSB
-          </button>
-        )}
-      </div>
-      <div className="space-y-2">
-        {mappings.map(mapping => (
-          <KsbCard
-            key={mapping.id}
-            mapping={mapping}
-            sourceLabels={sourceLabels}
-            onRemove={onRemove ? () => onRemove(mapping.id) : undefined}
-            onWeightChange={onWeightChange ? weight => onWeightChange(mapping.id, weight) : undefined}
-            onWeightClassChange={onWeightClassChange ? weightClass => onWeightClassChange(mapping.id, weightClass) : undefined}
-          />
-        ))}
-        {!mappings.length && <p className="text-[11px] text-foreground-400">No KSBs mapped.</p>}
-      </div>
-    </div>
-  );
-}
-
-function KsbCard({ mapping, sourceLabels = {}, onRemove, onWeightChange, onWeightClassChange }: { mapping: KsbMapping; sourceLabels?: Record<string, string>; onRemove?: () => void; onWeightChange?: (weight: number) => void; onWeightClassChange?: (weightClass: KsbWeightClass) => void }) {
-  const tone = ksbVisualTone(mapping.code, mapping.type);
-  const classification = normaliseKsbMappingType(mapping.classification || mapping.type);
-  const weightClass = normaliseKsbWeightClass(mapping.weightClass || mapping.weight_class, classification);
-  const sourceLabel = ksbSourceLabel(mapping, sourceLabels);
-  return (
-    <div className={`rounded-lg border border-l-4 p-2 ${tone.row}`} title={mapping.description || `${mapping.code} applied`}>
-      <div className="flex items-center gap-2">
-        <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-lg ${tone.iconClass}`}>
-          <AppIcon className={`${tone.icon} text-[13px]`}></AppIcon>
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-1.5 min-w-0">
-            <p className="truncate text-[11px] font-bold text-foreground-900">{mapping.code} applied</p>
-            <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${tone.badgeClass}`}>{tone.label}</span>
-            <span className="rounded-full bg-background-50 px-2 py-0.5 text-[9px] font-bold text-foreground-600">{ksbWeightClassLabel(weightClass)}</span>
-            <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${tone.weightClass}`}>{Number(mapping.weight || 0)}%</span>
-          </div>
-          <p className="mt-1 truncate text-[10px] font-semibold text-foreground-400">{sourceLabel}</p>
-          {(onWeightChange || onWeightClassChange) && (
-            <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-[112px_88px]">
-              {onWeightClassChange && (
-                <div className="text-[10px] font-semibold uppercase text-foreground-400">
-                  Weight class
-                  <div className="mt-1">
-                    <SelectMenu
-                      ariaLabel="Weight class"
-                      value={weightClass}
-                      onChange={value => onWeightClassChange(normaliseKsbWeightClass(value))}
-                      options={WEIGHT_CLASS_OPTIONS}
-                      size="sm"
-                    />
-                  </div>
-                </div>
-              )}
-              {onWeightChange && (
-                <label className="text-[10px] font-semibold uppercase text-foreground-400">
-                  Weight
-                  <input
-                    type="number"
-                    min={0}
-                    step={1}
-                    value={Number(mapping.weight || 0)}
-                    onChange={event => onWeightChange(clampKsbWeight(Number(event.target.value)))}
-                    className="mt-1 h-7 w-full rounded-md border border-foreground-200/60 bg-background-50 px-2 text-[12px] font-bold text-foreground-900 outline-none focus:border-primary-300"
-                  />
-                </label>
-              )}
-            </div>
-          )}
-          {Number(mapping.weight || 0) <= 0 && (
-            <p className="mt-1 text-[10px] font-semibold text-amber-700">Set a positive weight before saving.</p>
-          )}
-        </div>
-        {onRemove && <button onClick={onRemove} className="h-6 w-6 shrink-0 rounded-md text-red-500 hover:bg-red-50"><AppIcon className="ri-close-line text-xs"></AppIcon></button>}
-      </div>
-    </div>
-  );
-}
-
-function WeekKsbCodeSection({ mappings, sourceLabels }: { mappings: KsbMapping[]; sourceLabels: Record<string, string> }) {
-  const groups = [
-    { key: 'K', label: 'Knowledge', items: mappings.filter(mapping => String(mapping.code || '').toUpperCase().startsWith('K')) },
-    { key: 'S', label: 'Skills', items: mappings.filter(mapping => String(mapping.code || '').toUpperCase().startsWith('S')) },
-    { key: 'B', label: 'Behaviours', items: mappings.filter(mapping => String(mapping.code || '').toUpperCase().startsWith('B')) },
-  ];
-  return (
-    <div className="space-y-2 rounded-xl border border-primary-100 bg-primary-50/35 p-3">
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-[10px] font-bold uppercase text-primary-700">Week KSBs</p>
-        {!!mappings.length && <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-bold text-primary-700">{mappings.length}</span>}
-      </div>
-      {mappings.length ? (
-        <div className="space-y-2">
-          {groups.map(group => group.items.length ? (
-            <div key={group.key} className="space-y-1">
-              <p className="text-[9px] font-bold uppercase text-foreground-400">{group.label}</p>
-              <div className="flex flex-wrap gap-1">
-                {group.items.map(mapping => <KsbCodeOnlyChip key={mapping.id} mapping={mapping} sourceLabels={sourceLabels} />)}
-              </div>
-            </div>
-          ) : null)}
-        </div>
-      ) : (
-        <p className="text-[11px] text-foreground-400">No KSBs mapped.</p>
-      )}
-    </div>
-  );
-}
-
-function KsbCodeOnlyChip({ mapping, sourceLabels }: { mapping: KsbMapping; sourceLabels: Record<string, string> }) {
-  const sourceLabel = ksbSourceLabel(mapping, sourceLabels);
-  return (
-    <span
-      title={`${mapping.description || mapping.code} - ${sourceLabel}`}
-      className={`inline-flex max-w-full items-center gap-1 rounded-md border px-2 py-1 text-[10px] font-bold ${ksbCodeChipClass(mapping.code)}`}
-    >
-      <span>{mapping.code}</span>
-      <span className="max-w-[140px] truncate rounded bg-white/70 px-1 text-[8px] font-semibold">{sourceLabel}</span>
-    </span>
-  );
-}
-
-function ksbVisualTone(code: string, type?: string) {
-  const rawType = String(type || '').trim().toLowerCase();
-  const prefix = String(code || '').trim().toUpperCase().slice(0, 1);
-  if (prefix === 'S' || rawType.startsWith('skill')) {
-    return {
-      label: 'Skill',
-      icon: 'ri-tools-line',
-      row: 'border-amber-100 border-l-amber-500 bg-amber-50/35 hover:bg-amber-50',
-      selectedRow: 'border-amber-300 border-l-amber-600 bg-amber-50 ring-1 ring-amber-100',
-      iconClass: 'bg-amber-100 text-amber-700',
-      badgeClass: 'bg-amber-100 text-amber-700',
-      weightClass: 'bg-amber-50 text-amber-700',
-      chipClass: 'border-amber-100 bg-amber-50 text-amber-700',
-    };
-  }
-  if (prefix === 'B' || rawType.startsWith('behaviour')) {
-    return {
-      label: 'Behaviour',
-      icon: 'ri-user-heart-line',
-      row: 'border-emerald-100 border-l-emerald-500 bg-emerald-50/35 hover:bg-emerald-50',
-      selectedRow: 'border-emerald-300 border-l-emerald-600 bg-emerald-50 ring-1 ring-emerald-100',
-      iconClass: 'bg-emerald-100 text-emerald-700',
-      badgeClass: 'bg-emerald-100 text-emerald-700',
-      weightClass: 'bg-emerald-50 text-emerald-700',
-      chipClass: 'border-emerald-100 bg-emerald-50 text-emerald-700',
-    };
-  }
-  return {
-    label: 'Knowledge',
-    icon: 'ri-book-open-line',
-    row: 'border-primary-100 border-l-primary-500 bg-primary-50/35 hover:bg-primary-50',
-    selectedRow: 'border-primary-300 border-l-primary-600 bg-primary-50 ring-1 ring-primary-100',
-    iconClass: 'bg-primary-100 text-primary-700',
-    badgeClass: 'bg-primary-100 text-primary-700',
-    weightClass: 'bg-primary-50 text-primary-700',
-    chipClass: 'border-primary-100 bg-primary-50 text-primary-700',
-  };
-}
-
-function ksbCodeChipClass(code: string) {
-  return ksbVisualTone(code).chipClass;
-}
-
 function SettingsSection({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="rounded-2xl border border-foreground-200/60 bg-background-50 p-4 space-y-4">
@@ -8554,353 +7259,6 @@ function ModuleCardActionButton({ label, icon, onClick, tone = 'default' }: { la
       <AppIcon name={icon} size={15}></AppIcon>
       {label}
     </button>
-  );
-}
-
-type KsbSourceOption = {
-  id: string;
-  label: string;
-  title: string;
-  subtitle: string;
-  options: KsbOption[];
-};
-
-type ModuleKsbMapRow = {
-  code: string;
-  description: string;
-  source: string;
-  sourceFull: string;
-  weight: number;
-  locations: string[];
-  placements: ModuleKsbPlacement[];
-  applied: boolean;
-  classificationLabels: string[];
-};
-
-type ModuleKsbPlacement = {
-  label: string;
-  scope: 'Module' | 'Week' | 'Component';
-  otjh: number;
-  points: number;
-  /**
-   * Which column of the heatmap this placement belongs in: 'module' for a
-   * module-level mapping, `week:<index>` for anything inside a week. Set by
-   * `moduleKsbMapRows` from the week structure itself rather than parsed back
-   * out of the label, so a week titled "Week 3 / Intro" cannot be misread.
-   */
-  columnKey?: string;
-  /** The component's own title, when the placement is a component. */
-  detail?: string;
-};
-
-function ModuleKsbMapModal({ module, sourceLabels, ksbSets, standards, programmes, onClose, onBuild }: {
-  module: ModuleBuilderListItem;
-  sourceLabels: Record<string, string>;
-  ksbSets: CurriculumKsbSet[];
-  standards: CurriculumStandard[];
-  programmes: CurriculumProgramme[];
-  onClose: () => void;
-  onBuild: () => void;
-}) {
-  const [query, setQuery] = useState('');
-  const allSourceOptions = useMemo(() => ksbMapSourceOptions(ksbSets, standards), [ksbSets, standards]);
-  const defaultSourceId = useMemo(() => {
-    const selected = cleanKsbSourceId(module.ksbProfileSourceId);
-    if (selected && allSourceOptions.some(option => option.id === selected)) return selected;
-    const matchingProfile = ksbSetForModule(ksbSets, module, programmes);
-    if (matchingProfile) return ksbSetSourceId(matchingProfile);
-    const matchingStandard = standardForModule(standards, module, programmes);
-    return matchingStandard ? ksbStandardSourceId(matchingStandard) : allSourceOptions[0]?.id || '';
-  }, [allSourceOptions, ksbSets, module, programmes, standards]);
-  const sourceOptions = useMemo(() => {
-    return allSourceOptions
-      .map(option => {
-        const appliedCount = moduleKsbMapRows(module, sourceLabels, option, option.id === defaultSourceId).length;
-        return {
-          ...option,
-          appliedCount,
-        };
-      })
-      .filter(option => option.appliedCount > 0 || option.id === defaultSourceId);
-  }, [allSourceOptions, defaultSourceId, module, sourceLabels]);
-  const [selectedSourceId, setSelectedSourceId] = useState(defaultSourceId);
-  useEffect(() => {
-    if (!selectedSourceId && defaultSourceId) setSelectedSourceId(defaultSourceId);
-    else if (selectedSourceId && sourceOptions.length && !sourceOptions.some(option => option.id === selectedSourceId)) setSelectedSourceId(defaultSourceId);
-  }, [defaultSourceId, selectedSourceId, sourceOptions]);
-  const selectedSource = sourceOptions.find(option => option.id === selectedSourceId) || allSourceOptions.find(option => option.id === selectedSourceId) || null;
-  const rows = moduleKsbMapRows(module, sourceLabels, selectedSource, selectedSource?.id === defaultSourceId);
-  const filteredRows = useMemo(() => {
-    const search = query.trim().toLowerCase();
-    return rows.filter(row => {
-      const matchesSearch = !search || [
-        row.code,
-        row.description,
-        row.source,
-        row.applied ? 'mapped applied used' : 'not mapped unused',
-        ...row.locations,
-      ].some(value => String(value || '').toLowerCase().includes(search));
-      return matchesSearch;
-    });
-  }, [query, rows]);
-  const groups = [
-    { key: 'K' as const, title: 'Knowledge', icon: 'ri-book-open-line', rows: filteredRows.filter(row => row.code.toUpperCase().startsWith('K')) },
-    { key: 'S' as const, title: 'Skills', icon: 'ri-tools-line', rows: filteredRows.filter(row => row.code.toUpperCase().startsWith('S')) },
-    { key: 'B' as const, title: 'Behaviours', icon: 'ri-user-heart-line', rows: filteredRows.filter(row => row.code.toUpperCase().startsWith('B')) },
-  ];
-  const visiblePlacementCount = filteredRows.reduce((total, row) => total + row.placements.length, 0);
-  const visibleWeight = filteredRows.reduce((total, row) => total + row.weight, 0);
-  const visibleOtjh = uniquePlacementOtjh(filteredRows);
-  useEffect(() => {
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
-    };
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    window.addEventListener('keydown', closeOnEscape);
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      window.removeEventListener('keydown', closeOnEscape);
-    };
-  }, [onClose]);
-  const dialog = (
-    <div role="dialog" aria-modal="true" aria-labelledby="module-ksb-map-title" className="fixed inset-0 z-[110] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm" onClick={onClose}>
-      <div className="flex max-h-[88vh] w-full max-w-7xl flex-col overflow-hidden rounded-2xl bg-background-50 shadow-2xl" onClick={event => event.stopPropagation()}>
-        <div className="border-b border-background-200 bg-primary-950 px-5 py-4 text-white">
-          <div className="flex items-start justify-between gap-4">
-            <div className="min-w-0">
-              <p className="text-[10px] font-bold uppercase tracking-wide text-white/60">KSB Coverage</p>
-              <h3 id="module-ksb-map-title" className="mt-1 truncate text-base font-heading font-bold text-white">{module.title}</h3>
-              <p className="mt-1 text-[11px] font-semibold text-white/70">Applied KSBs, placement, weight and OTJH for this module.</p>
-            </div>
-            <button type="button" aria-label="Close module KSB review" onClick={onClose} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-white/10 text-white transition-smooth hover:bg-white/20">
-              <AppIcon className="ri-close-line"></AppIcon>
-            </button>
-          </div>
-        </div>
-        <div className="border-b border-background-200 bg-background-50 px-5 py-3">
-          <div className="grid grid-cols-1 gap-3 xl:grid-cols-[300px_minmax(260px,1fr)_auto] xl:items-end">
-            <div className="block">
-              <span className="mb-1 block text-[9px] font-bold uppercase tracking-wide text-foreground-400">KSB source</span>
-              <div className="flex min-h-10 w-full items-center rounded-lg border border-background-200 bg-background-100 px-3 py-2">
-                {selectedSource ? (
-                  <div className="min-w-0">
-                    <p className="truncate text-[12px] font-bold text-foreground-950">{selectedSource.title}</p>
-                    <p className="mt-0.5 truncate text-[11px] font-medium text-foreground-500">{selectedSource.subtitle}</p>
-                  </div>
-                ) : (
-                  <span className="text-[12px] font-semibold text-foreground-500">No applied KSB sources</span>
-                )}
-              </div>
-            </div>
-            <div className="relative">
-              <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
-              <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search code, description, week or component..." className="h-10 w-full rounded-lg border border-background-200 bg-background-100 pl-9 pr-3 text-[12px] text-foreground-900 outline-none transition-smooth focus:border-primary-300 focus:bg-background-50" />
-            </div>
-            <div className="grid grid-cols-3 gap-2">
-              <KsbCoverageMetric label="KSBs" value={String(filteredRows.length)} />
-              <KsbCoverageMetric label="Placements" value={String(visiblePlacementCount)} />
-              <KsbCoverageMetric label="OTJH" value={formatKsbOtjh(visibleOtjh)} />
-            </div>
-          </div>
-          <div className="mt-3 flex flex-wrap gap-2 text-[10px] font-bold text-foreground-500">
-            <span className="rounded-md border border-background-200 bg-background-100 px-2 py-1">Mapped weight: {formatKsbWeight(visibleWeight)}</span>
-            <span className="rounded-md border border-background-200 bg-background-100 px-2 py-1">Applied KSBs only</span>
-          </div>
-        </div>
-        <div className="min-h-0 flex-1 overflow-y-auto p-5">
-          {rows.length ? (
-            <div className="space-y-4">
-              <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-                {groups.map(group => (
-                  <ModuleKsbGroupPanel key={group.key} group={group} />
-                ))}
-              </div>
-            </div>
-          ) : (
-            <div className="rounded-2xl border border-dashed border-background-300 bg-background-100 p-8 text-center">
-              <AppIcon className="ri-node-tree text-3xl text-foreground-300"></AppIcon>
-              <p className="mt-2 text-[13px] font-bold text-foreground-700">No applied KSBs for this source</p>
-              <p className="mt-1 text-[12px] text-foreground-500">Choose another source or use Edit mappings to attach KSBs to weeks or components.</p>
-            </div>
-          )}
-        </div>
-        <div className="flex flex-col gap-3 border-t border-background-200 bg-background-50 px-5 py-4 sm:flex-row sm:items-center sm:justify-end">
-          <button type="button" onClick={onClose} className="rounded-lg border border-background-200 bg-background-50 px-4 py-2 text-[12px] font-semibold text-foreground-700 transition-smooth hover:bg-background-100">
-            Close
-          </button>
-          <button type="button" onClick={onBuild} className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-4 py-2 text-[12px] font-bold text-white transition-smooth hover:bg-primary-600">
-            <AppIcon className="ri-hammer-line"></AppIcon>
-            Edit mappings
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-  return typeof document === 'undefined' ? dialog : createPortal(dialog, document.body);
-}
-
-function ProgrammeKsbMapModal({ programmeName, modules, sourceLabels, onClose }: {
-  programmeName: string;
-  modules: ModuleBuilderListItem[];
-  sourceLabels: Record<string, string>;
-  onClose: () => void;
-}) {
-  const [query, setQuery] = useState('');
-  const rows = useMemo(() => programmeKsbMapRows(modules, sourceLabels, programmeName), [modules, programmeName, sourceLabels]);
-  const filteredRows = useMemo(() => {
-    const search = query.trim().toLowerCase();
-    return rows.filter(row => {
-      if (!search) return true;
-      return [
-        row.code,
-        row.description,
-        row.source,
-        ...row.locations,
-      ].some(value => String(value || '').toLowerCase().includes(search));
-    });
-  }, [query, rows]);
-  const groups = [
-    { key: 'K' as const, title: 'Knowledge', icon: 'ri-book-open-line', rows: filteredRows.filter(row => row.code.toUpperCase().startsWith('K')) },
-    { key: 'S' as const, title: 'Skills', icon: 'ri-tools-line', rows: filteredRows.filter(row => row.code.toUpperCase().startsWith('S')) },
-    { key: 'B' as const, title: 'Behaviours', icon: 'ri-user-heart-line', rows: filteredRows.filter(row => row.code.toUpperCase().startsWith('B')) },
-  ];
-
-  return (
-    <div className="fixed inset-0 z-[88] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm" onClick={onClose}>
-      <div className="flex max-h-[88vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-background-50 shadow-2xl" onClick={event => event.stopPropagation()}>
-        <div className="border-b border-background-200 bg-primary-950 px-5 py-4 text-white">
-          <div className="flex items-start justify-between gap-4">
-            <div className="min-w-0">
-              <p className="text-[10px] font-bold uppercase tracking-wide text-white/60">Programme KSB Coverage</p>
-              <h3 className="mt-1 truncate text-base font-heading font-bold text-white">{programmeName}</h3>
-              <p className="mt-1 text-[11px] font-semibold text-white/70">Applied KSBs across {modules.length} module{modules.length === 1 ? '' : 's'} in this programme.</p>
-            </div>
-            <button onClick={onClose} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-white/10 text-white transition-smooth hover:bg-white/20">
-              <AppIcon className="ri-close-line"></AppIcon>
-            </button>
-          </div>
-        </div>
-        <div className="border-b border-background-200 bg-background-50 px-5 py-3">
-          <div className="relative">
-            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
-            <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search code, source, module, week or component..." className="h-10 w-full rounded-lg border border-background-200 bg-background-100 pl-9 pr-3 text-[12px] text-foreground-900 outline-none transition-smooth focus:border-primary-300 focus:bg-background-50" />
-          </div>
-        </div>
-        <div className="min-h-0 flex-1 overflow-y-auto p-5">
-          {rows.length ? (
-            <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-              {groups.map(group => (
-                <ModuleKsbGroupPanel key={group.key} group={group} />
-              ))}
-            </div>
-          ) : (
-            <div className="rounded-2xl border border-dashed border-background-300 bg-background-100 p-8 text-center">
-              <AppIcon className="ri-node-tree text-3xl text-foreground-300"></AppIcon>
-              <p className="mt-2 text-[13px] font-bold text-foreground-700">No detailed KSB mappings in this programme</p>
-              <p className="mt-1 text-[12px] text-foreground-500">Add KSB mappings to weeks or components to see programme coverage here.</p>
-            </div>
-          )}
-        </div>
-        <div className="flex items-center justify-end border-t border-background-200 bg-background-50 px-5 py-4">
-          <button type="button" onClick={onClose} className="rounded-lg border border-background-200 bg-background-50 px-4 py-2 text-[12px] font-semibold text-foreground-700 transition-smooth hover:bg-background-100">
-            Close
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ModuleKsbGroupPanel({ group }: {
-  group: { key: 'K' | 'S' | 'B'; title: string; icon: string; rows: ModuleKsbMapRow[] };
-}) {
-  const tone = ksbVisualTone(group.key);
-  const placementCount = group.rows.reduce((total, row) => total + row.placements.length, 0);
-  const groupOtjh = uniquePlacementOtjh(group.rows);
-  return (
-    <section className={`flex min-h-0 flex-col rounded-xl border border-l-4 bg-background-100/35 ${tone.row}`}>
-      <div className="border-b border-background-200 px-4 py-3">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <span className={`grid h-9 w-9 place-items-center rounded-lg ${tone.iconClass}`}>
-              <AppIcon className={`${group.icon} text-sm`}></AppIcon>
-            </span>
-            <div>
-              <h4 className="text-[12px] font-black uppercase text-foreground-800">{group.title}</h4>
-              <p className="mt-0.5 text-[10px] font-semibold text-foreground-400">{placementCount} placement{placementCount === 1 ? '' : 's'} - {formatKsbOtjh(groupOtjh)} OTJH</p>
-            </div>
-          </div>
-          <span className={`rounded-full px-2.5 py-1 text-[11px] font-black ${tone.badgeClass}`}>{group.rows.length}</span>
-        </div>
-      </div>
-      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
-        {group.rows.map(row => (
-          <ModuleKsbMapCard key={row.code} row={row} />
-        ))}
-        {!group.rows.length && <p className="rounded-xl border border-dashed border-background-300 bg-background-50 px-3 py-8 text-center text-[11px] font-semibold text-foreground-400">None mapped.</p>}
-      </div>
-    </section>
-  );
-}
-
-function ModuleKsbMapCard({ row }: { row: ModuleKsbMapRow }) {
-  const kind = row.code.toUpperCase().slice(0, 1);
-  const tone = ksbVisualTone(kind);
-  const totalOtjh = row.placements.reduce((total, placement) => total + Number(placement.otjh || 0), 0);
-  const totalPoints = row.placements.reduce((total, placement) => total + Number(placement.points || 0), 0);
-  return (
-    <article className={`rounded-xl border bg-background-50 p-3 shadow-sm transition-smooth hover:border-primary-200 hover:shadow-md ${tone.selectedRow}`}>
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className={`rounded-lg border px-2.5 py-1 text-[12px] font-black ${ksbCodeChipClass(row.code)}`}>{row.code}</span>
-            <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${row.applied ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100' : 'bg-slate-100 text-slate-500 ring-1 ring-slate-200'}`}>{row.applied ? `${row.placements.length} place${row.placements.length === 1 ? '' : 's'}` : 'Not mapped'}</span>
-            {row.classificationLabels.map(label => <span key={label} className="rounded-full bg-background-100 px-2 py-0.5 text-[9px] font-bold text-foreground-500">{label}</span>)}
-          </div>
-        </div>
-        <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-black ${row.applied ? ksbCodeChipClass(row.code) : 'bg-slate-100 text-slate-500 ring-1 ring-slate-200'}`}>{formatKsbWeight(row.weight)}</span>
-      </div>
-      <p className="mt-2 line-clamp-3 text-[12px] font-medium leading-relaxed text-foreground-700">{row.description || 'No description available.'}</p>
-      <div className="mt-3 grid grid-cols-3 gap-2">
-        <KsbCoverageMetric label="Weight" value={formatKsbWeight(row.weight)} compact />
-        <KsbCoverageMetric label="OTJH" value={formatKsbOtjh(totalOtjh)} compact />
-        <KsbCoverageMetric label="Points" value={String(totalPoints)} compact />
-      </div>
-      <div className="mt-3 space-y-2">
-        {row.applied ? <div>
-          <p className="mb-1 flex items-center gap-1 text-[8px] font-black uppercase text-foreground-400">
-            <AppIcon className="ri-map-pin-line text-[10px]"></AppIcon>
-            Applied in
-          </p>
-          <div className="space-y-1.5">
-            {row.placements.map(placement => (
-              <div key={`${placement.scope}:${placement.label}`} className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 rounded-lg border border-background-200 bg-background-100 px-2.5 py-2">
-                <div className="min-w-0">
-                  <p className="truncate text-[10px] font-black text-foreground-800">{placement.label}</p>
-                  <p className="mt-0.5 text-[8px] font-bold uppercase text-foreground-400">{placement.scope}</p>
-                </div>
-                <span className="rounded-md bg-background-50 px-2 py-1 text-[9px] font-black text-emerald-700">{formatKsbOtjh(placement.otjh)}</span>
-                <span className="rounded-md bg-background-50 px-2 py-1 text-[9px] font-black text-foreground-600">{placement.points} pts</span>
-              </div>
-            ))}
-          </div>
-        </div> : (
-          <div className="rounded-lg border border-dashed border-background-300 bg-background-50 px-2.5 py-2 text-[10px] font-bold text-foreground-400">
-            Not applied to any week or component yet.
-          </div>
-        )}
-      </div>
-    </article>
-  );
-}
-
-function KsbCoverageMetric({ label, value, compact = false }: { label: string; value: string; compact?: boolean }) {
-  return (
-    <div className={`rounded-lg border border-background-200 bg-background-100 ${compact ? 'px-2 py-1.5' : 'min-w-20 px-3 py-2'}`}>
-      <p className="text-[8px] font-black uppercase text-foreground-400">{label}</p>
-      <p className={`${compact ? 'text-[11px]' : 'text-[13px]'} mt-0.5 font-black text-foreground-900`}>{value}</p>
-    </div>
   );
 }
 
@@ -9386,10 +7744,6 @@ function moduleIdentityText(module: ModuleCatalogueItem) {
   return parts.join(' - ');
 }
 
-function normaliseDeepLinkValue(value: unknown) {
-  return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
-}
-
 function isCanonicalModuleCatalogueId(value: unknown) {
   return /^MOD-[A-Z0-9][A-Z0-9_-]*$/i.test(String(value || '').trim());
 }
@@ -9647,17 +8001,6 @@ function moduleLearnerIdentifier(module: Pick<ModuleCatalogueItem, 'catalogueId'
   return cleanModuleMeta(module.catalogueId || module.sourceModule?.moduleCatalogueId || module.sourceModule?.moduleId || module.id);
 }
 
-function IconButton({ label, icon, onClick, tone = 'default' }: { label: string; icon: string; onClick: () => void; tone?: 'default' | 'danger' }) {
-  const classes = tone === 'danger'
-    ? 'bg-red-50 text-red-500 hover:bg-red-100 hover:text-red-700'
-    : 'bg-background-100 text-foreground-600 hover:bg-primary-50 hover:text-primary-700';
-  return (
-    <button onClick={onClick} title={label} aria-label={label} className={`inline-flex h-8 w-8 items-center justify-center rounded-lg transition-smooth ${classes}`}>
-      <AppIcon name={icon} size={15}></AppIcon>
-    </button>
-  );
-}
-
 function MiniMetric({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-xl border border-background-200 bg-background-100/60 p-3">
@@ -9665,10 +8008,6 @@ function MiniMetric({ label, value }: { label: string; value: string }) {
       <p className="text-lg font-heading font-bold text-foreground-950">{value}</p>
     </div>
   );
-}
-
-function EmptyState({ text }: { text: string }) {
-  return <div className="rounded-xl border border-dashed border-background-300 bg-background-100/40 px-3 py-5 text-center text-[12px] font-medium text-foreground-400">{text}</div>;
 }
 
 function EmptyEditor({ onAddWeek }: { onAddWeek: () => void }) {
@@ -9712,411 +8051,6 @@ function ModuleListSkeleton() {
       ))}
     </div>
   );
-}
-
-const DEFAULT_KSB_MAPPING_TYPE: KsbMappingType = 'main';
-const DEFAULT_KSB_WEIGHT_CLASS: KsbWeightClass = 'hard';
-const DEFAULT_KSB_WEIGHTS: Record<KsbWeightClass, number> = {
-  hard: 50,
-  soft: 30,
-  possible: 20,
-};
-
-function defaultKsbWeight(weightClass: KsbWeightClass = DEFAULT_KSB_WEIGHT_CLASS) {
-  return DEFAULT_KSB_WEIGHTS[normaliseKsbWeightClass(weightClass)];
-}
-
-function clampKsbWeight(value: number) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return 0;
-  return Math.max(0, Math.round(parsed * 100) / 100);
-}
-
-function clampPositiveKsbWeight(value: number, weightClass: KsbWeightClass = DEFAULT_KSB_WEIGHT_CLASS) {
-  const weight = clampKsbWeight(value);
-  return weight > 0 ? weight : defaultKsbWeight(weightClass);
-}
-
-function normaliseKsbMappingType(value?: string): KsbMappingType {
-  const raw = String(value || '').trim().toLowerCase();
-  if (raw === 'main' || raw === 'secondary' || raw === 'possible') return raw;
-  if (raw === 'practice') return 'possible';
-  return 'secondary';
-}
-
-function normaliseKsbWeightClass(value?: string, fallbackClassification?: KsbMappingType): KsbWeightClass {
-  const raw = String(value || '').trim().toLowerCase();
-  if (raw === 'hard' || raw === 'soft' || raw === 'possible') return raw;
-  const legacy = normaliseKsbMappingType(fallbackClassification);
-  if (legacy === 'main') return 'hard';
-  if (legacy === 'possible') return 'possible';
-  return 'soft';
-}
-
-function ksbWeightClassLabel(value?: string) {
-  const weightClass = normaliseKsbWeightClass(value);
-  if (weightClass === 'hard') return 'Hard';
-  if (weightClass === 'soft') return 'Soft';
-  return 'Possible';
-}
-
-function ksbMappingIdentity(value: Pick<KsbMapping, 'code' | 'sourceType' | 'sourceId'> | Pick<KsbOption, 'code' | 'sourceType' | 'sourceId'>) {
-  return [
-    String(value.code || '').trim().toUpperCase(),
-    String(value.sourceType || '').trim().toLowerCase(),
-    String(value.sourceId || '').trim().toLowerCase(),
-  ].join('|');
-}
-
-function mappingsForTarget(module: ModuleCatalogueItem, target: KsbTarget) {
-  if (target.scope === 'module') return module.moduleKsbMappings;
-  const week = module.weekStructure.find(item => item.id === target.weekId);
-  if (!week) return [];
-  if (target.scope === 'week') return week.ksbMappings;
-  return week.components.find(component => component.id === target.componentId)?.ksbMappings || [];
-}
-
-function addKsbMapping(module: ModuleCatalogueItem, target: KsbTarget, option: KsbOption, weight = defaultKsbWeight(), weightClass: KsbWeightClass = DEFAULT_KSB_WEIGHT_CLASS): ModuleCatalogueItem {
-  const nextIdentity = ksbMappingIdentity(option);
-  if (mappingsForTarget(module, target).some(mapping => ksbMappingIdentity(mapping) === nextIdentity)) return module;
-  const mapping: KsbMapping = {
-    id: makeAuthoringId('KSBMAP'),
-    ksbId: option.id,
-    code: option.code,
-    description: option.description,
-    sourceType: option.sourceType,
-    sourceId: option.sourceId,
-    type: DEFAULT_KSB_MAPPING_TYPE,
-    classification: DEFAULT_KSB_MAPPING_TYPE,
-    weight: clampKsbWeight(weight),
-    weightClass: normaliseKsbWeightClass(weightClass),
-    weight_class: normaliseKsbWeightClass(weightClass),
-  };
-  if (target.scope === 'module') return { ...module, moduleKsbMappings: [...module.moduleKsbMappings, mapping] };
-  return {
-    ...module,
-    weekStructure: module.weekStructure.map(week => {
-      if (week.id !== target.weekId) return week;
-      if (target.scope === 'week') return { ...week, ksbMappings: [...week.ksbMappings, mapping] };
-      return { ...week, components: week.components.map(component => component.id === target.componentId ? { ...component, ksbMappings: [...component.ksbMappings, mapping] } : component) };
-    }),
-  };
-}
-
-function updateKsbMappingWeight(module: ModuleCatalogueItem, target: KsbTarget, mappingId: string, weight: number): ModuleCatalogueItem {
-  const updateMappings = (mappings: KsbMapping[]) => mappings.map(mapping => (
-    mapping.id === mappingId ? { ...mapping, weight: clampKsbWeight(weight) } : mapping
-  ));
-  if (target.scope === 'module') return { ...module, moduleKsbMappings: updateMappings(module.moduleKsbMappings) };
-  return {
-    ...module,
-    weekStructure: module.weekStructure.map(week => {
-      if (week.id !== target.weekId) return week;
-      if (target.scope === 'week') return { ...week, ksbMappings: updateMappings(week.ksbMappings) };
-      return { ...week, components: week.components.map(component => component.id === target.componentId ? { ...component, ksbMappings: updateMappings(component.ksbMappings) } : component) };
-    }),
-  };
-}
-
-function updateKsbMappingWeightClass(module: ModuleCatalogueItem, target: KsbTarget, mappingId: string, weightClass: KsbWeightClass): ModuleCatalogueItem {
-  const nextWeightClass = normaliseKsbWeightClass(weightClass);
-  const updateMappings = (mappings: KsbMapping[]) => mappings.map(mapping => (
-    mapping.id === mappingId
-      ? {
-          ...mapping,
-          weight: defaultKsbWeight(nextWeightClass),
-          weightClass: nextWeightClass,
-          weight_class: nextWeightClass,
-        }
-      : mapping
-  ));
-  if (target.scope === 'module') return { ...module, moduleKsbMappings: updateMappings(module.moduleKsbMappings) };
-  return {
-    ...module,
-    weekStructure: module.weekStructure.map(week => {
-      if (week.id !== target.weekId) return week;
-      if (target.scope === 'week') return { ...week, ksbMappings: updateMappings(week.ksbMappings) };
-      return { ...week, components: week.components.map(component => component.id === target.componentId ? { ...component, ksbMappings: updateMappings(component.ksbMappings) } : component) };
-    }),
-  };
-}
-
-function removeKsbMapping(module: ModuleCatalogueItem, target: KsbTarget, mappingId: string): ModuleCatalogueItem {
-  if (target.scope === 'module') return { ...module, moduleKsbMappings: module.moduleKsbMappings.filter(mapping => mapping.id !== mappingId) };
-  return {
-    ...module,
-    weekStructure: module.weekStructure.map(week => {
-      if (week.id !== target.weekId) return week;
-      if (target.scope === 'week') return { ...week, ksbMappings: week.ksbMappings.filter(mapping => mapping.id !== mappingId) };
-      return { ...week, components: week.components.map(component => component.id === target.componentId ? { ...component, ksbMappings: component.ksbMappings.filter(mapping => mapping.id !== mappingId) } : component) };
-    }),
-  };
-}
-
-function moveById<T extends { id: string }>(items: T[], sourceId: string, targetId: string): T[] {
-  const sourceIndex = items.findIndex(item => item.id === sourceId);
-  const targetIndex = items.findIndex(item => item.id === targetId);
-  if (sourceIndex < 0 || targetIndex < 0 || sourceIndex === targetIndex) return items;
-  const next = [...items];
-  const [moved] = next.splice(sourceIndex, 1);
-  next.splice(targetIndex, 0, moved);
-  return next;
-}
-
-function uniqueMappings(mappings: KsbMapping[]) {
-  const seen = new Set<string>();
-  return mappings.filter(mapping => {
-    const key = ksbMappingIdentity(mapping);
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-}
-
-/** The heatmap's first column: mappings made against the module as a whole. */
-const MODULE_KSB_COLUMN = 'module';
-
-function moduleKsbWeekColumnKey(index: number) {
-  return `week:${index}`;
-}
-
-function moduleKsbMapRows(module: ModuleCatalogueItem, sourceLabels: Record<string, string>, source?: KsbSourceOption | null, allowSelectedSourceCodeFallback = false): ModuleKsbMapRow[] {
-  const rows = new Map<string, ModuleKsbMapRow>();
-  const fallbackSourceFull = source ? (sourceLabels[source.id] || source.label) : '';
-  const fallbackSource = conciseKsbSourceLabel(fallbackSourceFull);
-  const sourceCodes = new Set<string>();
-  source?.options.forEach(option => {
-    const code = String(option.code || '').trim().toUpperCase();
-    if (!code) return;
-    sourceCodes.add(code);
-    const sourceId = String(option.sourceId || source.id || '').trim();
-    const key = ksbMappingIdentity({ code, sourceType: option.sourceType || (sourceId.startsWith('standard:') ? 'standard' : 'framework'), sourceId });
-    rows.set(key, {
-      code,
-      description: option.description || option.title || '',
-      source: fallbackSource,
-      sourceFull: fallbackSourceFull,
-      weight: 0,
-      locations: [],
-      placements: [],
-      applied: false,
-      classificationLabels: [],
-    });
-  });
-  const addMapping = (mapping: KsbMapping, placement: ModuleKsbPlacement) => {
-    const location = placement.label;
-    const code = String(mapping.code || '').trim().toUpperCase();
-    if (!code) return;
-    if (isLegacyModuleLevelKsbFallback(mapping, location)) return;
-    const sourceFull = ksbSourceLabel(mapping, sourceLabels);
-    const sourceLabel = conciseKsbSourceLabel(sourceFull);
-    const mappingSourceId = cleanKsbSourceId(mapping.sourceId);
-    const selectedSourceId = cleanKsbSourceId(source?.id);
-    const mappingKey = ksbMappingIdentity(mapping);
-    const selectedSourceKey = selectedSourceId
-      ? ksbMappingIdentity({
-        code,
-        sourceType: selectedSourceId.startsWith('standard:') ? 'standard' : 'framework',
-        sourceId: selectedSourceId,
-      })
-      : '';
-    const canUseSelectedSourceByCode = Boolean(allowSelectedSourceCodeFallback && selectedSourceId && sourceCodes.has(code));
-    if (selectedSourceId && mappingSourceId && mappingSourceId !== selectedSourceId && !canUseSelectedSourceByCode) return;
-    const rowKey = selectedSourceKey && canUseSelectedSourceByCode && rows.has(selectedSourceKey)
-      ? selectedSourceKey
-      : rows.has(mappingKey)
-        ? mappingKey
-        : (selectedSourceKey && rows.has(selectedSourceKey) ? selectedSourceKey : mappingKey);
-    const current = rows.get(rowKey) || {
-      code,
-      description: mapping.description || '',
-      source: canUseSelectedSourceByCode ? fallbackSource : sourceLabel || fallbackSource,
-      sourceFull: canUseSelectedSourceByCode ? fallbackSourceFull : sourceFull || fallbackSourceFull,
-      weight: 0,
-      locations: [],
-      placements: [],
-      applied: false,
-      classificationLabels: [],
-    };
-    current.weight += Number(mapping.weight || 0);
-    current.applied = true;
-    const classification = ksbWeightClassLabel(mapping.weightClass || mapping.weight_class);
-    if (classification && !current.classificationLabels.includes(classification)) current.classificationLabels.push(classification);
-    if (!current.description && mapping.description) current.description = mapping.description;
-    if (!current.locations.includes(location)) current.locations.push(location);
-    if (!current.placements.some(item => item.label === placement.label && item.scope === placement.scope)) current.placements.push(placement);
-    rows.set(rowKey, current);
-  };
-
-  const modulePlacement = {
-    label: 'Module',
-    scope: 'Module' as const,
-    otjh: Number(module.declaredTotalOtjh ?? module.totalOtjh ?? 0) || 0,
-    points: module.weekStructure.reduce((total, week) => total + week.components.reduce((weekTotal, component) => weekTotal + Number(component.points || 0), 0), 0),
-    columnKey: MODULE_KSB_COLUMN,
-  };
-  module.moduleKsbMappings.forEach(mapping => addMapping(mapping, modulePlacement));
-  module.weekStructure.forEach((week, index) => {
-    const weekLabel = week.title || `Week ${week.weekNumber}`;
-    const columnKey = moduleKsbWeekColumnKey(index);
-    const weekPlacement = {
-      label: weekLabel,
-      scope: 'Week' as const,
-      otjh: weekExpectedOtjhTotal(week),
-      points: week.components.reduce((total, component) => total + Number(component.points || 0), 0),
-      columnKey,
-    };
-    week.ksbMappings.forEach(mapping => addMapping(mapping, weekPlacement));
-    week.components.forEach(component => {
-      const componentTitle = readableComponentTitle(component.title) || 'Component';
-      const location = `${weekLabel} / ${componentTitle}`;
-      const componentPlacement = {
-        label: location,
-        scope: 'Component' as const,
-        otjh: Number(component.expectedOtjh || 0),
-        points: Number(component.points || 0),
-        columnKey,
-        detail: componentTitle,
-      };
-      component.ksbMappings.forEach(mapping => addMapping(mapping, componentPlacement));
-    });
-  });
-
-  return Array.from(rows.values()).filter(row => row.applied).sort((a, b) => {
-    const codeSort = a.code.localeCompare(b.code, undefined, { numeric: true });
-    if (codeSort) return codeSort;
-    return a.source.localeCompare(b.source);
-  });
-}
-
-function programmeKsbMapRows(modules: ModuleCatalogueItem[], sourceLabels: Record<string, string>, programmeName = ''): ModuleKsbMapRow[] {
-  const rows = new Map<string, ModuleKsbMapRow>();
-  const addMapping = (mapping: KsbMapping, placement: ModuleKsbPlacement) => {
-    const location = placement.label;
-    const code = String(mapping.code || '').trim().toUpperCase();
-    if (!code) return;
-    if (isLegacyModuleLevelKsbFallback(mapping, location)) return;
-    const sourceFull = ksbSourceLabel(mapping, sourceLabels, programmeName);
-    const source = conciseKsbSourceLabel(sourceFull);
-    const key = `${code}::${normaliseDeepLinkValue(sourceFull) || normaliseDeepLinkValue(mapping.description) || 'source'}`;
-    const current = rows.get(key) || {
-      code,
-      description: mapping.description || '',
-      source,
-      sourceFull,
-      weight: 0,
-      locations: [],
-      placements: [],
-      applied: true,
-      classificationLabels: [],
-    };
-    current.weight += Number(mapping.weight || 0);
-    const classification = ksbWeightClassLabel(mapping.weightClass || mapping.weight_class);
-    if (classification && !current.classificationLabels.includes(classification)) current.classificationLabels.push(classification);
-    if (!current.description && mapping.description) current.description = mapping.description;
-    if (!current.locations.includes(location)) current.locations.push(location);
-    if (!current.placements.some(item => item.label === placement.label && item.scope === placement.scope)) current.placements.push(placement);
-    rows.set(key, current);
-  };
-
-  modules.forEach(module => {
-    const moduleLabel = module.title || module.programmeName || 'Module';
-    const modulePlacement = {
-      label: `${moduleLabel} / Module`,
-      scope: 'Module' as const,
-      otjh: Number(module.declaredTotalOtjh ?? module.totalOtjh ?? 0) || 0,
-      points: module.weekStructure.reduce((total, week) => total + week.components.reduce((weekTotal, component) => weekTotal + Number(component.points || 0), 0), 0),
-    };
-    module.moduleKsbMappings.forEach(mapping => addMapping(mapping, modulePlacement));
-    module.weekStructure.forEach(week => {
-      const weekLabel = week.title || `Week ${week.weekNumber}`;
-      const weekPlacement = {
-        label: `${moduleLabel} / ${weekLabel}`,
-        scope: 'Week' as const,
-        otjh: weekExpectedOtjhTotal(week),
-        points: week.components.reduce((total, component) => total + Number(component.points || 0), 0),
-      };
-      week.ksbMappings.forEach(mapping => addMapping(mapping, weekPlacement));
-      week.components.forEach(component => {
-        const componentLabel = readableComponentTitle(component.title) || 'Component';
-        const componentPlacement = {
-          label: `${moduleLabel} / ${weekLabel} / ${componentLabel}`,
-          scope: 'Component' as const,
-          otjh: Number(component.expectedOtjh || 0),
-          points: Number(component.points || 0),
-        };
-        component.ksbMappings.forEach(mapping => addMapping(mapping, componentPlacement));
-      });
-    });
-  });
-
-  return Array.from(rows.values()).filter(hasReadableKsbSource).sort((a, b) => {
-    const codeSort = a.code.localeCompare(b.code, undefined, { numeric: true });
-    if (codeSort) return codeSort;
-    return a.source.localeCompare(b.source);
-  });
-}
-
-function isLegacyModuleLevelKsbFallback(mapping: KsbMapping, location: string) {
-  return (
-    /\/ Module$/i.test(location) &&
-    /^Mapped KSB\s+/i.test(String(mapping.description || '').trim())
-  );
-}
-
-function hasReadableKsbSource(row: Pick<ModuleKsbMapRow, 'source' | 'sourceFull'>) {
-  const source = String(row.source || '').trim().toLowerCase();
-  const sourceFull = String(row.sourceFull || '').trim().toLowerCase();
-  if (!source || source === 'no source' || !sourceFull || sourceFull === 'no source') return false;
-  return !/^profile\s*-\s*ksbp-/i.test(row.source) && !/^ksb profile:\s*ksbp-/i.test(row.sourceFull);
-}
-
-function uniquePlacementOtjh(rows: ModuleKsbMapRow[]) {
-  const placements = new Map<string, number>();
-  rows.forEach(row => {
-    row.placements.forEach(placement => {
-      const key = `${placement.scope}:${placement.label}`;
-      if (!placements.has(key)) placements.set(key, Number(placement.otjh || 0));
-    });
-  });
-  return Array.from(placements.values()).reduce((total, value) => total + value, 0);
-}
-
-function formatKsbOtjh(value: number) {
-  const amount = Number(value || 0);
-  return `${Number.isInteger(amount) ? amount.toFixed(0) : amount.toFixed(1)}h`;
-}
-
-function formatKsbWeight(value: number) {
-  const amount = Number(value || 0);
-  return `${Number.isInteger(amount) ? amount.toFixed(0) : amount.toFixed(1)}%`;
-}
-
-function componentDisplayTitle(title: string) {
-  return title.replace(/\s*(?:-|—)\s*Week\s*\d+\s*$/i, '').trim();
-}
-
-function readableComponentTitle(title: string) {
-  const cleaned = componentDisplayTitle(title);
-  if (!cleaned || /\s/.test(cleaned)) return cleaned;
-  return cleaned
-    .replace(/([A-Za-z])of([A-Z])/g, '$1 of $2')
-    .replace(/([a-z])([A-Z])/g, '$1 $2')
-    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
-    .trim();
-}
-
-function normaliseComponentTitles(module: ModuleCatalogueItem): ModuleCatalogueItem {
-  return {
-    ...module,
-    weekStructure: module.weekStructure.map(week => ({
-      ...week,
-      components: week.components.map(component => ({
-        ...component,
-        title: readableComponentTitle(component.title) || component.title,
-      })),
-    })),
-  };
 }
 
 function resizeWeeks(module: ModuleCatalogueItem, count: number, onChange: (updates: Partial<ModuleCatalogueItem>) => void) {
@@ -10177,24 +8111,6 @@ function createNamedComponent(week: ModuleWeek, type: ModuleComponentType, index
 
 function createNamedComponents(week: ModuleWeek, types: ModuleComponentType[]) {
   return types.map((type, index) => createNamedComponent(week, type, week.components.length + index + 1));
-}
-
-function componentToneClasses(tone = 'slate') {
-  const map: Record<string, { soft: string; text: string; ring: string }> = {
-    violet: { soft: 'bg-violet-100', text: 'text-violet-700', ring: 'border-violet-200' },
-    slate: { soft: 'bg-slate-100', text: 'text-slate-700', ring: 'border-slate-200' },
-    rose: { soft: 'bg-rose-100', text: 'text-rose-700', ring: 'border-rose-200' },
-    amber: { soft: 'bg-amber-100', text: 'text-amber-700', ring: 'border-amber-200' },
-    emerald: { soft: 'bg-emerald-100', text: 'text-emerald-700', ring: 'border-emerald-200' },
-    orange: { soft: 'bg-orange-100', text: 'text-orange-700', ring: 'border-orange-200' },
-    sky: { soft: 'bg-sky-100', text: 'text-sky-700', ring: 'border-sky-200' },
-    purple: { soft: 'bg-purple-100', text: 'text-purple-700', ring: 'border-purple-200' },
-    teal: { soft: 'bg-teal-100', text: 'text-teal-700', ring: 'border-teal-200' },
-    lime: { soft: 'bg-lime-100', text: 'text-lime-700', ring: 'border-lime-200' },
-    blue: { soft: 'bg-blue-100', text: 'text-blue-700', ring: 'border-blue-200' },
-    pink: { soft: 'bg-pink-100', text: 'text-pink-700', ring: 'border-pink-200' },
-  };
-  return map[tone] || map.slate;
 }
 
 function lines(value: string) {

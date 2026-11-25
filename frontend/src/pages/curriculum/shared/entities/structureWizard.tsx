@@ -371,7 +371,7 @@ export function CurriculumStructureWizard({
   // Groups the reverse), and a chain needs all of it whichever door it came in
   // through.
   const { data, reload } = useCurriculumData({ autoLoad: false, compact: true, includeHolidays: true });
-  const { tutors, coaches, reload: reloadStaff } = useCurriculumStaffProfiles({ autoLoad: false });
+  const { tutors, coaches, error: staffError, reload: reloadStaff } = useCurriculumStaffProfiles({ autoLoad: false });
 
   // `useCurriculumData` hands back a fresh `reload` closure on every render, so
   // the open transition is tracked by hand: the body below is a no-op unless the
@@ -749,6 +749,14 @@ export function CurriculumStructureWizard({
         <WizardRail steps={steps} step={step} created={created} resolved={chainNames} />
         <WizardStepBrief steps={steps} step={target} inherited={inheritedFor(target)} siblingCount={siblingCountFor(target)} />
         {target === 'programme' && <WizardBeforeYouStart />}
+        {staffError && (target === 'group' || target === 'module') && (
+          <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+            {staffError}
+            <button type="button" className="ml-2 font-semibold underline" onClick={() => reloadStaff()}>
+              Retry staff options
+            </button>
+          </div>
+        )}
       </>
     ),
     // A record step with nothing after it keeps its form's own label ("Create

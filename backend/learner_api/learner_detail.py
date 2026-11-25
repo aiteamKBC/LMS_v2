@@ -46,7 +46,7 @@ from .mappers import _s, get_training_plan, to_learner_detail
 from .models import EnrolmentUser, LearnerProfile
 from .retained_quiz_progress import retain_quiz_progress
 from .student_activity_access import student_activity_available
-from curriculum_api.learning_storage import read_sql
+from curriculum_api.catalogue.infrastructure.course_storage_reads import read_sql
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 from curriculum_api.canonical_read_sql import component_ksb_mappings_sql, standard_ksb_join_sql
 from .module_placement_sql import current_module_sql
@@ -1201,7 +1201,7 @@ def _review_otjh_hours(learner_profile):
     if learner_profile is None:
         return 0.0, 0.0
 
-    from curriculum_api import review_otjh
+    import curriculum_api.review_management.application.otjh_queries as review_application_otjh_queries
 
     learner_id = getattr(learner_profile, "id", None)
     start_date = getattr(learner_profile, "start_date", None)
@@ -1217,11 +1217,11 @@ def _review_otjh_hours(learner_profile):
         planned = sum(row["hours"] for row in planned_meetings(learner_profile, start_date, end_date)) if start_date and end_date else 0
         # Newly credited migrated reviews already exist in training_plan_progress
         # and the canonical ledger. Only old Native credit is additional here.
-        return planned, review_otjh.completed_hours(learner_id)
+        return planned, review_application_otjh_queries.completed_hours(learner_id)
     if not learner_id or not start_date or not end_date:
-        return 0.0, review_otjh.completed_hours(learner_id) if learner_id else 0.0
+        return 0.0, review_application_otjh_queries.completed_hours(learner_id) if learner_id else 0.0
 
-    planned = review_otjh.planned_hours(
+    planned = review_application_otjh_queries.planned_hours(
         _s(getattr(learner_profile, "programme_id", "")),
         learner_id,
         _s(getattr(learner_profile, "programme_status", "")),
@@ -1229,7 +1229,7 @@ def _review_otjh_hours(learner_profile):
         start_date,
         end_date,
     )
-    return planned, review_otjh.completed_hours(learner_id)
+    return planned, review_application_otjh_queries.completed_hours(learner_id)
 
 
 def _live_otjh_snapshot(detail, learner_profile=None):

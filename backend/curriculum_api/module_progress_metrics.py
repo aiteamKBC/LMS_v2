@@ -64,7 +64,9 @@ def completion_records(records, owners, read, table):
 
 def apply_ksb_metrics(payload, records, read, table, connection):
     """Current component weights count once; historical weights remain separate."""
-    from . import views
+    from curriculum_api.ksb_coverage import normalise_code as coverage_normalise_code
+    from curriculum_api.reporting.infrastructure.progress_runtime import learner_consumption_payload
+    from curriculum_api.reporting.domain.source_values import scope_ksb_achievement
 
     learners = payload.get('assignedLearners') or []
     if not learners:
@@ -79,7 +81,7 @@ def apply_ksb_metrics(payload, records, read, table, connection):
     unallocated = defaultdict(float)
     scope_weights = defaultdict(float)
     for item in coverage:
-        code = views.coverage_normalise_code(item.get('code'))
+        code = coverage_normalise_code(item.get('code'))
         if not code:
             continue
         for mapping in item.get('mappings') or []:
@@ -107,7 +109,7 @@ def apply_ksb_metrics(payload, records, read, table, connection):
         rows = read(f'''SELECT k.progress_id,k.ksb_code,k.weight FROM {official_progress_relation()} k
             WHERE {selection}{and_not_excluded('k', connection)}''', params)
         for row in rows:
-            code = views.coverage_normalise_code(row.get('ksb_code'))
+            code = coverage_normalise_code(row.get('ksb_code'))
             value = float(row.get('weight') or 0)
             if code:
                 snapshots[row['progress_id']][code] = max(snapshots[row['progress_id']].get(code, 0), value)
@@ -134,7 +136,7 @@ def apply_ksb_metrics(payload, records, read, table, connection):
             (current if is_current else historical)[learner][code] += value
 
     progress_totals = {learner['id']: dict(current[str(learner['id'])]) for learner in learners}
-    consumed = views.learner_consumption_payload(
+    consumed = learner_consumption_payload(
         learners, coverage, progress_totals, {},
         expected_by_learner={learner['id']: dict(expected[learner['id']]) for learner in learners},
     )
@@ -150,7 +152,7 @@ def apply_ksb_metrics(payload, records, read, table, connection):
         row['historicalConsumedWeightTotal'] = sum(historical[key].values())
         row['unallocatedPlannedWeight'] = unallocated[key]
     payload['learnerKsbConsumption'] = consumed
-    payload['ksbAchievement'] = views.scope_ksb_achievement(
+    payload['ksbAchievement'] = scope_ksb_achievement(
         coverage, consumed, learners, {'scopeKsbWeights': dict(scope_weights)},
         {learner['id']: {'ksbWeights': dict(expected[learner['id']])} for learner in learners},
     )

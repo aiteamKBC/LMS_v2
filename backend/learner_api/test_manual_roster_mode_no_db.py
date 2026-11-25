@@ -1,10 +1,13 @@
 """Regression checks for manual-roster modules staying out of group presets."""
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.test import SimpleTestCase
 
 from curriculum_api import views
+from curriculum_api.directory.api import roster_composition
 from learner_api import learning_plan as plans
+from learner_api.learning_plans.infrastructure import assignment_reads as plan_reads
 
 
 class ManualRosterModeTests(SimpleTestCase):
@@ -14,10 +17,10 @@ class ManualRosterModeTests(SimpleTestCase):
 
     def test_manual_modules_are_filtered_without_removing_them_from_group_data(self):
         with patch.object(
-            plans,
+            plan_reads,
             '_group_preset_rows',
             return_value=[{'module_ids': ['MOD-INHERITED', 'MOD-MANUAL']}],
-        ), patch.object(plans, '_manual_roster_module_ids', return_value={'MOD-MANUAL'}):
+        ), patch.object(plan_reads, '_manual_roster_module_ids', return_value={'MOD-MANUAL'}):
             self.assertEqual(plans._group_module_ids('Programme', 'Group'), ['MOD-INHERITED'])
 
     def test_manual_assignment_can_still_be_explicitly_represented(self):
@@ -28,9 +31,9 @@ class ManualRosterModeTests(SimpleTestCase):
         })
         self.assertEqual(payload['learnerRosterMode'], 'manual')
 
-    @patch.object(views.connection, 'vendor', 'postgresql')
+    @patch.object(roster_composition, 'connection', SimpleNamespace(vendor='postgresql'))
     @patch('curriculum_api.learner_assignments.module_assignment_roster')
-    @patch.object(views, 'assigned_learners_for_programme')
+    @patch.object(roster_composition, 'assigned_learners_for_programme')
     def test_manual_module_progress_roster_does_not_seed_group_learners(
         self, assigned_for_programme, module_roster,
     ):

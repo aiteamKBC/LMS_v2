@@ -1,3 +1,4 @@
+from curriculum_api.catalogue.tests.parity.composition_test_support import composition_fixture
 import json
 import os
 import threading
@@ -678,7 +679,7 @@ class CurriculumTeamsMeetingTests(CurriculumTeamsRequestTestCase):
             verification_boundaries.append(graph_request.call_count)
             return event
 
-        verifier = patch.object(views, 'verify_teams_calendar_with_standalones', side_effect=verified_calendar)
+        verifier = composition_fixture(views, 'verify_teams_calendar_with_standalones', side_effect=verified_calendar)
         verifier.start()
         self.addCleanup(verifier.stop)
         response = self.client.post(
@@ -880,7 +881,7 @@ class CurriculumTeamsMeetingTests(CurriculumTeamsRequestTestCase):
         series_before = views.authoring_fetch_all(views.LIVE_SESSIONS_TABLE, 'id = %s', [live_session_id])[0]
         # These previously delivered slots are history, not future sessions being cancelled.
         dropped_sessions = views.sessions_a_rewrite_would_drop
-        clock = patch.object(views, 'sessions_a_rewrite_would_drop', side_effect=lambda *args, **kwargs:
+        clock = composition_fixture(views, 'sessions_a_rewrite_would_drop', side_effect=lambda *args, **kwargs:
             dropped_sessions(*args, **kwargs, now=datetime(2026, 11, 1, tzinfo=timezone.utc)))
         clock.start()
         self.addCleanup(clock.stop)
@@ -1100,7 +1101,7 @@ class CurriculumTeamsMeetingTests(CurriculumTeamsRequestTestCase):
             verification_boundaries.append(graph_request.call_count)
             return event
 
-        verifier = patch.object(views, 'verify_teams_calendar_with_standalones', side_effect=verified_calendar)
+        verifier = composition_fixture(views, 'verify_teams_calendar_with_standalones', side_effect=verified_calendar)
         verifier.start()
         self.addCleanup(verifier.stop)
         with patch.dict(os.environ, {'MICROSOFT_TEAMS_ORGANIZER_EMAIL': 'organizer@example.com'}):
@@ -1637,7 +1638,7 @@ class CurriculumTeamsMeetingTests(CurriculumTeamsRequestTestCase):
                 'status': 'scheduled',
             })
 
-    @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
+    @patch('curriculum_api.catalogue.infrastructure.cohort_calendar_composition.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
     def test_structure_payload_dates_every_week_from_the_module_plan(self, _holidays):
         # The weeks are a timetable, not just a running count: each one carries
         # the day it actually runs.
@@ -1660,10 +1661,11 @@ class CurriculumTeamsMeetingTests(CurriculumTeamsRequestTestCase):
         self.assertEqual(payload['weekStructure'][0]['sessionStartTime'], '09:00')
         self.assertEqual(payload['weekStructure'][0]['sessionDurationMinutes'], 120)
 
-    @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
-    def test_restore_creates_live_only_in_open_weeks_without_shifting_the_run(self, _holidays):
-        # Restoring links must respect the author's closed weeks even when an
-        # older series still contains a tracked occurrence on those dates.
+    @patch('curriculum_api.catalogue.infrastructure.cohort_calendar_composition.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
+    def test_restore_can_give_every_week_its_own_live_session(self, _holidays):
+        # Re-attaching is the one action that finishes the job: a created series
+        # is only in front of the learner once every week has a session to open,
+        # on that week's own date.
         self._module_with_six_saturday_weeks()
         views.authoring_upsert(views.AUTHORING_COMPONENTS_TABLE, ['id'], {
             'id': 'COMP-EXISTING',
@@ -1681,8 +1683,9 @@ class CurriculumTeamsMeetingTests(CurriculumTeamsRequestTestCase):
         )
         self.assertEqual(response.status_code, 200, response.content)
         result = response.json()
-        # Week 1 has Live; weeks 2-4 close for Christmas and New Year holidays.
-        self.assertEqual(result['createdComponents'], 2)
+        # Week 1 already had one; the other five were created rather than left
+        # without a session.
+        self.assertEqual(result['createdComponents'], 5)
         self.assertEqual(result['updatedComponents'], 1)
 
         weeks = result['module']['weekStructure']
@@ -1690,29 +1693,29 @@ class CurriculumTeamsMeetingTests(CurriculumTeamsRequestTestCase):
             [component for component in week['components'] if component['type'] == 'live-session']
             for week in weeks
         ]
-        self.assertEqual([len(items) for items in live_sessions], [1, 0, 0, 0, 1, 1])
-        # Later sessions retain their own dates; no compensation or extension.
+        self.assertEqual([len(items) for items in live_sessions], [1, 1, 1, 1, 1, 1])
+        # A ticked holiday no longer displaces the session -- every week keeps
+        # its own Saturday, closed or not.
         self.assertEqual(
-            [items[0]['settings']['sessionDate'] for items in live_sessions if items],
-            ['2026-12-12', '2027-01-09', '2027-01-16'],
+            [items[0]['settings']['sessionDate'] for items in live_sessions],
+            ['2026-12-12', '2026-12-19', '2026-12-26', '2027-01-02', '2027-01-09', '2027-01-16'],
         )
         # Every one of them can be joined, and the created ones say when they
         # start and how long they run.
         self.assertTrue(all(
             items[0]['settings']['liveSessionUrl'] == 'https://teams.microsoft.com/l/meetup-join/series'
-            for items in live_sessions if items
+            for items in live_sessions
         ))
-        self.assertEqual(len(views.authoring_fetch_all(views.LIVE_SESSION_OCCURRENCES_TABLE, 'live_session_id = %s', ['LIVE-WEEKS'])), 6)
-        created = live_sessions[4][0]
+        created = live_sessions[1][0]
         self.assertEqual(created['settings']['sessionTime'], '09:00')
         self.assertEqual(created['settings']['durationMinutes'], 120)
         self.assertEqual(created['expectedOtjh'], 2.0)
         # Titled after the session, never after the week: a live session named
-        # "Week 4" is read as a generated placeholder and hidden by the authoring
+        # "Week 2" is read as a generated placeholder and hidden by the authoring
         # model.
-        self.assertNotIn(created['title'], {'Week 4', ''})
+        self.assertNotIn(created['title'], {'Week 2', ''})
 
-    @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
+    @patch('curriculum_api.catalogue.infrastructure.cohort_calendar_composition.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
     def test_session_plan_dates_a_week_that_is_not_saved_yet(self, _holidays):
         # Module Builder adds a week before anything is written, and week N is
         # session N -- so a seventh week on a stored six-week module has to be
@@ -1745,7 +1748,7 @@ class CurriculumTeamsMeetingTests(CurriculumTeamsRequestTestCase):
         self.assertEqual(views.get_authoring_structure_payload('MOD-WEEKS')['weekStructure'], stored_weeks)
         self.assertEqual(views.authoring_fetch_all(views.AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', ['MOD-WEEKS'])[0], stored_module)
 
-    @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
+    @patch('curriculum_api.catalogue.infrastructure.cohort_calendar_composition.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
     def test_session_plan_keeps_an_added_week_on_its_own_saturday(self, _holidays):
         # An added week runs on its own delivery day, ticked holiday or not: the
         # fourteenth Saturday of this module is 13 March 2027, which is nowhere
@@ -1766,7 +1769,7 @@ class CurriculumTeamsMeetingTests(CurriculumTeamsRequestTestCase):
         self.assertEqual(plan['sessions'][1]['skippedHolidays'], ['2026-12-19'])
         self.assertEqual(plan['finalEndDate'], '2027-03-13')
 
-    @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
+    @patch('curriculum_api.catalogue.infrastructure.cohort_calendar_composition.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
     def test_session_plan_falls_back_to_the_stored_session_count(self, _holidays):
         self._module_with_six_saturday_weeks()
         stored_weeks = views.get_authoring_structure_payload('MOD-WEEKS')['weekStructure']
@@ -1800,7 +1803,7 @@ class CurriculumTeamsMeetingTests(CurriculumTeamsRequestTestCase):
 
         self.assertEqual(response.status_code, 404, response.content)
 
-    @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
+    @patch('curriculum_api.catalogue.infrastructure.cohort_calendar_composition.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
     def test_restore_without_the_flag_authors_nothing(self, _holidays):
         # The Module Builder calls this endpoint silently when it opens a module
         # whose join link went missing. Opening a module must never write
@@ -1892,7 +1895,7 @@ class CurriculumTeamsMeetingTests(CurriculumTeamsRequestTestCase):
             @classmethod
             def utcnow(cls):
                 return cls(2026, 9, 1)
-        clock = patch.object(views, 'datetime', BeforeSeptember)
+        clock = composition_fixture(views, 'datetime', BeforeSeptember)
         clock.start()
         self.addCleanup(clock.stop)
         views.ensure_live_session_tracking_tables()
@@ -1956,6 +1959,59 @@ class CurriculumTeamsMeetingTests(CurriculumTeamsRequestTestCase):
             [8, 8],
         )
         self.assertRegex(detailed_row['nextOccurrence'], r'(Z|[+-]\d{2}:\d{2})$')
+
+    @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
+    def test_restore_creates_live_only_in_open_weeks_without_shifting_the_run(self, _holidays):
+        # Restoring links must respect the author's closed weeks even when an
+        # older series still contains a tracked occurrence on those dates.
+        self._module_with_six_saturday_weeks()
+        views.authoring_upsert(views.AUTHORING_COMPONENTS_TABLE, ['id'], {
+            'id': 'COMP-EXISTING',
+            'week_id': 'WEEK-1',
+            'module_catalogue_id': 'MOD-WEEKS',
+            'type': 'live_session',
+            'title': 'Kick-off',
+            'display_order': 1,
+        })
+
+        response = self.client.post(
+            '/curriculum_api/curriculum/modules/MOD-WEEKS/teams-meetings/restore/',
+            data=json.dumps({'createMissingComponents': True}),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        result = response.json()
+        # Week 1 has Live; weeks 2-4 close for Christmas and New Year holidays.
+        self.assertEqual(result['createdComponents'], 2)
+        self.assertEqual(result['updatedComponents'], 1)
+
+        weeks = result['module']['weekStructure']
+        live_sessions = [
+            [component for component in week['components'] if component['type'] == 'live-session']
+            for week in weeks
+        ]
+        self.assertEqual([len(items) for items in live_sessions], [1, 0, 0, 0, 1, 1])
+        # Later sessions retain their own dates; no compensation or extension.
+        self.assertEqual(
+            [items[0]['settings']['sessionDate'] for items in live_sessions if items],
+            ['2026-12-12', '2027-01-09', '2027-01-16'],
+        )
+        # Every one of them can be joined, and the created ones say when they
+        # start and how long they run.
+        self.assertTrue(all(
+            items[0]['settings']['liveSessionUrl'] == 'https://teams.microsoft.com/l/meetup-join/series'
+            for items in live_sessions if items
+        ))
+        self.assertEqual(len(views.authoring_fetch_all(views.LIVE_SESSION_OCCURRENCES_TABLE, 'live_session_id = %s', ['LIVE-WEEKS'])), 6)
+        created = live_sessions[4][0]
+        self.assertEqual(created['settings']['sessionTime'], '09:00')
+        self.assertEqual(created['settings']['durationMinutes'], 120)
+        self.assertEqual(created['expectedOtjh'], 2.0)
+        # Titled after the session, never after the week: a live session named
+        # "Week 4" is read as a generated placeholder and hidden by the authoring
+        # model.
+        self.assertNotIn(created['title'], {'Week 4', ''})
+
 
 
 class TeamsCalendarSyncVerdictTests(CurriculumTeamsRequestTestCase):
@@ -2037,7 +2093,7 @@ class TeamsCalendarSyncVerdictTests(CurriculumTeamsRequestTestCase):
             for start in starts
         ]
 
-    @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
+    @patch('curriculum_api.catalogue.infrastructure.cohort_calendar_composition.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
     def test_exact_match_is_in_sync(self, _holidays):
         module = self._module('MOD-SYNC-1', sessions_number=2)  # Mondays 07, 14 Sept
         verdict = views.teams_calendar_sync_verdict(
@@ -2046,7 +2102,7 @@ class TeamsCalendarSyncVerdictTests(CurriculumTeamsRequestTestCase):
         self.assertEqual(verdict['syncState'], 'in-sync')
         self.assertEqual(verdict['differingOccurrences'], 0)
 
-    @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
+    @patch('curriculum_api.catalogue.infrastructure.cohort_calendar_composition.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
     def test_extra_teams_weekday_is_out_of_sync(self, _holidays):
         # Plan is Monday only; Teams also holds a Thursday nobody authored.
         module = self._module('MOD-SYNC-2', sessions_number=1, session_week_day='Monday')
@@ -2057,7 +2113,7 @@ class TeamsCalendarSyncVerdictTests(CurriculumTeamsRequestTestCase):
         self.assertIn('extra_in_teams', verdict['syncReasons'])
         self.assertEqual(verdict['differingOccurrences'], 1)
 
-    @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
+    @patch('curriculum_api.catalogue.infrastructure.cohort_calendar_composition.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
     def test_missing_teams_weekday_is_out_of_sync(self, _holidays):
         # Plan is Monday + Thursday; Teams only ever got the Monday.
         module = self._module('MOD-SYNC-3', sessions_number=2, session_week_day='Monday,Thursday')
@@ -2068,7 +2124,7 @@ class TeamsCalendarSyncVerdictTests(CurriculumTeamsRequestTestCase):
         self.assertIn('missing_from_teams', verdict['syncReasons'])
         self.assertEqual(verdict['differingOccurrences'], 1)
 
-    @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
+    @patch('curriculum_api.catalogue.infrastructure.cohort_calendar_composition.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
     def test_reordered_dates_are_still_in_sync(self, _holidays):
         module = self._module('MOD-SYNC-4', sessions_number=2)  # Mondays 07, 14 Sept
         verdict = views.teams_calendar_sync_verdict(
@@ -2076,7 +2132,7 @@ class TeamsCalendarSyncVerdictTests(CurriculumTeamsRequestTestCase):
         )
         self.assertEqual(verdict['syncState'], 'in-sync')
 
-    @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
+    @patch('curriculum_api.catalogue.infrastructure.cohort_calendar_composition.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
     def test_holiday_keeps_authored_date_and_matching_teams_is_in_sync(self, _holidays):
         # Case A: a holiday annotates the authored date without moving it.
         self._cohort('COHORT-SYNC-5', holiday_ids=['1080'])
@@ -2099,7 +2155,7 @@ class TeamsCalendarSyncVerdictTests(CurriculumTeamsRequestTestCase):
         self.assertFalse(any(session.get('rescheduled') for session in plan['sessions']))
         self.assertFalse(views.session_overrides(module))
 
-    @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
+    @patch('curriculum_api.catalogue.infrastructure.cohort_calendar_composition.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
     def test_explicit_session_move_requires_teams_to_match_effective_date(self, _holidays):
         self._cohort('COHORT-SYNC-6', holiday_ids=['1080'])
         module = self._module(
@@ -2140,7 +2196,7 @@ class TeamsCalendarSyncVerdictTests(CurriculumTeamsRequestTestCase):
         self.assertEqual(verdict['missingFromTeams'], ['2027-01-04T09:00:00Z'])
         self.assertEqual(verdict['extraInTeams'], ['2026-12-21T09:00:00Z'])
 
-    @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
+    @patch('curriculum_api.catalogue.infrastructure.cohort_calendar_composition.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
     def test_changed_start_date_is_out_of_sync(self, _holidays):
         # Teams holds the dates from the module's old start date; the module
         # was since moved a week later.
@@ -2152,7 +2208,7 @@ class TeamsCalendarSyncVerdictTests(CurriculumTeamsRequestTestCase):
         self.assertIn('extra_in_teams', verdict['syncReasons'])
         self.assertIn('missing_from_teams', verdict['syncReasons'])
 
-    @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
+    @patch('curriculum_api.catalogue.infrastructure.cohort_calendar_composition.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
     def test_cohorts_are_read_once_for_every_module_that_shares_one(self, _holidays):
         # Three modules, one cohort: the holiday selection is the same for all
         # three, so the grouped comparison must read the cohort table once, not
@@ -2176,8 +2232,8 @@ class TeamsCalendarSyncVerdictTests(CurriculumTeamsRequestTestCase):
                 cohort_reads.append((args, kwargs))
             return original_fetch_all(table, *args, **kwargs)
 
-        with patch('curriculum_api.views.authoring_fetch_all', side_effect=counting_fetch_all), \
-             patch.object(views, 'teams_calendar_sync_verdict', wraps=views.teams_calendar_sync_verdict) as compare:
+        with composition_fixture(views, 'authoring_fetch_all', side_effect=counting_fetch_all), \
+             composition_fixture(views, 'teams_calendar_sync_verdict', wraps=views.teams_calendar_sync_verdict) as compare:
             verdicts = views.teams_calendar_sync_verdicts(
                 ['MOD-SYNC-8A', 'MOD-SYNC-8B', 'MOD-SYNC-8C'], occurrences_by_module,
             )
@@ -2220,7 +2276,7 @@ class TeamsCalendarSyncVerdictTests(CurriculumTeamsRequestTestCase):
         nothing_tracked = views.teams_calendar_sync_verdict(module, [])
         self.assertEqual(nothing_tracked['syncState'], 'unverified')
 
-    @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
+    @patch('curriculum_api.catalogue.infrastructure.cohort_calendar_composition.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
     def test_summary_endpoint_reports_a_correctly_synced_module_as_in_sync(self, _holidays):
         module = self._module('MOD-SYNC-10', sessions_number=2)
         views.authoring_upsert(views.LIVE_SESSIONS_TABLE, ['id'], {
@@ -2285,7 +2341,7 @@ class CurriculumPersistenceFixtures:
     """Schema setup and payload builders shared by the persistence test suites.
 
     Split out from ``CurriculumPersistenceTests`` so sibling suites can reuse the
-    fixture without inheriting — and therefore re-running — every test in it.
+    fixture without inheriting â€” and therefore re-running â€” every test in it.
     """
 
     def setUp(self):
@@ -3530,7 +3586,7 @@ class CurriculumCacheTests(SimpleTestCase):
             views.cached_curriculum_value('k', boom)
         # A failure must not be memoised, otherwise one transient DB error would
         # serve an error (or a hole) for the whole TTL.
-        self.assertNotIn('k', views._CURRICULUM_CACHE)
+        self.assertNotIn('k', views.cache_state._CURRICULUM_CACHE)
         self.assertEqual(views.cached_curriculum_value('k', lambda: 'recovered'), 'recovered')
 
     def test_slow_build_does_not_block_other_keys(self):
@@ -3577,14 +3633,14 @@ class CurriculumCacheTests(SimpleTestCase):
             release.set()
             builder.join(5)
 
-        self.assertNotIn('race', views._CURRICULUM_CACHE)
+        self.assertNotIn('race', views.cache_state._CURRICULUM_CACHE)
         self.assertEqual(views.cached_curriculum_value('race', lambda: 'post-write rows'), 'post-write rows')
 
     def test_invalidation_is_global_so_every_write_clears_every_key(self):
         # Curriculum writes cascade widely: a module edit changes the overview, the
         # programme tree, the module list and any resolve-structures entry naming it.
         # Rather than enumerate that fan-out per write, invalidation clears the whole
-        # cache — the trade-off is a cold rebuild after each write, in exchange for
+        # cache â€” the trade-off is a cold rebuild after each write, in exchange for
         # making a missed key impossible. This test fails if it is ever narrowed to
         # targeted eviction without the per-key mapping being proven first.
         for key in ('overview:operational:compact', 'overview:all:full', 'modules:all:enriched'):
@@ -3593,11 +3649,11 @@ class CurriculumCacheTests(SimpleTestCase):
             views.structure_payloads_cache_key(['MOD-A'], include_staff=False),
             lambda: 'pre-write',
         )
-        self.assertNotEqual(views._CURRICULUM_CACHE, {})
+        self.assertNotEqual(views.cache_state._CURRICULUM_CACHE, {})
 
         views.invalidate_curriculum_cache()
 
-        self.assertEqual(views._CURRICULUM_CACHE, {})
+        self.assertEqual(views.cache_state._CURRICULUM_CACHE, {})
 
     def test_invalidation_forgets_missing_tables_but_keeps_known_ones(self):
         """A curriculum write is not DDL.
@@ -3626,11 +3682,11 @@ class CurriculumPayloadPerformanceTests(SimpleTestCase):
             'coaches': [],
             'tutor_modules': [],
         }
-        with patch.object(views, 'build_sessions', side_effect=AssertionError('must stay lazy')), \
-             patch.object(views, 'build_sessions_from_authoring_modules', side_effect=AssertionError('must stay lazy')), \
-             patch.object(views, 'build_programmes', return_value=[]), \
-             patch.object(views, 'build_cohorts_and_groups', return_value=([], [])), \
-             patch.object(views, 'build_ksb_data', return_value=([], [])):
+        with composition_fixture(views, 'build_sessions', side_effect=AssertionError('must stay lazy')), \
+             composition_fixture(views, 'build_sessions_from_authoring_modules', side_effect=AssertionError('must stay lazy')), \
+             composition_fixture(views, 'build_programmes', return_value=[]), \
+             composition_fixture(views, 'build_cohorts_and_groups', return_value=([], [])), \
+             composition_fixture(views, 'build_ksb_data', return_value=([], [])):
             payload = views.build_curriculum_payload_from_rows(rows, compact=True)
         self.assertEqual(payload['sessions'], [])
 
@@ -3697,11 +3753,11 @@ class CurriculumPayloadPerformanceTests(SimpleTestCase):
             {'id': 'MOD-ARCHIVED', 'moduleCatalogueId': 'MOD-ARCHIVED', 'catalogueId': 'MOD-ARCHIVED'},
             {'id': 'MOD-LIVE', 'moduleCatalogueId': 'MOD-LIVE', 'catalogueId': 'MOD-LIVE'},
         ]
-        with patch.object(views, 'build_modules', return_value=delivery_rows), \
-             patch.object(views, 'build_programmes', return_value=[]), \
-             patch.object(views, 'build_cohorts_and_groups', return_value=([], [])), \
-             patch.object(views, 'build_ksb_data', return_value=([], [])), \
-             patch.object(views, 'attach_module_assignment_counts'):
+        with composition_fixture(views, 'build_modules', return_value=delivery_rows), \
+             composition_fixture(views, 'build_programmes', return_value=[]), \
+             composition_fixture(views, 'build_cohorts_and_groups', return_value=([], [])), \
+             composition_fixture(views, 'build_ksb_data', return_value=([], [])), \
+             composition_fixture(views, 'attach_module_assignment_counts'):
             payload = views.build_curriculum_payload_from_rows(rows, compact=True)
 
         self.assertEqual(
@@ -3829,10 +3885,10 @@ class CurriculumPayloadPerformanceTests(SimpleTestCase):
         scopes = []
 
         def probe(identifier, visibility):
-            scopes.append(getattr(views._CURRICULUM_READ_SCOPE, 'memo', None) is not None)
+            scopes.append(getattr(views.cache_state._CURRICULUM_READ_SCOPE, 'memo', None) is not None)
             return None
 
-        with patch.object(views, '_build_curriculum_programme_tree_detail_payload', probe):
+        with composition_fixture(views, '_build_curriculum_programme_tree_detail_payload', probe):
             views.build_curriculum_programme_tree_detail_payload('PROG-1', 'all')
 
         self.assertEqual(scopes, [True])
@@ -3917,18 +3973,18 @@ class ProgrammePermanentDeleteTests(SimpleTestCase):
         # The content check and the unhook read rows this SimpleTestCase has no
         # database for. They have DB-backed cover in tests_content_library; here
         # only the ordering of the deletes matters.
-        with patch.object(views, 'table_exists', lambda table: True), \
-                patch.object(views, 'delete_rows', record), \
+        with composition_fixture(views, 'table_exists', lambda table: True), \
+                composition_fixture(views, 'delete_rows', record), \
                 patch.object(views.group_coaches, 'release_groups',
                              lambda where, params: self.assertTrue(where and params)), \
                 patch.object(views.calendar_holidays, 'release_cohorts',
                              lambda where, params: self.assertTrue(where and params)), \
-                patch.object(views, 'refuse_if_programme_owns_content', lambda plan: None), \
+                composition_fixture(views, 'refuse_if_programme_owns_content', lambda plan: None), \
                 patch.object(
                     views, 'unhook_programme_reusables',
                     lambda plan, removed: unhooks.append(plan),
                 ), \
-                patch.object(views, 'invalidate_curriculum_cache', lambda: None):
+                composition_fixture(views, 'invalidate_curriculum_cache', lambda: None):
             removed = views.permanently_delete_programme_structure(plan)
         return deletes, unhooks, removed
 
@@ -3973,7 +4029,7 @@ class ProgrammePermanentDeleteTests(SimpleTestCase):
             'candidates': ['PROG-1'],
             'childIds': {'moduleIds': ['MOD-1'], 'weekIds': ['WEEK-1'], 'componentIds': ['COMP-1']},
         }
-        with patch.object(views, 'table_exists', lambda table: True), \
+        with composition_fixture(views, 'table_exists', lambda table: True), \
                 patch.object(
                     views, 'delete_rows',
                     lambda table, where_sql, params: order.append(('delete', table)) or [{'id': 'row'}],
@@ -3986,7 +4042,7 @@ class ProgrammePermanentDeleteTests(SimpleTestCase):
                     views, 'unhook_programme_reusables',
                     lambda plan, removed: order.append(('unhook', None)),
                 ), \
-                patch.object(views, 'invalidate_curriculum_cache', lambda: None):
+                composition_fixture(views, 'invalidate_curriculum_cache', lambda: None):
             views.permanently_delete_programme_structure(plan)
 
         self.assertEqual(order[:2], [('check', None), ('unhook', None)])
@@ -4001,17 +4057,17 @@ class ProgrammePermanentDeleteTests(SimpleTestCase):
         def refuse(plan):
             raise views.ProgrammeContentRetained(views.PROGRAMME_CONTENT_RETAINED_MESSAGE)
 
-        with patch.object(views, 'table_exists', lambda table: True), \
-                patch.object(views, 'delete_rows', lambda table, where_sql, params: deletes.append(table) or []), \
-                patch.object(views, 'refuse_if_programme_owns_content', refuse), \
-                patch.object(views, 'invalidate_curriculum_cache', lambda: None):
+        with composition_fixture(views, 'table_exists', lambda table: True), \
+                composition_fixture(views, 'delete_rows', lambda table, where_sql, params: deletes.append(table) or []), \
+                composition_fixture(views, 'refuse_if_programme_owns_content', refuse), \
+                composition_fixture(views, 'invalidate_curriculum_cache', lambda: None):
             with self.assertRaises(views.ProgrammeContentRetained):
                 views.permanently_delete_programme_structure(plan)
         self.assertEqual(deletes, [])
 
     def test_nothing_is_deleted_without_a_programme_id(self):
         deletes = []
-        with patch.object(views, 'table_exists', lambda table: True),              patch.object(views, 'delete_rows', lambda *args: deletes.append(args)):
+        with composition_fixture(views, 'table_exists', lambda table: True),              composition_fixture(views, 'delete_rows', lambda *args: deletes.append(args)):
             removed = views.permanently_delete_programme_structure({'candidates': [], 'childIds': {}})
         self.assertEqual(deletes, [])
         self.assertEqual(removed, {})
@@ -4086,7 +4142,7 @@ class KsbFrameworkLibraryVisibilityTests(SimpleTestCase):
             'coaches': [],
             'tutor_modules': [],
         }
-        with patch.object(views, 'build_programmes', return_value=programmes),              patch.object(views, 'build_modules', return_value=[]),              patch.object(views, 'build_cohorts_and_groups', return_value=([], [])):
+        with composition_fixture(views, 'build_programmes', return_value=programmes),              composition_fixture(views, 'build_modules', return_value=[]),              composition_fixture(views, 'build_cohorts_and_groups', return_value=([], [])):
             return views.build_curriculum_payload_from_rows(rows, compact=True)
 
     def test_a_framework_no_live_programme_points_at_is_still_listed(self):
@@ -4127,7 +4183,7 @@ class KsbFrameworkLibraryVisibilityTests(SimpleTestCase):
             'coaches': [],
             'tutor_modules': [],
         }
-        with patch.object(views, 'build_programmes', return_value=[]),              patch.object(views, 'build_modules', return_value=[]),              patch.object(views, 'build_cohorts_and_groups', return_value=([], [])):
+        with composition_fixture(views, 'build_programmes', return_value=[]),              composition_fixture(views, 'build_modules', return_value=[]),              composition_fixture(views, 'build_cohorts_and_groups', return_value=([], [])):
             payload = views.build_curriculum_payload_from_rows(rows, visibility='all', compact=True)
         self.assertEqual([item['name'] for item in payload['ksbFrameworks']], ['Retired standard'])
 
@@ -4197,7 +4253,7 @@ class StructurePayloadsCacheKeyTests(SimpleTestCase):
     def test_key_length_is_bounded_for_large_requests(self):
         # A resolve request may name hundreds of modules; the key must stay short or the
         # process cache holds megabytes of keys for the whole TTL. Only the count digits
-        # vary with input size — the identifiers themselves are hashed to a fixed width.
+        # vary with input size â€” the identifiers themselves are hashed to a fixed width.
         one = self.key(['MOD-A'])
         many = self.key([f'MOD-{index}' for index in range(500)])
         self.assertLess(len(many), 160)
@@ -4281,7 +4337,7 @@ class ProgrammeLearnerKsbProgressTests(TestCase):
         views.reset_schema_ready_flags()
         views.invalidate_curriculum_cache()
         # Borrow the persistence suite's schema fixtures so the helper runs its
-        # real query path instead of bailing out on a missing table — a test that
+        # real query path instead of bailing out on a missing table â€” a test that
         # only exercises the except branch would pass no matter what the maths did.
         CurriculumPersistenceTests.ensure_programmes_table(self)
         CurriculumPersistenceTests.ensure_ksb_profiles_table(self)
@@ -5004,7 +5060,7 @@ class AuthoringModuleSessionHolidayTests(SimpleTestCase):
     HOLIDAY_ROWS = [
         {'id': 'england-and-wales:2026-12-25', 'title': 'Christmas Day', 'holiday_date': '2026-12-25'},
         {'id': 'england-and-wales:2026-12-28', 'title': 'Boxing Day', 'holiday_date': '2026-12-28', 'notes': 'Substitute day'},
-        {'id': 'england-and-wales:2027-01-01', 'title': 'New Year’s Day', 'holiday_date': '2027-01-01'},
+        {'id': 'england-and-wales:2027-01-01', 'title': 'New Yearâ€™s Day', 'holiday_date': '2027-01-01'},
         # A Monday, but well after the cohort period used below.
         {'id': 'england-and-wales:2027-03-29', 'title': 'Easter Monday', 'holiday_date': '2027-03-29'},
     ]
@@ -5443,8 +5499,8 @@ class CohortEpaPeriodTests(SimpleTestCase):
 class ApprenticeshipEndDateOverrideTests(SimpleTestCase):
     """The apprenticeship end date is editable, and the edit wins.
 
-    The calculated date is only a default. A cohort that has to move it — a break
-    in learning, a resit window, an EPAO with no capacity — usually lands on a
+    The calculated date is only a default. A cohort that has to move it â€” a break
+    in learning, a resit window, an EPAO with no capacity â€” usually lands on a
     date no whole number of EPA months reaches, so the authored date has to
     override the arithmetic rather than be reverse-engineered into months.
     """
@@ -5644,8 +5700,443 @@ class CohortEndDatePreviewTests(SimpleTestCase):
         self.assertIn('The practical end date is before the cohort start date.', result['warnings'])
 
 
-# Keep the established test label while using final-schema PostgreSQL fixtures.
-from .tests_tutor_notifications import TutorAssignmentNotificationTests  # noqa: E402,F401
+class TutorAssignmentNotificationTests(TestCase):
+    """Mailing a tutor the delivery facts when a module lands on them."""
+
+    def setUp(self):
+        views.reset_schema_ready_flags()
+        views.invalidate_curriculum_cache()
+        views.ensure_module_authoring_tables()
+        with connection.cursor() as cursor:
+            for table in (
+                views.AUTHORING_MODULES_TABLE,
+                views.GROUPS_TABLE,
+                views.COHORT_AUTHORING_DETAILS_TABLE,
+            ):
+                cursor.execute(f'delete from {views.authoring_table_name(table)}')
+        # Provisioned against empty tables, so the seed records nothing and every
+        # assignment these tests make afterwards counts as new.
+        tutor_notifications.ensure_notification_table()
+        # Who the tutors are comes from the staff directory; which module each one
+        # holds comes from the module row. There is no third place to seed.
+        self.directory = []
+        patcher = patch(
+            'curriculum_api.views.fetch_staff_users_by_access',
+            side_effect=lambda access: [
+                row for row in self.directory
+                if views.clean_str(row.get('Access')).lower() == views.clean_str(access).lower()
+            ],
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    # -- fixtures ----------------------------------------------------------
+
+    def seed_tutor(self, name='Amira Hassan', email='amira@example.com'):
+        row = staff_user_row(name, email, access='tutor', row_id=1)
+        # An address the directory does not hold is an empty one, not a default.
+        row['Email'] = email
+        self.directory = [row]
+        views.invalidate_curriculum_cache()
+        return row
+
+    def seed_delivery(self, module_id='MOD-ALPHA', title='Data Handling', tutor_name=''):
+        views.authoring_upsert(views.COHORT_AUTHORING_DETAILS_TABLE, ['cohort_id'], {
+            'cohort_id': 'COH-1',
+            'cohort_name': 'September 2026',
+            'programme_id': 'PROG-1',
+            'programme_name': 'Data Analyst L4',
+            'start_date': '2026-09-01',
+            'end_date': '2027-06-30',
+        })
+        views.authoring_upsert(views.GROUPS_TABLE, ['group_id'], {
+            'group_id': 'GRP-1',
+            'group_name': 'Group A',
+            'cohort_id': 'COH-1',
+            'cohort_name': 'September 2026',
+            'programme_id': 'PROG-1',
+            'programme_name': 'Data Analyst L4',
+            'coach_name': 'Sam Coach',
+            'session_week_day': 'Tuesday',
+            'session_start_time': '09:00',
+            'session_end_time': '12:00',
+        })
+        views.authoring_upsert(views.AUTHORING_MODULES_TABLE, ['module_catalogue_id'], {
+            'module_catalogue_id': module_id,
+            'title': title,
+            'programme_id': 'PROG-1',
+            'programme_name': 'Data Analyst L4',
+            'cohort_id': 'COH-1',
+            'cohort_name': 'September 2026',
+            'group_id': 'GRP-1',
+            'group_name': 'Group A',
+            'tutor_name': tutor_name,
+            'sessions_number': 8,
+            'start_date': '2026-09-08',
+            'end_date': '2026-11-03',
+            'total_otjh': 24,
+        })
+
+    def sent_mail(self):
+        return patch.object(
+            tutor_notifications.email_azure, 'send_mail', return_value=(True, None)
+        )
+
+    # -- tests -------------------------------------------------------------
+
+    def test_assignment_mail_carries_the_full_delivery_context(self):
+        """The mail has to answer "what, for whom, when" without opening the LMS."""
+        self.seed_tutor()
+        self.seed_delivery(tutor_name='Amira Hassan')
+
+        with self.sent_mail() as send:
+            tutor_notifications.dispatch_assignment_notifications()
+
+        send.assert_called_once()
+        kwargs = send.call_args.kwargs
+        self.assertEqual(kwargs['to'], 'amira@example.com')
+        self.assertIn('Data Handling', kwargs['subject'])
+
+        body = kwargs['text_body']
+        self.assertIn('Data Handling', body)
+        self.assertIn('MOD-ALPHA', body)
+        self.assertIn('Data Analyst L4', body)
+        self.assertIn('September 2026', body)
+        self.assertIn('Group A', body)
+        # Schedule falls back to the group when the module row carries none.
+        self.assertIn('Tuesday 09:00-12:00', body)
+        self.assertIn('2026-09-08 to 2026-11-03', body)
+        self.assertRegex(body, r'Sessions:\s+8')
+        self.assertRegex(body, r'OTJ hours:\s+24 hours')
+        self.assertIn('Sam Coach', body)
+        self.assertIn('Data Handling', kwargs['html_body'])
+
+    def test_the_same_assignment_is_not_mailed_twice(self):
+        self.seed_tutor()
+        self.seed_delivery(tutor_name='Amira Hassan')
+
+        with self.sent_mail():
+            tutor_notifications.dispatch_assignment_notifications()
+        with self.sent_mail() as send:
+            tutor_notifications.dispatch_assignment_notifications()
+
+        send.assert_not_called()
+
+    def test_several_modules_saved_together_produce_one_mail(self):
+        """A wizard save that attaches three modules is one assignment, not three."""
+        self.seed_tutor()
+        self.seed_delivery(module_id='MOD-A', title='Module A', tutor_name='Amira Hassan')
+        self.seed_delivery(module_id='MOD-B', title='Module B', tutor_name='Amira Hassan')
+        self.seed_delivery(module_id='MOD-C', title='Module C', tutor_name='Amira Hassan')
+
+        with self.sent_mail() as send:
+            tutor_notifications.dispatch_assignment_notifications()
+
+        send.assert_called_once()
+        body = send.call_args.kwargs['text_body']
+        self.assertIn('Module A', body)
+        self.assertIn('Module B', body)
+        self.assertIn('Module C', body)
+        self.assertIn('3 modules', send.call_args.kwargs['subject'])
+
+    def test_a_tutor_with_no_email_is_skipped_and_stays_notifiable(self):
+        """No address is not a delivered notification â€” record nothing, retry later."""
+        self.seed_tutor(email='')
+        self.seed_delivery(tutor_name='Amira Hassan')
+
+        with self.sent_mail() as send:
+            tutor_notifications.dispatch_assignment_notifications()
+        send.assert_not_called()
+        self.assertEqual(tutor_notifications.ledger_rows(), [])
+
+        self.seed_tutor(email='amira@example.com')
+        with self.sent_mail() as send:
+            tutor_notifications.dispatch_assignment_notifications()
+        send.assert_called_once()
+
+    def test_reassignment_after_removal_is_mailed_again(self):
+        self.seed_tutor()
+        self.seed_delivery(tutor_name='Amira Hassan')
+        with self.sent_mail():
+            tutor_notifications.dispatch_assignment_notifications()
+
+        views.update_authoring_rows(
+            views.AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', ['MOD-ALPHA'],
+            {'tutor_name': ''},
+        )
+        with self.sent_mail() as send:
+            tutor_notifications.dispatch_assignment_notifications()
+        send.assert_not_called()
+        self.assertEqual(tutor_notifications.ledger_rows(), [])
+
+        views.update_authoring_rows(
+            views.AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', ['MOD-ALPHA'],
+            {'tutor_name': 'Amira Hassan'},
+        )
+        with self.sent_mail() as send:
+            tutor_notifications.dispatch_assignment_notifications()
+        send.assert_called_once()
+
+    def test_a_failed_send_is_retried_then_given_up_on(self):
+        self.seed_tutor()
+        self.seed_delivery(tutor_name='Amira Hassan')
+
+        failing = patch.object(
+            tutor_notifications.email_azure, 'send_mail', return_value=(False, 'graph 503')
+        )
+        for _ in range(tutor_notifications.MAX_SEND_ATTEMPTS):
+            with failing as send:
+                tutor_notifications.dispatch_assignment_notifications()
+                send.assert_called_once()
+
+        with failing as send:
+            tutor_notifications.dispatch_assignment_notifications()
+        send.assert_not_called()
+
+    def test_a_deleted_module_is_not_mailed_and_frees_its_ledger_row(self):
+        """A module removed from the programme is not a teaching assignment."""
+        self.seed_tutor()
+        self.seed_delivery(tutor_name='Amira Hassan')
+        with self.sent_mail():
+            tutor_notifications.dispatch_assignment_notifications()
+
+        views.update_authoring_rows(
+            views.AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', ['MOD-ALPHA'],
+            {'is_programme_deleted': True},
+        )
+        with self.sent_mail() as send:
+            tutor_notifications.dispatch_assignment_notifications()
+        send.assert_not_called()
+        self.assertEqual(tutor_notifications.ledger_rows(), [])
+
+    def test_assignments_predating_the_ledger_are_seeded_rather_than_mailed(self):
+        """First deployment must not mail every tutor their whole back catalogue."""
+        self.seed_tutor()
+        self.seed_delivery(tutor_name='Amira Hassan')
+        with connection.cursor() as cursor:
+            cursor.execute(
+                'drop table if exists '
+                + views.table_name(tutor_notifications.NOTIFICATION_TABLE)
+            )
+        views.reset_schema_ready_flags()
+
+        with self.sent_mail() as send:
+            tutor_notifications.dispatch_assignment_notifications()
+
+        send.assert_not_called()
+        rows = tutor_notifications.ledger_rows()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['status'], 'seeded')
+
+    def test_assigning_a_tutor_no_longer_mails_them(self):
+        """Assignment emails are sent from the module workspace, never on save.
+
+        save_tree_group_modules and every other assignment path still reach
+        notify_staff_assignment_change; it now schedules nothing.
+        """
+        self.seed_tutor()
+        self.seed_delivery(tutor_name='Amira Hassan')
+
+        with self.sent_mail() as send:
+            with self.captureOnCommitCallbacks(execute=True) as callbacks:
+                views.notify_staff_assignment_change()
+        send.assert_not_called()
+        self.assertEqual(callbacks, [])
+        self.assertEqual(tutor_notifications.ledger_rows(), [])
+
+    def test_staff_email_the_tutor_of_one_module_on_request(self):
+        self.seed_tutor()
+        self.seed_delivery(tutor_name='Amira Hassan')
+        self.assertEqual(tutor_notifications.module_tutor_status('MOD-ALPHA'), {
+            'moduleId': 'MOD-ALPHA', 'tutor': {'name': 'Amira Hassan', 'hasEmail': True}, 'lastSent': None,
+        })
+
+        with self.sent_mail() as send:
+            payload, status = tutor_notifications.send_module_tutor_email('MOD-ALPHA')
+        self.assertEqual((status, payload['sent'], payload['tutor']), (200, True, 'Amira Hassan'))
+        send.assert_called_once()
+        self.assertEqual(send.call_args.kwargs['to'], 'amira@example.com')
+        self.assertIn('Data Handling', send.call_args.kwargs['text_body'])
+        self.assertEqual(tutor_notifications.module_tutor_status('MOD-ALPHA')['lastSent']['status'], 'sent')
+
+        # Sending again is allowed (the button asks first) and still one row.
+        with self.sent_mail() as send:
+            tutor_notifications.send_module_tutor_email('MOD-ALPHA')
+        send.assert_called_once()
+        self.assertEqual(len(tutor_notifications.ledger_rows()), 1)
+
+    def test_several_deliveries_of_one_module_are_one_email(self):
+        """A drawer save that attaches three groups is one decision, not three.
+
+        The tutor is put on one delivery per group in a single save, and
+        `email_azure.tutor_assignment_message` has always taken a list for
+        exactly this. Three mails in the same second would describe the same
+        assignment three times.
+        """
+        self.seed_tutor()
+        self.seed_delivery(module_id='MOD-ALPHA', title='Data Handling', tutor_name='Amira Hassan')
+        self.seed_delivery(module_id='MOD-BETA', title='Statistics', tutor_name='Amira Hassan')
+
+        with self.sent_mail() as send:
+            payload, status = tutor_notifications.send_tutor_email(['MOD-ALPHA', 'MOD-BETA'])
+
+        self.assertEqual((status, payload['sent'], payload['modules']), (200, True, 2))
+        send.assert_called_once()
+        body = send.call_args.kwargs['text_body']
+        self.assertIn('Data Handling', body)
+        self.assertIn('Statistics', body)
+        # One mail, but each module keeps its own ledger row so the workspace can
+        # still say when that module last went out.
+        self.assertEqual(len(tutor_notifications.ledger_rows()), 2)
+        for module_id in ('MOD-ALPHA', 'MOD-BETA'):
+            self.assertEqual(tutor_notifications.module_tutor_status(module_id)['lastSent']['status'], 'sent')
+
+    def test_the_same_delivery_named_twice_is_still_one_entry(self):
+        self.seed_tutor()
+        self.seed_delivery(tutor_name='Amira Hassan')
+        with self.sent_mail() as send:
+            payload, status = tutor_notifications.send_tutor_email(['MOD-ALPHA', 'MOD-ALPHA', ''])
+        self.assertEqual((status, payload['modules']), (200, 1))
+        send.assert_called_once()
+        self.assertEqual(len(tutor_notifications.ledger_rows()), 1)
+
+    def test_modules_with_different_tutors_are_refused_not_split(self):
+        """Who the one mail is addressed to has to be unambiguous."""
+        amira = staff_user_row('Amira Hassan', 'amira@example.com', access='tutor', row_id=1)
+        amira['Email'] = 'amira@example.com'
+        ben = staff_user_row('Ben Carter', 'ben@example.com', access='tutor', row_id=2)
+        ben['Email'] = 'ben@example.com'
+        self.directory = [amira, ben]
+        views.invalidate_curriculum_cache()
+        self.seed_delivery(module_id='MOD-ALPHA', title='Data Handling', tutor_name='Amira Hassan')
+        self.seed_delivery(module_id='MOD-BETA', title='Statistics', tutor_name='Ben Carter')
+
+        with self.sent_mail() as send:
+            payload, status = tutor_notifications.send_tutor_email(['MOD-ALPHA', 'MOD-BETA'])
+        self.assertEqual(status, 409)
+        self.assertIn('same tutor', payload['error'])
+        send.assert_not_called()
+        self.assertEqual(tutor_notifications.ledger_rows(), [])
+
+    def test_naming_no_module_sends_nothing(self):
+        self.seed_tutor()
+        self.seed_delivery(tutor_name='Amira Hassan')
+        with self.sent_mail() as send:
+            payload, status = tutor_notifications.send_tutor_email([])
+        self.assertEqual(status, 400)
+        send.assert_not_called()
+
+    def test_the_tick_reads_its_state_from_the_ledger_not_from_the_drawer(self):
+        """Nothing sent yet reads as unchecked; a send makes it checked."""
+        self.seed_tutor()
+        self.seed_delivery(tutor_name='Amira Hassan')
+
+        before = tutor_notifications.tutor_email_status(['MOD-ALPHA'], 'Amira Hassan')
+        self.assertEqual((before['total'], before['emailed'], before['lastSentAt']), (1, 0, None))
+        self.assertEqual(before['tutor'], {'name': 'Amira Hassan', 'hasEmail': True})
+
+        with self.sent_mail():
+            tutor_notifications.send_tutor_email(['MOD-ALPHA'])
+
+        after = tutor_notifications.tutor_email_status(['MOD-ALPHA'], 'Amira Hassan')
+        self.assertEqual((after['total'], after['emailed']), (1, 1))
+        self.assertTrue(after['lastSentAt'])
+        self.assertTrue(after['deliveries'][0]['emailed'])
+
+    def test_a_failed_send_does_not_count_as_emailed(self):
+        """The ledger records the attempt; the tutor still heard nothing."""
+        self.seed_tutor()
+        self.seed_delivery(tutor_name='Amira Hassan')
+        with patch.object(tutor_notifications.email_azure, 'send_mail', return_value=(False, 'graph 503')):
+            _payload, status = tutor_notifications.send_tutor_email(['MOD-ALPHA'])
+        self.assertEqual(status, 502)
+
+        state = tutor_notifications.tutor_email_status(['MOD-ALPHA'], 'Amira Hassan')
+        self.assertEqual(state['emailed'], 0)
+        self.assertIsNone(state['lastSentAt'])
+        # The attempt is visible, but it is not a notification.
+        self.assertEqual(state['deliveries'][0]['lastSent']['status'], 'failed')
+
+    def test_the_previous_tutor_emailed_state_never_carries_over(self):
+        amira = staff_user_row('Amira Hassan', 'amira@example.com', access='tutor', row_id=1)
+        amira['Email'] = 'amira@example.com'
+        ben = staff_user_row('Ben Carter', 'ben@example.com', access='tutor', row_id=2)
+        ben['Email'] = 'ben@example.com'
+        self.directory = [amira, ben]
+        views.invalidate_curriculum_cache()
+        self.seed_delivery(tutor_name='Amira Hassan')
+        with self.sent_mail():
+            tutor_notifications.send_tutor_email(['MOD-ALPHA'])
+
+        self.assertEqual(tutor_notifications.tutor_email_status(['MOD-ALPHA'], 'Amira Hassan')['emailed'], 1)
+        # The drawer asking about the tutor somebody just picked, before it is
+        # saved onto the module. Amira's record is hers and says nothing here.
+        handed_over = tutor_notifications.tutor_email_status(['MOD-ALPHA'], 'Ben Carter')
+        self.assertEqual((handed_over['emailed'], handed_over['lastSentAt']), (0, None))
+        self.assertEqual(handed_over['tutor'], {'name': 'Ben Carter', 'hasEmail': True})
+
+    def test_a_partly_notified_module_reports_the_mix(self):
+        """Two deliveries, one told: neither "emailed" nor "not emailed"."""
+        self.seed_tutor()
+        self.seed_delivery(module_id='MOD-ALPHA', title='Data Handling', tutor_name='Amira Hassan')
+        self.seed_delivery(module_id='MOD-BETA', title='Statistics', tutor_name='Amira Hassan')
+        with self.sent_mail():
+            tutor_notifications.send_tutor_email(['MOD-ALPHA'])
+
+        mixed = tutor_notifications.tutor_email_status(['MOD-ALPHA', 'MOD-BETA'], 'Amira Hassan')
+        self.assertEqual((mixed['total'], mixed['emailed']), (2, 1))
+        self.assertEqual(
+            {d['moduleId']: d['emailed'] for d in mixed['deliveries']},
+            {'MOD-ALPHA': True, 'MOD-BETA': False},
+        )
+
+        # Finishing the job covers both in one message, and the mix resolves.
+        with self.sent_mail() as send:
+            tutor_notifications.send_tutor_email(['MOD-ALPHA', 'MOD-BETA'])
+        send.assert_called_once()
+        done = tutor_notifications.tutor_email_status(['MOD-ALPHA', 'MOD-BETA'], 'Amira Hassan')
+        self.assertEqual((done['total'], done['emailed']), (2, 2))
+
+    def test_a_manual_send_explains_why_it_cannot_go(self):
+        self.seed_delivery(tutor_name='')
+        with self.sent_mail() as send:
+            payload, status = tutor_notifications.send_module_tutor_email('MOD-ALPHA')
+            self.assertEqual(status, 409)
+            self.assertIn('Assign a tutor', payload['error'])
+            self.seed_tutor(email='')
+            self.seed_delivery(tutor_name='Amira Hassan')
+            payload, status = tutor_notifications.send_module_tutor_email('MOD-ALPHA')
+            self.assertEqual(status, 409)
+            self.assertIn('no email address', payload['error'])
+            self.assertEqual(tutor_notifications.send_module_tutor_email('MOD-MISSING')[1], 404)
+        send.assert_not_called()
+
+    def test_a_failed_manual_send_is_reported_and_recorded(self):
+        self.seed_tutor()
+        self.seed_delivery(tutor_name='Amira Hassan')
+        with patch.object(tutor_notifications.email_azure, 'send_mail', return_value=(False, 'mailbox unavailable')):
+            payload, status = tutor_notifications.send_module_tutor_email('MOD-ALPHA')
+        self.assertEqual((status, payload['code']), (502, 'send_failed'))
+        self.assertEqual(tutor_notifications.module_tutor_status('MOD-ALPHA')['lastSent']['status'], 'failed')
+
+    def test_nothing_is_sent_while_the_transaction_is_still_open(self):
+        """A save that rolls back must not have told anybody it happened."""
+        self.seed_tutor()
+        self.seed_delivery(tutor_name='Amira Hassan')
+
+        with self.sent_mail() as send:
+            with self.captureOnCommitCallbacks(execute=False):
+                views.notify_staff_assignment_change()
+            send.assert_not_called()
+
+    def test_the_feature_can_be_switched_off(self):
+        self.seed_tutor()
+        self.seed_delivery(tutor_name='Amira Hassan')
+
+        with patch.dict(os.environ, {'TUTOR_ASSIGNMENT_EMAILS': 'false'}):
+            with self.sent_mail() as send:
+                tutor_notifications.dispatch_assignment_notifications()
+        send.assert_not_called()
 
 
 class ModuleTotalOtjhTests(CurriculumPersistenceHarness):

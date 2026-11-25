@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState, type ComponentProps } from 'react
 import { loadAssignmentTopicStates, selectAssignmentTopic, type AssignmentTopicState } from '@/api/assignmentTopics';
 import { MONTHLY_STEPS } from '@/api/monthlyAssignment';
 import { hasHtmlText, presentTopic, topicHasContent, topicLabel, type AssignmentTopic } from '@/lib/assignmentTopics';
-import { AssignmentSubmissionForm } from './AssignmentSubmissionWizard';
+import { AssignmentSubmissionForm } from './AssignmentSubmissionForm';
 import { useAssignmentTimer } from './useAssignmentTimer';
 import { ActivityElapsedTimer } from './ActivityElapsedTimer';
 import { AssignmentAttachment } from '../monthly-submission/AssignmentAttachment';

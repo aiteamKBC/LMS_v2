@@ -19,12 +19,14 @@ def normalise_projected_calendar(module):
 def cohort_holidays(cohort_ids):
     # Use the existing sources/exclusion rule, but propagate read failures.
     # The general curriculum helper deliberately swallows them for other views.
-    from curriculum_api.views import (
-        clean_str, curriculum_in_clause, COHORT_AUTHORING_DETAILS_TABLE,
-        scheduling_holidays_from, parse_json_value, fetch_all, table_name,
-        table_exists, ENGLAND_HOLIDAYS_TABLE, authored_holiday_table_name,
-        holiday_row_archived, holiday_row_sort_key,
-    )
+    from curriculum_api.catalogue.domain.values import clean_str, parse_json_value
+    from curriculum_api.catalogue.infrastructure.database_reads import curriculum_in_clause, fetch_all, table_name, table_exists
+    from curriculum_api.catalogue.infrastructure.authoring_schema_runtime import COHORT_AUTHORING_DETAILS_TABLE
+    from curriculum_api.catalogue.application.inherited_calendar import scheduling_holidays_from
+    from curriculum_api.catalogue.domain.read_contracts import ENGLAND_HOLIDAYS_TABLE
+    from curriculum_api.catalogue.infrastructure.calendar_runtime import authored_holiday_table_name
+    from curriculum_api.catalogue.domain.holiday_selection import holiday_row_archived
+    from curriculum_api.catalogue.application.cohort_calendar import holiday_row_sort_key
     wanted = list(dict.fromkeys(clean_str(value) for value in cohort_ids if clean_str(value)))
     if not wanted:
         return {}

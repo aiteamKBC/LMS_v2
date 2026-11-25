@@ -114,12 +114,10 @@ def _selected_working_holidays(cohort_id):
     scheduling and are deliberately not promoted into this rule.
     """
     from curriculum_api import calendar_holidays
-    from curriculum_api.views import (
-        HOLIDAY_SOURCE_GOVUK,
-        holiday_row_source,
-        parse_date,
-        serialize_holiday_row,
-    )
+    from curriculum_api.catalogue.domain.read_contracts import HOLIDAY_SOURCE_GOVUK
+    from curriculum_api.catalogue.domain.holiday_selection import holiday_row_source
+    from curriculum_api.catalogue.domain.values import parse_date
+    from curriculum_api.catalogue.application.cohort_calendar import serialize_holiday_row
 
     period_start, period_end = _cohort_window(cohort_id)
     period_start, period_end = parse_date(period_start), parse_date(period_end)
@@ -168,7 +166,7 @@ def learner_holiday_details(component_id=None, *, quiz_id=None):
     delivery (personal learning, a free course) has no cohort calendar to sit
     on, so nothing is a holiday for it.
     """
-    from curriculum_api.views import holiday_details_by_date
+    from curriculum_api.catalogue.application.session_plans import holiday_details_by_date
 
     cohort_id = (
         _module_cohort_for_quiz(quiz_id) if quiz_id

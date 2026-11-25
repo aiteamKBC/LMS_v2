@@ -21,7 +21,7 @@ from old_otjh.service import ServiceError
 from old_otjh.repository import request_read_scope
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 from curriculum_api.canonical_read_sql import module_expected_otjh_sql
-from curriculum_api.learning_storage import read_sql
+from curriculum_api.catalogue.infrastructure.course_storage_reads import read_sql
 
 from .response_cache import cached_learner_read
 from .weekly_read_cache import weekly_read_scope

@@ -17,7 +17,7 @@ adapted to plain CSRF-exempt JSON views keyed on kind+id.
     GET  /learner_api/evidence/<kind>/<pk>/<file_id>/download/
     DELETE /learner_api/evidence/<kind>/<pk>/<file_id>/   (own file, pre-submission)
 """
-from curriculum_api.learning_storage import read_sql
+from curriculum_api.catalogue.infrastructure.course_storage_reads import read_sql
 import json
 import logging
 from pathlib import Path

@@ -19,7 +19,14 @@ import logging
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET
 
-from . import views
+from curriculum_api.catalogue.domain.values import clean_str
+from curriculum_api.catalogue.infrastructure.placement_runtime import cohort_conflict_record, group_conflict_record
+from curriculum_api.catalogue.application.module_projection import curriculum_module_from_authoring_payload
+from curriculum_api.catalogue.infrastructure.revision_runtime import curriculum_record_revision
+from curriculum_api.catalogue.api.structure_composition import get_authoring_structure_payload
+from curriculum_api.catalogue.api.responses import json_error
+from curriculum_api.catalogue.infrastructure.hierarchy_composition import programme_conflict_record
+from curriculum_api.catalogue.infrastructure.catalogue_resolution import resolve_stored_module_catalogue_id
 
 logger = logging.getLogger(__name__)
 
@@ -27,17 +34,17 @@ logger = logging.getLogger(__name__)
 def _module_record(identifier):
     # The record the module PATCH hands back on a refusal, so the drawer merges
     # a snapshot and a refusal through one shape.
-    module_catalogue_id = views.resolve_stored_module_catalogue_id(identifier) or identifier
-    return views.curriculum_module_from_authoring_payload(
-        views.get_authoring_structure_payload(module_catalogue_id)
+    module_catalogue_id = resolve_stored_module_catalogue_id(identifier) or identifier
+    return curriculum_module_from_authoring_payload(
+        get_authoring_structure_payload(module_catalogue_id)
     )
 
 
 #: The drawer-authored fields of each kind -- the same builders a 409 uses.
 SNAPSHOT_READERS = {
-    'programme': views.programme_conflict_record,
-    'cohort': views.cohort_conflict_record,
-    'group': views.group_conflict_record,
+    'programme': programme_conflict_record,
+    'cohort': cohort_conflict_record,
+    'group': group_conflict_record,
     'module': _module_record,
 }
 
@@ -52,12 +59,12 @@ def curriculum_record_snapshot(request):
     token with nothing to pair it with is the stale pairing this exists to
     prevent, and the drawer treats a failed read as "do not save unchecked".
     """
-    kind = views.clean_str(request.GET.get('kind'))
-    identifier = views.clean_str(request.GET.get('id'))
+    kind = clean_str(request.GET.get('kind'))
+    identifier = clean_str(request.GET.get('id'))
     read = SNAPSHOT_READERS.get(kind)
     if not read or not identifier:
-        return views.json_error('Name a programme, cohort, group or module to read.', status=400)
-    revision = views.curriculum_record_revision(kind, identifier)
+        return json_error('Name a programme, cohort, group or module to read.', status=400)
+    revision = curriculum_record_revision(kind, identifier)
     if not revision:
         return JsonResponse({'kind': kind, 'id': identifier, 'revision': '', 'record': None})
     try:
@@ -66,7 +73,7 @@ def curriculum_record_snapshot(request):
         logger.warning('Unable to read the stored %s %s.', kind, identifier, exc_info=True)
         record = None
     if not record:
-        return views.json_error(
+        return json_error(
             'The saved version of this record could not be read. Try again in a moment.',
             status=503,
         )

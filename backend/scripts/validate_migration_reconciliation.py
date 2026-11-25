@@ -34,9 +34,9 @@ with patch.object(BaseDatabaseWrapper, 'ensure_connection', side_effect=Assertio
     with patch.object(socket.socket, 'connect', side_effect=AssertionError('Network forbidden')):
         suite = unittest.defaultTestLoader.loadTestsFromNames([
             'curriculum_api.test_migration_reconciliation_no_db',
-            'curriculum_api.test_live_session_register_no_db',
-            'curriculum_api.tests_parallel_attendance_register',
-            'curriculum_api.test_qr_attendance_delete_cleanup_no_db',
+            'curriculum_api.meetings.tests.test_live_session_register_no_db',
+            'curriculum_api.meetings.tests.tests_parallel_attendance_register',
+            'curriculum_api.meetings.tests.test_qr_attendance_delete_cleanup_no_db',
         ])
         result = unittest.TextTestRunner(verbosity=2).run(suite)
     if not result.wasSuccessful():

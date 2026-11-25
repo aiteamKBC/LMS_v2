@@ -42,7 +42,7 @@ class NativeReviewEmailIdentityTests(SimpleTestCase):
         query = Mock()
         query.order_by.return_value = rows
         with patch.object(calendar.CoachCalendarEvent.objects, "filter", return_value=query), \
-             patch("curriculum_api.review_instances.list_review_instances_for_learner",
+             patch('curriculum_api.review_management.infrastructure.instance_rows.list_review_instances_for_learner',
                    return_value=instances if instances is not None else [instance()]) as read, \
              patch.object(calendar, "_curriculum_cycle_events",
                           side_effect=lambda _source, _mirror, records, **_kw: list(records)):
@@ -74,7 +74,7 @@ class NativeReviewEmailIdentityTests(SimpleTestCase):
         query = Mock()
         query.order_by.return_value = [row]
         with patch.object(calendar.CoachCalendarEvent.objects, "filter", return_value=query), \
-             patch("curriculum_api.review_instances.list_review_instances_for_learner", return_value=[instance()]), \
+             patch('curriculum_api.review_management.infrastructure.instance_rows.list_review_instances_for_learner', return_value=[instance()]), \
              patch.object(calendar, "_generated_cycle_events", return_value=[generated]), \
              patch.object(calendar, "_serialize_event",
                           return_value={"eventKey": row.event_key, "status": row.status}):
@@ -120,7 +120,7 @@ class NativeReviewEmailIdentityTests(SimpleTestCase):
         query.order_by.return_value = [row]
         with patch.object(calendar.CoachCalendarEvent.objects, "filter", return_value=query), \
              patch.object(calendar, "review_profile_for_source", return_value=mirror), \
-             patch("curriculum_api.review_instances.list_review_instances_for_learner") as native, \
+             patch('curriculum_api.review_management.infrastructure.instance_rows.list_review_instances_for_learner') as native, \
              patch("learner_api.imported_review_calendar.imported_events_for_learner",
                    return_value=[{"reviewSource": "aptem", "eventKey": "imported-review:808"}]) as imported:
             result = calendar.coaching_events_for_learner(source, mirror)
@@ -137,7 +137,7 @@ class NativeReviewEmailIdentityTests(SimpleTestCase):
              patch.object(calendar, "_calendar_profile", return_value=mirror), \
              patch.object(calendar.CoachCalendarEvent.objects, "filter") as events, \
              patch("coach_api.reconciliation_links.for_calendar", return_value=None), \
-             patch("curriculum_api.review_instances.get_review_instance") as read:
+             patch('curriculum_api.review_management.infrastructure.instance_rows.get_review_instance') as read:
             events.return_value.first.return_value = row
             read.return_value = instance()
             self.assertIs(calendar._learner_calendar_record("commercial", 17, row.event_key), row)

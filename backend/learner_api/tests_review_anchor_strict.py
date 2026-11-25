@@ -31,7 +31,12 @@ from coach_api.views import (
     resolve_review_anchor_date,
     resolve_schedule_window,
 )
-from curriculum_api import review_instances, review_types, reviews
+import curriculum_api.review_management.api.commands as review_api_commands
+import curriculum_api.review_management.domain.classification as review_domain_classification
+import curriculum_api.review_management.infrastructure.instance_rows as review_infrastructure_instance_rows
+import curriculum_api.review_management.infrastructure.instance_schema as review_infrastructure_instance_schema
+import curriculum_api.review_management.infrastructure.template_rows as review_infrastructure_template_rows
+import curriculum_api.review_management.infrastructure.type_rows as review_infrastructure_type_rows
 
 from .calendar import _generated_cycle_events
 from .tests_learner_review_pages import LearnerReviewPageTestCase, LEARNER_START, PROGRAMME_ID
@@ -89,10 +94,10 @@ class StrictReviewAnchorTestCase(LearnerReviewPageTestCase):
     """Shared fixtures. No tests of its own."""
 
     def _template(self, *, name, type_code, interval=4, unit='weeks'):
-        review_id, errors = reviews.create_review(PROGRAMME_ID, {
+        review_id, errors = review_api_commands.create_review(PROGRAMME_ID, {
             'name': name,
             'enabled': True,
-            'reviewTypeId': review_types.get_review_type_by_code(type_code)['id'],
+            'reviewTypeId': review_infrastructure_type_rows.get_review_type_by_code(type_code)['id'],
             'recurrence': {'interval': interval, 'unit': unit},
             'scheduleAnchorDate': '2026-01-01',
             'applicableStatuses': [],
@@ -102,12 +107,12 @@ class StrictReviewAnchorTestCase(LearnerReviewPageTestCase):
             'sections': [],
         }, actor='test')
         self.assertIsNone(errors, errors)
-        return reviews.get_review_template_row(review_id)
+        return review_infrastructure_template_rows.get_review_template_row(review_id)
 
     def _custom_template(self, *, name, type_name, interval=4, unit='weeks'):
-        type_row, errors = review_types.create_review_type(type_name, actor='test')
+        type_row, errors = review_api_commands.create_review_type(type_name, actor='test')
         self.assertIsNone(errors, errors)
-        review_id, errors = reviews.create_review(PROGRAMME_ID, {
+        review_id, errors = review_api_commands.create_review(PROGRAMME_ID, {
             'name': name, 'enabled': True, 'reviewTypeId': type_row['id'],
             'recurrence': {'interval': interval, 'unit': unit},
             'scheduleAnchorDate': '2026-01-01', 'applicableStatuses': [],
@@ -117,7 +122,7 @@ class StrictReviewAnchorTestCase(LearnerReviewPageTestCase):
             'sections': [],
         }, actor='test')
         self.assertIsNone(errors, errors)
-        return reviews.get_review_template_row(review_id), type_row
+        return review_infrastructure_template_rows.get_review_template_row(review_id), type_row
 
     def _learner_calendar_dates(self, row, *, mirror=None):
         """What /learner/monthly-coaching, /learner/progress-reviews and the
@@ -232,7 +237,7 @@ class MCMAndProgressReviewUseLearnerStartDateTests(StrictReviewAnchorTestCase):
         # (unrelated, unchanged) scheduling WINDOW still covers the expected
         # occurrence -- resolve_schedule_window legitimately still reads
         # start_date; only the ANCHOR must come from learner_start_date.
-        self._template(name='Monthly Coaching Meeting', type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        self._template(name='Monthly Coaching Meeting', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         row = enrolment_row(start_date='2025-01-01', learner_start_date=LEARNER_START.isoformat())
         dates = self._learner_calendar_dates(row)
         self.assertTrue(dates)
@@ -241,7 +246,7 @@ class MCMAndProgressReviewUseLearnerStartDateTests(StrictReviewAnchorTestCase):
 
     def test_progress_review_occurrence_generation_uses_learner_start_date(self):
         self._template(
-            name='Progress Review', type_code=review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW,
+            name='Progress Review', type_code=review_domain_classification.REVIEW_TYPE_CODE_PROGRESS_REVIEW,
             interval=8, unit='weeks',
         )
         row = enrolment_row(start_date='2025-01-01', learner_start_date=LEARNER_START.isoformat())
@@ -252,7 +257,7 @@ class MCMAndProgressReviewUseLearnerStartDateTests(StrictReviewAnchorTestCase):
     def test_recurrence_interval_behaviour_is_unchanged(self):
         """Scope guard: only the anchor SOURCE changed. The interval math
         itself (weeks/months, occurrence numbering) is untouched."""
-        self._template(name='Six Weekly Coaching', type_code=review_types.REVIEW_TYPE_CODE_MCM, interval=6, unit='weeks')
+        self._template(name='Six Weekly Coaching', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM, interval=6, unit='weeks')
         row = enrolment_row(learner_start_date=LEARNER_START.isoformat())
         dates = self._learner_calendar_dates(row)
         expected = [(LEARNER_START + timedelta(weeks=6 * step)).isoformat() for step in range(1, len(dates) + 1)]
@@ -261,9 +266,9 @@ class MCMAndProgressReviewUseLearnerStartDateTests(StrictReviewAnchorTestCase):
     def test_review_type_event_type_mapping_is_unchanged(self):
         """Scope guard: mcm -> mcr and progress_review -> progress-review
         still hold after the anchor source change."""
-        self._template(name='Monthly Coaching Meeting', type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        self._template(name='Monthly Coaching Meeting', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         self._template(
-            name='Progress Review', type_code=review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW, interval=8,
+            name='Progress Review', type_code=review_domain_classification.REVIEW_TYPE_CODE_PROGRESS_REVIEW, interval=8,
         )
         row = enrolment_row(learner_start_date=LEARNER_START.isoformat())
         events = _generated_cycle_events(row, profile_row(), set())
@@ -272,8 +277,8 @@ class MCMAndProgressReviewUseLearnerStartDateTests(StrictReviewAnchorTestCase):
         self.assertEqual(by_type_code.get('progress_review'), 'progress-review')
 
     def test_no_calendar_or_instance_write_when_anchor_is_missing(self):
-        self._template(name='Monthly Coaching Meeting', type_code=review_types.REVIEW_TYPE_CODE_MCM)
-        review_instances.provision_review_instance_tables()
+        self._template(name='Monthly Coaching Meeting', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
+        review_infrastructure_instance_schema.provision_review_instance_tables()
         row = enrolment_row(start_date='2026-10-01', learner_start_date=None)
 
         events = _generated_cycle_events(row, profile_row(), set())
@@ -281,7 +286,7 @@ class MCMAndProgressReviewUseLearnerStartDateTests(StrictReviewAnchorTestCase):
         self.assertEqual(events, [])
         for occurrence_number in range(1, 4):
             self.assertIsNone(
-                review_instances.find_review_instance('any-template-id', MIRROR_ID, occurrence_number),
+                review_infrastructure_instance_rows.find_review_instance('any-template-id', MIRROR_ID, occurrence_number),
             )
 
 
@@ -306,34 +311,34 @@ class ResolveSchedulingWindowUnaffectedTests(StrictReviewAnchorTestCase):
 
 class LearnerCalendarStrictAnchorTests(StrictReviewAnchorTestCase):
     def test_1_occurrences_generate_from_created_users_start_date(self):
-        self._template(name='Monthly Coaching Meeting', type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        self._template(name='Monthly Coaching Meeting', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         dates = self._learner_calendar_dates(enrolment_row())
         self.assertTrue(dates)
         self.assertEqual(dates[0], (LEARNER_START + timedelta(weeks=4)).isoformat())
 
     def test_2_created_users_wins_over_a_different_profile_cohort_start(self):
-        self._template(name='Monthly Coaching Meeting', type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        self._template(name='Monthly Coaching Meeting', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         dates = self._learner_calendar_dates(enrolment_row())
         # Anchored on the 10th, not the cohort's 3rd.
         self.assertEqual(dates[0], (LEARNER_START + timedelta(weeks=4)).isoformat())
         self.assertNotIn((COHORT_START + timedelta(weeks=4)).isoformat(), dates)
 
     def test_3_missing_created_users_row_generates_nothing(self):
-        self._template(name='Monthly Coaching Meeting', type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        self._template(name='Monthly Coaching Meeting', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         # The mirror still carries a perfectly usable cohort start date; the
         # point is that it must NOT be used.
         self.assertEqual(self._learner_calendar_dates(None), [])
 
     def test_4_blank_created_users_start_date_generates_nothing(self):
-        self._template(name='Monthly Coaching Meeting', type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        self._template(name='Monthly Coaching Meeting', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         self.assertEqual(self._learner_calendar_dates(enrolment_row(learner_start_date='')), [])
 
     def test_5_invalid_created_users_start_date_generates_nothing(self):
-        self._template(name='Monthly Coaching Meeting', type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        self._template(name='Monthly Coaching Meeting', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         self.assertEqual(self._learner_calendar_dates(enrolment_row(learner_start_date='not-a-date')), [])
 
     def test_6_mcm_follows_the_strict_rule(self):
-        self._template(name='Monthly Coaching Meeting', type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        self._template(name='Monthly Coaching Meeting', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         events = _generated_cycle_events(enrolment_row(), profile_row(), set())
         self.assertEqual({event['reviewTypeCode'] for event in events}, {'mcm'})
         self.assertEqual(events[0]['date'], (LEARNER_START + timedelta(weeks=4)).isoformat())
@@ -341,7 +346,7 @@ class LearnerCalendarStrictAnchorTests(StrictReviewAnchorTestCase):
 
     def test_7_progress_review_follows_the_strict_rule(self):
         self._template(
-            name='Progress Review', type_code=review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW,
+            name='Progress Review', type_code=review_domain_classification.REVIEW_TYPE_CODE_PROGRESS_REVIEW,
             interval=8, unit='weeks',
         )
         events = _generated_cycle_events(enrolment_row(), profile_row(), set())
@@ -358,7 +363,7 @@ class LearnerCalendarStrictAnchorTests(StrictReviewAnchorTestCase):
 
     def test_a_skip_is_logged_with_the_identifiers_needed_to_fix_it(self):
         template = self._template(
-            name='Monthly Coaching Meeting', type_code=review_types.REVIEW_TYPE_CODE_MCM,
+            name='Monthly Coaching Meeting', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM,
         )
         with self.assertLogs('coach_api.views', level='WARNING') as captured:
             self.assertEqual(self._learner_calendar_dates(None), [])
@@ -374,14 +379,14 @@ class LearnerCalendarStrictAnchorTests(StrictReviewAnchorTestCase):
 
 class CoachTimetableStrictAnchorTests(StrictReviewAnchorTestCase):
     def test_1_coach_timetable_generates_from_created_users_start_date(self):
-        self._template(name='Monthly Coaching Meeting', type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        self._template(name='Monthly Coaching Meeting', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         dates, counts = self._coach_timetable_dates(enrolment_row())
         self.assertTrue(dates)
         self.assertEqual(dates[0], (LEARNER_START + timedelta(weeks=4)).isoformat())
         self.assertEqual(counts['reviewAnchorSkipped'], 0)
 
     def test_3_4_5_no_usable_start_date_generates_nothing(self):
-        self._template(name='Monthly Coaching Meeting', type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        self._template(name='Monthly Coaching Meeting', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         for row, reason in (
             (None, REVIEW_ANCHOR_MISSING_ROW),
             (enrolment_row(learner_start_date=''), REVIEW_ANCHOR_MISSING_START),
@@ -394,7 +399,7 @@ class CoachTimetableStrictAnchorTests(StrictReviewAnchorTestCase):
                 self.assertEqual(counts['reviewAnchorSkipReasons'], {reason: 1})
 
     def test_missing_anchor_returns_a_learner_scoped_generation_issue(self):
-        self._template(name='Monthly Coaching Meeting', type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        self._template(name='Monthly Coaching Meeting', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         for row, expected_code in (
             (None, 'missing_learner_enrolment'),
             (enrolment_row(learner_start_date=''), 'missing_learner_start_date'),
@@ -408,9 +413,9 @@ class CoachTimetableStrictAnchorTests(StrictReviewAnchorTestCase):
                 }])
 
     def test_9_coach_and_learner_calendars_produce_the_same_dates(self):
-        self._template(name='Monthly Coaching Meeting', type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        self._template(name='Monthly Coaching Meeting', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         self._template(
-            name='Progress Review', type_code=review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW,
+            name='Progress Review', type_code=review_domain_classification.REVIEW_TYPE_CODE_PROGRESS_REVIEW,
             interval=8, unit='weeks',
         )
         row = enrolment_row()
@@ -433,9 +438,9 @@ class NoInstanceWithoutAnAnchorTests(StrictReviewAnchorTestCase):
         schedule, or on the coach's first open of one). With no anchor there is
         no occurrence, so there is nothing to create an instance from."""
         template = self._template(
-            name='Monthly Coaching Meeting', type_code=review_types.REVIEW_TYPE_CODE_MCM,
+            name='Monthly Coaching Meeting', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM,
         )
-        review_instances.provision_review_instance_tables()
+        review_infrastructure_instance_schema.provision_review_instance_tables()
 
         self.assertEqual(self._learner_calendar_dates(None), [])
         coach_dates, _counts = self._coach_timetable_dates(None)
@@ -444,5 +449,5 @@ class NoInstanceWithoutAnAnchorTests(StrictReviewAnchorTestCase):
         # Nothing was written: no instance for any occurrence number.
         for occurrence_number in range(1, 6):
             self.assertIsNone(
-                review_instances.find_review_instance(template['id'], MIRROR_ID, occurrence_number),
+                review_infrastructure_instance_rows.find_review_instance(template['id'], MIRROR_ID, occurrence_number),
             )

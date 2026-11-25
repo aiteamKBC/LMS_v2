@@ -55,7 +55,7 @@ def subject_rows(cursor, sql, enrolment_id):
     key = None
     if enabled() and enrolment_id not in (None, ''):
         try:
-            from curriculum_api.views import shared_curriculum_epoch
+            from curriculum_api.catalogue.infrastructure.cache_composition import shared_curriculum_epoch
             version, generation = cache_versions.current(NAMESPACE, enrolment_id)
             epoch = shared_curriculum_epoch()
             key = (f'lplan:v1:{_digest(sql)}:{enrolment_id}:{epoch}:'

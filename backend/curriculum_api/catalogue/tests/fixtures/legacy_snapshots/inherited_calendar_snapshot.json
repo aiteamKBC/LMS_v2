@@ -1,0 +1,57 @@
+{
+  "scheduling_holidays_from": {
+    "source": "def scheduling_holidays_from(holiday_rows, start_value, excluded_ids=None):\n    \"\"\"The bank holidays a session plan starting on ``start_value`` must skip.\n\n    Open at the far end, deliberately. Every holiday a plan steps over pushes it\n    a delivery slot later, so a plan routinely finishes after the cohort's\n    practical end date -- and a set bounded at that date would then let the very\n    last sessions land on Good Friday or Easter Monday, which is the bug this\n    exists to prevent. A holiday after the plan's final session is inert: the\n    set is only ever tested for membership against a session date.\n\n    Bounded below by the cohort start because nothing delivers before it. A\n    cohort with no usable start date gets the whole calendar rather than none of\n    it: a session must never be planned onto a bank holiday, and an imported\n    cohort missing its dates is not a reason to schedule one on Christmas Day.\n\n    ``excluded_ids`` is the cohort's own deny-list -- the holidays a human\n    unticked in the cohort drawer -- so a plan stops skipping exactly those\n    dates. It is applied after the start-date bound, not instead of it: a\n    holiday outside the cohort's own period was never offered as a checkbox in\n    the first place, so it cannot be named here, and stays skipped either way.\n    \"\"\"\n    serialized = [serialize_holiday_row(row) for row in (holiday_rows or [])]\n    start = parse_date(start_value)\n    if start:\n        serialized = [\n            item for item in serialized\n            if (parse_date(item.get('endDate') or item.get('startDate')) or start) >= start\n        ]\n    excluded_set = {clean_str(value) for value in (excluded_ids or []) if clean_str(value)}\n    if excluded_set:\n        serialized = [item for item in serialized if clean_str(item.get('id')) not in excluded_set]\n    return sorted_holidays(serialized)",
+    "decorators": [],
+    "module": "curriculum_api.catalogue.application.inherited_calendar",
+    "bindings": {
+      "serialize_holiday_row": "serialize_holiday_row",
+      "parse_date": "parse_date",
+      "clean_str": "clean_str",
+      "sorted_holidays": "sorted_holidays"
+    }
+  },
+  "cohort_selected_holidays_by_id": {
+    "source": "def cohort_selected_holidays_by_id(cohorts, holiday_rows):\n    \"\"\"Each cohort's holidays, keyed by cohort id.\n\n    The authoring module rows carry a ``cohort_id`` and nothing about holidays,\n    so this is the lookup that lets their session dates skip the same days the\n    cohort does. Built once per payload: the alternative is a holiday read per\n    module.\n\n    A cohort's holidays are England's bank holidays from its own start date\n    onwards -- see ``scheduling_holidays_from``: these dates are what a session\n    plan steps over, and a plan that steps over enough of them finishes after\n    the cohort's practical end date. ``excludedHolidayIds`` narrows that set to\n    the ones the cohort has not unticked.\n    \"\"\"\n    holidays_by_cohort = {}\n    for cohort in cohorts or []:\n        cohort_id = clean_str(cohort.get('id'))\n        if not cohort_id:\n            continue\n        calendar_rows = holiday_rows\n        if cohort.get('calendarPolicy') or cohort.get('calendar_policy'):\n            from curriculum_api.calendar_policy import read_policy\n            from curriculum_api.delivery_calendar import policy_holidays\n            from curriculum_api.country_calendars import CalendarUnavailable\n            try:\n                calendar_rows = policy_holidays(read_policy(cohort), cohort.get('startDate') or cohort.get('start_date'), cohort.get('endDate') or cohort.get('end_date'), holiday_rows)\n            except CalendarUnavailable as exc:\n                cohort['calendarError'] = str(exc)\n                calendar_rows = []\n        holidays_by_cohort[cohort_id] = scheduling_holidays_from(\n            calendar_rows,\n            cohort.get('startDate') or cohort.get('start_date'),\n            cohort.get('excludedHolidayIds') or cohort.get('excluded_holiday_ids'),\n        )\n    return holidays_by_cohort",
+    "decorators": [],
+    "module": "curriculum_api.catalogue.application.inherited_calendar",
+    "bindings": {
+      "clean_str": "clean_str",
+      "scheduling_holidays_from": "scheduling_holidays_from",
+      "read_overview_calendar": "read_overview_calendar"
+    }
+  },
+  "module_schedule_holidays": {
+    "source": "def module_schedule_holidays(schedule, cache=None):\n    \"\"\"The ticked holidays that move one schedule's sessions.\n\n    A caller that already holds the list (a form previewing a cohort selection\n    that is not stored yet) wins; otherwise the parent cohort's ticked selection\n    is read, which is the same set every other dated view of the module skips.\n\n    ``cache`` is a plain dict keyed by cohort id. A tutor roster asks about one\n    slot once per name, so without it the same cohort's holidays were re-read\n    from the database once per tutor per module.\n    \"\"\"\n    explicit = (schedule or {}).get('holidays')\n    if isinstance(explicit, list) and explicit:\n        return explicit\n    cohort_id = clean_str((schedule or {}).get('cohort_id'))\n    if not cohort_id:\n        return []\n    if cache is None:\n        return module_cohort_selected_holidays({'cohort_id': cohort_id})\n    if cohort_id not in cache:\n        cache[cohort_id] = module_cohort_selected_holidays({'cohort_id': cohort_id})\n    return cache[cohort_id]",
+    "decorators": [],
+    "module": "curriculum_api.catalogue.application.inherited_calendar",
+    "bindings": {
+      "clean_str": "clean_str",
+      "module_cohort_selected_holidays": "module_cohort_selected_holidays"
+    }
+  },
+  "cohort_selected_holidays_by_cohort": {
+    "source": "def cohort_selected_holidays_by_cohort(cohort_ids):\n    \"\"\"The holidays of many cohorts at once, keyed by cohort id.\n\n    These are the dates a session plan skips, so they are resolved from the\n    cohort's start date with no end bound (``scheduling_holidays_from``): a plan\n    pushed later by the holidays it stepped over has to keep skipping them after\n    the cohort's practical end date, not stop at it. The cohort's *own* holidays\n    -- what the drawer lists and the row records -- are the narrower in-period\n    set, and ``cohort_holiday_details`` answers for those.\n\n    The stored ``holiday_ids`` and ``selected_holidays`` columns are\n    deliberately not read: both were written against the authored holiday table\n    that is no longer a source, and ``selected_holidays`` went stale besides --\n    a cohort with eight holidays has been seen carrying one there, which left a\n    module's sessions running straight through a closed Christmas.\n    ``excluded_holiday_ids`` is different: it is the human's own deny-list, not\n    a derived cache, so it is read and honoured.\n\n    Two reads for any number of cohorts -- the cohort rows in one ``in (...)``\n    and the holiday table once -- because every module in a cohort shares that\n    cohort's holidays. A caller planning a page of modules groups the ids first\n    and reads here once, instead of paying a cohort read and a holiday read per\n    module. ``module_cohort_selected_holidays`` is this same function for one\n    cohort, so the resolution rule above lives in exactly one place.\n    \"\"\"\n    wanted = list(dict.fromkeys(\n        clean_str(value) for value in (cohort_ids or []) if clean_str(value)\n    ))\n    if not wanted:\n        return {}\n    try:\n        # Keyed by cohort id (the primary key) below, so inside a programme\n        # build this filters the cohorts read the cohort list already made.\n        rows = authoring_rows_by_id(\n            COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id', wanted, COHORT_ROWS_ORDER, ensure_tables=False,\n        )\n    except (Exception, AssertionError):\n        logger.debug('Unable to read cohort holidays for %s.', ', '.join(wanted), exc_info=True)\n        return {}\n    if not rows:\n        return {}\n    try:\n        holiday_rows = get_holiday_rows()\n    except (Exception, AssertionError):\n        logger.debug('Unable to read holidays for %s.', ', '.join(wanted), exc_info=True)\n        holiday_rows = []\n\n    grouped = {}\n    for cohort in rows:\n        cohort_id = clean_str(cohort.get('cohort_id'))\n        if not cohort_id:\n            continue\n        calendar_rows = holiday_rows\n        if cohort.get('calendar_policy'):\n            from curriculum_api.calendar_policy import read_policy\n            from curriculum_api.delivery_calendar import policy_holidays\n            calendar_rows = policy_holidays(read_policy(cohort), cohort.get('start_date'), cohort_holiday_period_end(cohort), holiday_rows)\n        grouped[cohort_id] = scheduling_holidays_from(\n            calendar_rows,\n            cohort.get('start_date'),\n            parse_json_value(cohort.get('excluded_holiday_ids'), []),\n        )\n    return grouped",
+    "decorators": [],
+    "module": "curriculum_api.catalogue.application.inherited_calendar",
+    "bindings": {
+      "clean_str": "clean_str",
+      "authoring_rows_by_id": "authoring_rows_by_id",
+      "COHORT_AUTHORING_DETAILS_TABLE": "COHORT_AUTHORING_DETAILS_TABLE",
+      "COHORT_ROWS_ORDER": "COHORT_ROWS_ORDER",
+      "logger": "logger",
+      "get_holiday_rows": "get_holiday_rows",
+      "scheduling_holidays_from": "scheduling_holidays_from",
+      "parse_json_value": "parse_json_value",
+      "read_cohort_calendar": "read_cohort_calendar"
+    }
+  },
+  "module_cohort_selected_holidays": {
+    "source": "def module_cohort_selected_holidays(module_row):\n    \"\"\"The parent cohort's ticked holidays for one module.\n\n    One cohort's slice of ``cohort_selected_holidays_by_cohort``, which owns the\n    rule; this is the single-module door onto it.\n    \"\"\"\n    cohort_id = clean_str((module_row or {}).get('cohort_id'))\n    if not cohort_id:\n        return []\n    return cohort_selected_holidays_by_cohort([cohort_id]).get(cohort_id) or []",
+    "decorators": [],
+    "module": "curriculum_api.catalogue.application.inherited_calendar",
+    "bindings": {
+      "clean_str": "clean_str",
+      "cohort_selected_holidays_by_cohort": "cohort_selected_holidays_by_cohort"
+    }
+  }
+}

@@ -67,7 +67,7 @@ class CurriculumApiConfig(AppConfig):
         # is off.
         if getattr(settings, 'CURRICULUM_HOME_SHARED_READ_MODEL_ENABLED', False):
             return
-        from .views import schedule_curriculum_warm
+        from .catalogue.api.cache_lifecycle import schedule_curriculum_warm
         schedule_curriculum_warm()
 
     def log_cache_backend(self):

@@ -29,12 +29,10 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from django.db import connection
+from .catalogue.infrastructure.archive_sql import STATUS_TABLES, uses_status, live_sql, inactive_sql
 
-from .curriculum_names import ACTIVE, INACTIVE, INACTIVE_STATUSES, is_inactive
+from .catalogue.domain.archive_policy import ACTIVE, INACTIVE, INACTIVE_STATUSES, is_inactive, row_inactive
 
-STATUS_TABLES = frozenset({
-    'programmes', 'cohorts', 'groups', 'modules', 'weeks', 'components', 'ksb_mappings', 'coaches', 'tutors',
-})
 # Tables whose rows follow their module (no lifecycle column of their own).
 MODULE_OWNED_TABLES = frozenset({'module_details', 'module_completion_criteria'})
 
@@ -52,24 +50,6 @@ _LEGACY_VIA = {
                          'weeks': 'programme', 'components': 'programme', 'ksb_mappings': 'programme',
                          'module_details': 'programme', 'module_completion_criteria': 'programme'},
 }
-
-
-def uses_status(table):
-    return table in STATUS_TABLES
-
-
-def live_sql(alias=''):
-    prefix = f'{alias}.' if alias and not alias.endswith('.') else alias
-    return f"{prefix}\"status\" not in ('inactive', 'archived')"
-
-
-def inactive_sql(alias=''):
-    prefix = f'{alias}.' if alias and not alias.endswith('.') else alias
-    return f"{prefix}\"status\" in ('inactive', 'archived')"
-
-
-def row_inactive(row):
-    return bool(row) and is_inactive(row.get('status'))
 
 
 def archive_values():

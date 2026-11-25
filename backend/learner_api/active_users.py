@@ -22,7 +22,7 @@ from curriculum_api.canonical_read_sql import component_ksb_mappings_sql, curren
 from curriculum_api.programme_name_sql import programme_name_sql
 from curriculum_api.schema_compat import inactive_condition
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
-from curriculum_api.learning_storage import read_sql
+from curriculum_api.catalogue.infrastructure.course_storage_reads import read_sql
 
 from .retake_timing import attempt_order, selected_attempt
 from .ksb_definition_links import assigned_definition_ids, attach_definition_ids
@@ -871,7 +871,7 @@ def hydrate_training_plan(plan, *, strict=False):
         try:
             # Use the exact delivery dates used by Module Builder/Calendar,
             # including authored delivery days and selected cohort holidays.
-            from curriculum_api.views import module_session_plan_for_count
+            from curriculum_api.catalogue.infrastructure.session_plan_composition import module_session_plan_for_count
             dated_sessions = module_session_plan_for_count(module_schedules.get(module_id, {}), len(resolved_weeks)).get("sessions") or []
         except Exception:
             dated_sessions = []
@@ -999,7 +999,7 @@ def refresh_saved_session_dates(plan):
         modules = {str(row[0]['module_catalogue_id']): row[0] for row in cursor.fetchall()}
     if not modules:
         return plan
-    from curriculum_api.views import apply_module_session_plan_to_weeks
+    from curriculum_api.catalogue.infrastructure.session_plan_persistence import apply_module_session_plan_to_weeks
     result = copy.deepcopy(plan)
     for item in result:
         module = modules.get(_s(item.get('moduleId') or item.get('moduleCatalogueId')))

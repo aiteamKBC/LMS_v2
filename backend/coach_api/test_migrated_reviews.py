@@ -109,7 +109,7 @@ class MigratedDefinitionTests(SimpleTestCase):
         self.assertEqual(initial_local_status("Scheduled"), "scheduled")
         self.assertIsNone(initial_local_status("AwaitingSignature"))
 
-    @patch("coach_api.views.curriculum_review_instances.progress_review_rag_history", return_value=[])
+    @patch('curriculum_api.review_management.application.instance_progress.progress_review_rag_history', return_value=[])
     @patch("coach_api.views._imported_review_progress_snapshot", return_value=None)
     @patch("coach_api.views.CoachCalendarEvent.objects.filter")
     @patch("coach_api.views.ImportedReviewInstance.objects.filter")
@@ -161,7 +161,7 @@ class MigratedDefinitionTests(SimpleTestCase):
         self.assertIsNone(views._imported_review_definition("coach@example.invalid", "imported-review:A-7"))
 
     @patch("coach_api.views._review_instance_meeting_summary_source", return_value=None)
-    @patch("coach_api.views.curriculum_review_instances.review_instance_form_definition")
+    @patch('curriculum_api.review_management.application.instance_definitions.review_instance_form_definition')
     @patch("coach_api.views.LearnerProfile.objects.filter")
     def test_native_definition_uses_linked_profile_identity(self, profiles, form_definition, _summary):
         form_definition.return_value = {"instance": {"id": "native-1", "learnerId": 21}}
@@ -514,7 +514,7 @@ class MigratedPreviewTests(SimpleTestCase):
         self.templates.assert_not_called()
 
     def test_completed_lms_form_survives_source_completion_without_rewriting_history(self):
-        self._patch("coach_api.views.curriculum_review_instances.progress_review_rag_history", return_value=[])
+        self._patch('curriculum_api.review_management.application.instance_progress.progress_review_rag_history', return_value=[])
         self._patch("learner_api.booking_calendar.booking_calendar_payload", return_value={})
         self._patch("coach_api.personal_support_booking.booking_state", return_value=(None, {}))
         completed_at = timezone.now()

@@ -60,7 +60,7 @@ def online_state(meeting):
 
 
 def emails(value):
-    from .views import teams_attendee_emails
+    from .meetings.domain.invitation_policy import teams_attendee_emails
     if not isinstance(value, list) or len(value) > 500:
         raise ValueError('Supply a list of at most 500 email addresses.')
     return teams_attendee_emails(value)

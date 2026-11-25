@@ -32,9 +32,10 @@ class ScheduledContinuationTests(SimpleTestCase):
         self.view_as.return_value = False
         self.factory = RequestFactory()
         self._patch("coach_api.reconciliation_links.active_links").return_value.select_related.return_value.first.return_value = None
-        self._patch("coach_api.views.curriculum_review_instances.progress_review_rag_history", return_value=[])
-        for name in ("ensure_review_instance", "save_review_instance_answers"):
-            self._patch(f"coach_api.views.curriculum_review_instances.{name}", side_effect=AssertionError("Native write"))
+        self._patch('curriculum_api.review_management.application.instance_progress.progress_review_rag_history', return_value=[])
+        for target in ("curriculum_api.review_management.application.instance_creation.ensure_review_instance",
+                       "curriculum_api.review_management.application.instance_answers.save_review_instance_answers"):
+            self._patch(target, side_effect=AssertionError("Native write"))
         self._patch("coach_api.views.build_progress_snapshot", side_effect=AssertionError("GET calculated"))
         self._patch("coach_api.migrated_progress.build_progress_snapshot", side_effect=AssertionError("Implicit calculation"))
         self._patch("coach_api.views.transaction.atomic", side_effect=lambda: nullcontext())

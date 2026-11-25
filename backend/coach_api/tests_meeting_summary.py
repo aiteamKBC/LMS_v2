@@ -281,8 +281,8 @@ class ReviewMeetingSummaryEndpointTests(SimpleTestCase):
     def patches(self):
         return (
             patch("coach_api.views._authorized_review_instance", return_value=(self.instance, None)),
-            patch("coach_api.views.curriculum_review_instances.review_instance_form_definition", return_value=self.definition),
-            patch("coach_api.views.curriculum_review_instances.meeting_summary_field", return_value=self.definition["sections"][0]["fields"][0]),
+            patch('curriculum_api.review_management.application.instance_definitions.review_instance_form_definition', return_value=self.definition),
+            patch('curriculum_api.review_management.domain.instance_definitions.meeting_summary_field', return_value=self.definition["sections"][0]["fields"][0]),
             patch("coach_api.views._review_instance_calendar_record", return_value=self.record),
         )
 
@@ -645,8 +645,8 @@ class PreviousReviewSessionTests(SimpleTestCase):
         record = SimpleNamespace(event_key="mcm:42:2")
 
         with patch("coach_api.views._authorized_review_instance", return_value=(current, None)), \
-             patch("coach_api.views.curriculum_review_instances.find_review_instance", return_value=previous) as find_instance, \
-             patch("coach_api.views.curriculum_review_instances.review_instance_form_definition", return_value=definition), \
+             patch('curriculum_api.review_management.infrastructure.instance_rows.find_review_instance', return_value=previous) as find_instance, \
+             patch('curriculum_api.review_management.application.instance_definitions.review_instance_form_definition', return_value=definition), \
              patch("coach_api.views._review_instance_calendar_record", return_value=record), \
              patch("coach_api.views.stored_coach_meeting_summary", return_value={
                  "status": "ready",

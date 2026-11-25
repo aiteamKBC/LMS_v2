@@ -1,0 +1,1 @@
+"""Catalogue application responsibilities."""

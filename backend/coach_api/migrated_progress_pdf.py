@@ -1,7 +1,9 @@
 """Render saved progress in the existing migrated PDF layout; no calculation."""
 from html import escape
 
-from curriculum_api.review_pdf import display_date, percent_text, variance_text
+from curriculum_api.review_management.infrastructure.pdf_renderer import display_date
+from curriculum_api.review_management.infrastructure.pdf_renderer import percent_text
+from curriculum_api.review_management.infrastructure.pdf_renderer import variance_text
 
 
 def progress_section(snapshot, styles):

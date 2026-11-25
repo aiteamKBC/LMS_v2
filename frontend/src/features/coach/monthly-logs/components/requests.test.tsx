@@ -11,7 +11,7 @@ const identity = vi.hoisted(() => ({ account: 1, viewAs: '' }));
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ auth: { account: { id: identity.account } } }) }));
 vi.mock('@/lib/coachViewAs', () => ({ coachViewAs: () => identity.viewAs ? { email: identity.viewAs } : null }));
 vi.mock('@/lib/coachFetch', () => ({ coachFetch: vi.fn() }));
-vi.mock('@/features/monthly-logs/page', () => ({ MonthlyLog: () => <div>Opened month detail</div> }));
+vi.mock('@/features/monthly-logs/MonthlyLog', () => ({ MonthlyLog: () => <div>Opened month detail</div> }));
 
 const year = new Date().getFullYear();
 const learners = [{ id: 7, name: 'Synthetic learner', programme: 'Programme' }, { id: 8, name: 'Other learner', programme: 'Other programme' }];
