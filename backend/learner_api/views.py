@@ -41,12 +41,17 @@ from .active_users import (
     stamp_cohort_window,
     sync_active_user,
 )
-from .identity import learner_profile_for_source
+from .identity_placement.public import (
+    learner_profile_for_source,
+    placement_payload,
+    placement_profile,
+    with_placements,
+)
 from .account_deletion import delete_learner_account
 from .learner_dates import save_enrolment_fields
 from .coach_assignment import case_owner_coach, current_coach
 from .directory import learner_directory_queryset, to_directory_row
-from .placement_links import with_placements, placement_input, placement_payload, validate_placement, placement_profile
+from .placement_links import placement_input, validate_placement
 from .learner_progression import ACTIVE_STATUS, advance_learner
 from login.services import sync_account
 

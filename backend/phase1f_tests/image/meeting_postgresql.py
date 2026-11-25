@@ -59,9 +59,9 @@ with connection.cursor() as cursor:
     cursor.execute('ALTER TABLE curriculum.module_details ADD COLUMN IF NOT EXISTS updated_at timestamptz DEFAULT current_timestamp, ADD COLUMN IF NOT EXISTS created_at timestamptz DEFAULT current_timestamp')
     # The authoring group writer stores its delivery day in this schema column;
     # the older read fixture's week_days column is a different contract.
-    cursor.execute('ALTER TABLE curriculum.groups ADD COLUMN session_week_day varchar(255)')
-    cursor.execute('ALTER TABLE "Learner".learner_progress_entries ADD COLUMN reporting_month varchar(7), ADD COLUMN curriculum_component_ref text')
-    cursor.execute('ALTER TABLE "Learner".learner_progress_ksbs ADD COLUMN ksb_description text, ADD COLUMN source_type text, ADD COLUMN source_id text, ADD COLUMN classification text')
+    cursor.execute('ALTER TABLE curriculum.groups ADD COLUMN IF NOT EXISTS session_week_day varchar(255)')
+    cursor.execute('ALTER TABLE "Learner".learner_progress_entries ADD COLUMN IF NOT EXISTS reporting_month varchar(7), ADD COLUMN IF NOT EXISTS curriculum_component_ref text')
+    cursor.execute('ALTER TABLE "Learner".learner_progress_ksbs ADD COLUMN IF NOT EXISTS ksb_definition_id bigint, ADD COLUMN IF NOT EXISTS ksb_description text, ADD COLUMN IF NOT EXISTS source_type text, ADD COLUMN IF NOT EXISTS source_id text, ADD COLUMN IF NOT EXISTS classification text')
 views.provision_live_sessions_table()
 views.provision_live_session_tracking_tables()
 for name in ('session_results_archive.sql','teams_calendar_create_claims.sql','teams_calendar_create_drafts.sql',

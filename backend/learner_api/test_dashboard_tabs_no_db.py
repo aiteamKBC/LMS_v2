@@ -80,7 +80,8 @@ class DashboardMonthlyHoursTests(SimpleTestCase):
             self.assertEqual(actual[key], expected[key], key)
 
     def test_training_tab_reuses_records_and_avoids_attendance_and_overview_reads(self):
-        from . import identity, overview_week, training_plan_dashboard, attendance_lectures, module_progress, dashboard_training
+        from . import overview_week, training_plan_dashboard, attendance_lectures, module_progress, dashboard_training
+        from .identity_placement import public as identity
         source = SimpleNamespace(pk=5, _canonical_training_plan=[])
         owner = {'id': 15}
         records = [{'id': 1}]
@@ -108,7 +109,7 @@ class DashboardMonthlyHoursTests(SimpleTestCase):
         progress.assert_not_called()
 
     def test_missing_or_mismatched_profile_fails_before_progress_reads(self):
-        from . import identity
+        from .identity_placement import public as identity
         from old_otjh.service import ServiceError
         source = SimpleNamespace(pk=5)
         for profile in (None, SimpleNamespace(pk=16, enrolment_id=5), SimpleNamespace(pk=15, enrolment_id=6)):

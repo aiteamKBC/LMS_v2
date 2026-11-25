@@ -42,7 +42,7 @@ class CompactLearnerLoadingTests(SimpleTestCase):
             for name in ("advance_learner", "_apply_cohort_schedule",
                          "persist_live_otjh_snapshot", "_apply_live_otjh_snapshot"):
                 work[name] = stack.enter_context(patch.object(detail, name))
-            install = stack.enter_context(patch.object(detail, "install_canonical_training_plan", return_value=[]))
+            install = stack.enter_context(patch.object(detail, "hydrate_normalized_plan", return_value=[]))
             resolve = stack.enter_context(patch.object(detail, "_active_profile_for_source", return_value=profile))
             stack.enter_context(patch.object(detail, "_linked_profile_ids", return_value=()))
             stack.enter_context(patch("learner_api.active_users.refresh_learner_ksb_snapshot", return_value=refreshed_ksbs))

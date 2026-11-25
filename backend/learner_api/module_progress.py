@@ -244,8 +244,8 @@ def learner_module_progress(request, kind, pk):
     try:
         source = model.all_learners.get(pk=pk)
         profile = LearnerProfile.objects.using('enrolment').get(enrolment_id=pk)
-        from .learning_plan import install_canonical_training_plan
-        install_canonical_training_plan(source, profile)
+        from .learning_plans.public import hydrate_normalized_plan
+        hydrate_normalized_plan(source, profile)
         response = JsonResponse({'modules': canonical_module_progress(source, profile)})
         response['Cache-Control'] = 'private, no-store'
         return response

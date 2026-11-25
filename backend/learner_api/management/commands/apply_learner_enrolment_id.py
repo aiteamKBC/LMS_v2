@@ -5,7 +5,7 @@ The problem this fixes
 ``enrolment."Created_users"`` and ``"Learner".learners`` have independent primary
 key sequences — the ids are disjoint (21,22,23… vs 1,2,4…), so one cannot be read
 as the other. Until now the only bridge between the two schemas was an **email
-match** (see ``learner_api.identity.learner_profile_for_source``), which breaks
+match** (see ``learner_api.identity_placement.public.learner_profile_for_source``), which breaks
 the moment somebody's address is corrected and silently mis-links two people who
 ever share one.
 

@@ -26,8 +26,8 @@ from .response_cache import cached_learner_read
 from . import canonical_learning as canonical
 from .journal_sources import learner_journal_view, enabled as journal_enabled
 from .learner_detail import SOURCE_MODELS
-from .learning_plan import (CANONICAL_TRAINING_PLAN_PREFETCH, effective_training_plan,
-                            install_canonical_training_plan, request_preset_cache)
+from .learning_plan import effective_training_plan, request_preset_cache
+from .learning_plans.public import NORMALIZED_PLAN_PREFETCH, hydrate_normalized_plan
 from .progress_rules import progress_counts_as_achieved
 from .activity_requirements import has_required_hours
 from .projection_performance import projection_stage, local_catalogue_trace
@@ -722,11 +722,11 @@ def load_context(source, owner, subject_id=None, *, purpose='catalogue', records
     with projection_stage('profile'):
         profile = (LearnerProfile.objects.only('id', 'enrolment_id', 'email')
                    .filter(pk=owner['id'], enrolment_id=source.pk)
-                   .prefetch_related(CANONICAL_TRAINING_PLAN_PREFETCH).first())
+                   .prefetch_related(NORMALIZED_PLAN_PREFETCH).first())
     if profile is None:
         raise ServiceError('The consolidated learner identity needs review.', 'identity_review_required', 409)
     source._case_file_profile = profile
-    install_canonical_training_plan(source, profile)
+    hydrate_normalized_plan(source, profile)
     with projection_stage('assignments'):
         assigned = list(source._canonical_training_plan or [])
         if getattr(source, '_learner_plan_only', False):

@@ -426,7 +426,8 @@ class OverviewProjectionTests(SimpleTestCase):
         legacy.assert_not_called()
 
     def test_dispatch_verifies_identity_before_overview(self):
-        from . import dashboard_tabs, identity
+        from . import dashboard_tabs
+        from .identity_placement import public as identity
         source = SimpleNamespace(pk=265)
         with patch.object(dashboard_tabs.canonical, 'require_profile', return_value={'id': 17}), \
              patch.object(identity, 'learner_profile_for_source', return_value=SimpleNamespace(pk=18, enrolment_id=265)), \

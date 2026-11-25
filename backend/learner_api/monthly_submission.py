@@ -20,11 +20,12 @@ from django.http import JsonResponse
 from login.errors import DATABASE_ERRORS, database_unavailable
 from login.permissions import learner_self_or_staff
 
-from .identity import learner_profile_for_source
+from .identity_placement.public import learner_profile_for_source
 from .learner_detail import (
     SOURCE_MODELS, _annotate_otjh, _apply_programme_assignment_template, _resolve_from_master,
 )
-from .learning_plan import effective_training_plan, install_canonical_training_plan
+from .learning_plan import effective_training_plan
+from .learning_plans.public import hydrate_normalized_plan
 from .mappers import _component_marking_statuses, _s, flatten_training_plan, get_training_plan
 from .projection_performance import measure_projection
 from .weekly_learning import component_content_available
@@ -81,7 +82,7 @@ def assignment_list(source, pk):
     Overdue view and the total count all span the whole plan.
     """
     profile = learner_profile_for_source(source, pk, heal=False)
-    install_canonical_training_plan(source, profile)
+    hydrate_normalized_plan(source, profile)
     components = _resolved_components(source, effective_training_plan(source))
     # On the whole list, before filtering, exactly as learner detail does.
     components, _ = _annotate_otjh(components)
@@ -134,7 +135,7 @@ def assignment_detail(source, component_id):
     Resolves only the owning module when it can; the same resolver decides
     visibility, so an unassigned, hidden or non-assignment id is never returned.
     """
-    install_canonical_training_plan(source)
+    hydrate_normalized_plan(source)
     assigned = effective_training_plan(source)
     module_id = _module_of(component_id, assigned)
     attempts = []

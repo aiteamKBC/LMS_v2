@@ -7,7 +7,7 @@ or the legacy builder's activation, hydration and snapshot persistence.
 from old_otjh.service import ServiceError
 
 from . import canonical_learning, dashboard_tabs
-from .identity import learner_profile_for_source
+from .identity_placement.public import learner_profile_for_source
 from .journal_sources import learner_journal_reads
 
 

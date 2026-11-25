@@ -28,7 +28,7 @@ from .evidence_storage import (
     resolve_read_url,
     upload_to_quarantine,
 )
-from .identity import learner_profile_for_source
+from .identity_placement.public import learner_profile_for_source
 from .models import CommercialUser, EnrolmentUser
 from .alternative_recovery import (
     ALTERNATIVE_METHOD,

@@ -1,16 +1,22 @@
 """Database-free characterization of the effective-plan policy."""
 
-from pathlib import Path
 import sys
-from types import SimpleNamespace
 import unittest
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 BACKEND = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(BACKEND))
 
-from learner_api.learning_plans.application.effective_plan import effective_module_ids
-from learner_api.learning_plans.domain.effective_plan import effective_module_ids_from_state
+from learner_api.learning_plans.application.effective_plan import (
+    effective_module_ids,
+    effective_plan_projection,
+)
+from learner_api.learning_plans.domain.effective_plan import (
+    effective_module_ids_from_state,
+    effective_plan_selection_from_plan,
+)
 
 
 class EffectivePlanPolicyTests(unittest.TestCase):
@@ -99,6 +105,110 @@ class EffectivePlanPolicyTests(unittest.TestCase):
         )
         self.assertEqual(result, [])
         inherited.assert_not_called()
+
+    def test_enriched_projection_preserves_snapshots_and_appends_minimal_ids(self):
+        saved = [{"moduleId": "A", "moduleTitle": "Agreed title"}]
+        stored = Mock(return_value=saved)
+        fallback = Mock(side_effect=AssertionError("saved plan must win"))
+        effective = Mock(return_value=["A", "B"])
+        learner = SimpleNamespace()
+
+        self.assertEqual(
+            effective_plan_projection(
+                learner,
+                {"request": "cache"},
+                read_stored_plan=stored,
+                read_fallback_plan=fallback,
+                read_effective_module_ids=effective,
+            ),
+            [saved[0], {"moduleId": "B"}],
+        )
+        effective.assert_called_once_with(
+            learner,
+            {"request": "cache"},
+            saved_plan=saved,
+        )
+        fallback.assert_not_called()
+
+    def test_enriched_projection_uses_fallback_only_for_unsaved_plan(self):
+        learner = SimpleNamespace()
+        fallback = Mock(return_value=[{"moduleId": "F", "legacy": True}])
+        effective = Mock(return_value=["F"])
+
+        self.assertEqual(
+            effective_plan_projection(
+                learner,
+                read_stored_plan=Mock(return_value=None),
+                read_fallback_plan=fallback,
+                read_effective_module_ids=effective,
+            ),
+            [{"moduleId": "F", "legacy": True}],
+        )
+        fallback.assert_called_once_with(learner)
+        effective.assert_called_once_with(learner, {}, saved_plan=None)
+
+    def test_enriched_projection_canonical_cache_short_circuits_legacy_reads(self):
+        canonical = [{"moduleId": "C", "weeks": []}]
+        learner = SimpleNamespace(_canonical_training_plan=canonical)
+        stored = Mock(side_effect=AssertionError("canonical plan must win"))
+        fallback = Mock(side_effect=AssertionError("canonical plan must win"))
+        effective = Mock(side_effect=AssertionError("canonical plan must win"))
+
+        result = effective_plan_projection(
+            learner,
+            read_stored_plan=stored,
+            read_fallback_plan=fallback,
+            read_effective_module_ids=effective,
+        )
+
+        self.assertEqual(result, canonical)
+        self.assertIsNot(result, canonical)
+        stored.assert_not_called()
+        fallback.assert_not_called()
+        effective.assert_not_called()
+
+    def test_unsaved_imported_plan_appends_imported_ids_after_the_preset(self):
+        selection = effective_plan_selection_from_plan(
+            None,
+            lambda: ["G1", "SHARED"],
+            lambda: ["SHARED", "A1"],
+        )
+        self.assertEqual(selection.module_ids, ("G1", "SHARED", "A1"))
+        self.assertEqual(selection.inherited_module_ids, ())
+        self.assertEqual(selection.imported_module_ids, ("A1",))
+        self.assertFalse(selection.has_saved_plan)
+
+    def test_empty_imported_plan_keeps_imported_ids_without_group_inheritance(self):
+        inherited = Mock(return_value=["G1"])
+        selection = effective_plan_selection_from_plan(
+            [], inherited, lambda: ["A1"],
+        )
+        self.assertEqual(selection.module_ids, ("A1",))
+        self.assertEqual(selection.inherited_module_ids, ())
+        self.assertEqual(selection.imported_module_ids, ("A1",))
+        inherited.assert_not_called()
+
+    def test_explicit_assignment_suppresses_group_and_imported_reads(self):
+        inherited = Mock(side_effect=AssertionError("group preset"))
+        imported = Mock(side_effect=AssertionError("imported subjects"))
+        selection = effective_plan_selection_from_plan(
+            [{"moduleId": "S1", "assignmentMode": "explicit"}],
+            inherited,
+            imported,
+        )
+        self.assertEqual(selection.module_ids, ("S1",))
+        inherited.assert_not_called()
+        imported.assert_not_called()
+
+    def test_saved_plan_orders_stored_then_inherited_then_imported(self):
+        selection = effective_plan_selection_from_plan(
+            [{"moduleId": "S1"}],
+            lambda: ["S1", "G1"],
+            lambda: ["G1", "A1"],
+        )
+        self.assertEqual(selection.module_ids, ("S1", "G1", "A1"))
+        self.assertEqual(selection.inherited_module_ids, ("G1",))
+        self.assertEqual(selection.imported_module_ids, ("A1",))
 
 
 if __name__ == "__main__":

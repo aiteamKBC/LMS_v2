@@ -26,9 +26,9 @@ LIVE = os.environ.get('CURRICULUM_SQL_COUNT_LIVE_CHECK', '').strip().lower() in 
 
 
 def fact(learner_id=1, programme='Business', grp='Group A', has_plan=True,
-         id_count=1, has_explicit=False, matched=(), ambiguous=False):
+         group_id='GROUP-1', id_count=1, has_explicit=False, matched=(), ambiguous=False):
     return {
-        'learner_id': learner_id, 'programme': programme, 'grp': grp,
+        'learner_id': learner_id, 'programme': programme, 'grp': grp, 'group_id': group_id,
         'ambiguous': ambiguous, 'has_plan': has_plan, 'id_count': id_count,
         'has_explicit': has_explicit, 'matched': list(matched),
     }
@@ -38,7 +38,7 @@ class ReductionTests(SimpleTestCase):
     """`counts_from_plan_facts` against the rules in `_effective_plan_ids`."""
 
     def counts(self, facts, wanted=('MOD-1', 'MOD-2'), preset=()):
-        with patch.object(sqlcounts.plans, '_group_module_ids', return_value=list(preset)):
+        with patch.object(sqlcounts, '_group_module_ids', return_value=list(preset)):
             counts, ambiguous = sqlcounts.counts_from_plan_facts(facts, wanted)
         self.assertEqual(ambiguous, [])
         return counts
@@ -68,16 +68,14 @@ class ReductionTests(SimpleTestCase):
         self.assertEqual(counts, {'MOD-1': 1, 'MOD-2': 0})
 
     def test_learner_without_a_group_has_no_preset_to_inherit(self):
-        # A null programme/group has to reach _group_module_ids as ('', ''), the
-        # blank pair its own guard answers [] to -- not as None, which would go
-        # to the database as a parameter and match nothing in a different way.
-        with patch.object(sqlcounts.plans, '_group_module_ids',
-                          side_effect=lambda programme, group: ['MOD-2'] if group else []) as lookup:
+        # The normalized contract requires a stable group id. Without one no
+        # name-based lookup is allowed to broaden membership.
+        with patch.object(sqlcounts, '_group_module_ids', return_value=['MOD-2']) as lookup:
             counts, _ = sqlcounts.counts_from_plan_facts(
-                [fact(programme=None, grp=None, has_plan=False, id_count=0)],
+                [fact(programme=None, grp=None, group_id=None, has_plan=False, id_count=0)],
                 ('MOD-1', 'MOD-2'),
             )
-        lookup.assert_called_once_with('', '')
+        lookup.assert_not_called()
         self.assertEqual(counts, {'MOD-1': 0, 'MOD-2': 0})
 
     def test_modules_outside_the_requested_set_are_not_counted(self):
@@ -86,7 +84,7 @@ class ReductionTests(SimpleTestCase):
 
     def test_the_preset_lookup_is_shared_across_learners(self):
         facts = [fact(learner_id=i, has_plan=False, id_count=0) for i in range(1, 6)]
-        with patch.object(sqlcounts.plans, '_group_module_ids', return_value=['MOD-1']) as lookup:
+        with patch.object(sqlcounts, '_group_module_ids', return_value=['MOD-1']) as lookup:
             counts, _ = sqlcounts.counts_from_plan_facts(facts, ('MOD-1',))
         self.assertEqual(lookup.call_count, 1)
         self.assertEqual(counts, {'MOD-1': 5})
@@ -197,7 +195,7 @@ class PlanFactSqlTests(SimpleTestCase):
 
     def test_a_learner_without_programme_or_group_still_returns_a_row(self):
         facts = self.facts([{'id': 1, 'programme': None, 'group': None, 'learning_plan': None}])
-        self.assertEqual((facts[1]['programme'], facts[1]['grp'], facts[1]['has_plan']), (None, None, False))
+        self.assertEqual((facts[1]['programme'], facts[1]['grp'], facts[1]['has_plan']), ('', '', False))
 
     def test_a_plan_stored_as_a_json_string_is_handed_back_to_python(self):
         facts = self.facts([{'id': 1, 'learning_plan': '[{"moduleId": "MOD-1"}]'}])

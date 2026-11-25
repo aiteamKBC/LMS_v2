@@ -108,7 +108,10 @@ class ModuleMembershipTests(SimpleTestCase):
             with (
                 self.subTest(kind=kind, plan=plan),
                 mock.patch.object(modules.EnrolmentUser.all_learners, 'filter', return_value=query),
-                mock.patch.object(modules.plans, '_preset_ids_for', return_value=['M2']),
+                mock.patch(
+                    'learner_api.learning_plans.composition._preset_ids_for',
+                    return_value=['M2'],
+                ),
             ):
                 self.assertEqual(modules.module_memberships({'M1', 'M2'}, '7'), {'7': expected})
 

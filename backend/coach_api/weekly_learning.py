@@ -115,7 +115,7 @@ def week_rows(modules, today):
 
 def read_weekly_learning(context, selection=None, *, module_id=None, include_weeks=True, include_actions=False):
     from learner_api.weekly_hours import module_activity_hours, selected_activity_hours, activity_hours_index
-    from learner_api.learning_plan import _effective_plan_ids
+    from learner_api.learning_plans.public import effective_module_ids
     from learner_api import canonical_learning
     from learner_api.training_plan_dashboard import rows, attach_curriculum_slots, plan_session
     from learner_api.learner_detail import _display_component_title, _display_quiz_title, _component_ksb_items, _RESOURCE_URL_KEYS
@@ -130,7 +130,7 @@ def read_weekly_learning(context, selection=None, *, module_id=None, include_wee
     assigned_ids = (list(dict.fromkeys(
         str(entry.get('moduleId')) for entry in canonical_plan
         if isinstance(entry, dict) and entry.get('moduleId')
-    )) if canonical_only else _effective_plan_ids(source, {}))
+    )) if canonical_only else effective_module_ids(source, {}))
     ids = (assigned_ids if canonical_only else
            list(dict.fromkeys([*assigned_ids, *canonical_learning.curriculum_module_ids_for(owner)])))
     if module_id is not None and str(module_id) not in set(map(str, ids)):
@@ -166,7 +166,7 @@ def read_weekly_learning(context, selection=None, *, module_id=None, include_wee
         modules = [normalise_projected_calendar(row) for row in modules]
         policies = {}
         if any(row.get('source_weekly_display') for row in modules):
-            from learner_api.placement_links import placement_ids
+            from learner_api.identity_placement.public import placement_ids
             policies = display_policies(modules, placement_ids(source)['cohort_id'])
         if canonical_only:
             cur.execute('''SELECT plan_week.curriculum_week_id AS id,

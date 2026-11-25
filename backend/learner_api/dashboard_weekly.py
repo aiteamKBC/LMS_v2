@@ -13,12 +13,12 @@ from old_otjh.service import ServiceError
 from coach_api.weekly_learning import read_weekly_learning
 from .response_cache import cached_learner_read
 from . import canonical_learning, journal_sources
-from .identity import learner_profile_for_source
+from .identity_placement.public import learner_profile_for_source
 from .learner_detail import SOURCE_MODELS
 from .projection_performance import measure_projection
 from .weekly_learning import _weekly_component
 from .learner_detail import _resolve_from_master, _apply_programme_assignment_template
-from .learning_plan import install_canonical_training_plan
+from .learning_plans.public import hydrate_normalized_plan
 from .submission_visibility import VISIBLE_SUBMISSION_SQL
 
 # programme/cohort/group are placement properties (not columns); load their id
@@ -98,7 +98,7 @@ def read_dashboard_weekly(source, pk, *, week_id=None, module_id=None):
         raise ServiceError('The consolidated learner identity needs review.', 'identity_review_required', 409)
     source._canonical_profile = {**owner, '_canonical_plan_only': True}
     source._case_file_profile = profile
-    install_canonical_training_plan(source, profile)
+    hydrate_normalized_plan(source, profile)
     selection = _selection(week_id, module_id)
     try:
         payload = read_weekly_learning(SimpleNamespace(source=source, profile=profile), selection,

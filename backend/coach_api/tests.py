@@ -851,7 +851,7 @@ class CanonicalCoachMetricsTests(SimpleTestCase):
                 10: [{"componentId": "native-null", "passed": True}],
                 11: [{"componentId": "native-aptem", "passed": True}],
             }),
-            "_effective_plan_ids": MagicMock(side_effect=lambda source, _cache: [source.pk * 100]),
+            "effective_module_ids": MagicMock(side_effect=lambda source, _cache: [source.pk * 100]),
             "load_native_components_bulk": MagicMock(return_value={
                 "1000": [{"id": "native-null"}],
                 "1100": [{"id": "native-aptem"}],

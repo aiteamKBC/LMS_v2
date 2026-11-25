@@ -10,7 +10,7 @@ from django.test import SimpleTestCase, RequestFactory
 
 from . import (canonical_learning as canonical, dashboard_tabs, dashboard_overview,
                dashboard_training, employer_learning, employer_portal, learning_plan,
-               identity, overview_week, training_plan_dashboard as schedule)
+               overview_week, training_plan_dashboard as schedule)
 from .journal_sources import learner_journal_reads, enabled
 from old_otjh.service import ServiceError
 
@@ -56,11 +56,14 @@ class EmployerLearningParityTests(SimpleTestCase):
         cursor.fetchone.return_value = (100,)
         connection = SimpleNamespace(cursor=lambda: cursor)
         with ExitStack() as stack:
-            stack.enter_context(patch('learner_api.learning_plan.install_canonical_training_plan', side_effect=lambda source, profile: setattr(source, '_canonical_training_plan', plan)))
+            stack.enter_context(patch(
+                'learner_api.learning_plans.public.hydrate_normalized_plan',
+                side_effect=lambda source, profile: setattr(source, '_canonical_training_plan', plan),
+            ))
             for target, value in (
                 ('learner_api.canonical_learning.require_profile', owner),
-                ('learner_api.identity.learner_profile_for_source', profile),
-                ('learner_api.learning_plan._preset_ids_for', ['M1', 'M2']),
+                ('learner_api.identity_placement.public.learner_profile_for_source', profile),
+                ('learner_api.learning_plans.infrastructure.assignment_reads._preset_ids_for', ['M1', 'M2']),
                 ('learner_api.canonical_learning.curriculum_module_ids_for', []),
                 ('learner_api.training_plan_dashboard.builder_subject_links', {}),
                 ('learner_api.canonical_learning.entries_for', records),
@@ -134,7 +137,7 @@ class EmployerLearningParityTests(SimpleTestCase):
         for profile in (None, SimpleNamespace(pk=18, enrolment_id=265), SimpleNamespace(pk=17, enrolment_id=266)):
             for tab in ('overview', 'training'):
                 with self.subTest(profile=profile, tab=tab), self.fixture() as (source, *_):
-                    with patch.object(identity, 'learner_profile_for_source', return_value=profile), patch.object(canonical, 'entries_for') as entries:
+                    with patch.object(employer_learning, 'learner_profile_for_source', return_value=profile), patch.object(canonical, 'entries_for') as entries:
                         with self.assertRaises(ServiceError):
                             employer_learning.read_dashboard(source, 'commercial', tab, RequestFactory().get('/'))
                         entries.assert_not_called()

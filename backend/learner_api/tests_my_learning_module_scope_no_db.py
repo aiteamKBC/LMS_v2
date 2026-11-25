@@ -50,7 +50,7 @@ class ModuleContextScopeTests(SimpleTestCase):
         with ExitStack() as stack:
             stack.enter_context(patch.object(models.LearnerProfile, 'objects', manager))
             stack.enter_context(patch.object(
-                learning, 'install_canonical_training_plan',
+                learning, 'hydrate_normalized_plan',
                 side_effect=lambda selected_source, profile: (
                     setattr(selected_source, '_canonical_training_plan', deepcopy(plan)) or plan
                 ),

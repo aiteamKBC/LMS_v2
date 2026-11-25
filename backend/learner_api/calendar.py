@@ -23,7 +23,7 @@ from coach_api.review_sources import (
 )
 
 from .learner_detail import SOURCE_MODELS
-from .identity import learner_profile_for_source
+from .identity_placement.public import learner_profile_for_source
 from .mappers import _s
 from .models import EnrolmentReview, LearnerProfile, StaffUser
 from .booking_calendar import booking_calendar_payload, booking_date_restriction

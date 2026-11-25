@@ -13,7 +13,8 @@ import re
 
 from .student_activity_access import student_activity_available
 from .aptem_status import programme_status
-from .placement_links import placement_input, placement_payload
+from .identity_placement.public import placement_payload
+from .placement_links import placement_input
 from .constants import (
     ACCESS_CHOICES,
     ACCESS_SUPER_ADMIN,

@@ -32,7 +32,8 @@ from .learner_detail import (
     _video_url_from_settings,
     component_audio_url,
 )
-from .free_course_selectors import VALID_LEARNER_KINDS, assigned_course_ids, canonical_learner
+from .free_course_selectors import assigned_course_ids
+from .identity_placement.public import VALID_LEARNER_KINDS, canonical_learner
 from .mappers import _s
 from .models import FREE_PROGRESS_ACTIVE, LearnerFreeCourseProgress, LearnerProfile
 from .free_course_progress import ACTIVITY_STATES, save_activity_state, save_completion

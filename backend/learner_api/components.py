@@ -23,7 +23,7 @@ from curriculum_api.catalogue.infrastructure.learning_read_routes import read_ta
 from curriculum_api.canonical_read_sql import current_status_sql, standard_ksb_join_sql
 
 from .active_users import ComponentReferenceError, save_progress_record, sync_active_user
-from .identity import learner_profile_for_source
+from .identity_placement.public import learner_profile_for_source
 from .models import CommercialUser, EnrolmentUser
 from .time_tracking import (
     TrackingSessionError,

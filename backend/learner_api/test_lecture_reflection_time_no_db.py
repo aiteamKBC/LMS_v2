@@ -35,9 +35,9 @@ class LectureReflectionTimeTests(SimpleTestCase):
             stack.enter_context(patch('learner_api.lecture_reflection_time.connections'))['enrolment'].cursor.return_value.__enter__.return_value = cursor
             models = stack.enter_context(patch('learner_api.components.SOURCE_MODELS'))
             models.__getitem__.return_value.objects.get.return_value = source
-            stack.enter_context(patch('learner_api.identity.learner_profile_for_source', return_value=learner))
+            stack.enter_context(patch('learner_api.identity_placement.public.learner_profile_for_source', return_value=learner))
             stack.enter_context(patch(
-                'learner_api.learning_plan.install_canonical_training_plan',
+                'learner_api.learning_plans.public.hydrate_normalized_plan',
                 side_effect=lambda selected_source, _profile: (
                     setattr(selected_source, '_canonical_training_plan',
                             [{'moduleId': 'MODULE' if assigned else 'OTHER'}])

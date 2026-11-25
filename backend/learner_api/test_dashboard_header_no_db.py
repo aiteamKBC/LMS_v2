@@ -132,7 +132,7 @@ class DashboardHeaderTests(SimpleTestCase):
         source = SimpleNamespace(pk=7, email=' Learner@Example.test ', aptem_id='0009')
         profile = SimpleNamespace(id=17, email='learner@example.test', aptem_id=9, enrolment_id=7)
         with patch.object(header, 'LearnerProfile') as model, \
-             patch.object(header, 'install_canonical_training_plan') as install:
+             patch.object(header, 'hydrate_normalized_plan') as install:
             queryset = model.objects.filter.return_value.only.return_value.prefetch_related.return_value
             queryset.__getitem__.return_value = [profile]
             actual, owner = header.header_profile(source, 7)

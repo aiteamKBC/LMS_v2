@@ -72,9 +72,13 @@ ALLOWED = {'learner_api.learning_plans.tests',
            'curriculum_api.directory.infrastructure.registration_reads',
            'learner_api.learning_plans.application',
            'learner_api.learning_plans.application.module_membership',
+           'learner_api.learning_plans.public',
+           'learner_api.learning_plans.application.hydration',
 'curriculum_api', 'curriculum_api.learner_status_counts', 'curriculum_api.learner_assignments',
            'login', 'login.permissions', 'learner_api', 'learner_api.learning_plans',
            'learner_api.learning_plans.domain', 'learner_api.learning_plans.domain.membership_policy',
+           'learner_api.learning_plans.domain.effective_plan',
+           'learner_api.learning_plans.domain.stored_plan',
            'learner_api.learning_plans.tests.parity.test_membership_caller_parity_standalone',
            'learner_api.learning_plans.tests.parity.test_membership_integration_standalone'}
 
@@ -126,6 +130,9 @@ sessions = stub('login.sessions', authenticate_request=lambda r: r.account,
 plans = stub('learner_api.learning_plan', _s=strings['_s'])
 stub('learner_api.placement_links', with_placements=lambda rows: rows, placement_ids=deny,
      placement_profile=lambda row: row.profile, RELATIONS=(), CACHE='synthetic')
+stub('learner_api.identity_placement.public', with_placements=lambda rows: rows,
+     placement_ids=deny, placement_profile=lambda row: row.profile,
+     RELATIONS=(), CACHE='synthetic')
 stub('learner_api.active_users', hydrate_training_plan=deny)
 stub('learner_api.mappers', get_training_plan=deny, stored_training_plan=deny, training_plan_field=deny)
 models = stub('learner_api.models', EnrolmentUser=SimpleNamespace(), LearnerProfile=SimpleNamespace())

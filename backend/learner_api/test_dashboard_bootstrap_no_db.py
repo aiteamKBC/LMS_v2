@@ -39,7 +39,8 @@ class BootstrapTests(SimpleTestCase):
             self.assertNotIn('canonical', route.kwargs)
 
     def test_canonical_monthly_dispatch_uses_same_authorized_calculations(self):
-        from . import dashboard_tabs, dashboard_monthly, identity
+        from . import dashboard_tabs, dashboard_monthly
+        from .identity_placement import public as identity
         source = SimpleNamespace(pk=7, _canonical_training_plan=[])
         with patch.object(dashboard_tabs.canonical, 'require_profile', return_value={'id': 9}), \
              patch.object(identity, 'learner_profile_for_source', return_value=SimpleNamespace(pk=9, enrolment_id=7)), \

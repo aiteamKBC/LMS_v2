@@ -9,21 +9,15 @@ import json
 
 from django.utils.crypto import salted_hmac
 
-from .models import LearnerFreeCourse, LearnerProfile
+from .identity_placement.public import VALID_LEARNER_KINDS, canonical_learner
+from .models import LearnerFreeCourse
 
-
-VALID_LEARNER_KINDS = frozenset({"commercial", "apprenticeship"})
-
-
-def canonical_learner(kind, enrolment_id):
-    """Resolve one canonical learner profile from its authenticated enrolment."""
-    if kind not in VALID_LEARNER_KINDS:
-        raise LearnerProfile.DoesNotExist
-    return (
-        LearnerProfile.objects
-        .only("id", "enrolment_id", "learner_type", "lifecycle_status", "programme_status")
-        .get(enrolment_id=enrolment_id, learner_type=kind)
-    )
+__all__ = (
+    "VALID_LEARNER_KINDS",
+    "assigned_course_ids",
+    "assignment_version",
+    "canonical_learner",
+)
 
 
 def assigned_course_ids(learner):

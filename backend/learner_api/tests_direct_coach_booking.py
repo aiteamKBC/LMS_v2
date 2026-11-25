@@ -148,7 +148,7 @@ class DirectCoachAvailabilityTests(SimpleTestCase):
         profile = SimpleNamespace(coach_email='old@example.invalid')
         request = RequestFactory().get('/availability/', {'date': '2026-07-01', 'purpose': 'coach-session', 'timezoneOffsetMinutes': -180})
         with patch('learner_api.learner_detail.SOURCE_MODELS', {'commercial': source}), \
-                patch('learner_api.identity.learner_profile_for_source', return_value=profile), \
+                patch('learner_api.identity_placement.public.learner_profile_for_source', return_value=profile), \
                 patch.object(coach_availability, 'free_slots', return_value=['11:00']) as slots:
             response = inspect.unwrap(coach_availability.coach_available_slots)(request, 'commercial', 101)
         self.assertEqual(response.status_code, 200)
@@ -159,7 +159,7 @@ class DirectCoachAvailabilityTests(SimpleTestCase):
         source.all_learners.filter.return_value.first.return_value = SimpleNamespace()
         request = RequestFactory().get('/availability/', {'date': '2026-11-04', 'purpose': 'coach-session', 'excludeEventKey': 'other:9'})
         with patch('learner_api.learner_detail.SOURCE_MODELS', {'commercial': source}), \
-                patch('learner_api.identity.learner_profile_for_source', return_value=SimpleNamespace(coach_email='coach@example.invalid')), \
+                patch('learner_api.identity_placement.public.learner_profile_for_source', return_value=SimpleNamespace(coach_email='coach@example.invalid')), \
                 patch.object(calendar, '_learner_booking_record', return_value=None), \
                 patch.object(coach_availability, 'free_slots') as slots:
             self.assertEqual(inspect.unwrap(coach_availability.coach_available_slots)(request, 'commercial', 101).status_code, 409)
@@ -169,7 +169,7 @@ class DirectCoachAvailabilityTests(SimpleTestCase):
         source = Mock()
         source.all_learners.filter.return_value.first.return_value = SimpleNamespace()
         with patch('learner_api.learner_detail.SOURCE_MODELS', {'commercial': source}), \
-                patch('learner_api.identity.learner_profile_for_source', return_value=SimpleNamespace(coach_email='coach@example.invalid')), \
+                patch('learner_api.identity_placement.public.learner_profile_for_source', return_value=SimpleNamespace(coach_email='coach@example.invalid')), \
                 patch.object(coach_availability, 'free_slots', return_value=['11:00']) as slots:
             for duration in (15, 75, 180, 480):
                 with self.subTest(duration=duration):
@@ -183,7 +183,7 @@ class DirectCoachAvailabilityTests(SimpleTestCase):
         record = SimpleNamespace(event_type='student-support', status='scheduled', owner_email='original@example.invalid')
         request = RequestFactory().get('/availability/', {'date': '2026-11-04', 'purpose': 'coach-session', 'excludeEventKey': 'support:9'})
         with patch('learner_api.learner_detail.SOURCE_MODELS', {'commercial': source}), \
-                patch('learner_api.identity.learner_profile_for_source', return_value=SimpleNamespace(coach_email='old@example.invalid')), \
+                patch('learner_api.identity_placement.public.learner_profile_for_source', return_value=SimpleNamespace(coach_email='old@example.invalid')), \
                 patch.object(calendar, '_learner_booking_record', return_value=record), \
                 patch.object(coach_availability, 'free_slots', return_value=['11:00']) as slots:
             self.assertEqual(inspect.unwrap(coach_availability.coach_available_slots)(request, 'commercial', 101).status_code, 200)

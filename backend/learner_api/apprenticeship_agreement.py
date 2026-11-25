@@ -149,7 +149,7 @@ def _group_dates(learner):
     cohort = _s(getattr(learner, "cohort", ""))
     if (start is None or end is None) and programme and cohort:
         from .active_users import cohort_dates
-        from .placement_links import placement_ids
+        from .identity_placement.public import placement_ids
 
         # By the cohort's id where the learner's profile holds one, so a renamed
         # cohort still supplies the date the progression and access gate read.

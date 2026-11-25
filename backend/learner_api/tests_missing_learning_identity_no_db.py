@@ -27,7 +27,7 @@ class MissingLearningIdentityTests(SimpleTestCase):
         self.profiles.objects.filter.return_value.first.return_value = None
         self.atomic = self.enterContext(patch.object(active_users.transaction, "atomic"))
         self.legacy = self.enterContext(patch(
-            "learner_api.identity.learner_profile_for_source", return_value=None
+            "learner_api.identity_placement.public.learner_profile_for_source", return_value=None
         ))
         self.sync = self.enterContext(patch.object(active_users, "sync_active_user", return_value=self.profile))
         self.validate = self.enterContext(patch.object(canonical_learning, "require_profile", return_value={"id": 9001}))
@@ -85,7 +85,7 @@ class ActiveProfileAptemTests(SimpleTestCase):
         with patch("learner_api.apprenticeship_agreement._group_dates", return_value=(None, None, None)), \
              patch("learner_api.coach_assignment.source_coach_id", return_value=None), \
              patch.object(active_users.transaction, "atomic"), \
-             patch("learner_api.placement_links.placement_profile", return_value=existing), \
+             patch("learner_api.identity_placement.public.placement_profile", return_value=existing), \
              patch.object(active_users, "hydrate_source_training_plan", return_value=source.learning_plan), \
              patch.object(active_users, "LearnerProfile") as model, \
              patch.object(active_users, "replace_training_plan"), \

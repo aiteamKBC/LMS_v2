@@ -197,7 +197,7 @@ def free_slots(owner_email, day, offset, *, exclude_event_key='', exclude_record
 @learner_self_or_staff(kwarg="pk")
 def coach_available_slots(request, kind, pk):
     from .learner_detail import SOURCE_MODELS
-    from .identity import learner_profile_for_source
+    from .identity_placement.public import learner_profile_for_source
     model = SOURCE_MODELS.get(kind)
     if model is None:
         return JsonResponse({'error': 'Unknown learner kind.'}, status=404)

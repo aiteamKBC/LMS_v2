@@ -103,7 +103,7 @@ class GuardedSideEffects(SimpleTestCase):
 class ModelTests(SimpleTestCase):
     def test_canonical_owner_never_falls_back_to_the_enrolment_id(self):
         from .free_course_records import progress_owner
-        with patch('learner_api.identity.learner_profile_for_source', return_value=None) as resolve:
+        with patch('learner_api.identity_placement.public.learner_profile_for_source', return_value=None) as resolve:
             self.assertIsNone(progress_owner(SimpleNamespace(pk=19)))
             self.assertFalse(resolve.call_args.kwargs['heal'])
 

@@ -8,7 +8,7 @@ import json
 from django.db import connection, connections
 
 from curriculum_api.catalogue.infrastructure.course_storage_reads import read_sql
-from learner_api.placement_links import placement_ids
+from learner_api.identity_placement.public import placement_ids
 from learner_api.projection_performance import projection_call, projection_operation
 from learner_api.learning_plans.application.effective_plan import effective_module_ids
 from learner_api.learning_plans.domain.stored_plan import _s, stored_training_plan

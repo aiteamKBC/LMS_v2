@@ -63,7 +63,7 @@ from .active_users import (
     sync_active_user,
     validate_training_plan_relationships,
 )
-from .identity import learner_profile_for_source
+from .identity_placement.public import learner_profile_for_source
 from .ksb_definition_links import assigned_definition_ids, attach_definition_ids
 from .learner_progression import advance_learner
 from .learning_plan import (
@@ -77,7 +77,7 @@ from .learning_plan import (
     sync_learning_plan_mirror,
 )
 from .mappers import ValidationError, _s, training_plan_field
-from .placement_links import placement_ids
+from .identity_placement.public import placement_ids
 from .models import (
     EnrolmentUser,
     LearnerProfile,

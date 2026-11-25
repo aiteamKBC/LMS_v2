@@ -189,7 +189,7 @@ def main():
                                 source = SOURCE_MODELS[kind].all_learners.only(*dict.fromkeys([
                                     *TRAINING_PLAN_SOURCE_FIELDS, 'username', 'employer_id', 'learning_plan', 'training_plan'])).get(pk=pk)
                                 if tab == 'training-detail':
-                                    from learner_api.identity import learner_profile_for_source
+                                    from learner_api.identity_placement.public import learner_profile_for_source
                                     selected = selections.get(sample)
                                     if not selected:
                                         raise LookupError('No assigned module available for detail measurement')

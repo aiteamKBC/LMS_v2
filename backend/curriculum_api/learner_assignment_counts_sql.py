@@ -47,16 +47,83 @@ original code path. No row in the current data is in that state.
 """
 from __future__ import annotations
 
+import json
 import logging
 import time
 
 from django.db import connections
 
-from learner_api.learning_plans.infrastructure import assignment_reads as plans
+from learner_api.learning_plans import public as learner_plans
 from learner_api.models import EnrolmentUser
-from learner_api.placement_links import with_placements
+from learner_api.identity_placement.public import with_placements
+
+from .catalogue.infrastructure.database_reads import (
+    AUTHORING_MODULES_TABLE,
+    authoring_table_name,
+    fetch_all,
+)
 
 logger = logging.getLogger(__name__)
+
+
+GROUP_PRESET_SOURCE = """(
+    SELECT g.group_id, g.group_name, g.programme_id,
+           p.name AS programme_name, g.created_at, g.updated_at, g.status,
+           COALESCE((SELECT jsonb_agg(m.module_catalogue_id ORDER BY m.module_catalogue_id)
+                     FROM curriculum.modules m WHERE m.group_id = g.group_id), '[]'::jsonb) AS module_ids
+    FROM curriculum.groups g
+    LEFT JOIN curriculum.programmes p ON p.programme_id = g.programme_id
+)"""
+
+
+def _module_ids_from_column(value):
+    """Interpret Curriculum's stored/presented module-id collection."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            return []
+    return [learner_plans.clean_text(item) for item in value] if isinstance(value, list) else []
+
+
+def _manual_roster_module_ids(module_ids):
+    """Curriculum modules whose membership is always explicit."""
+    wanted = [
+        item
+        for item in dict.fromkeys(learner_plans.clean_text(value) for value in module_ids)
+        if item
+    ]
+    if not wanted:
+        return set()
+    placeholders = ', '.join(['%s'] * len(wanted))
+    try:
+        rows = fetch_all(
+            f'SELECT module_catalogue_id FROM {authoring_table_name(AUTHORING_MODULES_TABLE)} '
+            f'WHERE module_catalogue_id IN ({placeholders}) '
+            "AND COALESCE(learner_roster_mode, 'inherited') = 'manual'",
+            wanted,
+        )
+    except Exception:  # noqa: BLE001 - preserve the compatibility read's fail-closed fallback
+        return set()
+    return {
+        learner_plans.clean_text(row.get('module_catalogue_id'))
+        for row in rows
+        if learner_plans.clean_text(row.get('module_catalogue_id'))
+    }
+
+
+def _group_module_ids(group_id, source=None):
+    """Read one canonical Curriculum group preset by stable group id."""
+    relation = f'(SELECT * FROM {source})' if source else GROUP_PRESET_SOURCE
+    rows = fetch_all(
+        f'SELECT module_ids FROM {relation} AS preset WHERE group_id = %s',
+        [group_id],
+    )
+    if not rows:
+        return []
+    module_ids = _module_ids_from_column(rows[0].get('module_ids'))
+    manual_ids = _manual_roster_module_ids(module_ids)
+    return [module_id for module_id in module_ids if module_id not in manual_ids]
 
 #: The relation the production query reads. Parameterised only so the tests can
 #: substitute a literal VALUES list and exercise the jsonb expressions below
@@ -202,13 +269,13 @@ def _preset_ids(programme, group, cache, group_id=''):
 
     A placement's canonical group id names the group; absent ids have no preset.
     """
-    group_id = plans._s(group_id)
+    group_id = learner_plans.clean_text(group_id)
     if not group_id:
         return []
     key = ('group_id', group_id)
     if key not in cache:
         source = _group_source()
-        cache[key] = plans._group_module_ids('', '', source=source, group_id=group_id)
+        cache[key] = _group_module_ids(group_id, source=source)
     return cache[key]
 
 
@@ -216,16 +283,25 @@ def seed_preset_cache(facts):
     """One round trip of group presets for every fact, keyed as `_preset_ids` keys them."""
     source = _group_source()
     cache = {}
-    group_ids = sorted({plans._s(fact.get('group_id')) for fact in facts if plans._s(fact.get('group_id'))})
+    group_ids = sorted({
+        learner_plans.clean_text(fact.get('group_id'))
+        for fact in facts
+        if learner_plans.clean_text(fact.get('group_id'))
+    })
     if group_ids:
-        relation = source or plans.GROUP_PRESET_SOURCE
-        rows = plans._rows(
+        relation = source or GROUP_PRESET_SOURCE
+        rows = fetch_all(
             f'SELECT group_id, module_ids FROM {relation} WHERE group_id = ANY(%s) '
             "AND status NOT IN ('inactive','archived')",
             [group_ids],
         )
-        found = {plans._s(row.get('group_id')): plans._module_ids_from_column(row.get('module_ids')) for row in rows}
-        manual = plans._manual_roster_module_ids([i for ids in found.values() for i in ids])
+        found = {
+            learner_plans.clean_text(row.get('group_id')): _module_ids_from_column(
+                row.get('module_ids')
+            )
+            for row in rows
+        }
+        manual = _manual_roster_module_ids([i for ids in found.values() for i in ids])
         for group_id in group_ids:
             cache[('group_id', group_id)] = [i for i in found.get(group_id, []) if i not in manual]
     return cache
@@ -273,14 +349,24 @@ def _effective_ids_from_fact(fact, wanted, cache):
     an id it was never asked about, so the caller must pass a `wanted` wide
     enough to cover every id it needs back (the whole catalogue, to get a
     learner's true plan size rather than just their overlap with one target)."""
-    matched = {module_id for module_id in (fact['matched'] or []) if module_id in wanted}
-    if not fact['has_plan']:
-        # No saved plan: the group preset *is* the effective plan.
-        return {i for i in _preset_ids(fact['programme'], fact['grp'], cache, fact.get('group_id')) if i in wanted}
-    if not fact['id_count'] or fact['has_explicit']:
-        # A cleared plan stays cleared, and an explicit one is the whole of it.
-        return matched
-    return matched | {i for i in _preset_ids(fact['programme'], fact['grp'], cache, fact.get('group_id')) if i in wanted}
+    matched = [module_id for module_id in (fact['matched'] or []) if module_id in wanted]
+    effective = learner_plans.effective_module_ids_from_state(
+        matched,
+        lambda: (
+            module_id
+            for module_id in _preset_ids(
+                fact['programme'],
+                fact['grp'],
+                cache,
+                fact.get('group_id'),
+            )
+            if module_id in wanted
+        ),
+        has_saved_plan=fact['has_plan'],
+        has_explicit_assignment=fact['has_explicit'],
+        saved_module_count=fact['id_count'],
+    )
+    return set(effective)
 
 
 def counts_from_plan_facts(facts, wanted, preset_cache=None):
@@ -289,7 +375,11 @@ def counts_from_plan_facts(facts, wanted, preset_cache=None):
     Pure apart from the group-preset lookup, which is the one thing still worth
     a query. Returns the counts and the learner ids SQL could not decide.
     """
-    wanted = {plans._s(module_id) for module_id in wanted if plans._s(module_id)}
+    wanted = {
+        learner_plans.clean_text(module_id)
+        for module_id in wanted
+        if learner_plans.clean_text(module_id)
+    }
     counts = {module_id: 0 for module_id in wanted}
     cache = preset_cache if preset_cache is not None else {}
     ambiguous = []
@@ -328,7 +418,11 @@ def assignment_directory_facts(target_module_ids):
         clean_str(row.get('module_catalogue_id')) for row in catalogue_rows
         if clean_str(row.get('module_catalogue_id'))
     }
-    wanted |= {plans._s(module_id) for module_id in target_module_ids if plans._s(module_id)}
+    wanted |= {
+        learner_plans.clean_text(module_id)
+        for module_id in target_module_ids
+        if learner_plans.clean_text(module_id)
+    }
     if not wanted:
         return {}, []
     facts = fetch_plan_facts(wanted)
@@ -353,7 +447,11 @@ def bulk_assigned_learner_counts_sql(module_ids):
     Used by the enrolment-keyed catalogue payload. `compare_assignment_counts`
     remains an explicit diagnostic against the original Python reader.
     """
-    wanted = {plans._s(module_id) for module_id in module_ids if plans._s(module_id)}
+    wanted = {
+        learner_plans.clean_text(module_id)
+        for module_id in module_ids
+        if learner_plans.clean_text(module_id)
+    }
     if not wanted:
         return {}
     facts = fetch_plan_facts(wanted)
@@ -372,7 +470,7 @@ def bulk_assigned_learner_counts_sql(module_ids):
             'id', 'programme_id', 'group_id', 'learning_plan', 'training_plan',
         ).filter(pk__in=ambiguous))
         for learner in learners:
-            for module_id in set(plans._effective_plan_ids(learner, cache)):
+            for module_id in set(learner_plans.effective_module_ids(learner, cache)):
                 if module_id in wanted:
                     counts[module_id] += 1
     return counts
@@ -389,14 +487,18 @@ def bulk_assigned_learner_counts(module_ids):
     shared across learners exactly as `_payload` already shares it across a
     single module's request.
     """
-    wanted = {plans._s(module_id) for module_id in module_ids if plans._s(module_id)}
+    wanted = {
+        learner_plans.clean_text(module_id)
+        for module_id in module_ids
+        if learner_plans.clean_text(module_id)
+    }
     if not wanted:
         return {}
     counts = {module_id: 0 for module_id in wanted}
     cache = {}
     learners = with_placements(EnrolmentUser.all_learners.only('id', 'learning_plan', 'training_plan'))
     for learner in learners:
-        for module_id in set(plans._effective_plan_ids(learner, cache)):
+        for module_id in set(learner_plans.effective_module_ids(learner, cache)):
             if module_id in wanted:
                 counts[module_id] += 1
     return counts

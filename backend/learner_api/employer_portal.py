@@ -34,7 +34,7 @@ from django.views.decorators.csrf import csrf_exempt
 from login.permissions import employer_or_staff
 
 from .learner_detail import SOURCE_MODELS
-from .identity import learner_profile_for_source
+from .identity_placement.public import learner_profile_for_source
 from .employer_review_dates import imported_document_dates
 from .mappers import _s, to_employer_row
 from .models import Employer, EnrolmentReview, LearnerProfile
@@ -1702,7 +1702,7 @@ def _learner_assignments(kind, learner):
     from django.db import connections
 
     from . import legacy_assignments
-    from .identity import learner_profile_for_source
+    from .identity_placement.public import learner_profile_for_source
 
     profile = learner_profile_for_source(learner)
     if profile is None:
@@ -1788,7 +1788,7 @@ def employer_portal_assignment_file(request, employer_id, kind, learner_id, file
     from django.db import connections
 
     from .evidence_storage import azure_configured, get_download_sas
-    from .identity import learner_profile_for_source
+    from .identity_placement.public import learner_profile_for_source
 
     if not azure_configured():
         return _error("Document storage is not configured.", 503)

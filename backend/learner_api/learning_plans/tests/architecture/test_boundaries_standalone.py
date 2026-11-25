@@ -1,9 +1,9 @@
 """Static dependency checks for the domain-first learning-plan boundary."""
 
 import ast
+import unittest
 from collections import Counter
 from pathlib import Path
-import unittest
 
 BACKEND = Path(__file__).resolve().parents[4]
 PACKAGE = BACKEND / "learner_api" / "learning_plans"
@@ -60,12 +60,13 @@ class DependencyBoundaryTests(unittest.TestCase):
         for path in production_python(learner_root):
             if PACKAGE in path.parents:
                 continue
+            if path == learner_root / "training_plan_writes.py":
+                continue
             for value in imports(path):
                 if value.startswith((
                     "learner_api.learning_plans.application",
                     "learner_api.learning_plans.domain",
                     "learner_api.learning_plans.infrastructure",
-                )) or value.startswith((
                     "learning_plans.application",
                     "learning_plans.domain",
                     "learning_plans.infrastructure",
@@ -73,14 +74,36 @@ class DependencyBoundaryTests(unittest.TestCase):
                     violations.append((path.relative_to(BACKEND).as_posix(), value))
         self.assertEqual(violations, [])
 
+    def test_root_writer_is_the_only_approved_infrastructure_compatibility_alias(self):
+        path = BACKEND / "learner_api" / "training_plan_writes.py"
+        tree = ast.parse(path.read_text(encoding="utf-8-sig"))
+        definitions = [
+            node.name
+            for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.ClassDef))
+        ]
+        self.assertEqual(definitions, [])
+        self.assertIn(
+            "learning_plans.infrastructure",
+            imports(path),
+        )
+
+    def test_exactly_one_normalized_writer_implementation_exists(self):
+        definitions = []
+        for path in production_python(BACKEND / "learner_api"):
+            tree = ast.parse(path.read_text(encoding="utf-8-sig"))
+            if any(
+                isinstance(node, ast.FunctionDef)
+                and node.name == "reconcile_training_plan"
+                for node in tree.body
+            ):
+                definitions.append(path.relative_to(BACKEND).as_posix())
+        self.assertEqual(definitions, [
+            "learner_api/learning_plans/infrastructure/training_plan_writes.py"
+        ])
+
     def test_existing_cross_domain_private_imports_are_frozen(self):
-        expected = {
-            ("curriculum_api/directory/infrastructure/membership_runtime.py", "learner_api.learning_plans.infrastructure.membership_facts"),
-            ("curriculum_api/directory/infrastructure/membership_runtime.py", "learner_api.learning_plans.domain.membership_policy"),
-            ("curriculum_api/directory/infrastructure/membership_runtime.py", "learner_api.learning_plans.application.module_membership"),
-            ("curriculum_api/learner_assignment_counts_sql.py", "learner_api.learning_plans.infrastructure"),
-            ("curriculum_api/module_plan_rows.py", "learner_api.learning_plans.infrastructure.plan_reads"),
-        }
+        expected = set()
         found = set()
         for owner in ("curriculum_api", "coach_api"):
             for path in production_python(BACKEND / owner):
@@ -93,19 +116,13 @@ class DependencyBoundaryTests(unittest.TestCase):
                         found.add((path.relative_to(BACKEND).as_posix(), value))
         self.assertEqual(found, expected)
 
-    def test_existing_legacy_view_imports_are_frozen(self):
+    def test_existing_external_legacy_imports_are_frozen(self):
         expected = Counter({
-            ("coach_api/case_file.py", "learner_api.learning_plan", "effective_training_plan", None): 1,
-            ("coach_api/learning_plan_projection.py", "learner_api.learning_plan", "_effective_plan_ids", None): 2,
-            ("coach_api/monthly_focus.py", "learner_api.learning_plan", "_effective_plan_ids", None): 1,
-            ("coach_api/views.py", "learner_api.learning_plan", "_effective_plan_ids", None): 1,
-            ("coach_api/weekly_learning.py", "learner_api.learning_plan", "_effective_plan_ids", None): 1,
-            ("curriculum_api/learner_assignments.py", "learner_api", "learning_plan", "plans"): 1,
-            ("curriculum_api/module_plan_rows.py", "learner_api", "learning_plan", "plans"): 1,
             ("curriculum_api/qr_attendance.py", "learner_api.learning_plan", "_parse_day", None): 1,
+            ("enrolment_api/wizard_bootstrap.py", "learner_api.learning_plan", "promote_learner_if_ready", None): 1,
         })
         found = Counter()
-        for owner in ("curriculum_api", "coach_api"):
+        for owner in ("curriculum_api", "coach_api", "engagement_api", "enrolment_api"):
             for path in production_python(BACKEND / owner):
                 tree = ast.parse(path.read_text(encoding="utf-8-sig"))
                 for node in ast.walk(tree):
@@ -121,6 +138,54 @@ class DependencyBoundaryTests(unittest.TestCase):
                                 alias.name,
                                 alias.asname,
                             )] += 1
+        self.assertEqual(found, expected)
+
+    def test_remaining_learning_plan_consumers_use_public_boundary(self):
+        expected = Counter({
+            ("engagement_api/module_feedback.py", "effective_module_ids", None): 1,
+            ("scripts/benchmark_week_switch.py", "effective_module_ids", None): 1,
+        })
+        found = Counter()
+        for path in (
+            BACKEND / "engagement_api" / "module_feedback.py",
+            BACKEND / "scripts" / "benchmark_week_switch.py",
+        ):
+            tree = ast.parse(path.read_text(encoding="utf-8-sig"))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.ImportFrom):
+                    continue
+                if node.module != "learner_api.learning_plans.public":
+                    continue
+                for alias in node.names:
+                    found[(
+                        path.relative_to(BACKEND).as_posix(),
+                        alias.name,
+                        alias.asname,
+                    )] += 1
+        self.assertEqual(found, expected)
+
+    def test_coach_learning_plan_consumers_use_public_boundary(self):
+        expected = Counter({
+            ("coach_api/case_file.py", "effective_plan_projection", None): 1,
+            ("coach_api/learning_plan_projection.py", "effective_module_ids", None): 2,
+            ("coach_api/monthly_focus.py", "effective_module_ids", None): 1,
+            ("coach_api/views.py", "effective_module_ids", None): 1,
+            ("coach_api/weekly_learning.py", "effective_module_ids", None): 1,
+        })
+        found = Counter()
+        for path in production_python(BACKEND / "coach_api"):
+            tree = ast.parse(path.read_text(encoding="utf-8-sig"))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.ImportFrom):
+                    continue
+                if node.module != "learner_api.learning_plans.public":
+                    continue
+                for alias in node.names:
+                    found[(
+                        path.relative_to(BACKEND).as_posix(),
+                        alias.name,
+                        alias.asname,
+                    )] += 1
         self.assertEqual(found, expected)
 
 

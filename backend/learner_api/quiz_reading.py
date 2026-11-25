@@ -17,7 +17,7 @@ from django.views.decorators.csrf import csrf_exempt
 from login.permissions import learner_self_only
 
 from .active_users import save_progress_record
-from .identity import learner_profile_for_source
+from .identity_placement.public import learner_profile_for_source
 from .models import CommercialUser, EnrolmentUser, LearnerProgressEntry
 from .quizzes import _fetch_quiz, _format_clock, _parse_image_matching_answer
 from .reflection_ai import _openai_client

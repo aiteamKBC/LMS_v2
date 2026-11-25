@@ -6,6 +6,8 @@ from . import views
 from .tests import CurriculumPersistenceHarness
 from . import learner_assignments as assignments
 from .tests_learner_assignments import learner
+from learner_api import learning_plan as legacy_plans
+from learner_api.learning_plans.infrastructure import assignment_reads
 
 
 class StandaloneCourseTests(CurriculumPersistenceHarness):
@@ -122,19 +124,19 @@ class StandaloneCourseTests(CurriculumPersistenceHarness):
     def test_assignment_uses_normal_plan_and_hours_for_both_learner_types(self):
         self.save()
         target = assignments._target('module', 'MOD-FREE')
-        catalogue = {entry['moduleId']: entry for entry in assignments.plans._all_modules()}
+        catalogue = assignments._assignment_catalogue()
         for kind, field in (('apprenticeship', 'learning_plan'), ('commercial', 'training_plan'),
                             ('apprenticeship', 'training_plan'), ('commercial', 'learning_plan')):
             with self.subTest(learner_type=kind, plan_column=field), \
-                    patch.object(assignments.plans, '_group_module_ids', return_value=[]), \
-                    patch.object(assignments.plans, 'sync_learning_plan_mirror'), \
+                    patch.object(assignment_reads, '_group_module_ids', return_value=[]), \
+                    patch.object(assignments.learner_plans, 'synchronize_compatibility_plan'), \
                     patch.object(assignments, 'LearnerProfile') as profiles:
                 row = learner([], learner_type=kind, training_plan=[] if field == 'training_plan' else None)
                 other = learner([], pk=2, learner_type=kind, training_plan=[] if field == 'training_plan' else None)
                 self.assertTrue(assignments._assign(row, target, catalogue, {}))
                 plan = getattr(row, field)
                 self.assertEqual([entry['moduleId'] for entry in plan], ['MOD-FREE'])
-                self.assertEqual(assignments.plans._totals(plan)['totalHours'], 2)
+                self.assertEqual(legacy_plans._totals(plan)['totalHours'], 2)
                 self.assertTrue(plan[0]['weeks'])
                 self.assertEqual((row.programme, row.cohort, row.group), ('Original programme', 'Original cohort', 'Original group'))
                 self.assertEqual(getattr(other, field), [])

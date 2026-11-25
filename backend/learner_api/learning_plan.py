@@ -37,6 +37,7 @@ every learner -- and that route is documented beside its view below:
 """
 import json
 import logging
+import sys
 from datetime import date, datetime
 
 from django.db import DatabaseError, connection, connections, transaction
@@ -58,11 +59,12 @@ from curriculum_api.catalogue.infrastructure.course_storage_reads import read_sq
 from login.permissions import learner_self_or_staff, staff_only
 
 from .constants import DELIVERY_PROGRAMME_STATUS
-from .free_course_selectors import assignment_version, assigned_course_ids, canonical_learner
-from .learner_progression import advance_learner
-from .mappers import ValidationError, _s, get_training_plan, stored_training_plan, training_plan_field
+from .free_course_selectors import assignment_version, assigned_course_ids
+from .identity_placement.public import canonical_learner, placement_ids, placement_payload
+from .learner_progression import advance_learner  # noqa: F401 -- compatibility patch target
+from .mappers import ValidationError, _s, stored_training_plan, training_plan_field
+from .mappers import get_training_plan  # noqa: F401 -- compatibility patch target
 from .models import EnrolmentUser, LearnerProfile
-from .placement_links import placement_ids, placement_payload
 from .planned_learning import learner_type, planned_modules
 from .projection_performance import projection_call, projection_operation
 from .training_plan_editor_contract import (
@@ -79,6 +81,8 @@ from .training_plan_writes import (
     reconcile_training_plan,
     training_plan_snapshot,
 )
+from .learning_plans.api.learning_plan import learning_plan as _learning_plan_api
+from .learning_plans.api.module_membership import module_learners as _module_learners_api
 
 from .learning_plans.composition import (
     _rows,
@@ -94,106 +98,14 @@ from .learning_plans.composition import (
     _preset_ids_for,
     request_preset_cache,
     _effective_plan_ids,
+    legacy_effective_plan_projection,
+    legacy_http_dependencies,
+    legacy_plan_membership,
 )
 
 logger = logging.getLogger(__name__)
 
-CANONICAL_TRAINING_PLAN_PREFETCH = "plan_modules__weeks__components"
 TRAINING_PLAN_DATABASE = "enrolment"
-
-
-def install_canonical_training_plan(source, profile=None, *, profile_id=None):
-    """Attach the normalized learner-owned plan to an enrolment source.
-
-    The exact ``enrolment_id`` bridge enforces ownership.  Four bounded ORM
-    queries load the profile, modules, weeks and components; related Curriculum
-    titles are joined by the child managers.  Missing assignments are a real
-    empty plan and never fall through to Created_users JSON or group presets.
-    """
-    if hasattr(source, "_canonical_training_plan"):
-        return source._canonical_training_plan
-
-    source_id = getattr(source, "pk", None) or getattr(source, "id", None)
-    if profile is None:
-        query = LearnerProfile.objects.only("id", "enrolment_id").filter(
-            enrolment_id=source_id,
-        )
-        if profile_id is not None:
-            query = query.filter(pk=profile_id)
-        profile = query.prefetch_related(CANONICAL_TRAINING_PLAN_PREFETCH).first()
-    else:
-        if source_id is None or profile.enrolment_id != source_id:
-            raise ValueError("The learner profile does not own this enrolment source.")
-        from django.db.models import prefetch_related_objects
-
-        prefetch_related_objects([profile], CANONICAL_TRAINING_PLAN_PREFETCH)
-
-    plan = profile.training_plan if profile is not None else []
-    source._canonical_training_plan = plan
-    return plan
-
-
-def install_canonical_training_plan_modules(source, profile):
-    """Attach a compact normalized plan tree in one read.
-
-    Monthly Plan originally used only the module FK list and rebuilt every
-    child from Curriculum.  That loses the learner-owned week/component
-    boundary.  Keep the performance benefit of a single values query while
-    retaining the complete canonical ownership chain and saved placement.
-    """
-    if hasattr(source, "_canonical_training_plan"):
-        return source._canonical_training_plan
-    source_id = getattr(source, "pk", None) or getattr(source, "id", None)
-    if source_id is None or profile.enrolment_id != source_id:
-        raise ValueError("The learner profile does not own this enrolment source.")
-    using = getattr(getattr(profile, "_state", None), "db", None) or "enrolment"
-    with connections[using].cursor() as cursor:
-        cursor.execute('''
-            SELECT plan_module.id,plan_module.curriculum_module_id,module.title,
-                   plan_week.id,plan_week.curriculum_week_id,week.title,
-                   plan_component.id,plan_component.curriculum_component_id
-            FROM "Learner".learner_training_plan_modules plan_module
-            LEFT JOIN curriculum.modules module
-              ON module.module_catalogue_id=plan_module.curriculum_module_id
-            LEFT JOIN "Learner".learner_training_plan_weeks plan_week
-              ON plan_week.plan_module_id=plan_module.id
-            LEFT JOIN curriculum.weeks week
-              ON week.id=plan_week.curriculum_week_id
-            LEFT JOIN "Learner".learner_training_plan_components plan_component
-              ON plan_component.plan_week_id=plan_week.id
-            WHERE plan_module.learner_id=%s
-            ORDER BY plan_module.position,plan_module.id,
-                     plan_week.position,plan_week.id,
-                     plan_component.position,plan_component.id
-        ''', [profile.pk])
-        rows = cursor.fetchall()
-
-    modules = {}
-    weeks = {}
-    for module_pk, module_id, module_title, week_pk, week_id, week_title, _component_pk, component_id in rows:
-        if not module_id:
-            continue
-        module = modules.setdefault(module_pk, {
-            "moduleId": _s(module_id),
-            "moduleTitle": _s(module_title),
-            "weeks": [],
-        })
-        if week_pk is None or not week_id:
-            continue
-        week = weeks.get(week_pk)
-        if week is None:
-            week = {
-                "weekId": _s(week_id),
-                "weekTitle": _s(week_title),
-                "components": [],
-            }
-            weeks[week_pk] = week
-            module["weeks"].append(week)
-        if component_id:
-            week["components"].append({"componentId": _s(component_id)})
-    plan = list(modules.values())
-    source._canonical_training_plan = plan
-    return plan
 
 
 def _error(message, status):
@@ -704,7 +616,7 @@ def sync_learning_plan_mirror(source, *, strict=False):
     recoverable -- ``manage.py sync_learning_plans`` rebuilds it from the plan.
     """
     from .active_users import ensure_active_learner_profile, replace_training_plan
-    from .mappers import get_training_plan
+    from .mappers import get_training_plan  # noqa: F811 -- local mirror reader
     from .models import LearnerProfile
 
     if source is None or not getattr(source, "pk", None):
@@ -945,6 +857,20 @@ def _legacy_serialize(learner):
     # A saved plan wins; an unsaved learner starts from their group's preset so
     # staff are editing something real rather than an empty list.
     saved = _saved_modules(learner)
+    aptem = None
+
+    def imported_module_ids():
+        nonlocal aptem
+        if aptem is None:
+            aptem = _aptem_subject_modules(learner)
+        return aptem.keys()
+
+    membership = legacy_plan_membership(
+        saved,
+        [module_id for module_id in preset_ids if module_id in by_id],
+        imported_module_ids,
+    )
+    inherited = list(membership.inherited_module_ids)
     if saved is not None:
         # Re-read hours/titles from the catalogue so an edited module shows its
         # current values. Entries with no catalogue match are kept (the module
@@ -981,11 +907,6 @@ def _legacy_serialize(learner):
         # indistinguishable in the stored plan, so the deliberate one wins.
         # Curriculum assignments also mark an explicit set, which must stay
         # limited to those modules even if the group later acquires others.
-        planned = {_s(m.get("moduleId")) for m in plan}
-        inherited = (
-            [i for i in preset_ids if i in by_id and i not in planned]
-            if plan and not any(m.get('assignmentMode') == 'explicit' for m in saved) else []
-        )
         plan = plan + [dict(by_id[i], inherited=True) for i in inherited]
         # Subjects an Aptem-imported learner is taught that never reached their
         # plan column. Same additive contract as the group preset above: shown
@@ -996,23 +917,18 @@ def _legacy_serialize(learner):
         # Unlike the group preset this also applies to an EMPTY plan: for these
         # learners an empty column means "nothing was ever imported here",
         # not "staff decided this learner is taught nothing".
-        if not any(m.get('assignmentMode') == 'explicit' for m in saved):
-            planned = {_s(m.get("moduleId")) for m in plan}
+        if membership.imported_module_ids:
             plan = plan + [
-                dict(module, fromAptem=True)
-                for module_id, module in _aptem_subject_modules(learner).items()
-                if module_id not in planned
+                dict(aptem[module_id], fromAptem=True)
+                for module_id in membership.imported_module_ids
             ]
     else:
-        inherited = []
         # A learner with no saved plan at all still gets their imported
         # subjects, for the same reason -- their group preset is empty because
         # the Aptem import populated the audit mirror, not the curriculum group.
-        aptem = _aptem_subject_modules(learner)
-        preset_ids_set = {_s(m.get("moduleId")) for m in preset}
         plan = preset + [
-            dict(module, fromAptem=True)
-            for module_id, module in aptem.items() if module_id not in preset_ids_set
+            dict(aptem[module_id], fromAptem=True)
+            for module_id in membership.imported_module_ids
         ]
 
     chosen = {_s(m.get("moduleId")) for m in plan}
@@ -1116,139 +1032,12 @@ def _serialize(learner, *, canonical_plan, plan_version):
 # programme; only the learner themselves or staff may write it. Reads stay open.
 @learner_self_or_staff(kwarg="pk")
 def learning_plan(request, pk):
-    """GET the learner's plan (with preset + pickable modules), or PATCH to save."""
-    try:
-        learner = EnrolmentUser.all_learners.get(pk=pk)
-    except EnrolmentUser.DoesNotExist:
-        return _error("Learner not found.", 404)
-    except DatabaseError as exc:
-        logger.exception("learning_plan: lookup failed")
-        return _error(f"Database error: {exc}", 502)
-
-    if request.method == "GET":
-        try:
-            return JsonResponse(_legacy_serialize(learner))
-        except DatabaseError:
-            logger.exception("learning_plan: read failed")
-            return _error("Could not read the learning plan.", 503)
-
-    if request.method not in ("PATCH", "PUT"):
-        return _error("Method not allowed.", 405)
-
-    # ---- save ----
-    try:
-        payload = json.loads(request.body or b"{}")
-    except ValueError:
-        return _error("Request body must be valid JSON.", 400)
-    if not isinstance(payload, dict):
-        return _error("Request body must be a JSON object.", 400)
-
-    modules = payload.get("modules")
-    if not isinstance(modules, list):
-        return _error("modules must be a list.", 400)
-
-    # Older clients include their current Free Course snapshot with every
-    # module save. It is accepted only when it exactly matches the canonical
-    # ordered assignments; this endpoint is not an assignment writer.
-    has_free_courses = "freeCourses" in payload
-    if has_free_courses:
-        assignment_error = _validate_free_course_assignment_snapshot(
-            learner,
-            payload.get("freeCourses"),
-        )
-        if assignment_error is not None:
-            return assignment_error
-
-    programme = _s(learner.programme)
-    try:
-        catalogue = {m["moduleId"]: m for m in _all_modules()}
-    except DatabaseError as exc:
-        logger.exception("learning_plan: catalogue lookup failed")
-        return _error(f"Database error: {exc}", 502)
-
-    # A module already on this learner's plan that the catalogue no longer
-    # offers. `_serialize` serves those rows as orphans so the plan still says
-    # what was agreed; refusing to save them would mean the server rejecting its
-    # own response -- one retired module anywhere on the plan and the modal
-    # could not be saved at all, with nothing to do about it but remove a row
-    # recording real teaching.
-    retained = {
-        _s(m.get("moduleId")): m
-        for m in _plan_entries(learner)
-        if _s(m.get("moduleId"))
-    }
-
-    # Rebuild each entry from the catalogue rather than trusting the client's
-    # titles/hours/dates/programme, and reject anything that is not a live
-    # module and was not already on the plan. A module from another programme is
-    # allowed — it is recorded with its own programme, so the plan says plainly
-    # where each module came from.
-    resolved, seen = [], set()
-    for entry in modules:
-        module_id = _s(entry.get("moduleId") if isinstance(entry, dict) else entry)
-        if not module_id:
-            return _error("Every module needs a moduleId.", 400)
-        if module_id in seen:
-            continue
-        if module_id not in catalogue and module_id not in retained:
-            return _error(f"Module '{module_id}' is not in the module catalogue.", 400)
-        seen.add(module_id)
-        resolved.append(dict(catalogue.get(module_id) or retained[module_id]))
-
-    # Is this save agreeing to the learner's group, or overriding it?
-    #
-    # `_serialize` re-offers any group module missing from the stored plan as an
-    # inherited row, because a module added to the group after the plan was
-    # agreed is one the learner is now taught. The stored plan alone cannot tell
-    # that case apart from "staff took this module off this learner" -- so a
-    # removal saved, and then came straight back on the next read wearing a "New
-    # from group" badge, with nothing the officer could do to make it stick.
-    #
-    # The omission itself is the record. A save that drops a module the group
-    # teaches is a decision about this learner, and freezes the set the way a
-    # curriculum assignment does; a save that keeps every one of them is an
-    # agreement to the group, and lets later additions flow in again. That makes
-    # "Reset to group default" the way back: it puts the preset on screen, and
-    # saving it clears the freeze.
-    try:
-        programme_catalogue = {m["moduleId"] for m in learner_programme_modules(learner)}
-    except DatabaseError as exc:
-        logger.exception("learning_plan: programme catalogue lookup failed")
-        return _error(f"Database error: {exc}", 502)
-    # Only the preset modules `_serialize` could actually inherit count: an id
-    # left in groups.module_ids for a module that no longer exists would
-    # otherwise pin every plan to explicit forever.
-    inheritable = [
-        i for i in learner_group_module_ids(learner)
-        if i in programme_catalogue
-    ]
-    overrides_group = any(i not in seen for i in inheritable)
-    if overrides_group:
-        resolved = [dict(entry, assignmentMode='explicit') for entry in resolved]
-
-    field = training_plan_field(learner)
-    setattr(learner, field, resolved)
-    update_fields = [field]
-    try:
-        learner.save(update_fields=update_fields)
-    except DatabaseError as exc:
-        logger.exception("learning_plan: save failed")
-        return _error(f"Database error: {exc}", 502)
-
-    # Mirror outwards to the tables that report on the plan: "Learner".learners
-    # for every coach and marking surface, and the legacy Modules/Weeks/
-    # Components title columns. Never raises -- the plan is already saved above,
-    # and refusing here would lose the staff member's edit over a stale mirror.
-    sync_learning_plan_mirror(learner)
-
-    # For a commercial learner the plan is the last thing progression waits for:
-    # with a start date already passed, agreeing the plan is what makes them
-    # Active. Nothing else on this path would notice, so a learner who was ready
-    # the moment their plan was saved sat in Delivery until some unrelated edit
-    # happened to run the check. Never raises — see advance_learner.
-    advance_learner(learner)
-
-    return JsonResponse(_legacy_serialize(learner))
+    """Compatibility entry point for the extracted Learning Plan API adapter."""
+    return _learning_plan_api(
+        request,
+        pk,
+        dependencies=legacy_http_dependencies(sys.modules[__name__]),
+    )
 
 
 @ensure_csrf_cookie
@@ -1397,22 +1186,11 @@ def effective_training_plan(learner, preset_cache=None):
     modules. Module Builder remains authoritative for their live titles, weeks
     and components.
     """
-    if hasattr(learner, "_canonical_training_plan"):
-        return list(learner._canonical_training_plan or [])
-
-    saved = stored_training_plan(learner)
-    plan = list(saved if saved is not None else (get_training_plan(learner) or []))
-    effective_ids = _effective_plan_ids(
-        learner, preset_cache if preset_cache is not None else {}, saved_plan=saved,
+    return legacy_effective_plan_projection(
+        learner,
+        preset_cache,
+        sys.modules[__name__],
     )
-    represented = {
-        _s(entry.get('moduleId')) for entry in plan
-        if isinstance(entry, dict) and _s(entry.get('moduleId'))
-    }
-    return plan + [
-        {'moduleId': module_id}
-        for module_id in effective_ids if module_id not in represented
-    ]
 
 
 def _learner_picker_row(learner, module_id, preset_cache):
@@ -1481,113 +1259,12 @@ def _picker_learners():
 # changes what other people are taught. Staff/admin only, reads included.
 @staff_only()
 def module_learners(request, module_id):
-    """GET who is assigned to this module, or PATCH to set the assignment."""
-    module_id = _s(module_id)
-    if not module_id:
-        return _error("A module id is required.", 400)
-
-    try:
-        catalogue = {m["moduleId"]: m for m in _all_modules()}
-    except DatabaseError as exc:
-        logger.exception("module_learners: catalogue lookup failed")
-        return _error(f"Database error: {exc}", 502)
-
-    module = catalogue.get(module_id)
-    if module is None:
-        return _error(f"Module {module_id} is not in the module catalogue.", 404)
-
-    if request.method == "GET":
-        try:
-            return JsonResponse(_module_learners_payload(module, _picker_learners(), {}))
-        except DatabaseError as exc:
-            logger.exception("module_learners: read failed")
-            return _error(f"Database error: {exc}", 502)
-
-    if request.method not in ("PATCH", "PUT"):
-        return _error("Method not allowed.", 405)
-
-    # ---- save ----
-    try:
-        payload = json.loads(request.body or b"{}")
-    except ValueError:
-        return _error("Request body must be valid JSON.", 400)
-    if not isinstance(payload, dict):
-        return _error("Request body must be a JSON object.", 400)
-
-    learner_ids = payload.get("learnerIds")
-    if not isinstance(learner_ids, list):
-        return _error("learnerIds must be a list.", 400)
-    assigned_ids = {_s(value) for value in learner_ids if _s(value)}
-
-    try:
-        learners = _picker_learners()
-    except DatabaseError as exc:
-        logger.exception("module_learners: read failed")
-        return _error(f"Database error: {exc}", 502)
-
-    known_ids = {str(learner.id) for learner in learners}
-    unknown = sorted(assigned_ids - known_ids)
-    if unknown:
-        return _error(f"Learner {unknown[0]} is not in the learner directory.", 400)
-
-    preset_cache = {}
-    changed = 0
-    for learner in learners:
-        should_have = str(learner.id) in assigned_ids
-        saved = _plan_entries(learner)
-        plan_ids = _effective_plan_ids(learner, preset_cache)
-        # A learner whose effective plan already says the right thing is left
-        # alone — including one inheriting the module from their group preset.
-        # So opening this picker and saving it unchanged writes nothing, and
-        # never converts a preset into an agreed plan behind staff's back.
-        if should_have == (module_id in plan_ids):
-            continue
-        if should_have:
-            plan_ids = [*plan_ids, module_id]
-        else:
-            plan_ids = [value for value in plan_ids if value != module_id]
-
-        # Rebuilt from the catalogue, exactly as the learner's own plan save
-        # does it, so titles/hours/dates are current rather than whatever was
-        # stored last. A module retired since the plan was agreed has no
-        # catalogue row left, and keeps its saved snapshot instead of vanishing.
-        saved_by_id = {_s(entry.get("moduleId")): entry for entry in saved}
-        resolved, seen = [], set()
-        for plan_id in plan_ids:
-            if not plan_id or plan_id in seen:
-                continue
-            seen.add(plan_id)
-            resolved.append(dict(
-                catalogue.get(plan_id)
-                or _orphan_module(saved_by_id.get(plan_id) or {"moduleId": plan_id}),
-                **({'assignmentMode': 'explicit'} if any(entry.get('assignmentMode') == 'explicit' for entry in saved) else {}),
-            ))
-
-        field = _plan_field(learner)
-        setattr(learner, field, resolved)
-        try:
-            learner.save(update_fields=[field])
-        except DatabaseError as exc:
-            logger.exception("module_learners: save failed for learner %s", learner.id)
-            return _error(f"Database error: {exc}", 502)
-        # Same mirror as the learner's own plan save: assigning a module from
-        # this side changes the same record, so the reporting tables have to
-        # follow it here too or they would only track edits made from one of
-        # the two directions.
-        sync_learning_plan_mirror(learner)
-        # Agreeing a plan is the last gate before Active for a commercial
-        # learner, the same as on the learner's own plan save. Never raises.
-        advance_learner(learner)
-        changed += 1
-
-    try:
-        return JsonResponse({
-            **_module_learners_payload(module, _picker_learners(), {}),
-            "changedCount": changed,
-        })
-    except DatabaseError as exc:
-        logger.exception("module_learners: read-back failed")
-        return _error(f"Database error: {exc}", 502)
+    """Compatibility entry point for the extracted module-membership adapter."""
+    return _module_learners_api(
+        request,
+        module_id,
+        dependencies=legacy_http_dependencies(sys.modules[__name__]),
+    )
 
 
 # ---------------------------------------------------------------------------

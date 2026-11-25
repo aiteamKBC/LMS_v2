@@ -273,7 +273,7 @@ class PlacementCoach(models.Model):
 
 def _learner_placement_names(record, *, by_enrolment):
     """Display labels from the canonical learner's FK relationships only."""
-    from .placement_links import placement_profile
+    from .identity_placement.public import placement_profile
 
     profile = placement_profile(record) if by_enrolment else record
     if profile is None:

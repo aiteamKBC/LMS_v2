@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 from django.db import connection, transaction
 from django.utils import timezone
 
-from learner_api import learning_plan as plans
+from learner_api.learning_plans.public import effective_module_ids
 from learner_api.models import EnrolmentUser
 
 from .models import FeedbackDelivery, FeedbackDeliveryRecipient, FeedbackForm, FeedbackResponse
@@ -75,7 +75,7 @@ def module_memberships(wanted, learner_id=None):
         learner = EnrolmentUser.all_learners.filter(pk=learner_id).first()
         if learner is None:
             return {}
-        return {str(learner.pk): set(plans._effective_plan_ids(learner, {})) & wanted}
+        return {str(learner.pk): set(effective_module_ids(learner, {})) & wanted}
     from curriculum_api.learner_assignment_counts_sql import fetch_plan_facts, _effective_ids_from_fact, seed_preset_cache
     facts = fetch_plan_facts(wanted)
     cache = seed_preset_cache(facts)
@@ -84,7 +84,7 @@ def module_memberships(wanted, learner_id=None):
         learner_id = str(fact['learner_id'])
         if fact['ambiguous']:
             learner = EnrolmentUser.all_learners.get(pk=learner_id)
-            result[learner_id] = set(plans._effective_plan_ids(learner, cache)) & wanted
+            result[learner_id] = set(effective_module_ids(learner, cache)) & wanted
         else:
             result[learner_id] = _effective_ids_from_fact(fact, wanted, cache)
     return result

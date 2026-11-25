@@ -44,8 +44,11 @@ def _learner(plan=None):
         pk=19,
         username="test Lesrer mba",
         programme="MBA",
+        programme_id="PROG-MBA",
         cohort="C1",
+        cohort_id="COHORT-1",
         group="G1",
+        group_id="GROUP-1",
         programme_status="Delivery",
         # Not an imported learner unless a test says so.
         aptem_id="",

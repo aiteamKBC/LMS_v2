@@ -15,6 +15,7 @@ from django.test import RequestFactory, SimpleTestCase, override_settings
 from django.urls import path
 from learner_api import journal_sources
 from learner_api.learning_plans.domain import membership_policy
+from learner_api.learning_plans import public as learner_plans
 from . import learner_assignments as assignments, learner_directory_details as details
 from . import learner_status_counts as counts, module_plan_rows as plans, views
 
@@ -71,8 +72,26 @@ class ProgressMembershipParity(SimpleTestCase):
     def compare(self, filename, name, *args, **kwargs):
         with original_progress_membership():
             expected = getattr(MODULES[filename], name)(*deepcopy(args), **deepcopy(kwargs))
-        owner = importlib.import_module(SNAPSHOT[filename + ':' + name]['owner'])
-        with observe_export(views, owner, name, wraps=getattr(owner, name)) as called:
+        public_names = {
+            ('learner_status_counts.py', 'members_for_lineages'): 'members_for_lineages',
+            ('learner_status_counts.py', 'module_member_enrolment_ids_by_module'): 'module_member_enrolment_ids_by_module',
+            ('module_plan_rows.py', 'profile_for'): 'normalized_plan_profile_for',
+            ('module_plan_rows.py', 'has_plan_rows'): 'normalized_plan_has_rows',
+            ('module_plan_rows.py', 'has_module_row'): 'normalized_plan_has_module',
+        }
+        public_name = public_names.get((filename, name))
+        owner = (
+            learner_plans
+            if public_name
+            else importlib.import_module(SNAPSHOT[filename + ':' + name]['owner'])
+        )
+        observed_name = public_name or name
+        with observe_export(
+            views,
+            owner,
+            observed_name,
+            wraps=getattr(owner, observed_name),
+        ) as called:
             actual = getattr(MODULES[filename], name)(*deepcopy(args), **deepcopy(kwargs))
         called.assert_called_once()
         if hasattr(actual, 'content'):
@@ -173,7 +192,7 @@ class ProgressMembershipParity(SimpleTestCase):
 
     def test_both_count_and_batch_paths_invoke_the_single_domain_policy(self):
         lineage = {'found': True, 'programmeId': 'P', 'moduleCatalogueId': 'M'}
-        with patch.object(membership_policy, 'members_for_lineages', wraps=membership_policy.members_for_lineages) as policy, \
+        with patch.object(learner_plans, 'members_for_lineages', wraps=membership_policy.members_for_lineages) as policy, \
              composition_fixture(counts, 'placement_lineages', return_value={'M': lineage}), \
              composition_fixture(counts, 'learner_facts', return_value=[]), composition_fixture(views, 'programme_identity_candidates', return_value=[]):
             counts.status_counts('module', ['M'])

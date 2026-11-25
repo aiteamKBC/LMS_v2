@@ -10,6 +10,7 @@ from django.test import RequestFactory, SimpleTestCase, TransactionTestCase
 
 from . import learner_assignments as assignments
 from learner_api import free_course_catalogue
+from learner_api import learning_plan as legacy_plans
 from learner_api.learning_plan import _effective_plan_ids, _serialize
 from learner_api.learning_plans.infrastructure import assignment_reads
 
@@ -31,8 +32,10 @@ CATALOGUE = {key: {'moduleId': key, 'moduleTitle': key, 'hours': 1, 'programmeId
 
 class AssignmentTests(SimpleTestCase):
     def setUp(self):
-        self.mirror = self.enterContext(patch.object(assignments.plans, 'sync_learning_plan_mirror'))
-        self.enterContext(patch.object(assignments.plans, '_group_module_ids', return_value=[]))
+        self.mirror = self.enterContext(
+            patch.object(assignments.learner_plans, 'synchronize_compatibility_plan')
+        )
+        self.enterContext(patch.object(assignment_reads, '_group_module_ids', return_value=[]))
         self.enterContext(patch.object(assignments, 'hydrate_training_plan', side_effect=lambda plan, **kw: [dict(m, weeks=[]) for m in plan]))
         self.profiles = self.enterContext(patch.object(assignments, 'LearnerProfile'))
         # Membership and plan rows come from the normalized records; no database here.
@@ -45,6 +48,39 @@ class AssignmentTests(SimpleTestCase):
         self.rows.has_plan_rows.return_value = False
         self.placement = {'programme_id': 'PROG-1', 'cohort_id': 'OTHER', 'group_id': None}
         self.enterContext(patch.object(assignments, 'placement_ids', side_effect=lambda row: self.placement))
+
+    def test_assignment_catalogue_uses_curriculum_owned_projection(self):
+        summary = {
+            'catalogueId': 'MOD-1',
+            'title': ' Leadership ',
+            'group': ' Group A ',
+            'programmeId': ' PROG-1 ',
+            'programmeName': ' Business ',
+            'totalOtjh': 2,
+            'startDate': '2028-01-02T12:00:00',
+            'endDate': '2028-03-04',
+            'learnerRosterMode': 'manual',
+            'isFreeCourse': True,
+        }
+        with patch(
+            'curriculum_api.catalogue.infrastructure.catalogue_resolution.authoring_catalogue_summaries',
+            return_value={'MOD-1': summary},
+        ) as reader:
+            self.assertEqual(assignments._assignment_catalogue(), {
+                'MOD-1': {
+                    'moduleId': 'MOD-1',
+                    'moduleTitle': 'Leadership',
+                    'groupName': 'Group A',
+                    'programmeId': 'PROG-1',
+                    'programmeName': 'Business',
+                    'hours': 2.0,
+                    'startDate': '2028-01-02',
+                    'endDate': '2028-03-04',
+                    'learnerRosterMode': 'manual',
+                    'isFreeCourse': True,
+                },
+            })
+        reader.assert_called_once_with(list_only=True)
 
     def test_module_assignment_preserves_placement_and_detailed_existing_plan(self):
         old = {'moduleId': 'OLD', 'weeks': [{'weekId': 'W1', 'components': [{'componentId': 'C1'}]}]}
@@ -60,15 +96,17 @@ class AssignmentTests(SimpleTestCase):
     def test_single_module_after_empty_plan_never_inherits_group_siblings(self):
         row = learner([])
         placement = {**self.placement, 'group_id': 'GROUP-1'}
-        with patch.object(assignments.plans, 'placement_ids', return_value=placement), \
-                patch.object(assignments.plans, '_group_module_ids', return_value=['MOD-2']):
+        with patch.object(assignment_reads, 'placement_ids', return_value=placement), \
+                patch.object(assignment_reads, '_group_module_ids', return_value=['MOD-2']), \
+                patch.object(legacy_plans, 'placement_ids', return_value=placement), \
+                patch.object(legacy_plans, '_group_module_ids', return_value=['MOD-2']):
             assignments._assign(row, MODULE, CATALOGUE, {})
             self.assertEqual(_effective_plan_ids(row, {}), ['MOD-1'])
-            with patch.object(assignments.plans, '_programme_modules', return_value=list(CATALOGUE.values())), \
-                    patch.object(assignments.plans, '_all_modules', return_value=list(CATALOGUE.values())), \
-                    patch.object(assignments.plans, '_meetings', return_value=([], '')), \
-                    patch.object(assignments.plans, '_canonical_free_course_assignment_ids', return_value=[]), \
-                    patch.object(assignments.plans, '_canonical_free_course_assignment_version', return_value='synthetic-free-v1'), \
+            with patch.object(legacy_plans, '_programme_modules', return_value=list(CATALOGUE.values())), \
+                    patch.object(legacy_plans, '_all_modules', return_value=list(CATALOGUE.values())), \
+                    patch.object(legacy_plans, '_meetings', return_value=([], '')), \
+                    patch.object(legacy_plans, '_canonical_free_course_assignment_ids', return_value=[]), \
+                    patch.object(legacy_plans, '_canonical_free_course_assignment_version', return_value='synthetic-free-v1'), \
                     patch.object(free_course_catalogue, 'builder_free_courses', return_value=[]):
                 # The serializer receives normalized assignments explicitly; it
                 # must not merge the independently available group preset.
@@ -201,7 +239,7 @@ class AssignmentEndpointTests(SimpleTestCase):
         self.factory = RequestFactory()
         self.enterContext(patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role='admin')))
         self.enterContext(patch.object(assignments, '_target', return_value=MODULE))
-        self.enterContext(patch.object(assignments.plans, '_all_modules', return_value=list(CATALOGUE.values())))
+        self.enterContext(patch.object(assignments, '_assignment_catalogue', return_value=CATALOGUE))
         self.atomic = self.enterContext(patch.object(assignments.transaction, 'atomic', side_effect=lambda **kw: nullcontext()))
         self.model = self.enterContext(patch.object(assignments, 'EnrolmentUser'))
         self.model.all_learners.db = 'enrolment'
@@ -321,7 +359,7 @@ class AssignmentTransactionTests(TransactionTestCase):
             cursor.execute('CREATE TABLE assignment_atomic_probe (learner_id integer)')
         self.enterContext(patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role='admin')))
         self.enterContext(patch.object(assignments, '_target', return_value=MODULE))
-        self.enterContext(patch.object(assignments.plans, '_all_modules', return_value=list(CATALOGUE.values())))
+        self.enterContext(patch.object(assignments, '_assignment_catalogue', return_value=CATALOGUE))
         self.enterContext(patch('curriculum_api.views.invalidate_curriculum_cache'))
         self.model = self.enterContext(patch.object(assignments, 'EnrolmentUser'))
         self.model.all_learners.db = 'default'

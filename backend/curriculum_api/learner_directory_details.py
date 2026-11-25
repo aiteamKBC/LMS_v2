@@ -47,7 +47,7 @@ def progress(request):
     from learner_api.models import EnrolmentUser
     from learner_api.my_learning import SOURCE_FIELDS
     from learner_api.journal_sources import learner_journal_view
-    from learner_api.placement_links import with_placements
+    from learner_api.identity_placement.public import with_placements
     from .directory.application.progress import read_progress
     from .directory.infrastructure.registration_reads import progress_sources
     def module_ids(scope, identifier):

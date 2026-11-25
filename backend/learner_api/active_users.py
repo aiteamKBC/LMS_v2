@@ -2063,7 +2063,7 @@ def stamp_cohort_window(source):
     stamped from a cohort or set deliberately for this learner, and neither is
     this function's to overwrite. Returns the fields written. Never raises.
     """
-    from .placement_links import placement_ids
+    from .identity_placement.public import placement_ids
     cohort_id = placement_ids(source)['cohort_id']
     if not cohort_id:
         return {}
@@ -2101,7 +2101,7 @@ def mirror_learner_placement(source):
     Explicit placement edits have already updated Learner.learners. Registration
     labels and IDs must never overwrite those relationships during this step.
     """
-    from .placement_links import placement_profile
+    from .identity_placement.public import placement_profile
 
     try:
         profile = placement_profile(source)
@@ -2151,7 +2151,7 @@ def mirror_placement_to_enrolment(profile):
 
         # Display labels are read through the learner FK; only missing dates
         # still need the existing enrolment-window workflow.
-        from .placement_links import CACHE
+        from .identity_placement.public import CACHE
         user.__dict__[CACHE] = profile
         stamped = stamp_cohort_window(user)
         return user if stamped else None
@@ -2170,7 +2170,7 @@ def sync_active_user(source):
     from .learner_dates import learner_date_values
     from .coach_assignment import COACH_UNCHANGED, source_coach_id
 
-    from .placement_links import placement_profile, CACHE, FIELDS
+    from .identity_placement.public import CACHE, FIELDS, placement_profile
     learner = placement_profile(source)
     if learner is None:
         # Initial registration supplies IDs once. Later syncs preserve the
@@ -2267,7 +2267,7 @@ def ensure_active_learner_profile(source):
     from django.db.models.functions import Lower, Trim
     from old_otjh.service import ServiceError
     from .canonical_learning import require_profile
-    from .identity import learner_profile_for_source
+    from .identity_placement.public import learner_profile_for_source
 
     with transaction.atomic(using="enrolment"):
         source = EnrolmentUser.all_learners.select_for_update().get(pk=source.pk)

@@ -266,7 +266,7 @@ def resubmission_booking_satisfied(payload):
 
 def available_ksb_codes(payload):
     from .models import CommercialUser, EnrolmentUser
-    from .identity import learner_profile_for_source
+    from .identity_placement.public import learner_profile_for_source
     from .components import component_ksb_codes
     model = CommercialUser if payload.get("learnerKind") == "commercial" else EnrolmentUser
     source = model.all_learners.filter(pk=payload.get("learnerId")).first()

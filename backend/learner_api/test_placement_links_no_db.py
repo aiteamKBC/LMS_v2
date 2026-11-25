@@ -90,7 +90,7 @@ class CohortDatesByIdTests(SimpleTestCase):
 
     def test_agreement_and_progression_dates_read_the_cohort_by_id(self):
         learner = SimpleNamespace(start_date=None, end_date=None, programme='P', cohort='Old name')
-        with patch('learner_api.placement_links.placement_ids', return_value={'cohort_id': 'COH-1'}), \
+        with patch('learner_api.identity_placement.public.placement_ids', return_value={'cohort_id': 'COH-1'}), \
                 patch('learner_api.active_users.cohort_dates',
                       return_value=(date(2026, 9, 16), date(2028, 10, 31))) as dates:
             self.assertEqual(_group_dates(learner), (date(2026, 9, 16), date(2028, 10, 31), 'cohort'))
@@ -107,7 +107,7 @@ class CohortDatesByIdTests(SimpleTestCase):
 
     def test_learner_page_passes_the_placement_cohort_id(self):
         detail = {}
-        with patch('learner_api.placement_links.placement_ids',
+        with patch('learner_api.identity_placement.public.placement_ids',
                    return_value={'cohort_id': 'COH-1', 'programme_id': 'PROG-1', 'group_id': ''}), \
                 patch('learner_api.learner_detail._cohort_schedule', return_value={}) as schedule:
             _apply_cohort_schedule(detail, SimpleNamespace(cohort='Old name', programme='P'))

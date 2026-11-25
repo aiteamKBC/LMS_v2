@@ -2,7 +2,7 @@
 from django.db import transaction
 
 from .coach_assignment import case_owner_coach, coach_id_for_contact
-from .identity import learner_profile_for_source
+from .identity_placement.public import learner_profile_for_source
 
 
 DATE_FIELDS = ("learner_start_date", "learner_end_date")
@@ -52,7 +52,8 @@ def _save_enrolment_fields(user, fields):
 
 def save_enrolment_fields(user, fields):
     """Save registration fields and explicit educational FK changes atomically."""
-    from .placement_links import FIELDS, CACHE, placement_profile, validate_placement
+    from .identity_placement.public import CACHE, FIELDS, placement_profile
+    from .placement_links import validate_placement
 
     requested = {key: value for key, value in fields.items() if key in FIELDS}
     if not requested:

@@ -8,7 +8,7 @@ from django.utils import timezone
 
 from .apprenticeship_agreement import _to_date
 from .models import EnrolmentUser
-from .placement_links import placement_ids
+from .identity_placement.public import placement_ids
 
 
 def _month_cohort_key(value):

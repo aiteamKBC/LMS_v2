@@ -57,7 +57,7 @@ class LearnerDateSyncTests(SimpleTestCase):
         source = SimpleNamespace(id=132, programme_status='Active', learner_start_date='2028-01-01', learner_end_date='2028-12-31')
         with patch('learner_api.apprenticeship_agreement._group_dates', return_value=(None, None, None)), \
                 patch('learner_api.active_users.transaction.atomic'), \
-                patch('learner_api.placement_links.placement_profile', return_value=None), \
+                patch('learner_api.identity_placement.public.placement_profile', return_value=None), \
                 patch('learner_api.coach_assignment.source_coach_id', return_value=None), \
                 patch('learner_api.active_users.hydrate_source_training_plan', return_value=[]), \
                 patch('learner_api.active_users.LearnerProfile.objects.create') as create, \

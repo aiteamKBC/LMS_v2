@@ -5188,3 +5188,64 @@ Follow-up: the remaining consumer reverse imports were closed by the 2026-11-22 
   retain cancellation protections and add behavior evidence before changing that
   audit. Separately resolve the migration-test restriction. Architecture V1
   release acceptance and G01-G05 remain OPEN; no commit, PR, merge or deployment.
+
+### 2026-11-25 - Learning Plans Phase 1.7 capability closure - PASS
+
+- Extracted the two active normalized-plan hydration paths from
+  `learner_api/learning_plan.py`. Application now coordinates cache mutation and
+  injected readers; Infrastructure owns the exact ORM prefetch, compact SQL,
+  database-alias selection and ordered row conversion; Composition wires them;
+  Public exposes the supported calls. Eleven Learner consumers now use Public.
+- Root `_legacy_serialize` still owns its legacy HTTP payload, but stored,
+  inherited and Aptem membership selection now delegates the canonical pure
+  policy. Explicit, unsaved, empty, manual-roster, ordering and cache semantics
+  are unchanged. The two removed root functions comprised 90 definition lines
+  (29 and 61); the root hydration constant was also removed.
+- No obsolete root hydration definition/caller remains. The writer compatibility
+  module alias remains because active runtime, test and PostgreSQL-tool consumers
+  require exact import/patch identity. Exactly one `reconcile_training_plan`
+  definition remains, in Learning Plans Infrastructure. The candidate canonical
+  endpoint remains unregistered.
+- Final gates: legacy 80/80; standalone 99/99; disposable PostgreSQL 44/44;
+  isolated membership 8/8; module assignment 5/5; public/writer/consumer 79/79;
+  Curriculum 49/49; Engagement 31/31. Boundary checks are 9/9 and 8/8; focused
+  Ruff, syntax and diff checks pass. No shared database, provider or Teams call.
+- Established repository blockers remain separate: Coach reproduces its Phase 1.6
+  baseline at 60 pass, five fail and two errors out of 67; the migration graph
+  still references missing `curriculum_api.0087_free_course_compatible_fields`.
+  Broader Learner stale-fixture checks have 231 pass, nine fail and three errors
+  out of 243, all outside the extracted path. Capability status PASS; repository
+  readiness remains PARTIAL. Phase 2 was not started.
+
+### 2026-11-25 - Identity & Placement Phase 2.1 cohesive migration - PASS
+
+- Added `learner_api/identity_placement` with pure identifier/placement domain
+  rules, injected application orchestration, exact ORM read adapters, explicit
+  composition and one supported Public facade. Canonical Learner IDs remain
+  distinct from enrolment, Aptem and UUID identities; placement authority remains
+  the stable programme/cohort/group IDs and the exact `enrolment_id` bridge.
+- Moved the existing legacy email/PK fallbacks and optional opportunistic link
+  repair without changing their order or outcomes. They are documented legacy
+  debt, not new canonical rules. No new matching, inference, backfill, schema,
+  data, authorization, calculation or external-provider behavior was introduced.
+- Production read consumers in Learner, Learning Plans, Curriculum and Coach now
+  import only `identity_placement.public`. The old identity and placement read
+  implementations and Free Course exact resolver were removed. Compatibility
+  re-exports remain only for historical test/dotted-import surfaces; mixed Free
+  Course assignment and placement write validation stay with their current owners.
+- Old module reduction: `identity.py` 77 -> 15, `placement_links.py` 99 -> 56,
+  `free_course_selectors.py` 46 -> 40: 111 lines removed in total. No source file
+  or model was deleted; no Learning Plans public contract was changed.
+- Final gates: new unit/parity/public/architecture 22/22; no-DB ORM contracts 4/4;
+  Learning Plans standalone 99/99; isolated membership 8/8; disposable PostgreSQL
+  44/44; source-only import smoke PASS; focused Ruff, 144-file AST syntax and
+  `git diff --check` PASS. PostgreSQL proved loopback-only isolation, no ports or
+  mounts, synthetic aliases/data and container removal before Django ran.
+- The legacy canonical-placement file reproduces its exact pre-change result:
+  28/34 PASS and the same six stale source-extraction errors. It is not counted as
+  green. Whole-backend graph: 9 cyclic groups/largest 309 before, 9/largest 307
+  after; the new capability belongs to no cycle. No Teams suite or live provider,
+  Neon, existing database, migration, `.env`, branch, commit, push or deployment.
+- Next recommended Identity & Placement batch: separately decide and migrate the
+  legacy email/PK resolver and optional write-on-read repair, with DB/identity-owner
+  approval and data evidence. Phase 2.2 was not started.

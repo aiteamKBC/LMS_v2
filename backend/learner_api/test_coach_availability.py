@@ -89,7 +89,7 @@ class CoachAvailabilityAccessTests(SimpleTestCase):
         with patch('login.permissions._auth_gate_enabled', return_value=True), \
              patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role='learner', subject_id=101)), \
              patch('learner_api.learner_detail.SOURCE_MODELS', {'commercial': source}), \
-             patch('learner_api.identity.learner_profile_for_source', return_value=profile), \
+             patch('learner_api.identity_placement.public.learner_profile_for_source', return_value=profile), \
              patch('learner_api.coach_availability.free_slots', return_value=['10:00']) as slots:
             path = '/learner_api/calendar/commercial/101/coach-availability/'
             route = resolve(path)
@@ -133,7 +133,7 @@ class FirstSessionCollegeDayTests(SimpleTestCase):
              patch('login.permissions.authenticate_request',
                    return_value=SimpleNamespace(role='learner', subject_id=101)), \
              patch('learner_api.learner_detail.SOURCE_MODELS', {'commercial': source}), \
-             patch('learner_api.identity.learner_profile_for_source', return_value=profile), \
+             patch('learner_api.identity_placement.public.learner_profile_for_source', return_value=profile), \
              patch('learner_api.calendar._case_owner_contact', return_value=owner), \
              patch('learner_api.coach_availability.free_slots', free):
             route = resolve(path)
@@ -227,7 +227,7 @@ class FirstSessionCollegeDayTests(SimpleTestCase):
              patch('login.permissions.authenticate_request',
                    return_value=SimpleNamespace(role='learner', subject_id=101)), \
              patch('learner_api.learner_detail.SOURCE_MODELS', {'commercial': source}), \
-             patch('learner_api.identity.learner_profile_for_source',
+             patch('learner_api.identity_placement.public.learner_profile_for_source',
                    return_value=SimpleNamespace(coach_email='coach@example.com')), \
              patch('learner_api.calendar._case_owner_contact',
                    return_value=('owner@example.com', 'Mahmoud Fouda')), \

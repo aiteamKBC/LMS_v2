@@ -8,9 +8,15 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
 from login.permissions import staff_only
-from learner_api import learning_plan as plans
+from learner_api.learning_plans import public as learner_plans
 
-from learner_api.placement_links import with_placements, placement_ids, placement_profile, RELATIONS, CACHE
+from learner_api.identity_placement.public import (
+    CACHE,
+    RELATIONS,
+    placement_ids,
+    placement_profile,
+    with_placements,
+)
 from learner_api.active_users import hydrate_training_plan
 from learner_api.mappers import get_training_plan, stored_training_plan, training_plan_field
 from learner_api.models import EnrolmentUser, LearnerProfile
@@ -97,7 +103,13 @@ def _payload(target, learners):
 
 def _row(learner, assigned, module_count):
     from curriculum_api.directory.infrastructure.registration_reads import _row as implementation
-    return implementation(learner, assigned, module_count, placement_profile=placement_profile, clean_str=plans._s)
+    return implementation(
+        learner,
+        assigned,
+        module_count,
+        placement_profile=placement_profile,
+        clean_str=learner_plans.clean_text,
+    )
 
 
 def _module_payload(target, learners):
@@ -129,6 +141,33 @@ def _module_members(target, cache):
     return cache['_moduleMembers']
 
 
+def _assignment_catalogue():
+    """Curriculum-owned catalogue projection used by assignment writes."""
+    from .catalogue.infrastructure.catalogue_resolution import (
+        authoring_catalogue_summaries,
+    )
+
+    summaries = authoring_catalogue_summaries(list_only=True)
+    return {
+        module_id: {
+            'moduleId': module_id,
+            'moduleTitle': learner_plans.clean_text(summary.get('title')) or module_id,
+            'groupName': learner_plans.clean_text(summary.get('group')),
+            'programmeId': learner_plans.clean_text(summary.get('programmeId')),
+            'programmeName': learner_plans.clean_text(summary.get('programmeName')),
+            'hours': float(summary.get('totalOtjh') or 0),
+            'startDate': learner_plans.clean_text(summary.get('startDate'))[:10],
+            'endDate': learner_plans.clean_text(summary.get('endDate'))[:10],
+            'learnerRosterMode': (
+                learner_plans.clean_text(summary.get('learnerRosterMode')) or 'inherited'
+            ),
+            'isFreeCourse': bool(summary.get('isFreeCourse')),
+        }
+        for module_id, summary in summaries.items()
+        if module_id
+    }
+
+
 def _assign_module(learner, target, catalogue, cache):
     """Add one module to both plan stores without wiping rows the JSON lacks.
 
@@ -142,7 +181,7 @@ def _assign_module(learner, target, catalogue, cache):
         return False
     profile = module_plan_rows.profile_for(learner)
     targeted = module_plan_rows.has_plan_rows(profile)
-    legacy_has = module_id in set(plans._effective_plan_ids(learner, cache))
+    legacy_has = module_id in set(learner_plans.effective_module_ids(learner, cache))
     if '_assignmentModules' not in cache:
         additions = hydrate_training_plan([catalogue[mid] for mid in target['moduleIds']], strict=True)
         cache['_assignmentModules'] = {entry['moduleId']: entry for entry in additions}
@@ -153,8 +192,8 @@ def _assign_module(learner, target, catalogue, cache):
     if write_legacy:
         saved = stored_training_plan(learner)
         existing = list(saved if saved is not None else get_training_plan(learner) or [])
-        existing_ids = {plans._s(entry.get('moduleId')) for entry in existing}
-        for mid in [*plans._effective_plan_ids(learner, cache), module_id]:
+        existing_ids = {learner_plans.clean_text(entry.get('moduleId')) for entry in existing}
+        for mid in [*learner_plans.effective_module_ids(learner, cache), module_id]:
             if mid and mid not in existing_ids:
                 existing.append(dict(catalogue.get(mid) or {'moduleId': mid}))
                 existing_ids.add(mid)
@@ -166,7 +205,7 @@ def _assign_module(learner, target, catalogue, cache):
         module_plan_rows.add_module_row(profile, hydrated.get(module_id) or catalogue[module_id])
     else:
         # No plan rows yet, so a full rebuild from the JSON loses nothing.
-        plans.sync_learning_plan_mirror(learner, strict=True)
+        learner_plans.synchronize_compatibility_plan(learner, strict=True)
     return True
 
 
@@ -177,13 +216,13 @@ def _unassign_module(learner, target, cache):
         return False
     profile = module_plan_rows.profile_for(learner)
     targeted = module_plan_rows.has_plan_rows(profile)
-    legacy_has = module_id in set(plans._effective_plan_ids(learner, cache))
+    legacy_has = module_id in set(learner_plans.effective_module_ids(learner, cache))
     if legacy_has:
         saved = stored_training_plan(learner)
         existing = list(saved if saved is not None else get_training_plan(learner) or [])
         # Frozen as explicit, so a group preset does not put the module straight back.
         _save_legacy_plan(learner, [dict(entry, assignmentMode='explicit') for entry in existing
-                                    if plans._s(entry.get('moduleId')) != module_id])
+                                    if learner_plans.clean_text(entry.get('moduleId')) != module_id])
     if targeted:
         if legacy_has:
             module_plan_rows.refresh_title_columns(learner)
@@ -193,7 +232,7 @@ def _unassign_module(learner, target, cache):
         # remaining JSON plan out as rows makes their selection explicit, without
         # the module. A learner whose plan would be empty has no row to carry
         # that, so the removal is reported as failed rather than claimed.
-        plans.sync_learning_plan_mirror(learner, strict=True)
+        learner_plans.synchronize_compatibility_plan(learner, strict=True)
         if not module_plan_rows.has_plan_rows(module_plan_rows.profile_for(learner)):
             raise ValueError('This learner has no other modules, so the removal cannot be recorded.')
     return True
@@ -208,8 +247,8 @@ def _assign(learner, target, catalogue, cache):
     # already inherits. Only the target contributes new modules.
     saved = stored_training_plan(learner)
     existing = list(saved if saved is not None else get_training_plan(learner) or [])
-    existing_ids = {plans._s(entry.get('moduleId')) for entry in existing}
-    for module_id in [*plans._effective_plan_ids(learner, cache), *target['moduleIds']]:
+    existing_ids = {learner_plans.clean_text(entry.get('moduleId')) for entry in existing}
+    for module_id in [*learner_plans.effective_module_ids(learner, cache), *target['moduleIds']]:
         if module_id and module_id not in existing_ids:
             existing.append(dict(catalogue.get(module_id) or {'moduleId': module_id}))
             existing_ids.add(module_id)
@@ -247,7 +286,7 @@ def _assign(learner, target, catalogue, cache):
             module_plan_rows.add_module_row(profile, hydrated.get(module_id) or catalogue[module_id])
     else:
         # No plan rows yet, so a full rebuild from the JSON loses nothing.
-        plans.sync_learning_plan_mirror(learner, strict=True)
+        learner_plans.synchronize_compatibility_plan(learner, strict=True)
     return True
 
 
@@ -261,7 +300,10 @@ def _unassign(learner, target, catalogue, cache):
     saved = stored_training_plan(learner)
     existing = list(saved if saved is not None else get_training_plan(learner) or [])
     remove_ids = set(target['moduleIds'])
-    remaining = [entry for entry in existing if plans._s(entry.get('moduleId')) not in remove_ids]
+    remaining = [
+        entry for entry in existing
+        if learner_plans.clean_text(entry.get('moduleId')) not in remove_ids
+    ]
     # Freeze what is left as explicit, the same as an assignment does, so a later
     # plan read does not put the removed module straight back from a group/cohort
     # preset the learner still inherits from.
@@ -279,7 +321,7 @@ def _unassign(learner, target, catalogue, cache):
         # No plan rows: the modules were held through placement. Writing the
         # remaining JSON plan out as rows makes the selection explicit without
         # them; with nothing left there is no row to record it, so say so.
-        plans.sync_learning_plan_mirror(learner, strict=True)
+        learner_plans.synchronize_compatibility_plan(learner, strict=True)
         if not module_plan_rows.has_plan_rows(module_plan_rows.profile_for(learner)):
             raise ValueError('This learner has no other modules, so the removal cannot be recorded.')
     return True
@@ -311,7 +353,7 @@ def _handle(request, scope, identifier):
                        or len(str(value)) > 10 or not 0 < int(value) <= 2147483647 for value in values)):
             return JsonResponse({'error': 'Select between 1 and 5000 valid learners.'}, status=400)
         ids = sorted({int(value) for value in values})
-        catalogue = {module['moduleId']: module for module in plans._all_modules()}
+        catalogue = _assignment_catalogue()
         if set(target['moduleIds']) - catalogue.keys():
             return JsonResponse({'error': 'The module list changed. Reload and try again.'}, status=409)
         alias = EnrolmentUser.all_learners.db

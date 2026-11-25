@@ -644,7 +644,7 @@ class EmployerPortalAssignmentsTests(SimpleTestCase):
             mock.patch("login.permissions.authenticate_request", side_effect=lambda request: self.account),
             mock.patch.object(employer_portal, "_employer_or_404", return_value=(SimpleNamespace(pk=9), None)),
             mock.patch.object(employer_portal, "SOURCE_MODELS", {"commercial": _model(self.learner)}),
-            mock.patch("learner_api.identity.learner_profile_for_source", return_value=SimpleNamespace(pk=407)),
+            mock.patch("learner_api.identity_placement.public.learner_profile_for_source", return_value=SimpleNamespace(pk=407)),
             mock.patch("django.db.connections", {"enrolment": connection}),
             mock.patch("learner_api.evidence_storage.azure_configured", return_value=True),
             mock.patch.dict("os.environ", {"LEARNER_API_REQUIRE_AUTH": "1"}),

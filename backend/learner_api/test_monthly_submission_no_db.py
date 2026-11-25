@@ -165,9 +165,9 @@ class Fixture(SimpleTestCase):
             'learner_api.monthly_submission._resolve_from_master': resolve,
             'learner_api.learner_detail.effective_training_plan': lambda _source: list(self.assigned),
             'learner_api.monthly_submission.effective_training_plan': lambda _source: list(self.assigned),
-            'learner_api.learner_detail.install_canonical_training_plan': lambda source, _profile: (
+            'learner_api.learner_detail.hydrate_normalized_plan': lambda source, _profile: (
                 setattr(source, '_canonical_training_plan', list(self.assigned)) or list(self.assigned)),
-            'learner_api.monthly_submission.install_canonical_training_plan': lambda source, _profile=None: (
+            'learner_api.monthly_submission.hydrate_normalized_plan': lambda source, _profile=None: (
                 setattr(source, '_canonical_training_plan', list(self.assigned)) or list(self.assigned)),
             'learner_api.learner_detail._otjh_by_component_id': lambda components: dict(OTJH),
             'learner_api.learner_detail._otjh_by_legacy_title': lambda components: {},

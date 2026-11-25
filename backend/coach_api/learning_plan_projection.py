@@ -316,7 +316,7 @@ def read_native_facts(context, assigned):
 
 
 def read_journey(context, module_id=None, week_id=None):
-    from learner_api.learning_plan import _effective_plan_ids
+    from learner_api.learning_plans.public import effective_module_ids
     from learner_api.builder_activity_dates import read_builder_activity_dates
     if context.source is None:
         raise LookupError('Learner enrolment is unavailable.')
@@ -324,7 +324,7 @@ def read_journey(context, module_id=None, week_id=None):
     if owner['id'] != context.profile.pk or context.profile.enrolment_id != context.source.pk:
         from old_otjh.service import ServiceError
         raise ServiceError('The consolidated learner identity needs review.', 'identity_review_required', 409)
-    assigned = list(dict.fromkeys(_effective_plan_ids(context.source, {})))
+    assigned = list(dict.fromkeys(effective_module_ids(context.source, {})))
     detail = read_native_facts(context, assigned)
     history = read_history(context.source, owner)
     metadata = {'current_subjects': []}
@@ -364,12 +364,12 @@ def canonical_progress_facts(context):
 
 def read_timeline(context):
     from learner_api.module_progress import canonical_module_progress
-    from learner_api.learning_plan import _effective_plan_ids
+    from learner_api.learning_plans.public import effective_module_ids
     from learner_api.training_plan_dashboard import attach_curriculum_slots
     from learner_api.calendar import coaching_events_for_learner
     from .selectors.otjh import learner_programme_window
     owner = canonical_learning.require_profile(context.source.pk)
-    ids = list(dict.fromkeys([*_effective_plan_ids(context.source, {}), *canonical_learning.curriculum_module_ids_for(owner)]))
+    ids = list(dict.fromkeys([*effective_module_ids(context.source, {}), *canonical_learning.curriculum_module_ids_for(owner)]))
     with connections['enrolment'].cursor() as cur:
         cur.execute(f'''SELECT m.module_catalogue_id AS id,m.title,m.start_date,m.end_date,
             (SELECT COUNT(*) FROM curriculum.weeks w WHERE w.module_catalogue_id=m.module_catalogue_id AND {visible_week_sql('w')}) AS weeks_number,m.sessions_number,m.cohort_id,

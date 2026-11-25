@@ -188,7 +188,7 @@ class MonthlyProjectionTests(SimpleTestCase):
 
 class MonthlySourceReadTests(SimpleTestCase):
     def test_monthly_plan_installs_ordered_canonical_ownership_tree(self):
-        from .learning_plan import install_canonical_training_plan_modules
+        from .learning_plans.public import hydrate_normalized_plan_modules
         cursor = MagicMock()
         cursor.fetchall.return_value = [
             (20, 'M2', 'Two', 201, 'W2', 'Week 2', 2001, 'C2'),
@@ -200,8 +200,11 @@ class MonthlySourceReadTests(SimpleTestCase):
         profile = SimpleNamespace(pk=17, enrolment_id=265)
         source = SimpleNamespace(pk=265)
 
-        with patch('learner_api.learning_plan.connections', {'enrolment': connection}):
-            result = install_canonical_training_plan_modules(source, profile)
+        with patch(
+            'learner_api.learning_plans.infrastructure.plan_hydration.connections',
+            {'enrolment': connection},
+        ):
+            result = hydrate_normalized_plan_modules(source, profile)
 
         self.assertEqual(result, [
             {'moduleId': 'M2', 'moduleTitle': 'Two', 'weeks': [
@@ -218,6 +221,29 @@ class MonthlySourceReadTests(SimpleTestCase):
         self.assertIs(source._canonical_training_plan, result)
         self.assertIn('learner_training_plan_components', cursor.execute.call_args.args[0])
         self.assertEqual(cursor.execute.call_args.args[1], [17])
+
+    def test_monthly_plan_uses_the_profiles_actual_database_alias(self):
+        from .learning_plans.public import hydrate_normalized_plan_modules
+        cursor = MagicMock()
+        cursor.fetchall.return_value = []
+        connection = MagicMock()
+        connection.cursor.return_value.__enter__.return_value = cursor
+        profile = SimpleNamespace(
+            pk=17,
+            enrolment_id=265,
+            _state=SimpleNamespace(db='isolated_alias'),
+        )
+        source = SimpleNamespace(pk=265)
+
+        with patch(
+            'learner_api.learning_plans.infrastructure.plan_hydration.connections',
+            {'isolated_alias': connection},
+        ):
+            result = hydrate_normalized_plan_modules(source, profile)
+
+        self.assertEqual(result, [])
+        self.assertIs(source._canonical_training_plan, result)
+        cursor.execute.assert_called_once()
 
     def test_monthly_learning_reuses_schedule_metadata_and_component_dates(self):
         from . import dashboard_tabs, weekly_learning, student_activity_access, \

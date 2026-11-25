@@ -9,7 +9,7 @@ from datetime import timezone
 
 
 from .point_structure import point_projection
-from .identity import learner_profile_for_source
+from .identity_placement.public import learner_profile_for_source
 from .learning_plan import effective_training_plan, request_preset_cache
 from .mappers import _s, flatten_training_plan, get_training_plan
 from .models import _serialise_quiz_ref

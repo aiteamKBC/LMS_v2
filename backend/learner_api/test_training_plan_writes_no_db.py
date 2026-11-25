@@ -16,6 +16,18 @@ from learner_api.training_plan_writes import (
 
 
 class TrainingPlanWriteContractTests(SimpleTestCase):
+    def test_root_writer_is_the_same_runtime_module_as_the_capability_owner(self):
+        import learner_api.training_plan_writes as compatibility
+        from learner_api.learning_plans.infrastructure import (
+            training_plan_writes as owner,
+        )
+
+        self.assertIs(compatibility, owner)
+        self.assertIs(
+            compatibility.reconcile_training_plan,
+            owner.reconcile_training_plan,
+        )
+
     def test_empty_plan_version_is_deterministic_and_metadata_free(self):
         first = empty_training_plan_version()
         second = empty_training_plan_version()

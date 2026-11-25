@@ -47,8 +47,9 @@ OWN_ONLY = [m for m in CATALOGUE if m["programmeId"] == OWN_PROGRAMME]
 
 def _learner(plan=None):
     return SimpleNamespace(
-        id=19, pk=19, username="test learner", programme="MBA", cohort="C1",
-        group="G1", programme_status="Delivery", learning_plan=plan, free_courses=[], save=Mock(),
+        id=19, pk=19, username="test learner", programme="MBA", programme_id=OWN_PROGRAMME,
+        cohort="C1", cohort_id="COHORT-1", group="G1", group_id="GROUP-1",
+        programme_status="Delivery", learning_plan=plan, free_courses=[], save=Mock(),
     )
 
 

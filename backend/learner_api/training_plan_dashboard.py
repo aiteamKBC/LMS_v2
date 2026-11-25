@@ -17,8 +17,8 @@ from old_otjh.service import ServiceError
 from .learner_detail import SOURCE_MODELS
 from .module_placement_sql import group_coach_name_sql, module_placement_names_sql, module_tutor_name_sql
 from .models import LearnerProfile, StaffUser
-from .learning_plan import (_aptem_subject_modules, _effective_plan_ids,
-                            install_canonical_training_plan, request_preset_cache)
+from .learning_plan import _aptem_subject_modules, _effective_plan_ids, request_preset_cache
+from .learning_plans.public import hydrate_normalized_plan
 from .coach_assignment import learner_profile_coach as current_coach
 from .student_activity import _builder_subject_metadata, builder_subject_links
 from .subject_content import as_list, clean_text, safe_url
@@ -856,7 +856,7 @@ def training_plan_dashboard(request, kind, pk):
             if source is None:
                 source = model.all_learners.only(*TRAINING_PLAN_SOURCE_FIELDS).get(pk=pk)
             source._canonical_profile = canonical_learning.require_profile(pk)
-            install_canonical_training_plan(
+            hydrate_normalized_plan(
                 source, profile_id=source._canonical_profile['id'],
             )
         # ``learning`` is the detailed weekly dashboard projection.  Keep it

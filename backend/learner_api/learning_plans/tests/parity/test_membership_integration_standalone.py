@@ -20,6 +20,7 @@ sys.path.insert(0, str(BACKEND))
 from learner_api.learning_plans.tests.parity import test_membership_caller_parity_standalone as parity
 from learner_api.learning_plans.domain import membership_policy
 from learner_api.learning_plans.application import module_membership
+from learner_api.learning_plans import public as learner_plans
 
 PRE = '--preintegration' in sys.argv
 if PRE:
@@ -47,6 +48,7 @@ def compile_intact(definition, env, importer):
 def reader(variant, facts, targets):
     env, trace = parity.callers(parity.OLD if variant == 'old' else parity.new_policy,
                                 facts, targets)
+    env['learner_plans'] = learner_plans
     definition = node('module_member_enrolment_ids', baseline=variant != 'actual')
     if variant == 'binding_candidate':
         definition.body.insert(1, ast.parse(IMPORT).body[0])
@@ -144,12 +146,33 @@ class IntegrationTests(unittest.TestCase):
                          [ast.dump(n) for n in extracted.body[1:]])
         call = new_scope.body[0].value
         self.assertIsInstance(new_scope.body[0], ast.Return)
-        self.assertEqual(call.func.id, 'read_members')
+        self.assertEqual(ast.unparse(call.func), 'learner_plans.module_member_enrolment_ids')
         self.assertEqual([k.arg for k in call.keywords],
                          ['read_lineages', 'read_facts', 'programme_identifier', 'programme_candidates'])
         self.assertNotIn(IMPORT, parity.SNAPSHOT['module_member_enrolment_ids']['source'])
+        class CompatibilityReference(ast.NodeTransformer):
+            names = {
+                'clean_text': '_s',
+                'effective_module_ids': '_effective_plan_ids',
+                'synchronize_compatibility_plan': 'sync_learning_plan_mirror',
+            }
+            def visit_Attribute(self, value):
+                if isinstance(value.value, ast.Name) and value.value.id == 'learner_plans':
+                    return ast.copy_location(
+                        ast.Attribute(
+                            value=ast.Name(id='plans', ctx=ast.Load()),
+                            attr=self.names[value.attr],
+                            ctx=value.ctx,
+                        ),
+                        value,
+                    )
+                return self.generic_visit(value)
         for name in GUARDS:
-            self.assertEqual(ast.dump(node(name)), ast.dump(node(name, False)))
+            actual = node(name, False)
+            self.assertFalse(any(isinstance(item, ast.Name) and item.id == 'plans'
+                                 for item in ast.walk(actual)))
+            normalized = CompatibilityReference().visit(deepcopy(actual))
+            self.assertEqual(ast.dump(node(name)), ast.dump(normalized))
 
     def test_reader_and_both_guard_decisions(self):
         f, target = parity.fact, parity.TARGET
@@ -218,7 +241,7 @@ class IntegrationTests(unittest.TestCase):
             self.assertEqual(read('M'), {'101'})
             spy.assert_called_once()
             self.assertEqual(spy.call_args.args[1][0]['id'], 1)
-        self.assertEqual(imports, ['learner_api.learning_plans.domain.membership_policy'] if PRE else ['learner_api.learning_plans.application.module_membership'])
+        self.assertEqual(imports, ['learner_api.learning_plans.domain.membership_policy'] if PRE else [])
 
     def test_import_closure(self):
         self.assertFalse(any(n == 'django' or n.startswith('django.') for n in sys.modules))

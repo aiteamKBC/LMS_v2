@@ -193,7 +193,7 @@ class ModuleProgressEndpointTests(SimpleTestCase):
         with patch('login.permissions.authenticate_request', return_value=account), \
              patch.dict('learner_api.learner_detail.SOURCE_MODELS', {'commercial': model}), \
              patch('learner_api.models.LearnerProfile.objects') as manager, \
-             patch('learner_api.learning_plan.install_canonical_training_plan') as install, \
+             patch('learner_api.learning_plans.public.hydrate_normalized_plan') as install, \
              patch.object(module_progress, 'canonical_module_progress', return_value=rows, side_effect=error) as shared:
             manager.using.return_value.get.return_value = profile
             response = module_progress.learner_module_progress(request, kind='commercial', pk=201)

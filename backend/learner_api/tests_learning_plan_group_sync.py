@@ -18,7 +18,9 @@ from unittest.mock import Mock, patch
 
 from django.test import RequestFactory, SimpleTestCase
 
-from .learning_plan import _effective_plan_ids, _module_payload, effective_training_plan, learning_plan
+from learner_api.learning_plans.public import effective_module_ids, effective_plan_projection
+
+from .learning_plan import _module_payload, learning_plan
 
 MODULE_ROWS = [
     {
@@ -34,7 +36,8 @@ MODULE_ROWS = [
 
 def _learner(plan=None):
     return SimpleNamespace(
-        id=19, pk=19, username="Learner", programme="MBA", cohort="C1", group="G1",
+        id=19, pk=19, username="Learner", programme="MBA", programme_id="PROG-MBA",
+        cohort="C1", cohort_id="COHORT-1", group="G1", group_id="GROUP-1",
         programme_status="Delivery", learning_plan=plan, training_plan=None, free_courses=[], save=Mock(),
     )
 
@@ -47,7 +50,7 @@ class GroupSyncTests(SimpleTestCase):
         )
         self.enterContext(patch("learner_api.learning_plan._meetings", return_value=([], "")))
 
-    def _get(self, learner, preset):
+    def _get(self, learner, preset, imported=None):
         catalogue = [_module_payload(row) for row in MODULE_ROWS]
         request = RequestFactory().get("/learner_api/learning-plan/19/")
         with patch("learner_api.learning_plan.EnrolmentUser") as model, \
@@ -55,7 +58,8 @@ class GroupSyncTests(SimpleTestCase):
                 patch("learner_api.learning_plan._all_modules", return_value=catalogue), \
                 patch("learner_api.learning_plan._modules_by_id",
                       side_effect=lambda ids, catalogue=catalogue: {m["moduleId"]: m for m in catalogue if m["moduleId"] in set(ids)}), \
-                patch("learner_api.learning_plan._group_module_ids", return_value=preset):
+                patch("learner_api.learning_plan._group_module_ids", return_value=preset), \
+                patch("learner_api.learning_plan._aptem_subject_modules", return_value=imported or {}):
             model.all_learners.get.return_value = learner
             response = learning_plan(request, 19)
         return json.loads(response.content)
@@ -114,6 +118,33 @@ class GroupSyncTests(SimpleTestCase):
         self.assertEqual([m["moduleId"] for m in body["plan"]], ["MOD-1", "MOD-2"])
         self.assertFalse(body["saved"])
         # Nothing is "inherited" here: none of it was ever agreed to begin with.
+        self.assertEqual(body["inheritedCount"], 0)
+
+    def test_unsaved_aptem_subjects_follow_the_group_preset(self):
+        imported = {"APTEM": {"moduleId": "APTEM", "moduleTitle": "Imported"}}
+        body = self._get(_learner(None), ["MOD-1"], imported)
+
+        self.assertEqual([m["moduleId"] for m in body["plan"]], ["MOD-1", "APTEM"])
+        self.assertIs(body["plan"][1]["fromAptem"], True)
+        self.assertEqual(body["inheritedCount"], 0)
+
+    def test_empty_aptem_plan_keeps_imported_subjects_without_group_modules(self):
+        imported = {"APTEM": {"moduleId": "APTEM", "moduleTitle": "Imported"}}
+        body = self._get(_learner([]), ["MOD-1"], imported)
+
+        self.assertEqual([m["moduleId"] for m in body["plan"]], ["APTEM"])
+        self.assertIs(body["plan"][0]["fromAptem"], True)
+        self.assertEqual(body["inheritedCount"], 0)
+
+    def test_explicit_plan_suppresses_group_and_aptem_additions(self):
+        imported = {"APTEM": {"moduleId": "APTEM", "moduleTitle": "Imported"}}
+        body = self._get(
+            _learner([{"moduleId": "MOD-1", "assignmentMode": "explicit"}]),
+            ["MOD-1", "MOD-2"],
+            imported,
+        )
+
+        self.assertEqual([m["moduleId"] for m in body["plan"]], ["MOD-1"])
         self.assertEqual(body["inheritedCount"], 0)
 
     def _save(self, learner, preset, module_ids):
@@ -180,20 +211,26 @@ class ModulePickerAgreesWithThePlanTests(SimpleTestCase):
 
     def test_a_module_inherited_from_the_group_reads_as_assigned(self):
         learner = _learner([{"moduleId": "MOD-1"}])
-        with patch("learner_api.learning_plan._group_module_ids", return_value=["MOD-1", "MOD-2"]):
-            self.assertEqual(_effective_plan_ids(learner, {}), ["MOD-1", "MOD-2"])
+        with patch(
+            "learner_api.learning_plans.composition._preset_ids_for",
+            return_value=["MOD-1", "MOD-2"],
+        ):
+            self.assertEqual(effective_module_ids(learner, {}), ["MOD-1", "MOD-2"])
 
     def test_an_emptied_plan_reads_as_assigned_to_nothing(self):
-        with patch("learner_api.learning_plan._group_module_ids") as preset:
-            self.assertEqual(_effective_plan_ids(_learner([]), {}), [])
+        with patch("learner_api.learning_plans.composition._preset_ids_for") as preset:
+            self.assertEqual(effective_module_ids(_learner([]), {}), [])
         # Not merely empty -- the group is never consulted for an emptied plan.
         preset.assert_not_called()
 
     def test_learner_read_appends_inherited_modules_without_saving_them(self):
         saved = [{"moduleId": "MOD-1", "moduleTitle": "Agreed module", "weeks": []}]
         learner = _learner(saved)
-        with patch("learner_api.learning_plan._group_module_ids", return_value=["MOD-1", "MOD-2"]):
-            effective = effective_training_plan(learner)
+        with patch(
+            "learner_api.learning_plans.composition._preset_ids_for",
+            return_value=["MOD-1", "MOD-2"],
+        ):
+            effective = effective_plan_projection(learner)
 
         self.assertEqual([module["moduleId"] for module in effective], ["MOD-1", "MOD-2"])
         self.assertEqual(effective[1], {"moduleId": "MOD-2"})
@@ -201,6 +238,6 @@ class ModulePickerAgreesWithThePlanTests(SimpleTestCase):
 
     def test_explicit_learner_read_does_not_add_group_modules(self):
         saved = [{"moduleId": "MOD-1", "assignmentMode": "explicit"}]
-        with patch("learner_api.learning_plan._group_module_ids") as preset:
-            self.assertEqual(effective_training_plan(_learner(saved)), saved)
+        with patch("learner_api.learning_plans.composition._preset_ids_for") as preset:
+            self.assertEqual(effective_plan_projection(_learner(saved)), saved)
         preset.assert_not_called()

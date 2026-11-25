@@ -37,7 +37,8 @@ def course_progress(source, module_ref):
 
 def free_course_progress(source, module_ref):
     from .free_courses_view import _scoped_rows, _activity, free_programme_component_response, _completed_refs
-    from .free_course_selectors import canonical_learner, assigned_course_ids
+    from .free_course_selectors import assigned_course_ids
+    from .identity_placement.public import canonical_learner
 
     course_id = module_ref.split(':', 1)[1]
     kind = 'commercial' if source.learner_type == 'commercial' else 'apprenticeship'

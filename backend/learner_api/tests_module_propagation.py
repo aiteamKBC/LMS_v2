@@ -6,7 +6,9 @@ from unittest.mock import MagicMock, Mock, patch
 
 from django.test import RequestFactory, SimpleTestCase
 
-from .learning_plan import _effective_plan_ids, learning_plan, module_learners
+from learner_api.learning_plans.public import effective_module_ids
+
+from .learning_plan import learning_plan, module_learners
 from .learner_detail import (
     _append_week_quizzes,
     _live_session_occurrence_fallbacks,
@@ -33,6 +35,12 @@ def learner(**changes):
 class ModuleAssignmentTests(SimpleTestCase):
     def setUp(self):
         self.enterContext(patch('learner_api.free_course_catalogue.builder_free_courses', return_value=[]))
+        self.enterContext(patch(
+            'learner_api.learning_plan._canonical_free_course_assignment_ids', return_value=[],
+        ))
+        self.enterContext(patch(
+            'learner_api.learning_plan._canonical_free_course_assignment_version', return_value='',
+        ))
 
     def test_both_plan_columns_use_the_same_precedence_for_reads_and_writes(self):
         for training in ([MODULE], json.dumps([MODULE])):
@@ -46,8 +54,8 @@ class ModuleAssignmentTests(SimpleTestCase):
     def test_clearing_a_plan_does_not_restore_old_csv_or_group_assignments(self):
         source = learner(training_plan=[], learning_plan=[MODULE], modules='Old course')
         self.assertEqual(get_training_plan(source), [])
-        with patch('learner_api.learning_plan._group_module_ids') as preset:
-            self.assertEqual(_effective_plan_ids(source, {}), [])
+        with patch('learner_api.learning_plans.composition._preset_ids_for') as preset:
+            self.assertEqual(effective_module_ids(source, {}), [])
         preset.assert_not_called()
 
     def test_unsaved_legacy_csv_remains_readable(self):

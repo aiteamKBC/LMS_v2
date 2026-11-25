@@ -276,7 +276,7 @@ def day_from_session(value):
 def read_module_request(request, kind, pk, module_id):
     """Authenticate with precisely the same learner/staff gates as tab reads."""
     from .learner_detail import SOURCE_MODELS
-    from .identity import learner_profile_for_source
+    from .identity_placement.public import learner_profile_for_source
     from .case_file_sources import source_for_case_file
     from django.db import DatabaseError
     from django.http import JsonResponse
@@ -296,8 +296,8 @@ def read_module_request(request, kind, pk, module_id):
             if profile is None or profile.pk != owner['id'] or profile.enrolment_id != source.pk:
                 raise ServiceError('The consolidated learner identity needs review.', 'identity_review_required', 409)
             source._case_file_profile = profile
-            from .learning_plan import install_canonical_training_plan_modules
-            install_canonical_training_plan_modules(source, profile)
+            from .learning_plans.public import hydrate_normalized_plan_modules
+            hydrate_normalized_plan_modules(source, profile)
             from .dashboard_tabs import install_request_caches
             install_request_caches(source)
             payload = read_training(source, kind, owner, profile, request, module_id)

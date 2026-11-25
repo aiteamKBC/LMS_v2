@@ -110,7 +110,8 @@ class TrainingProjectionTests(SimpleTestCase):
 
     def test_selected_endpoint_identity_and_error_contract_for_both_learner_types(self):
         import os
-        from . import identity, case_file_sources
+        from . import case_file_sources
+        from .identity_placement import public as identity
         from login import permissions
         factory = RequestFactory()
         source = SimpleNamespace(pk=265, _canonical_training_plan=[])
@@ -195,7 +196,8 @@ class TrainingProjectionTests(SimpleTestCase):
         self.assertTrue(result['ksbMappingMissing'])
 
     def test_training_tab_short_circuits_all_legacy_projections(self):
-        from . import dashboard_tabs, identity
+        from . import dashboard_tabs
+        from .identity_placement import public as identity
         owner = {'id': 8}
         profile = SimpleNamespace(pk=8, enrolment_id=265)
         source = SimpleNamespace(pk=265, _canonical_training_plan=[])

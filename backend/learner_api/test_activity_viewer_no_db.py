@@ -63,7 +63,7 @@ class ActivityViewerProjectionTests(SimpleTestCase):
             mock(prefix + 'effective_training_plan', return_value=plan)
             profile_read = mock(prefix + '_active_profile_for_source', return_value=SimpleNamespace(
                 pk=9, enrolment_id=7, ksbs=['K1']))
-            mock(prefix + 'install_canonical_training_plan', side_effect=lambda selected_source, _profile: (
+            mock(prefix + 'hydrate_normalized_plan', side_effect=lambda selected_source, _profile: (
                 setattr(selected_source, '_canonical_training_plan', plan) or plan
             ))
             mock(prefix + '_activity_plan_assignments', side_effect=lambda _source, _profile, identity: (

@@ -210,7 +210,7 @@ class LearnerReviewAvailabilityIdentityTests(SimpleTestCase):
             for kind in ("commercial", "apprenticeship"):
                 with self.subTest(kind=kind), \
                      patch("learner_api.learner_detail.SOURCE_MODELS", {kind: model}), \
-                     patch("learner_api.identity.learner_profile_for_source", return_value=profile), \
+                     patch("learner_api.identity_placement.public.learner_profile_for_source", return_value=profile), \
                      patch("coach_api.models.CoachCalendarEvent.objects.filter", return_value=rows), \
                      patch("coach_api.views.microsoft_graph_request", return_value=schedule):
                     request = RequestFactory().get("/availability", {
@@ -243,7 +243,7 @@ class LearnerReviewAvailabilityIdentityTests(SimpleTestCase):
         for resolved, expected in (([{"eventKey": "imported-review:1", "calendarEventKey": "booking:51"}], 200), ([], 409)):
             with self.subTest(expected=expected), \
                  patch("learner_api.learner_detail.SOURCE_MODELS", {"commercial": model}), \
-                 patch("learner_api.identity.learner_profile_for_source", return_value=profile), \
+                 patch("learner_api.identity_placement.public.learner_profile_for_source", return_value=profile), \
                  patch("learner_api.calendar.coaching_events_for_learner", return_value=resolved), \
                  patch("coach_api.models.CoachCalendarEvent.objects.filter", return_value=rows), \
                  patch("coach_api.views.microsoft_graph_request", return_value=schedule) as graph:
@@ -255,7 +255,7 @@ class LearnerReviewAvailabilityIdentityTests(SimpleTestCase):
                 else:
                     graph.assert_not_called()
         with patch("learner_api.learner_detail.SOURCE_MODELS", {"commercial": model}), \
-             patch("learner_api.identity.learner_profile_for_source", return_value=profile), \
+             patch("learner_api.identity_placement.public.learner_profile_for_source", return_value=profile), \
              patch("learner_api.calendar.coaching_events_for_learner", side_effect=ReviewIdentityConflict("conflicting binding")), \
              patch("coach_api.views.microsoft_graph_request") as graph:
             response = unwrap(coach_available_slots)(request, "commercial", 121)

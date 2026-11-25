@@ -4,7 +4,8 @@ from unittest.mock import patch
 from django.test import SimpleTestCase
 
 from . import canonical_learning, dashboard_weekly, my_learning, training_plan_dashboard
-from .learning_plan import effective_training_plan, install_canonical_training_plan
+from .learning_plan import effective_training_plan
+from .learning_plans.public import hydrate_normalized_plan
 from .mappers import get_training_plan
 
 
@@ -22,8 +23,10 @@ class CanonicalTrainingPlanSourceTests(SimpleTestCase):
         )
         profile = SimpleNamespace(enrolment_id=17, training_plan=canonical)
 
-        with patch("django.db.models.prefetch_related_objects") as prefetch:
-            result = install_canonical_training_plan(source, profile)
+        with patch(
+            "learner_api.learning_plans.infrastructure.plan_hydration.prefetch_related_objects",
+        ) as prefetch:
+            result = hydrate_normalized_plan(source, profile)
 
         self.assertEqual(result, canonical)
         self.assertEqual(get_training_plan(source), canonical)
@@ -45,7 +48,28 @@ class CanonicalTrainingPlanSourceTests(SimpleTestCase):
         source = SimpleNamespace(pk=17)
         profile = SimpleNamespace(enrolment_id=18, training_plan=[])
         with self.assertRaisesMessage(ValueError, "does not own"):
-            install_canonical_training_plan(source, profile)
+            hydrate_normalized_plan(source, profile)
+
+    def test_existing_canonical_cache_short_circuits_the_orm_reader(self):
+        cached = []
+        source = SimpleNamespace(pk=17, _canonical_training_plan=cached)
+        with patch(
+            "learner_api.learning_plans.composition.read_normalized_plan",
+            side_effect=AssertionError("normalized reader"),
+        ) as reader:
+            result = hydrate_normalized_plan(source)
+        self.assertIs(result, cached)
+        reader.assert_not_called()
+
+    def test_missing_normalized_profile_installs_an_authoritative_empty_plan(self):
+        source = SimpleNamespace(pk=17)
+        with patch(
+            "learner_api.learning_plans.infrastructure.plan_hydration.LearnerProfile",
+        ) as model:
+            model.objects.only.return_value.filter.return_value.prefetch_related.return_value.first.return_value = None
+            result = hydrate_normalized_plan(source)
+        self.assertEqual(result, [])
+        self.assertIs(source._canonical_training_plan, result)
 
     def test_learner_read_source_fields_exclude_legacy_plan_storage(self):
         for fields in (

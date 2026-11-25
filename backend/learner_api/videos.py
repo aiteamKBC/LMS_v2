@@ -19,7 +19,7 @@ from django.views.decorators.csrf import csrf_exempt
 
 from .active_users import ComponentReferenceError, save_progress_record, sync_active_user
 from .components import component_ksb_codes
-from .identity import learner_profile_for_source
+from .identity_placement.public import learner_profile_for_source
 from .models import CommercialUser, EnrolmentUser
 from .time_tracking import (
     TrackingSessionError,

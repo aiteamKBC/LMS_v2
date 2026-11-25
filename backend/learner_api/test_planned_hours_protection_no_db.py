@@ -150,7 +150,7 @@ class SummaryPageLoadTests(SimpleTestCase):
                 return stack.enter_context(patch.object(reader, name, **kwargs))
 
             # Plan/identity reads are outside the snapshot persistence under test.
-            others = [mock("advance_learner"), mock("install_canonical_training_plan", return_value=[])]
+            others = [mock("advance_learner"), mock("hydrate_normalized_plan", return_value=[])]
             legacy_hydration = mock("hydrate_source_training_plan")
             mock("effective_training_plan", return_value=[])
             mock("_active_profile_for_source", return_value=profile)

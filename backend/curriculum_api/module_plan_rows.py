@@ -11,7 +11,7 @@ here, and the rest of their rows are left untouched.
 """
 from django.db.models import Max
 
-from learner_api import learning_plan as plans
+from learner_api.learning_plans import public as learner_plans
 from learner_api.mappers import get_training_plan
 from learner_api.models import (
     EnrolmentUser, LearnerProfile, LearnerTrainingPlanComponent,
@@ -20,22 +20,29 @@ from learner_api.models import (
 
 
 def _s(value):
-    return plans._s(value)
+    return learner_plans.clean_text(value)
 
 
 def profile_for(learner):
-    from learner_api.learning_plans.infrastructure.plan_reads import profile_for as implementation
-    return implementation(learner, LearnerProfile=LearnerProfile)
+    return learner_plans.normalized_plan_profile_for(
+        learner,
+        learner_profile_model=LearnerProfile,
+    )
 
 
 def has_plan_rows(profile):
-    from learner_api.learning_plans.infrastructure.plan_reads import has_plan_rows as implementation
-    return implementation(profile, LearnerTrainingPlanModule=LearnerTrainingPlanModule)
+    return learner_plans.normalized_plan_has_rows(
+        profile,
+        plan_module_model=LearnerTrainingPlanModule,
+    )
 
 
 def has_module_row(profile, module_id):
-    from learner_api.learning_plans.infrastructure.plan_reads import has_module_row as implementation
-    return implementation(profile, module_id, LearnerTrainingPlanModule=LearnerTrainingPlanModule)
+    return learner_plans.normalized_plan_has_module(
+        profile,
+        module_id,
+        plan_module_model=LearnerTrainingPlanModule,
+    )
 
 
 def _normalized_children():
@@ -134,6 +141,8 @@ def remove_module_rows(profile, module_id):
 def refresh_title_columns(learner):
     """Keep the legacy Modules/Weeks/Components title columns in step with the JSON plan,
     as ``sync_learning_plan_mirror`` does, without rebuilding the plan rows."""
-    modules_csv, weeks_csv, components_csv = plans._plan_titles(get_training_plan(learner) or [])
+    modules_csv, weeks_csv, components_csv = learner_plans.compatibility_plan_titles(
+        get_training_plan(learner) or []
+    )
     EnrolmentUser.all_learners.filter(pk=learner.pk).update(
         modules=modules_csv, weeks=weeks_csv, components=components_csv)

@@ -124,7 +124,7 @@ class FreeCourseCertificateProgressTests(SimpleTestCase):
         self.rows = self.enterContext(patch.object(free_courses_view, '_scoped_rows', return_value=(
             {'FC-1': {'course_name': 'Current title'}}, [{'id': 'W1', 'course_id': 'FC-1'}], self.components)))
         self.enterContext(patch.object(free_courses_view, 'free_programme_component_response', side_effect=lambda row: row))
-        self.owner = self.enterContext(patch('learner_api.free_course_selectors.canonical_learner', return_value=SimpleNamespace(pk=70)))
+        self.owner = self.enterContext(patch('learner_api.identity_placement.public.canonical_learner', return_value=SimpleNamespace(pk=70)))
         self.enterContext(patch('learner_api.free_course_selectors.assigned_course_ids', return_value=['FC-1']))
         self.completed = self.enterContext(patch.object(free_courses_view, '_completed_refs', return_value={('FC-1', ref) for ref in ('C0', 'C1', 'C2', 'C3', 'OTHER')}))
 

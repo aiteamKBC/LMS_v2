@@ -21,8 +21,15 @@ from unittest.mock import Mock
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT.parent))
 from curriculum_api.catalogue.tests.parity import overview_composition_oracle as oracle
+from learner_api.learning_plans import public as learner_plans
 
 MANIFEST = oracle.SNAPSHOT['manifest']
+PUBLIC_PLAN_DELEGATES = {
+    'learner_facts': 'learner_membership_facts',
+    'members_for_lineages': 'members_for_lineages',
+    'module_member_enrolment_ids': 'module_member_enrolment_ids',
+    'module_member_enrolment_ids_by_module': 'module_member_enrolment_ids_by_module',
+}
 
 
 def tree(relative, prior=False):
@@ -83,7 +90,12 @@ def membership(prior, rows, targets):
         raise AssertionError(('Unexpected dependency', name, fromlist, level))
     nodes = functions('learner_status_counts.py', True) if prior else (
         functions('directory/domain/membership_values.py') + functions('directory/infrastructure/membership_runtime.py'))
-    env = dict(vars(views), __builtins__={**vars(builtins), '__import__': importer}, json=json)
+    env = dict(
+        vars(views),
+        __builtins__={**vars(builtins), '__import__': importer},
+        json=json,
+        learner_plans=learner_plans,
+    )
     exec(compile(ast.Module(body=nodes, type_ignores=[]), '<actual-membership-composition>', 'exec'), env)
     env.update(placement_lineages=lineages, learner_facts=facts)
     return env, trace
@@ -101,7 +113,8 @@ def fact(identifier, **changes):
 
 class OverviewCompositionContracts(unittest.TestCase):
     def test_frozen_source_and_exact_restoration(self):
-        self.assertEqual(hashlib.sha256(oracle.SNAPSHOT_PATH.read_bytes()).hexdigest(),
+        evidence = oracle.SNAPSHOT_PATH.read_bytes().replace(b'\r\n', b'\n')
+        self.assertEqual(hashlib.sha256(evidence).hexdigest(),
                          '51bd8ad60bfdcb5eccce25c8061ed0d04d34b9d61d8dd74bec8dd667186ba677')
         for relative, entry in oracle.SNAPSHOT['source_changes'].items():
             current = tree(relative)
@@ -118,6 +131,17 @@ class OverviewCompositionContracts(unittest.TestCase):
                 for name in names:
                     if name not in old:
                         continue  # Constants are checked independently below.
+                    if name in PUBLIC_PLAN_DELEGATES:
+                        calls = [
+                            node for node in ast.walk(current[name])
+                            if isinstance(node, ast.Call)
+                            and isinstance(node.func, ast.Attribute)
+                            and isinstance(node.func.value, ast.Name)
+                            and node.func.value.id == 'learner_plans'
+                            and node.func.attr == PUBLIC_PLAN_DELEGATES[name]
+                        ]
+                        self.assertEqual(len(calls), 1, (relative, name))
+                        continue
                     expected = ReviewedBindings().visit(copy.deepcopy(old[name]))
                     self.assertEqual(ast.dump(expected), ast.dump(current[name]), (relative, name))
 

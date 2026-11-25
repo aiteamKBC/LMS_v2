@@ -20,8 +20,8 @@ from .learner_detail import (SOURCE_MODELS, _first_session_unlocked, _iso_date,
                              learning_access, student_activity_available, _s)
 from .models import LearnerProfile
 from .module_placement_sql import group_coach_name_sql, module_placement_names_sql
-from .learning_plan import (CANONICAL_TRAINING_PLAN_PREFETCH, _effective_plan_ids,
-                            install_canonical_training_plan)
+from .learning_plan import _effective_plan_ids
+from .learning_plans.public import NORMALIZED_PLAN_PREFETCH, hydrate_normalized_plan
 from .overview_week import upcoming_assignment_deadlines
 from .projection_performance import measure_projection
 from .subject_content import clean_text
@@ -199,7 +199,7 @@ def header_profile(source, pk, *, identity_only=False):
     """
     fields = ('id', 'email', 'aptem_id', 'enrolment_id') if identity_only else TRAINING_PLAN_PROFILE_FIELDS
     profiles = list(LearnerProfile.objects.filter(enrolment_id=pk).only(*fields)
-                    .prefetch_related(CANONICAL_TRAINING_PLAN_PREFETCH)[:2])
+                    .prefetch_related(NORMALIZED_PLAN_PREFETCH)[:2])
     if not profiles:
         raise ServiceError('The learner is not linked to the consolidated learning record.',
                            'ssot_identity_required', 409)
@@ -211,7 +211,7 @@ def header_profile(source, pk, *, identity_only=False):
         'account_record_id': source.pk, 'account_email': source.email,
         'account_aptem_id': source.aptem_id,
     })
-    install_canonical_training_plan(source, profile)
+    hydrate_normalized_plan(source, profile)
     return profile, owner
 
 

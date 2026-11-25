@@ -30,7 +30,7 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
-from .identity import learner_profile_for_source
+from .identity_placement.public import learner_profile_for_source
 
 from .active_users import ComponentReferenceError, save_progress_record
 from quiz_api.history import is_question_reference_violation

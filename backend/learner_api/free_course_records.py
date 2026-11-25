@@ -35,7 +35,7 @@ def profile_progress_enabled(database=None):
 def progress_owner(source):
     """Resolve canonical learner identity; never fall back to an enrolment id."""
 
-    from .identity import learner_profile_for_source
+    from .identity_placement.public import learner_profile_for_source
 
     profile = learner_profile_for_source(source, heal=False)
 

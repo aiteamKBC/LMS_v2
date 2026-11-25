@@ -208,7 +208,7 @@ class CoachResolutionTests(SimpleTestCase):
                 source = learner(case_owner=name, coach_name=name, coach_email=email)
                 with patch('learner_api.apprenticeship_agreement._group_dates', return_value=(None, None, None)), \
                         patch('learner_api.active_users.transaction.atomic'), \
-                        patch('learner_api.placement_links.placement_profile', return_value=None), \
+                        patch('learner_api.identity_placement.public.placement_profile', return_value=None), \
                         patch('learner_api.coach_assignment.source_coach_id',
                               return_value='COACH-1' if name else None), \
                         patch('learner_api.active_users.hydrate_source_training_plan', return_value=[]), \

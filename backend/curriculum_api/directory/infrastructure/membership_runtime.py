@@ -19,14 +19,18 @@ from curriculum_api.catalogue.infrastructure.database_reads import learner_schem
 from curriculum_api.catalogue.infrastructure.catalogue_resolution import programme_identity_candidates
 from curriculum_api.catalogue.infrastructure.catalogue_resolution import scope_placement_lineage
 from curriculum_api.catalogue.infrastructure.placement_runtime import scope_programme_identifier
+from learner_api.learning_plans import public as learner_plans
 
 
 def learner_facts(module_ids, profile_ids=None):
     """Compatibility adapter for normalized membership facts on the existing connection."""
-    from learner_api.learning_plans.infrastructure.membership_facts import learner_facts as read_facts
-    return read_facts(module_ids, profile_ids, connection=connection,
-                      table_exists=learner_schema_table_exists,
-                      columns_for=learner_schema_columns)
+    return learner_plans.learner_membership_facts(
+        module_ids,
+        profile_ids,
+        connection=connection,
+        table_exists=learner_schema_table_exists,
+        columns_for=learner_schema_columns,
+    )
 
 
 def placement_lineages(scope, identifiers):
@@ -44,8 +48,7 @@ def placement_lineages(scope, identifiers):
 
 
 def members_for_lineages(lineages, facts, programme_candidates):
-    from learner_api.learning_plans.domain.membership_policy import members_for_lineages as implementation
-    return implementation(lineages, facts, programme_candidates)
+    return learner_plans.members_for_lineages(lineages, facts, programme_candidates)
 
 
 def counts_for_lineages(lineages, facts, programme_candidates):
@@ -64,17 +67,23 @@ def status_counts(scope, identifiers):
 
 def module_member_enrolment_ids(module_id):
     """Enrolment-keyed members; None for a missing target, set() for no members."""
-    from learner_api.learning_plans.application.module_membership import module_member_enrolment_ids as read_members
     with curriculum_read_scope(targeted_child_reads=True):
-        return read_members(module_id, read_lineages=placement_lineages, read_facts=learner_facts,
-                            programme_identifier=scope_programme_identifier,
-                            programme_candidates=programme_identity_candidates)
+        return learner_plans.module_member_enrolment_ids(
+            module_id,
+            read_lineages=placement_lineages,
+            read_facts=learner_facts,
+            programme_identifier=scope_programme_identifier,
+            programme_candidates=programme_identity_candidates,
+        )
 
 
 def module_member_enrolment_ids_by_module(module_ids):
-    from learner_api.learning_plans.application.module_membership import module_member_enrolment_ids_by_module as implementation
-    return implementation(module_ids, curriculum_read_scope=curriculum_read_scope, placement_lineages=placement_lineages,
+    return learner_plans.module_member_enrolment_ids_by_module(
+        module_ids,
+        curriculum_read_scope=curriculum_read_scope,
+        placement_lineages=placement_lineages,
         scope_programme_identifier=scope_programme_identifier,
-        programme_identity_candidates=programme_identity_candidates, learner_facts=learner_facts,
+        programme_identity_candidates=programme_identity_candidates,
+        learner_facts=learner_facts,
         members_for_lineages=members_for_lineages,
     )

@@ -194,7 +194,7 @@ def install_request_caches(source):
 
 
 def read_tab(source, kind, tab, request, *, canonical_contract=False):
-    from .identity import learner_profile_for_source
+    from .identity_placement.public import learner_profile_for_source
 
     owner = canonical.require_profile(source.pk)
     source._canonical_profile = owner
@@ -207,11 +207,11 @@ def read_tab(source, kind, tab, request, *, canonical_contract=False):
         raise ServiceError('The consolidated learner identity needs review.', 'identity_review_required', 409)
     source._case_file_profile = profile
     if tab == 'monthly':
-        from .learning_plan import install_canonical_training_plan_modules
-        install_canonical_training_plan_modules(source, profile)
+        from .learning_plans.public import hydrate_normalized_plan_modules
+        hydrate_normalized_plan_modules(source, profile)
     else:
-        from .learning_plan import install_canonical_training_plan
-        install_canonical_training_plan(source, profile)
+        from .learning_plans.public import hydrate_normalized_plan
+        hydrate_normalized_plan(source, profile)
     install_request_caches(source)
     if tab == 'training':
         from .dashboard_training import read_training

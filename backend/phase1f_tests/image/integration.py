@@ -2804,6 +2804,13 @@ if __name__=='__main__':
             # database alias targets the disposable loopback-only PostgreSQL
             # container whose identity was asserted above.
             settings.USE_SECURITY_TEST_BRANCH = True
+            os.environ['CURRICULUM_SQL_COUNT_LIVE_CHECK'] = '1'
+            from curriculum_api.tests_learner_assignment_counts_sql import (
+                PlanFactSqlTests,
+            )
+            suite.addTests(
+                unittest.defaultTestLoader.loadTestsFromTestCase(PlanFactSqlTests)
+            )
             from learner_api.tests_training_plan_writes_postgres import (
                 CanonicalTrainingPlanConcurrencyPostgresTests,
                 CanonicalTrainingPlanHistoryProtectionPostgresTests,

@@ -34,11 +34,12 @@ from curriculum_api.session_component_identity import occurrence_fallbacks as _l
 
 from .active_users import (fmt_hours, hydrate_source_training_plan,
                            target_by_elapsed_time, week_by_elapsed_time)
-from .identity import learner_profile_for_source
+from .identity_placement.public import learner_profile_for_source
 from .aptem_status import programme_status
 from .constants import DEFAULT_PROGRAMME_STATUS
 from .learner_progression import access_gate, advance_learner
-from .learning_plan import effective_training_plan, install_canonical_training_plan
+from .learning_plan import effective_training_plan
+from .learning_plans.public import hydrate_normalized_plan
 from .programme_access import cohort_programme_filter, learning_access
 from .mappers import _s, get_training_plan, to_learner_detail
 from .models import EnrolmentUser, LearnerProfile
@@ -1580,7 +1581,7 @@ def _apply_cohort_schedule(detail, source):
     detail.update({
         "cohortStartDate": "", "gatewayStartDate": "", "epaEndDate": "", "epaMonths": None,
     })
-    from .placement_links import placement_ids
+    from .identity_placement.public import placement_ids
 
     try:
         ids = placement_ids(source)
@@ -2795,7 +2796,7 @@ def build_learner_detail(source, pk, *, compact=False, read_only=False, quiz_vie
             source, learner_profile, activity_component_id)
         source._canonical_training_plan = activity_assignments
     else:
-        install_canonical_training_plan(source, learner_profile)
+        hydrate_normalized_plan(source, learner_profile)
     assigned_modules = effective_training_plan(source)
     resolution_assignments = assigned_modules
     if activity_component_id:

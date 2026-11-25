@@ -75,7 +75,7 @@ class AssignmentReadParity(unittest.TestCase):
         tree = ast.parse((BACKEND / READER).read_text(encoding='utf-8'))
         imports = {node.module if isinstance(node, ast.ImportFrom) else node.names[0].name
                    for node in tree.body if isinstance(node, (ast.Import, ast.ImportFrom))}
-        self.assertEqual(imports, {'json', 'django.db', 'learner_api.placement_links',
+        self.assertEqual(imports, {'json', 'django.db', 'learner_api.identity_placement.public',
             'learner_api.projection_performance', 'learner_api.learning_plans.domain.stored_plan',
             'learner_api.learning_plans.application.effective_plan',
             'curriculum_api.catalogue.infrastructure.course_storage_reads'})
@@ -83,10 +83,14 @@ class AssignmentReadParity(unittest.TestCase):
         self.assertEqual([n.names[0].name for n in ast.walk(domain) if isinstance(n, ast.Import)], ['json'])
         self.assertFalse(any(isinstance(n, ast.ImportFrom) for n in ast.walk(domain)))
         counts = ast.parse((BACKEND / 'curriculum_api/learner_assignment_counts_sql.py').read_text(encoding='utf-8'))
-        imports = [n for n in counts.body if isinstance(n, ast.ImportFrom) and any(a.asname == 'plans' for a in n.names)]
+        imports = [
+            n for n in counts.body
+            if isinstance(n, ast.ImportFrom)
+            and any(a.asname == 'learner_plans' for a in n.names)
+        ]
         self.assertEqual(len(imports), 1)
-        self.assertEqual(imports[0].module, 'learner_api.learning_plans.infrastructure')
-        self.assertEqual(imports[0].names[0].name, 'assignment_reads')
+        self.assertEqual(imports[0].module, 'learner_api.learning_plans')
+        self.assertEqual(imports[0].names[0].name, 'public')
 
     def test_redirects_preserve_names_and_resolve_to_the_recorded_owner(self):
         for entry in SNAPSHOT['redirected_imports']:

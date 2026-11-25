@@ -47,7 +47,7 @@ class Harness:
             return stack.enter_context(patch.object(reader, name, **kwargs))
 
         self.writes = [mock(name) for name in ("advance_learner", "hydrate_source_training_plan")]
-        mock("install_canonical_training_plan")
+        mock("hydrate_normalized_plan")
         # This suite checks the official field, with ownership/plan readers mocked.
         activity_owner = {'moduleId': 'M1'}
         mock("_activity_plan_assignments", return_value=([activity_owner], activity_owner))

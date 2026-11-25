@@ -230,7 +230,7 @@ class CohortScheduleTests(SimpleTestCase):
 
     def test_the_page_keys_are_always_present_and_ids_are_forwarded(self):
         detail = {}
-        with patch('learner_api.placement_links.placement_ids', side_effect=DatabaseError('offline')), \
+        with patch('learner_api.identity_placement.public.placement_ids', side_effect=DatabaseError('offline')), \
                 patch.object(learner_detail, '_cohort_schedule', return_value={}) as schedule, \
                 self.assertLogs('learner_api.learner_detail', level='WARNING'):
             _apply_cohort_schedule(detail, SimpleNamespace(cohort='October 2026', programme='Marketing'))
