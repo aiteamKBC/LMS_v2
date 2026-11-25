@@ -1,10 +1,15 @@
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from django.test import SimpleTestCase
 
 from . import canonical_learning, dashboard_weekly, my_learning, training_plan_dashboard
-from .learning_plan import effective_training_plan, install_canonical_training_plan
+from .learning_plan import (
+    effective_training_plan,
+    install_canonical_training_plan,
+    install_canonical_training_plan_module_ids,
+    install_canonical_training_plan_modules,
+)
 from .mappers import get_training_plan
 
 
@@ -46,6 +51,75 @@ class CanonicalTrainingPlanSourceTests(SimpleTestCase):
         profile = SimpleNamespace(enrolment_id=18, training_plan=[])
         with self.assertRaisesMessage(ValueError, "does not own"):
             install_canonical_training_plan(source, profile)
+
+    def test_upcoming_module_ids_use_the_canonical_owner_without_loading_children(self):
+        source = SimpleNamespace(pk=285)
+        owner = {'id': 407, 'enrolment_id': 285}
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [('MOD-2',), ('MOD-1',), (None,)]
+        connection = MagicMock()
+        connection.cursor.return_value.__enter__.return_value = cursor
+
+        with patch('learner_api.learning_plan.connections', {'enrolment': connection}):
+            result = install_canonical_training_plan_module_ids(source, owner)
+
+        self.assertEqual(result, [{'moduleId': 'MOD-2'}, {'moduleId': 'MOD-1'}])
+        self.assertIs(source._canonical_training_plan, result)
+        sql, params = cursor.execute.call_args.args
+        self.assertEqual(params, [407])
+        self.assertIn('WHERE plan_module.learner_id=%s', sql)
+        self.assertNotIn('learner_training_plan_weeks', sql)
+        self.assertNotIn('learner_training_plan_components', sql)
+        self.assertNotIn('curriculum.components', sql)
+
+    def test_upcoming_module_ids_reject_a_same_number_foreign_canonical_owner(self):
+        source = SimpleNamespace(pk=285)
+        # Canonical learner 285 belongs to enrolment 207, not URL enrolment 285.
+        foreign_owner = {'id': 285, 'enrolment_id': 207}
+        with patch('learner_api.learning_plan.connections') as databases, \
+             self.assertRaisesMessage(ValueError, 'does not own'):
+            install_canonical_training_plan_module_ids(source, foreign_owner)
+        databases.__getitem__.assert_not_called()
+
+    def test_compact_dashboard_plan_uses_url_enrolment_owner_and_complete_ordered_tree(self):
+        source = SimpleNamespace(pk=285)
+        profile = SimpleNamespace(pk=407, enrolment_id=285, _state=SimpleNamespace(db='enrolment'))
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [
+            (10, 'MOD-1', 'Module 1', 101, 'WEEK-1', 'Week 1', 1001, 'COMP-1'),
+            (10, 'MOD-1', 'Module 1', 101, 'WEEK-1', 'Week 1', 1002, 'COMP-2'),
+            (20, 'MOD-2', 'Module 2', 201, 'WEEK-2', 'Week 2', None, None),
+        ]
+        connection = MagicMock()
+        connection.cursor.return_value.__enter__.return_value = cursor
+
+        with patch('learner_api.learning_plan.connections', {'enrolment': connection}):
+            result = install_canonical_training_plan_modules(source, profile)
+
+        self.assertEqual(result, [
+            {'moduleId': 'MOD-1', 'moduleTitle': 'Module 1', 'weeks': [
+                {'weekId': 'WEEK-1', 'weekTitle': 'Week 1', 'components': [
+                    {'componentId': 'COMP-1'}, {'componentId': 'COMP-2'},
+                ]},
+            ]},
+            {'moduleId': 'MOD-2', 'moduleTitle': 'Module 2', 'weeks': [
+                {'weekId': 'WEEK-2', 'weekTitle': 'Week 2', 'components': []},
+            ]},
+        ])
+        sql, params = cursor.execute.call_args.args
+        self.assertEqual(params, [407])
+        self.assertIn('WHERE plan_module.learner_id=%s', sql)
+        self.assertNotIn('description', sql)
+        self.assertNotIn('settings_json', sql)
+
+    def test_compact_dashboard_plan_never_treats_url_id_as_canonical_id(self):
+        source = SimpleNamespace(pk=285)
+        # Canonical learner 285 belongs to enrolment 207, not URL enrolment 285.
+        foreign_profile = SimpleNamespace(pk=285, enrolment_id=207, _state=SimpleNamespace(db='enrolment'))
+        with patch('learner_api.learning_plan.connections') as databases, \
+             self.assertRaisesMessage(ValueError, 'does not own'):
+            install_canonical_training_plan_modules(source, foreign_profile)
+        databases.__getitem__.assert_not_called()
 
     def test_learner_read_source_fields_exclude_legacy_plan_storage(self):
         for fields in (

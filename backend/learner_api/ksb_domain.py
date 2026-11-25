@@ -45,21 +45,36 @@ def learner_definition_condition(definition_alias, learner_id_sql):
                OR ksb_owner.standard_ref=ksb_programme.standard_ref))'''
 
 
-def official_progress_relation():
+def official_progress_relation(*, progress_relation=None):
     """One row per eligible progress/position, with authoritative definition text.
 
     A learner pin wins over the programme version. A conflicting programme
     reference is ineligible; another version of the same standard remains pinned.
     Without a learner pin the programme's exact registered pair is used. Missing
     pairs never resolve by code, title, or latest-version heuristics.
+
+    ``progress_relation='canonical'`` is reserved for a caller-owned CTE that
+    has already applied the mandatory learner and deleted-row predicates.  It
+    keeps the eligibility projection identical while making the learner scope
+    the first relation in the plan.  The default remains the complete canonical
+    relation used by existing cross-learner consumers.
     """
-    return '''(SELECT k.progress_id,k.position,k.standard_ksb_id,
+    if progress_relation not in (None, 'canonical'):
+        raise ValueError('Unsupported progress relation.')
+    if progress_relation is None:
+        source = '''FROM "Learner".ksb_learner_progress k
+        JOIN "Learner".learner_progress_entries entry ON entry.id=k.progress_id'''
+        deleted = 'AND entry.deleted_at IS NULL'
+    else:
+        source = '''FROM canonical entry
+        JOIN "Learner".ksb_learner_progress k ON k.progress_id=entry.id'''
+        deleted = ''
+    return f'''(SELECT k.progress_id,k.position,k.standard_ksb_id,
         d.ksb_code,d.ksb_description,k.classification,k.weight,k.weight_class,
         k.source_type,k.source_id,k.mapping_status,k.is_excluded,
         k.legacy_definition_snapshot,k.exclusion_reason,k.exclusion_metadata,
         d.standard_ref,d.standard_version
-        FROM "Learner".ksb_learner_progress k
-        JOIN "Learner".learner_progress_entries entry ON entry.id=k.progress_id
+        {source}
         JOIN "Learner".learners owner ON owner.id=entry.learner_id
         LEFT JOIN curriculum.programmes programme ON programme.programme_id=owner.programme_id
         JOIN curriculum.ksb_standard_versions version
@@ -68,20 +83,24 @@ def official_progress_relation():
         JOIN curriculum.ksb_standard_definitions d ON d.id=k.standard_ksb_id
           AND d.standard_ref=version.standard_ref AND d.standard_version=version.standard_version
         WHERE k.is_excluded=false AND k.mapping_status='verified'
-          AND entry.deleted_at IS NULL
+          {deleted}
           AND (owner.standard_ref IS NULL OR programme.standard_ref IS NULL
                OR owner.standard_ref=programme.standard_ref))'''
 
 
 def point_counts_sql():
     """Existing accepted-evidence point formula over canonical eligible links."""
-    return f'''WITH links AS (
+    return f'''WITH canonical AS (
+        SELECT p.id,p.learner_id,p.accepted,p.activity_status
+        FROM "Learner".learner_progress_entries p
+        WHERE p.learner_id=%s AND p.deleted_at IS NULL
+    ), links AS (
         SELECT DISTINCT ON (k.ksb_code,p.id) k.ksb_code AS code,p.id,
             k.ksb_description AS description,k.position,p.accepted,
             (p.activity_status='completed' AND p.accepted IS TRUE) AS achieved
-        FROM "Learner".learner_progress_entries p
-        JOIN {official_progress_relation()} k ON k.progress_id=p.id
-        WHERE p.learner_id=%s AND p.deleted_at IS NULL AND k.ksb_code IS NOT NULL
+        FROM canonical p
+        JOIN {official_progress_relation(progress_relation='canonical')} k ON k.progress_id=p.id
+        WHERE k.ksb_code IS NOT NULL
         ORDER BY k.ksb_code,p.id,k.position
     ) SELECT code,(array_agg(description ORDER BY id,position))[1] AS description,
         count(*) AS "evidenceCount",count(*) FILTER (WHERE achieved) AS completed,

@@ -117,6 +117,42 @@ def install_canonical_training_plan(source, profile=None, *, profile_id=None):
     return plan
 
 
+def install_canonical_training_plan_module_ids(source, owner):
+    """Attach only the normalized module identities needed by Home Upcoming.
+
+    Upcoming obtains sessions, assignment deadlines, component links and
+    reviews from their own authoritative readers.  It uses the attached plan
+    solely in ``plan_module_ids``, so loading every saved week and component is
+    unnecessary.  Keep the exact enrolment-to-canonical-owner check before the
+    scoped module read; a coincident canonical ID must never select a learner.
+    """
+    if hasattr(source, "_canonical_training_plan"):
+        return source._canonical_training_plan
+    source_id = getattr(source, "pk", None) or getattr(source, "id", None)
+    profile_id = owner.get("id") if isinstance(owner, dict) else getattr(owner, "pk", None)
+    enrolment_id = (
+        owner.get("enrolment_id")
+        if isinstance(owner, dict)
+        else getattr(owner, "enrolment_id", None)
+    )
+    if source_id is None or profile_id is None or enrolment_id != source_id:
+        raise ValueError("The learner profile does not own this enrolment source.")
+    with connections[TRAINING_PLAN_DATABASE].cursor() as cursor:
+        cursor.execute('''
+            SELECT plan_module.curriculum_module_id
+            FROM "Learner".learner_training_plan_modules plan_module
+            WHERE plan_module.learner_id=%s
+            ORDER BY plan_module.position,plan_module.id
+        ''', [profile_id])
+        plan = [
+            {"moduleId": _s(module_id)}
+            for module_id, in cursor.fetchall()
+            if module_id
+        ]
+    source._canonical_training_plan = plan
+    return plan
+
+
 def install_canonical_training_plan_modules(source, profile):
     """Attach a compact normalized plan tree in one read.
 

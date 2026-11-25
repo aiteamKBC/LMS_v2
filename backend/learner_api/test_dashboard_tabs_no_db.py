@@ -107,6 +107,31 @@ class DashboardMonthlyHoursTests(SimpleTestCase):
         attendance.assert_not_called()
         progress.assert_not_called()
 
+    def test_all_dashboard_tabs_install_the_compact_owned_plan(self):
+        from . import dashboard_monthly, dashboard_overview, dashboard_training, identity, learning_plan
+        readers = {
+            'monthly': (dashboard_monthly, 'read_monthly'),
+            'training': (dashboard_training, 'read_training'),
+            'overview': (dashboard_overview, 'read_overview'),
+        }
+        for tab, (module, name) in readers.items():
+            with self.subTest(tab=tab):
+                source = SimpleNamespace(pk=285)
+                profile = SimpleNamespace(pk=407, enrolment_id=285)
+                with patch.object(dashboard_tabs.canonical, 'require_profile',
+                                  return_value={'id': 407}), \
+                     patch.object(identity, 'learner_profile_for_source', return_value=profile), \
+                     patch.object(learning_plan, 'install_canonical_training_plan_modules',
+                                  side_effect=lambda selected, _profile: setattr(
+                                      selected, '_canonical_training_plan', [],
+                                  )) as compact, \
+                     patch.object(module, name, return_value={'tab': tab}):
+                    self.assertEqual(
+                        dashboard_tabs.read_tab(source, 'commercial', tab, object()),
+                        {'tab': tab},
+                    )
+                compact.assert_called_once_with(source, profile)
+
     def test_missing_or_mismatched_profile_fails_before_progress_reads(self):
         from . import identity
         from old_otjh.service import ServiceError

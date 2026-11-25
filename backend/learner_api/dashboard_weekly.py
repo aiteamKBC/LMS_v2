@@ -18,7 +18,8 @@ from .learner_detail import SOURCE_MODELS
 from .projection_performance import measure_projection
 from .weekly_learning import _weekly_component
 from .learner_detail import _resolve_from_master, _apply_programme_assignment_template
-from .learning_plan import install_canonical_training_plan
+from .learning_plan import install_canonical_training_plan_modules
+from .ksb_domain import official_progress_relation
 from .submission_visibility import VISIBLE_SUBMISSION_SQL
 from .weekly_read_cache import weekly_read_scope
 from old_otjh.repository import request_read_scope
@@ -34,15 +35,19 @@ def recorded_ksbs(owner, component_ids):
     if not component_ids:
         return {}
     from .progress_cache import value
-    sql = f'''SELECT DISTINCT
-        coalesce(nullif(p.curriculum_component_ref,''),nullif(p.component_ref,'')) AS component_id,
-        upper(btrim(k.ksb_code)) AS code
+    sql = f'''WITH canonical AS MATERIALIZED (
+        SELECT p.id,p.learner_id,
+            coalesce(nullif(p.curriculum_component_ref,''),nullif(p.component_ref,'')) AS component_id
         FROM "Learner".learner_progress_entries p
-        JOIN "Learner".ksb_learner_progress k ON k.progress_id=p.id
         WHERE p.learner_id=%s AND p.deleted_at IS NULL
           AND coalesce(nullif(p.curriculum_component_ref,''),nullif(p.component_ref,''))=ANY(%s)
-          AND nullif(btrim(k.ksb_code),'') IS NOT NULL AND {canonical_learning._ksb_not_excluded('k')}
-        ORDER BY component_id,code'''
+    )
+        SELECT DISTINCT p.component_id,
+        upper(btrim(k.ksb_code)) AS code
+        FROM canonical p
+        JOIN {official_progress_relation(progress_relation='canonical')} k ON k.progress_id=p.id
+        WHERE nullif(btrim(k.ksb_code),'') IS NOT NULL
+        ORDER BY p.component_id,code'''
     alias = canonical_learning.repository._query_alias.get() or canonical_learning.repository.DB
     records = value(sql, [alias, list(component_ids)], owner['id'],
                     lambda: canonical_learning.query(sql, [owner['id'], component_ids]))
@@ -102,7 +107,10 @@ def read_dashboard_weekly(source, pk, *, week_id=None, module_id=None, module_na
         raise ServiceError('The consolidated learner identity needs review.', 'identity_review_required', 409)
     source._canonical_profile = {**owner, '_canonical_plan_only': True}
     source._case_file_profile = profile
-    install_canonical_training_plan(source, profile)
+    # Weekly's shared reader resolves schedule/content from its own scoped SQL.
+    # It needs the complete learner-owned hierarchy for routing, but none of the
+    # large component bodies selected by the model managers' full ORM prefetch.
+    install_canonical_training_plan_modules(source, profile)
     selection = _selection(week_id, module_id)
     try:
         payload = read_weekly_learning(SimpleNamespace(source=source, profile=profile), selection,

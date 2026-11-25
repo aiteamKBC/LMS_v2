@@ -2,11 +2,50 @@
 from unittest.mock import patch
 from django.test import SimpleTestCase
 from . import canonical_learning as canonical
-from .ksb_domain import point_counts_sql
+from .ksb_domain import official_progress_relation, point_counts_sql
 from coach_api import otjh_ksb
 
 
 class CanonicalKsbConsumerTests(SimpleTestCase):
+    def test_scoped_relation_starts_with_the_owned_progress_cte_and_keeps_rules(self):
+        default = official_progress_relation()
+        scoped = official_progress_relation(progress_relation='canonical')
+
+        self.assertIn('FROM "Learner".ksb_learner_progress k', default)
+        self.assertIn('JOIN "Learner".learner_progress_entries entry ON entry.id=k.progress_id', default)
+        self.assertIn('AND entry.deleted_at IS NULL', default)
+        self.assertIn('FROM canonical entry', scoped)
+        self.assertIn('JOIN "Learner".ksb_learner_progress k ON k.progress_id=entry.id', scoped)
+        self.assertNotIn('learner_progress_entries entry', scoped)
+        self.assertNotIn('entry.deleted_at', scoped)
+        for invariant in (
+            'JOIN "Learner".learners owner ON owner.id=entry.learner_id',
+            'd.standard_ref=version.standard_ref',
+            'd.standard_version=version.standard_version',
+            "k.is_excluded=false AND k.mapping_status='verified'",
+            'owner.standard_ref=programme.standard_ref',
+        ):
+            self.assertIn(invariant, default)
+            self.assertIn(invariant, scoped)
+
+    def test_scoped_relation_name_is_not_an_open_sql_parameter(self):
+        with self.assertRaisesMessage(ValueError, 'Unsupported progress relation'):
+            official_progress_relation(progress_relation='untrusted_relation')
+
+    def test_entries_scope_ksbs_before_the_large_relationship(self):
+        owner = {'id': 407, 'enrolment_id': 285, 'progress_transfer_active': False}
+        with patch.object(canonical, 'query', return_value=[]) as query, \
+             patch.object(canonical, 'current_records', return_value=[]):
+            self.assertEqual(canonical.entries_for(owner, lineage_only=True), [])
+        sql, params = next(
+            call.args for call in query.call_args_list
+            if call.args[0].lstrip().startswith('WITH canonical AS')
+        )
+        self.assertEqual(params, [407])
+        self.assertIn('FROM canonical entry', sql)
+        self.assertNotIn('JOIN canonical p ON p.id=k.progress_id', sql)
+        self.assertNotIn('FROM "Learner".learner_progress_entries entry', sql)
+
     def test_source_history_does_not_award_official_points(self):
         from .dashboard_metrics import point_codes
         self.assertEqual(point_codes([

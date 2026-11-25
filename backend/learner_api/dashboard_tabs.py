@@ -206,12 +206,11 @@ def read_tab(source, kind, tab, request, *, canonical_contract=False):
     if profile is None or profile.pk != owner['id'] or profile.enrolment_id != source.pk:
         raise ServiceError('The consolidated learner identity needs review.', 'identity_review_required', 409)
     source._case_file_profile = profile
-    if tab == 'monthly':
-        from .learning_plan import install_canonical_training_plan_modules
-        install_canonical_training_plan_modules(source, profile)
-    else:
-        from .learning_plan import install_canonical_training_plan
-        install_canonical_training_plan(source, profile)
+    # Dashboard projections resolve authored content, schedule and progress in
+    # their own learner-scoped readers.  All three need the normalized ownership
+    # tree, not the component descriptions/settings pulled by the ORM managers.
+    from .learning_plan import install_canonical_training_plan_modules
+    install_canonical_training_plan_modules(source, profile)
     install_request_caches(source)
     if tab == 'training':
         from .dashboard_training import read_training

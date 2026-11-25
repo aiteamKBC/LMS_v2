@@ -469,7 +469,7 @@ def run(config):
             self.template_fixture()
             with self.db.transaction(), self.db.cursor() as cursor:
                 replace(cursor,'T1',[{'standardKsbId':2,'weight':1}])
-            with self.assertRaises(psycopg.errors.RestrictViolation), self.db.transaction():
+            with self.assertRaises(psycopg.errors.ForeignKeyViolation), self.db.transaction():
                 self.db.execute("DELETE FROM curriculum.week_template_components WHERE id='T1'")
             self.db.execute("DELETE FROM curriculum.ksb_component_mappings WHERE template_component_id='T1'")
             self.db.execute("DELETE FROM curriculum.week_template_components WHERE id='T1'")

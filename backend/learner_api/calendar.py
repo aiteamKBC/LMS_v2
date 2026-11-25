@@ -2923,6 +2923,20 @@ def _may_book_first_session_early(kind, learner):
     return learner_signed_compliance_documents(learner_type, learner.pk)
 
 
+def _first_session_profile_ids(enrolment_id):
+    """Return at most two profiles linked by the canonical enrolment bridge.
+
+    The caller deliberately needs to distinguish no profile, one profile, and
+    ambiguous duplicate profiles.  Never substitute an equal numeric profile
+    id or an email match: ``Learner.learners.enrolment_id`` is the sole bridge
+    from the authenticated ``Created_users`` identity.
+    """
+    return tuple(
+        LearnerProfile.objects.filter(enrolment_id=enrolment_id)
+        .values_list("pk", flat=True)[:2]
+    )
+
+
 @learner_self_or_staff(kwarg="pk")
 def learner_first_session(request, kind, pk):
     """Whether this learner has booked their first session, and when.
@@ -2965,6 +2979,11 @@ def learner_first_session(request, kind, pk):
         learner = model.all_learners.filter(pk=pk).first()
         if learner is None:
             return _error("Learner not found.", 404)
+        profile_ids = _first_session_profile_ids(pk)
+        if not profile_ids:
+            return _error("Learner profile not found.", 404)
+        if len(profile_ids) != 1:
+            return _error("Learner profile identity needs review.", 409)
         record = (
             CoachCalendarEvent.objects.filter(learner_profile_id=_profile_id_for_enrolment(pk), event_type=FIRST_SESSION_TYPE)
             .exclude(status=CoachCalendarEvent.STATUS_CANCELLED)
