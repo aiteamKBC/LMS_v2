@@ -64,8 +64,13 @@ def _prepare_and_upload(asset, client, stream):
     for attempt in range(3):
         try:
             if not asset.video_id:
-                recovered = _find_import(asset, client) if attempt or asset.scope.get('interrupted_upload_ids') else None
-                created = recovered or client.create(asset.id, asset.title, asset.collection_id, scope=asset.scope)
+                from .bunny_stream import live_library_id
+                if asset.library_id == live_library_id() and asset.library_id != os.environ.get('BUNNY_STREAM_LIBRARY_ID', '798153'):
+                    from .live_recording_transfer import create_video_once
+                    created = create_video_once(asset, client)
+                else:
+                    recovered = _find_import(asset, client) if attempt or asset.scope.get('interrupted_upload_ids') else None
+                    created = recovered or client.create(asset.id, asset.title, asset.collection_id, scope=asset.scope)
                 if created['guid'] in asset.scope.get('interrupted_upload_ids', []):
                     raise VideoImportError('Bunny returned a previously failed upload. Review the saved import.')
                 asset.video_id = created['guid']
@@ -240,6 +245,8 @@ def transfer_recording(asset, *, lease_id=None):
                 raise VideoImportError('The mapped LiveSessions video does not match this recording source.')
         elif not asset.video_id:
             live_video = _find_import(asset, client)
+            if live_video:
+                asset.scope.pop('live_video_create_pending', None)
             if live_video is None:
                 live_video = find_existing_recording(client, asset.scope)
                 if live_video:

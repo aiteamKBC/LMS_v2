@@ -3,6 +3,8 @@ import copy
 import hashlib
 import io
 import os
+from pathlib import Path
+import tempfile
 from contextlib import nullcontext
 from unittest.mock import Mock, patch
 
@@ -110,6 +112,30 @@ class RecordingIdentityTests(SimpleTestCase):
                 with live_recording_transfer.original_stream('synthetic-source', 'synthetic-token', {}, Mock()):
                     raise VideoImportError('Bunny returned HTTP 404.')
         self.assertEqual(download.call_count, 1)
+
+    def test_public_player_probe_requires_valid_signature_and_rejects_invalid_signature(self):
+        client = BunnyStream('796471', api_key='synthetic-api-key-must-not-be-sent')
+        url = f'https://iframe.mediadelivery.net/embed/796471/{VIDEO}?token=' + 'a' * 64 + '&expires=200'
+        with patch('curriculum_api.bunny_stream.requests.get', side_effect=[
+                nullcontext(Mock(status_code=200)), nullcontext(Mock(status_code=403))]) as get:
+            self.assertIs(client.verify_embed(url, referrer='https://example.invalid/path?ignored=1'), True)
+        self.assertNotEqual(get.call_args_list[0].args[0], get.call_args_list[1].args[0])
+        for call in get.call_args_list:
+            self.assertNotIn('AccessKey', call.kwargs['headers'])
+            self.assertEqual(call.kwargs['headers']['Referer'], 'https://example.invalid/')
+            self.assertFalse(call.kwargs['allow_redirects'])
+
+    def test_public_or_misconfigured_player_cannot_be_declared_protected(self):
+        client = BunnyStream('796471', api_key='synthetic')
+        url = f'https://iframe.mediadelivery.net/embed/796471/{VIDEO}?token=' + 'a' * 64 + '&expires=200'
+        with patch('curriculum_api.bunny_stream.requests.get', side_effect=[
+                nullcontext(Mock(status_code=200)), nullcontext(Mock(status_code=200))]):
+            with self.assertRaisesRegex(VideoImportError, 'reject an invalid token'):
+                client.verify_embed(url)
+        with patch('curriculum_api.bunny_stream.requests.get') as get:
+            with self.assertRaises(VideoImportError):
+                client.verify_embed(url.replace('/796471/', '/798153/'))
+        get.assert_not_called()
 
     def test_inventory_is_complete_before_selecting_to_detect_duplicates(self):
         client = Mock()
@@ -232,6 +258,7 @@ class LiveRoutingTests(TestCase):
         asset = migration.queue_migration(self.historical())
         asset.status, asset.video_id = 'ready', VIDEO
         client = Mock()
+        client.verify_embed.return_value = True
         client.request.return_value = {'video': {'guid': OTHER, 'videoLibraryId': 796471}}
         with self.assertRaises(VideoImportError):
             migration.verify_live_playback(asset, client)
@@ -266,6 +293,7 @@ class LiveRoutingTests(TestCase):
         self.read.return_value = [row]
         client = Mock()
         client.library_id = '796471'
+        client.verify_embed.return_value = True
         client.find_import.return_value = None
         client.video.return_value = copy.deepcopy(items[0]) if items else None
 
@@ -395,6 +423,7 @@ class LiveRoutingTests(TestCase):
         self.read.side_effect = lambda sql, params: [rows[params[0]]]
         client = Mock()
         client.library_id = '796471'
+        client.verify_embed.return_value = True
         client.find_import.return_value = None
         client.create.return_value = {'guid': VIDEO}
         client.video.return_value = video(extra={'videoLibraryId': '796471'})
@@ -461,3 +490,65 @@ class LiveRoutingTests(TestCase):
                 live_recording_transfer.transfer_original(asset, client, 'synthetic', {})
         client.create.assert_not_called()
         client.upload.assert_not_called()
+
+    def test_lost_create_response_retains_claim_and_never_posts_another_original(self):
+        with patch.dict(os.environ, {routing.UPLOAD_FLAG: 'true'}):
+            asset = self.enqueue()
+        client = Mock()
+        client.find_import.return_value = None
+        client.create.side_effect = VideoImportError('Bunny could not be reached.')
+        with self.assertRaises(VideoImportError):
+            live_recording_transfer.create_video_once(asset, client)
+        asset.refresh_from_db()
+        self.assertTrue(asset.scope[live_recording_transfer.CREATE_PENDING])
+        with self.assertRaisesRegex(VideoImportError, 'awaits confirmation'):
+            live_recording_transfer.create_video_once(asset, client)
+        self.assertEqual(client.create.call_count, 1)
+        client.find_import.return_value = {'guid': VIDEO}
+        self.assertEqual(live_recording_transfer.create_video_once(asset, client)['guid'], VIDEO)
+        self.assertNotIn(live_recording_transfer.CREATE_PENDING, asset.scope)
+        self.assertEqual(client.create.call_count, 1)
+
+    def test_another_attempts_committed_guid_is_reused(self):
+        with patch.dict(os.environ, {routing.UPLOAD_FLAG: 'true'}):
+            asset = self.enqueue()
+        CurriculumVideoImport.objects.filter(pk=asset.pk).update(video_id=VIDEO)
+        client = Mock()
+        client.find_import.return_value = None
+        self.assertEqual(live_recording_transfer.create_video_once(asset, client)['guid'], VIDEO)
+        client.create.assert_not_called()
+
+    def test_hash_updates_do_not_erase_a_concurrent_video_creation_claim(self):
+        with patch.dict(os.environ, {routing.UPLOAD_FLAG: 'true'}):
+            asset = self.enqueue()
+        CurriculumVideoImport.objects.filter(pk=asset.pk).update(scope={**asset.scope,
+            live_recording_transfer.CREATE_PENDING: 'another-active-attempt'})
+        migration.remember_content_hash(asset, 'a' * 64)
+        self.assertEqual(asset.scope[live_recording_transfer.CREATE_PENDING], 'another-active-attempt')
+        migration.original_source_owner(asset)
+        self.assertEqual(asset.scope[live_recording_transfer.CREATE_PENDING], 'another-active-attempt')
+
+    def test_downstream_manifest_uses_lms_authority_and_actual_published_component_bindings(self):
+        import json
+        from io import StringIO
+        from django.core.management import call_command
+        original = self.historical()
+        saved = {'state': 'ready', 'libraryId': '798153', 'videoId': OTHER, 'importId': str(original.pk)}
+        self.read.side_effect = lambda sql, params: ([{'playback': saved}] if 'live_session_artifacts' in sql
+                                                    else [{'id': 'CURRENT-COMPONENT', 'week_id': 'CURRENT-WEEK'}])
+        output = StringIO()
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'private-sources.json'
+            call_command('export_live_recording_sources', output=str(path), stdout=output)
+            payload = json.loads(path.read_text(encoding='utf-8'))
+        self.assertEqual(payload['authority'], 'LMS')
+        self.assertFalse(payload['live_cutover_enabled'])
+        row = payload['records'][0]
+        self.assertEqual(row['recording_identity'], original.fingerprint)
+        self.assertEqual(row['microsoft_recording_id'], 'GRAPH')
+        self.assertEqual(row['component_ids'], ['CURRENT-COMPONENT'])
+        self.assertEqual(row['week_ids'], ['CURRENT-WEEK'])
+        self.assertEqual(row['current_playback']['videoId'], OTHER)
+        self.assertNotIn('source_url', str(payload))
+        self.assertNotIn('organizer_email', str(payload))
+        self.assertEqual(CurriculumVideoImport.objects.count(), 1)

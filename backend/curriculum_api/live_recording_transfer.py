@@ -1,12 +1,18 @@
 """Hash an original before upload; one durable owner shares the result with aliases."""
 from contextlib import contextmanager, ExitStack
 import hashlib
+import uuid
+
+from django.db import transaction
 
 from .bunny_stream import VideoImportError, playback_url
-from .live_recording_migration import original_source_owner
+from .live_recording_migration import original_source_owner, remember_content_hash
 from .live_recording_routing import find_existing_recording
 from .session_recording_source import download_recording
 from .session_transfer_progress import TransferProgress
+from .models import CurriculumVideoImport
+
+CREATE_PENDING = 'live_video_create_pending'
 
 
 @contextmanager
@@ -65,11 +71,7 @@ def transfer_original(asset, client, source, artifact, *, lease_id=None):
         for block in iter(lambda: stream.read(1024 * 1024), b''):
             digest.update(block)
         content_hash = digest.hexdigest()
-        previous_hash = asset.scope.get('source_content_sha256')
-        if previous_hash and previous_hash != content_hash:
-            raise VideoImportError('The original recording bytes changed; the saved source was retained for review.')
-        asset.scope = {**asset.scope, 'source_content_sha256': content_hash}
-        asset.save(update_fields=['scope', 'updated_at'])
+        remember_content_hash(asset, content_hash)
         # A library listing may briefly lag a newly created GUID. The unique
         # database claim also prevents simultaneous aliases from uploading it.
         existing = find_existing_recording(client, asset.scope)
@@ -88,3 +90,49 @@ def transfer_original(asset, client, source, artifact, *, lease_id=None):
         if video.get('status') in (5, 6):
             raise VideoImportError('The original video could not be encoded; retry its saved import.')
         return video
+
+
+def create_video_once(asset, client):
+    """Commit creation intent before POST, including a lost/ambiguous response."""
+    from .session_bunny import _find_import
+    recovered = _find_import(asset, client)
+    claim = ''
+    with transaction.atomic():
+        current = CurriculumVideoImport.objects.select_for_update().get(pk=asset.pk)
+        if current.video_id:
+            asset.video_id, asset.scope = current.video_id, dict(current.scope)
+            return {'guid': current.video_id}
+        if recovered and recovered['guid'] not in current.scope.get('interrupted_upload_ids', []):
+            playback_url(current.library_id, recovered['guid'])
+            current.video_id = recovered['guid']
+            current.scope.pop(CREATE_PENDING, None)
+            current.save(update_fields=['video_id', 'scope', 'updated_at'])
+            asset.video_id, asset.scope = current.video_id, dict(current.scope)
+            return recovered
+        if current.scope.get(CREATE_PENDING):
+            raise VideoImportError('Live recording creation awaits confirmation; no second original was created.')
+        claim = str(uuid.uuid4())
+        current.scope = {**current.scope, CREATE_PENDING: claim}
+        current.save(update_fields=['scope', 'updated_at'])
+    try:
+        created = client.create(asset.id, asset.title, asset.collection_id, scope=asset.scope)
+    except VideoImportError as error:
+        if error.status_code is not None and 400 <= error.status_code < 500 and error.status_code != 408:
+            with transaction.atomic():
+                current = CurriculumVideoImport.objects.select_for_update().get(pk=asset.pk)
+                if current.scope.get(CREATE_PENDING) == claim:
+                    current.scope.pop(CREATE_PENDING)
+                    current.save(update_fields=['scope', 'updated_at'])
+        raise
+    playback_url(asset.library_id, created['guid'])
+    with transaction.atomic():
+        current = CurriculumVideoImport.objects.select_for_update().get(pk=asset.pk)
+        if current.video_id and current.video_id != created['guid']:
+            raise VideoImportError('Conflicting original video identities require review.')
+        if not current.video_id and current.scope.get(CREATE_PENDING) != claim:
+            raise VideoImportError('The original video creation owner changed; review is required.')
+        current.video_id = created['guid']
+        current.scope.pop(CREATE_PENDING, None)
+        current.save(update_fields=['video_id', 'scope', 'updated_at'])
+        asset.video_id, asset.scope = current.video_id, dict(current.scope)
+    return created

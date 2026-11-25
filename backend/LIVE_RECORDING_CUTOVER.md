@@ -12,6 +12,21 @@ configured as `BUNNY_LIVE_STREAM_API_KEY` and `BUNNY_LIVE_STREAM_TOKEN_KEY`.
 Credentials are selected by the saved library; material credentials are not
 reused for a different library. Never commit these values or private manifests.
 
+The LMS is the source of truth. The downstream checker adapts to the LMS
+contract; its private ID-generation algorithm is not an application dependency.
+Export the authoritative Microsoft recording identities, current component/week
+bindings and actual published player references with a SELECT-only command:
+
+```sh
+python manage.py export_live_recording_sources --output /private/lms-source-contract.json
+```
+
+The `lms.live-recording-sources.v1` file contains no access keys, source URLs,
+meeting join links or learner rosters. It explicitly reports whether the live
+cutover is active. Give it to the checker owner to reconcile historical data and
+make their system consume the LMS identities and current playback, rather than
+changing the LMS to imitate their identifiers.
+
 ## Before the owner switch
 
 1. Obtain a current inventory and a verified source mapping for historical peer
@@ -20,7 +35,10 @@ reused for a different library. Never commit these values or private manifests.
    `source_content_sha256` when available to reconcile Graph aliases. An occurrence, title,
    lecture date, duration or part number alone is insufficient. Multiple parts
    of the same occurrence remain separate originals.
-2. Verify protected LiveSessions play-data using the library's own token key.
+2. Verify protected LiveSessions play-data and the public iframe using the
+   library's own token key. The valid signature must work and a deliberately
+   invalid signature must be rejected; API credentials are never sent to the
+   public player. A publicly accessible or misconfigured library cannot pass.
 3. With original uploads still disabled, adopt already-uploaded, source-verified
    videos and confirm the same GUID through the saved LMS component/week binding.
 4. Have the other uploader stop starting originals and drain its in-flight

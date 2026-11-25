@@ -1,6 +1,7 @@
 """Reversible, journaled adoption of historical live recordings only."""
 import hashlib
 import json
+import os
 import re
 import uuid
 from datetime import timedelta
@@ -120,6 +121,8 @@ def verify_live_playback(asset, client):
         raise VideoImportError('LiveSessions protected playback has not been verified; historical playback is retained.')
     if video.get('videoLibraryId') is not None and str(video['videoLibraryId']) != asset.library_id:
         raise VideoImportError('The protected player returned a different library.')
+    if client.verify_embed(url, referrer=os.environ.get('APP_URL') or os.environ.get('FRONTEND_URL') or '') is not True:
+        raise VideoImportError('The signed LiveSessions player could not be verified.')
     asset.scope = {**asset.scope, 'live_playback_verified_video_id': asset.video_id,
         'live_playback_verified_library_id': asset.library_id}
     asset.save(update_fields=['scope', 'updated_at'])
@@ -252,6 +255,25 @@ def original_source_owner(asset, content_hash=None):
         if (owner.library_id != asset.library_id or any(owner.scope.get(key) != asset.scope.get(key) for key in owner_fields)
                 or owner.scope.get('source_content_sha256') != content_hash):
             raise VideoImportError('The original recording owner does not match this source identity.')
-        asset.scope = {**asset.scope, 'source_content_sha256': content_hash, 'live_source_claim_id': str(anchor.pk)}
-        asset.save(update_fields=['scope', 'updated_at'])
+        current = CurriculumVideoImport.objects.select_for_update().get(pk=asset.pk)
+        if current.scope.get('source_content_sha256') != content_hash:
+            raise VideoImportError('The original source hash changed while ownership was being confirmed.')
+        current.scope = {**current.scope, 'live_source_claim_id': str(anchor.pk),
+                         'live_source_owner_import_id': str(owner.pk)}
+        current.save(update_fields=['scope', 'updated_at'])
+        asset.scope, asset.video_id = dict(current.scope), current.video_id
     return owner
+
+
+def remember_content_hash(asset, content_hash):
+    with transaction.atomic():
+        current = CurriculumVideoImport.objects.select_for_update().get(pk=asset.pk)
+        if (current.source_at_start != asset.source_at_start or current.source_url != asset.source_url
+                or current.library_id != asset.library_id):
+            raise VideoImportError('The original source changed while it was being verified.')
+        previous = current.scope.get('source_content_sha256')
+        if previous and previous != content_hash:
+            raise VideoImportError('The original recording bytes changed; the saved source was retained for review.')
+        current.scope = {**current.scope, 'source_content_sha256': content_hash}
+        current.save(update_fields=['scope', 'updated_at'])
+        asset.scope, asset.video_id = dict(current.scope), current.video_id

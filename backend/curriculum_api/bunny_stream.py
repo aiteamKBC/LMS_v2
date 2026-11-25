@@ -8,7 +8,7 @@ from __future__ import annotations
 import os
 import base64
 import re
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 import requests
 
@@ -143,6 +143,42 @@ class BunnyStream:
             return result
         finally:
             response.close()
+
+    def verify_embed(self, url, *, referrer=''):
+        """Probe the public player without API credentials; reject a tampered token."""
+        try:
+            parsed = urlsplit(url)
+            query = parse_qs(parsed.query, strict_parsing=True)
+            if (parsed.scheme != 'https' or parsed.hostname != 'iframe.mediadelivery.net'
+                    or parsed.username or parsed.password or parsed.port not in (None, 443)
+                    or not re.fullmatch('/embed/' + re.escape(self.library_id) + r'/[0-9a-fA-F-]{36}', parsed.path)
+                    or len(query.get('token', [])) != 1 or len(query.get('expires', [])) != 1
+                    or not re.fullmatch('[0-9a-f]{64}', query['token'][0])
+                    or not query['expires'][0].isdigit()):
+                raise ValueError()
+            headers = {}
+            if referrer:
+                origin = urlsplit(referrer)
+                if origin.scheme not in ('http', 'https') or not origin.hostname or origin.username or origin.password:
+                    raise ValueError()
+                headers['Referer'] = origin.scheme + '://' + origin.netloc + '/'
+            wrong = {key: values[0] for key, values in query.items()}
+            token = wrong['token']
+            wrong['token'] = ('0' if token[0] != '0' else '1') + token[1:]
+            invalid = parsed._replace(query=urlencode(wrong)).geturl()
+        except ValueError:
+            raise VideoImportError('The protected LiveSessions player identity is invalid.') from None
+        try:
+            # Do not use the API session or its AccessKey for the public player.
+            with requests.get(url, headers=headers, timeout=(3, 8), allow_redirects=False) as valid:
+                good_status = valid.status_code
+            with requests.get(invalid, headers=headers, timeout=(3, 8), allow_redirects=False) as rejected:
+                bad_status = rejected.status_code
+        except requests.RequestException:
+            raise VideoImportError('The protected player could not be verified; historical playback is retained.') from None
+        if good_status != 200 or bad_status not in (401, 403):
+            raise VideoImportError('LiveSessions must accept its signed player and reject an invalid token before playback is switched.')
+        return True
 
     def collection(self, programme_id, programme_name):
         programme_collection_name(programme_id, programme_name)
