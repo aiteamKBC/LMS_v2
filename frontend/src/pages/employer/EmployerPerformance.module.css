@@ -14,30 +14,30 @@
 .card[data-tone='amber'] .icon { background: var(--employer-gold); color: var(--employer-on-gold); }
 .card[data-tone='rose'] { --tone: var(--employer-primary); }
 .card[data-tone='overall'] { background: color-mix(in srgb, var(--purple) 7%, var(--surface)); border-color: color-mix(in srgb, var(--purple) 30%, var(--line)); }
-.chartPanel { padding: 22px; border: 1px solid var(--line); border-radius: 16px; color: var(--ink); background: var(--surface); }
-.chartHeader { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; }
-.chartHeader h2 { display: flex; align-items: center; gap: 9px; font-size: 18px; }
+.chartPanel { padding: 12px; border: 1px solid var(--line); border-radius: 16px; color: var(--ink); background: var(--surface); }
+.chartHeader { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.chartPanel header.chartHeader h2 { display: flex; align-items: center; gap: 6px; font-size: 14px; line-height: 1.3; }
 .chartHeader h2 svg { color: var(--purple); }
-.chartHeader p, .chartNote { margin-top: 8px !important; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.chartHeader p, .chartNote { margin-top: 4px !important; color: var(--muted); font-size: 11px; line-height: 1.4; }
 .chartHeader label { display: flex; flex-direction: column; gap: 5px; max-width: 300px; min-width: 180px; color: var(--muted); font-size: 12px; }
 .chartHeader select { width: 100%; padding: 9px 12px; border: 1px solid var(--line); border-radius: 10px; color: var(--ink); background: var(--surface); }
-.columnCanvas { --plot-height: 140px; display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 12px; margin-top: 12px; }
-.columnAxis { position: relative; height: var(--plot-height); margin-top: 28px; color: var(--muted); font-size: 11px; }
+.columnCanvas { --plot-height: 64px; display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 8px; margin-top: 8px; }
+.columnAxis { position: relative; height: var(--plot-height); margin-top: 18px; color: var(--muted); font-size: 10px; }
 .columnAxis span { position: absolute; right: 0; transform: translateY(50%); }
-.columnScroll { min-width: 0; overflow-x: auto; padding-top: 28px; padding-bottom: 4px; overscroll-behavior-x: contain; }
+.columnScroll { min-width: 0; overflow-x: auto; padding-top: 18px; padding-bottom: 4px; overscroll-behavior-x: contain; }
 .columnScroll:focus-visible { outline: 2px solid var(--purple); outline-offset: 3px; }
 .columnPlot { position: relative; min-width: 0; }
-.columnGroups { display: grid; gap: 24px; position: relative; }
+.columnGroups { display: grid; gap: 16px; position: relative; }
 .columnModule { min-width: 0; text-align: center; }
-.columnModuleTitle { margin: 12px 6px 0; font-size: 13px; font-weight: 650; line-height: 1.5; overflow-wrap: anywhere; }
-.columnLegend { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px 18px; margin: 0; padding: 0; list-style: none; max-width: 600px; }
-.columnLegend li { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); }
-.columnLegend span { width: 10px; height: 10px; border-radius: 3px; background: var(--employer-series-1); }
+.chartPanel .columnModule .columnModuleTitle { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; margin: 6px 4px 0; font-size: 11px; font-weight: 650; line-height: 1.35; overflow-wrap: anywhere; }
+.columnLegend { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px 12px; margin: 0; padding: 0; list-style: none; max-width: 520px; }
+.columnLegend li { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; color: var(--muted); }
+.columnLegend span { width: 8px; height: 8px; border-radius: 2px; background: var(--employer-series-1); }
 .columnLegend [data-series='1'] span { background: var(--employer-series-2); }
 .columnLegend [data-series='2'] span { background: var(--employer-series-3); }
 .columnLegend [data-series='3'] span { background: var(--employer-series-4); }
 .columnGuides { position: absolute; inset: 0 0 auto; height: var(--plot-height); border-bottom: 1px solid var(--line); background: repeating-linear-gradient(to top, var(--line) 0, var(--line) 1px, transparent 1px, transparent 50%); pointer-events: none; }
-.columns { position: relative; display: grid; grid-template-columns: repeat(4, 36px); justify-content: center; gap: 8px; }
+.columns { position: relative; display: grid; grid-template-columns: repeat(4, 24px); justify-content: center; gap: 5px; }
 .columnSeries { --bar: var(--employer-series-1); min-width: 0; text-align: center; }
 .columnSeries[data-series='1'] { --bar: var(--employer-series-2); }
 .columnSeries[data-series='2'] { --bar: var(--employer-series-3); }
@@ -45,10 +45,10 @@
 .columnWell { position: relative; display: flex; justify-content: center; height: var(--plot-height); }
 .columnBar, .columnZero { position: absolute; bottom: 0; width: 100%; background: var(--bar); border-radius: 3px 3px 0 0; }
 .columnZero { height: 2px; }
-.columnOutsideValue { position: absolute; color: var(--ink); font-size: 11px; font-weight: 650; line-height: 1; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.columnMissing { position: absolute; bottom: 10px; color: var(--muted); font-size: 12px; }
+.columnOutsideValue { position: absolute; color: var(--ink); font-size: 10px; font-weight: 650; line-height: 1; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.columnMissing { position: absolute; bottom: 5px; color: var(--muted); font-size: 10px; }
 @container (max-width: 560px) {
-  .columnCanvas { grid-template-columns: 30px minmax(0, 1fr); gap: 8px; }
+  .columnCanvas { grid-template-columns: 24px minmax(0, 1fr); gap: 6px; }
   .columnLegend { justify-content: flex-start; }
 }
 .moduleCards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin-top: 20px; }
@@ -72,9 +72,9 @@
 @container (max-width: 560px) {
   .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .card { padding: 14px; min-height: 160px; }
-  .chartPanel { padding: 16px; }
+  .chartPanel { padding: 12px; }
   .moduleCards { grid-template-columns: minmax(0, 1fr); gap: 12px; }
   .moduleMetric { padding: 18px; }
-  .chartHeader { flex-direction: column; gap: 14px; }
+  .chartHeader { flex-direction: column; gap: 8px; }
   .chartHeader label { width: 100%; max-width: none; min-width: 0; }
 }

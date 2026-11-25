@@ -17,14 +17,14 @@ export function EmployerModuleColumnChart({ learners, records, moduleId }: Props
   const loading = learners.some(learner => !records[learnerKey(learner)] || records[learnerKey(learner)].status === 'loading');
   const failed = learners.some(learner => records[learnerKey(learner)]?.status === 'error');
   return <section className={styles.chartPanel} aria-labelledby="module-performance-title">
-    <header className={styles.chartHeader}><div><h2 id="module-performance-title"><BarChart3 size={21} aria-hidden="true" />Module performance</h2>
+    <header className={styles.chartHeader}><div><h2 id="module-performance-title"><BarChart3 size={16} aria-hidden="true" />Module performance</h2>
       <p>{moduleId ? 'Selected module' : 'All modules'} · Average learner progress</p></div>
       <ul className={styles.columnLegend} aria-label="Performance measures">{labels.map((label, index) => <li key={label} data-series={index}><span />{label}</li>)}</ul>
     </header>
     {modules.length > 0 ? <div className={styles.columnCanvas} role="group" aria-label="Module performance column chart">
       <div className={styles.columnAxis} aria-hidden="true">{[0, 50, 100].map(value => <span key={value} style={{ bottom: `${value}%` }}>{value}%</span>)}</div>
       <div className={styles.columnScroll} role="region" aria-label={moduleId ? 'Selected module chart' : 'All modules chart'} tabIndex={0}>
-        <div className={styles.columnPlot} style={{ minWidth: `${modules.length * 220}px` }}>
+        <div className={styles.columnPlot} style={{ minWidth: `${modules.length * 160}px` }}>
           <div className={styles.columnGuides} aria-hidden="true" />
           <div className={styles.columnGroups} style={{ gridTemplateColumns: `repeat(${modules.length}, minmax(0, 1fr))` }}>
             {modules.map(module => {
@@ -41,13 +41,13 @@ export function EmployerModuleColumnChart({ learners, records, moduleId }: Props
                       aria-valuemin={missing ? undefined : 0} aria-valuemax={missing ? undefined : 100}
                       aria-valuenow={measure.value ?? undefined} aria-valuetext={missing ? undefined : `${state}; ${measure.available} of ${assigned} learners have data`}>
                       {missing ? <span className={styles.columnMissing} title={state}>{loading ? 'Loading…' : 'N/A'}</span> : <>
-                        <span className={styles.columnOutsideValue} style={{ bottom: `calc(${measure.value}% + 8px)` }} aria-hidden="true">{state}</span>
+                        <span className={styles.columnOutsideValue} style={{ bottom: `calc(${measure.value}% + 5px)` }} aria-hidden="true">{state}</span>
                         <span className={measure.value === 0 ? styles.columnZero : styles.columnBar} style={measure.value === 0 ? undefined : { height: `${measure.value}%` }} />
                       </>}
                     </div>
                   </div>;
                 })}</div>
-                <h3 className={styles.columnModuleTitle}>{module.title}</h3>
+                <h3 className={styles.columnModuleTitle} title={module.title}>{module.title}</h3>
               </section>;
             })}
           </div>
