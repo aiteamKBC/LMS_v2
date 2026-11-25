@@ -72,9 +72,9 @@ function LearnerPin({ pin, learner, left }: { pin: JourneyPin; learner: Employer
       aria-label={`${learner.name}, ${pin.title}, ${percent(pin.percent)}, ${pin.label}`}
       aria-describedby={position ? id : undefined} onMouseEnter={show} onMouseLeave={hide} onFocus={show} onBlur={hide} onClick={show}>
       <span className={styles.pinHead}><span>{initials(learner.name) || '?'}</span></span>
-      <span className={styles.pinName}>{learner.name}</span>
       <span className={styles.pinCaption}>{pin.state === 'skipped' && <SkipForward size={10} aria-hidden="true" />}
-        {pin.percent == null ? '?' : `${number(pin.percent)}%`}{pin.state === 'skipped' ? ' · Skip' : pin.state === 'next' ? ' · Next' : pin.state === 'parallel' ? ' · Parallel' : ''}</span>
+        {pin.percent == null ? '?' : `${number(pin.percent)}%`}{pin.state === 'skipped' ? ' · Skipped' : pin.state === 'next' ? ' · Next' : pin.state === 'parallel' ? ' · Parallel' : ''}</span>
+      <span className={styles.pinName}>{learner.name}</span>
     </button>
     {position && createPortal(<div id={id} role="tooltip" className={styles.tooltip}
       style={{ left: position.left, top: position.top, maxHeight: position.maxHeight, transform: position.above ? 'translateY(-100%)' : undefined }}
