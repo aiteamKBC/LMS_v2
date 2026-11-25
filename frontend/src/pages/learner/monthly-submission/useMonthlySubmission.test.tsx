@@ -123,7 +123,8 @@ it('reuses a selected assignment within 30 seconds and refetches after expiry', 
   now += 11_000;
   rerender({ id: 'A1' });
   await waitFor(() => expect(detailReads()).toBe(2));
-  expect(result.current.data?.assignmentBrief).toBe('Brief A1');
+  // Dispatch is observable before the response has committed to React state.
+  await waitFor(() => expect(result.current.data?.assignmentBrief).toBe('Brief A1'));
 });
 
 it('drops cached assignment details after any save, submit or upload', async () => {

@@ -3213,7 +3213,7 @@ async function fetchJsonOnce<T>(path: string, init?: CurriculumRequestInit): Pro
   const csrfToken = unsafe && typeof document !== 'undefined'
     ? document.cookie.split('; ').find(value => value.startsWith('csrftoken='))?.split('=').slice(1).join('=')
     : undefined;
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await (csrf ? coachFetch : fetch)(`${API_BASE_URL}${path}`, {
     ...fetchInit,
     ...(init?.skipCache ? { cache: 'no-store' as const } : {}),
     signal,

@@ -458,7 +458,7 @@ it('reuses a prior topics booking when it saved the calendar key of the same imp
   vi.mocked(fetchLearnerCalendarEvents).mockResolvedValue({ learner: { kind: 'commercial', id: 1 }, events: [imported] });
   render(<EditableTopicBooking />);
   expect(await screen.findByText(/MCM already booked:/)).toBeVisible();
-  expect(props.onSelect).toHaveBeenCalledWith(imported.eventKey);
+  await waitFor(() => expect(props.onSelect).toHaveBeenCalledWith(imported.eventKey));
   expect(bookLearnerCalendarSession).not.toHaveBeenCalled();
 });
 

@@ -39,9 +39,9 @@ describe('Coach and tutor recordings entry points', () => {
     expect(entry?.children?.map(({ id, label, href }) => ({ id, label, href }))).toEqual([
       { id: 'curriculum-tutor-recordings', label: 'Tutor session recordings', href: '/curriculum/recordings' },
       { id: 'curriculum-coach-meetings', label: 'Coach meetings', href: '/curriculum/coaching-recordings' },
-      { id: 'curriculum-quality-assurance', label: 'Quality Assurance', href: '/curriculum/quality-demo' },
+      { id: 'curriculum-quality-assurance', label: 'Quality Assurance', href: '/curriculum/quality' },
       { id: 'curriculum-quality-checks', label: 'Quality Checks', href: '/curriculum/coaching-recordings/reviews' },
-      { id: 'curriculum-quality-deep-dive', label: 'Deep Dive', href: '/curriculum/quality-demo?view=deep-dive' },
+      { id: 'curriculum-quality-deep-dive', label: 'Deep Dive', href: '/curriculum/quality?view=deep-dive' },
     ]);
     expect(curriculumNavItems.find(item => item.href === '/curriculum/delivery')?.matchPaths).not.toContain('/curriculum/recordings');
   });

@@ -40,7 +40,9 @@ class QuizPolicyPostgresTests(unittest.TestCase):
             with self.subTest(present=present), transaction.atomic():
                 with connection.schema_editor() as editor:
                     if present:
-                        old.install(None, editor)
+                        editor.execute('''CREATE TABLE curriculum.quiz_defaults (
+                            id integer PRIMARY KEY, general jsonb, grades jsonb)''')
+                        editor.execute("INSERT INTO curriculum.quiz_defaults VALUES(1,'{}','{}')")
                     state = loader.project_state([('quiz_api', '0006_quiz_policies')])
                     state = new.Migration('0007_remove_quiz_defaults', 'quiz_api').apply(state, editor)
                 self.assertNotIn(('quiz_api', 'quizdefaults'), state.models)
@@ -57,6 +59,7 @@ class QuizPolicyPostgresTests(unittest.TestCase):
                 for name in ('0006_quiz_policies', '0007_remove_quiz_defaults'):
                     migration = import_module('quiz_api.migrations.' + name).Migration(name, 'quiz_api')
                     state = migration.apply(state, editor)
+                    self.assertIsNone(execute("SELECT to_regclass('curriculum.quiz_defaults')")[0][0])
             self.assertNotIn(('quiz_api', 'quizdefaults'), state.models)
             self.assertIsNone(execute("SELECT to_regclass('curriculum.quiz_defaults')")[0][0])
             self.assertEqual(execute('SELECT policy_enabled,attempt_limit,grade_settings FROM curriculum.quizzes WHERE id=%s', [self.quiz.pk]), [(False, 3, None)])

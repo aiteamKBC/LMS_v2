@@ -109,9 +109,11 @@ it('reads the activity text then only the currently open PDF page, without toolb
 });
 
 it('reads a PDF-only activity served from a protected URL identified by filename', async () => {
+  const user = userEvent.setup();
   render(reading({ contentHtml: '', resourceUrl: '/materials/123/', fileName: 'Reading.pdf' }));
   await screen.findByText('Page 1 of 3');
-  await startReading();
+  // Let the ready preview commit its reader registration before the user click.
+  await user.click(screen.getByRole('button', { name: 'Read aloud' }));
   await waitForSpeechCalls(1);
   expect(speak.mock.calls.map(([utterance]) => utterance.text)).toEqual(['Document 1 page 1.']);
   expect(fetch).toHaveBeenCalledWith('/materials/123/', expect.objectContaining({ credentials: 'same-origin' }));

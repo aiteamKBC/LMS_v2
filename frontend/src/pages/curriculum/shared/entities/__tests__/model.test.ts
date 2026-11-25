@@ -42,10 +42,10 @@ describe('resolving a record by identifier before name', () => {
       .toEqual({ id: 'A', name: 'Second' });
   });
 
-  it('still falls back to the name when no id matches at all', () => {
+  it('does not treat a display name as canonical identity', () => {
     const items = [{ id: 'B', name: 'A' }];
     expect(findByIdentifierThenName(items, 'A', item => [item.id], item => [item.name]))
-      .toEqual({ id: 'B', name: 'A' });
+      .toBeUndefined();
   });
 
   it('answers undefined for a blank identifier rather than the first record', () => {
@@ -59,13 +59,13 @@ describe('resolving a record by identifier before name', () => {
       .toEqual({ id: 'REAL', name: 'Real' });
   });
 
-  it('resolves a programme by id past a namesake, and by name when no id matches', () => {
+  it('resolves a programme by canonical id and rejects a name-only match', () => {
     const programmes = [
       { id: 'p1', sourceId: 'PROG-B', name: 'PROG-A' },
       { id: 'p2', sourceId: 'PROG-A', name: 'Marketing Executive Level 4' },
     ] as CurriculumProgramme[];
     expect(findProgramme(programmes, 'PROG-A')?.sourceId).toBe('PROG-A');
-    expect(findProgramme(programmes, 'Marketing Executive Level 4')?.sourceId).toBe('PROG-A');
+    expect(findProgramme(programmes, 'Marketing Executive Level 4')).toBeUndefined();
   });
 
   it('resolves a cohort and a group by id past a namesake', () => {
