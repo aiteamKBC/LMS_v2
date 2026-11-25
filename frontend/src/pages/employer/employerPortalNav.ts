@@ -10,9 +10,9 @@ import { useLocation } from 'react-router-dom';
  */
 export function employerPortalNav(employerId: string): SidebarNavItem[] {
   return [
-    { id: 'employer-portal-home', label: 'Home', icon: 'ri-home-line', href: `/employers/${employerId}` },
+    { id: 'employer-portal-home', label: 'Overview', icon: 'ri-home-line', href: `/employers/${employerId}` },
     { id: 'employer-portal-learners', label: 'My learners', icon: 'ri-group-line', href: `/employers/${employerId}/learners` },
-    { id: 'employer-portal-reviews', label: 'Progress & Gateway reviews', icon: 'ri-calendar-check-line', href: `/employers/${employerId}/reviews` },
+    { id: 'employer-portal-reviews', label: 'Reviews', icon: 'ri-calendar-check-line', href: `/employers/${employerId}/reviews` },
     { id: 'employer-portal-feedback', label: 'Feedback', icon: 'ri-chat-1-line', href: `/employers/${employerId}/feedback` },
     { id: 'employer-portal-documents', label: 'Documents', icon: 'ri-draft-line', href: `/employers/${employerId}/documents` },
   ];

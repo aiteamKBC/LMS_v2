@@ -5,6 +5,8 @@ type Count = { completed: number | null; total: number | null; percent: number |
 export type OverviewModule = {
   id: string; title: string; start: string; end: string;
   activities: { completed: number; total: number };
+  /** Opt-in employer summary; counts handed-in assignments independently of marking. */
+  assignments?: { submitted: number; total: number };
   attendance: { attended: number; total: number } | null;
   hours: { actual: number | null; planned: number | null };
   ksb: { completed: number; total: number } | null;

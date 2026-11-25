@@ -6,6 +6,7 @@ import { feedbackApi, type EmployerFeedbackListItem, type FeedbackAnswerValue, t
 import { FeedbackFormExperience } from '@/features/feedback/FormRenderer';
 import { missingRequiredQuestionIds } from '@/features/feedback/formPresentation';
 import { useEmployerPortalChrome } from './employerPortalNav';
+import styles from './EmployerFeedbackPage.module.css';
 
 export default function EmployerFeedbackPage() {
   const { employerId = '', deliveryId } = useParams();
@@ -107,22 +108,22 @@ function EmployerFeedbackContent({ employerId, deliveryId }: { employerId: strin
   }
   const back = `/employers/${employerId}/feedback`;
   return <WorkspaceShell {...shell} pageTitle="Feedback" pageSubtitle="Progress review feedback" hideBreadcrumbs>
-    <div className="mx-auto max-w-6xl space-y-5 p-4 sm:p-6">
+    <div className={`${styles.page} mx-auto max-w-6xl space-y-5 p-4 sm:p-6`} data-employer-theme>
       <Link to={deliveryId ? back : `/employers/${employerId}`} className="text-sm font-semibold text-primary-700"
         onClick={event => { if (['Changes waiting to save', 'Automatic save failed', 'Saving…'].includes(saveStatus) && !window.confirm('Leave with unsaved feedback changes?')) event.preventDefault(); }}>← {deliveryId ? 'Back to feedback' : 'Back to dashboard'}</Link>
       {!isEmployerViewer && <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm">Read-only preview. Only the assigned employer can submit feedback.</p>}
       {error && <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm">{error}{!form && <button className="ml-3 underline" onClick={() => setRefresh(value => value + 1)}>Retry</button>}</div>}
       {loading && <p ><LoadingSkeleton label="Loading feedback…" variant="rows" /></p>}
-      {!loading && !deliveryId && items && <section className="rounded-xl border bg-white p-5">
+      {!loading && !deliveryId && items && <section className={`${styles.panel} rounded-xl border p-5`}>
         <div className="mb-5 flex items-center justify-between"><h1 className="text-xl font-bold">Your feedback requests</h1><button onClick={() => setRefresh(value => value + 1)} className="rounded-lg border px-3 py-2 text-sm">Refresh</button></div>
         {!items.length ? <p>No feedback assigned.</p> : <ul className="divide-y">{items.map(item => <li key={item.id} className="flex flex-wrap items-center justify-between gap-4 py-4">
           <div><h2 className="font-semibold">{item.title}</h2><p className="text-sm">{item.learnerName} · {item.reviewName}</p><p className="text-xs text-foreground-500">Completed {formatDate(item.completedAt)}</p></div>
-          <div className="flex items-center gap-3"><span className="text-xs">{item.status === 'completed' ? 'Completed' : item.status === 'in_progress' ? 'In progress' : 'Not started'}</span><Link to={`${back}/${item.id}`} className="rounded-lg bg-primary-700 px-4 py-2 text-sm font-semibold text-white">{!isEmployerViewer || item.status === 'completed' ? 'View' : item.status === 'in_progress' ? 'Continue' : 'Start'}</Link></div>
+          <div className="flex items-center gap-3"><span className="text-xs">{item.status === 'completed' ? 'Completed' : item.status === 'in_progress' ? 'In progress' : 'Not started'}</span><Link to={`${back}/${item.id}`} className={`${styles.action} rounded-lg px-4 py-2 text-sm font-semibold`}>{!isEmployerViewer || item.status === 'completed' ? 'View' : item.status === 'in_progress' ? 'Continue' : 'Start'}</Link></div>
         </li>)}</ul>}
       </section>}
-      {!loading && form && <div className="rounded-xl border bg-white p-4 sm:p-8 max-sm:[&_header>div]:flex-col max-sm:[&_header>div]:items-start">
-        <p className="mb-4 rounded-lg bg-violet-50 p-3 text-sm">{form.relatedLearnerName} · {form.reviewDelivery?.reviewName} · {form.reviewDelivery && formatDate(form.reviewDelivery.completedAt)}</p>
-        {complete && <p role="status" className="mb-4 rounded-lg bg-emerald-50 p-3 font-semibold text-emerald-800">Thank you for your feedback. Your response has been submitted.</p>}
+      {!loading && form && <div className={`${styles.panel} ${styles.form} rounded-xl border p-4 sm:p-8 max-sm:[&_header>div]:flex-col max-sm:[&_header>div]:items-start`}>
+        <p className={`${styles.context} mb-4 rounded-lg p-3 text-sm`}>{form.relatedLearnerName} · {form.reviewDelivery?.reviewName} · {form.reviewDelivery && formatDate(form.reviewDelivery.completedAt)}</p>
+        {complete && <p role="status" className={`${styles.success} mb-4 rounded-lg p-3 font-semibold`}>Thank you for your feedback. Your response has been submitted.</p>}
         <FeedbackFormExperience title={form.title} description={form.description} instructions={form.instructions}
           sections={sections} answers={answers} activeSection={step} invalidQuestionIds={invalid}
           readOnly={readOnly || saving} onChange={updateAnswer} onNext={nextStep}

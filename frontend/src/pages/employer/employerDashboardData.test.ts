@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { LearnerCalendarEvent } from '@/api/learnerCalendar';
-import { greeting, orderReviewJourney, progressReviews, relativeReviewDate, reviewMatches, reviewState } from './employerDashboardData';
+import { greeting, nextReview, orderReviewJourney, progressReviews, relativeReviewDate, reviewMatches, reviewState } from './employerDashboardData';
 
 const review = (values: Partial<LearnerCalendarEvent> = {}) => ({
   id: 'pr', eventKey: 'pr', source: 'progress-review', status: 'scheduled', sequence: 1,
@@ -8,6 +8,50 @@ const review = (values: Partial<LearnerCalendarEvent> = {}) => ({
 } as LearnerCalendarEvent);
 
 describe('employer dashboard review facts', () => {
+  const journey = () => Array.from({ length: 6 }, (_, index) => review({
+    eventKey: `review-${index + 1}`, sequence: index + 1, status: 'not-scheduled',
+    targetDate: `2027-0${index + 1}-01`,
+  }));
+
+  it('advances after attendance without a booking, using programme order rather than response order', () => {
+    const events = journey();
+    events[0].reviewAttendance = 'attended';
+    expect(nextReview([...events].reverse())?.eventKey).toBe('review-2');
+  });
+
+  it('prioritises another booked review and advances after it is attended, with or without another booking', () => {
+    const events = journey();
+    events[0].status = 'completed';
+    events[3] = { ...events[3], status: 'scheduled', scheduledDate: '2027-02-10' };
+    expect(nextReview(events)?.eventKey).toBe('review-4');
+    events[3].reviewAttendance = 'attended';
+    expect(nextReview(events)?.eventKey).toBe('review-5');
+    events[5] = { ...events[5], status: 'scheduled', scheduledDate: '2027-05-10' };
+    expect(nextReview(events)?.eventKey).toBe('review-6');
+    events[5].status = 'completed';
+    expect(nextReview(events)).toBeUndefined();
+  });
+
+  it('chooses the earliest active appointment by booked date and time without changing the source array', () => {
+    const events = journey();
+    events[1] = { ...events[1], status: 'scheduled', scheduledDate: '2027-04-10', scheduledTime: '09:00' };
+    events[3] = { ...events[3], status: 'scheduled', scheduledDate: '2027-02-10', scheduledTime: '14:00' };
+    events[4] = { ...events[4], status: 'scheduled', scheduledDate: '2027-02-10', scheduledTime: '10:00' };
+    const original = [...events];
+    expect(nextReview(events)?.eventKey).toBe('review-5');
+    expect(events).toEqual(original);
+  });
+
+  it('skips cancelled bookings and reviews awaiting signatures, and respects legacy attendance', () => {
+    const events = journey();
+    events[0].meetingOutcome = 'completed';
+    events[1] = { ...events[1], status: 'awaiting-signature', employerSignatureRequired: true };
+    events[2] = { ...events[2], status: 'scheduled', bookingStatus: 'cancelled', scheduledDate: '2027-01-10' };
+    expect(nextReview(events)?.eventKey).toBe('review-4');
+    expect(nextReview()).toBeUndefined();
+    expect(nextReview(journey())?.eventKey).toBe('review-1');
+  });
+
   it('keeps Progress and Gateway reviews while excluding other types and cancelled bookings', () => {
     const events = [review(), review({ importedReviewType: 'Progress Review (+ Skills Radar)', eventKey: 'radar' }),
       review({ importedReviewType: 'Gateway Review', eventKey: 'gateway' }), review({ importedReviewType: 'Personal Support Plan' }),

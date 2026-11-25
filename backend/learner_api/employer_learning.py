@@ -27,7 +27,8 @@ def read_dashboard(source, kind, tab, request):
     with learner_journal_reads():
         # read_tab verifies the canonical profile against this exact enrolment,
         # uses heal=False and installs the same request caches as the learner.
-        return without_action_links(dashboard_tabs.read_tab(source, kind, tab, request))
+        options = {'employer_performance': True} if tab == 'overview' and request.GET.get('performance') == '1' else {}
+        return without_action_links(dashboard_tabs.read_tab(source, kind, tab, request, **options))
 
 
 def _prepare_source(source):

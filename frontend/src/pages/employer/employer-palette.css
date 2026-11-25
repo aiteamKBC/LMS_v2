@@ -1,0 +1,108 @@
+/* Shared by employer screens and My Courses. These tokens do not restyle
+   other workspaces; only the screens that consume them use this palette. */
+:root {
+  --employer-background: #f7f7fa;
+  --employer-surface: #ffffff;
+  --employer-soft: #f1edf6;
+  --employer-line: #e2dce9;
+  --employer-ink: #2e2938;
+  --employer-muted: #6b6476;
+  --employer-primary: #68468c;
+  --employer-primary-hover: #563774;
+  --employer-primary-strong: #4a2c67;
+  --employer-on-primary: #ffffff;
+  --employer-gold: #f1d46c;
+  --employer-gold-hover: #e3c254;
+  --employer-on-gold: #423713;
+  --employer-gold-soft: #fbf5de;
+  --employer-gold-ink: #745b1d;
+  --employer-series-1: #4a2c67;
+  --employer-series-2: var(--employer-gold);
+  --employer-series-3: var(--employer-success);
+  --employer-series-4: #856a95;
+  --employer-success: #43735d;
+  --employer-success-soft: #edf4f0;
+  --employer-warning: #8c682e;
+  --employer-warning-soft: #f8f3e9;
+  --employer-danger: #a24747;
+  --employer-danger-soft: #f8eded;
+}
+
+[data-theme='dark'] {
+  --employer-background: #1c1921;
+  --employer-surface: #26222d;
+  --employer-soft: #322b3c;
+  --employer-line: #494050;
+  --employer-ink: #eeeaf3;
+  --employer-muted: #beb5c8;
+  --employer-primary: #c4addb;
+  --employer-primary-hover: #d5c3e5;
+  --employer-primary-strong: #e5d7f2;
+  --employer-on-primary: #261b31;
+  --employer-gold-soft: #3b3422;
+  --employer-gold-ink: #f1d46c;
+  --employer-series-1: #ad8bc9;
+  --employer-series-2: var(--employer-gold);
+  --employer-series-3: var(--employer-success);
+  --employer-series-4: #d2c1e1;
+  --employer-success: #a8cdb8;
+  --employer-success-soft: #28382f;
+  --employer-warning: #ddc293;
+  --employer-warning-soft: #3b3224;
+  --employer-danger: #e0aaaa;
+  --employer-danger-soft: #3e2b2e;
+}
+
+/* The existing workspace skin also styles shared inputs and portalled menus.
+   Give it the same tokens only while one of these pages is mounted. */
+@layer workspace-enrolment {
+  :root:has([data-employer-theme]),
+  [class~='workspace-shell']:has([data-employer-theme]) {
+    --enrolment-ui-canvas: var(--employer-background) !important;
+    --enrolment-ui-surface: var(--employer-surface) !important;
+    --enrolment-ui-field: var(--employer-surface) !important;
+    --enrolment-ui-soft: var(--employer-soft) !important;
+    --enrolment-ui-stripe: var(--employer-background) !important;
+    --enrolment-ui-hover: var(--employer-soft) !important;
+    --enrolment-ui-border: var(--employer-line) !important;
+    --enrolment-ui-divider: var(--employer-line) !important;
+    --enrolment-ui-heading: var(--employer-ink) !important;
+    --enrolment-ui-text: var(--employer-ink) !important;
+    --enrolment-ui-muted: var(--employer-muted) !important;
+    --enrolment-ui-link: var(--employer-primary) !important;
+    --enrolment-ui-action: #68468c !important;
+    --enrolment-ui-action-hover: #563774 !important;
+    --enrolment-ui-focus: var(--employer-primary) !important;
+    --enrolment-ui-hero: var(--employer-surface) !important;
+  }
+
+  :root [class~='workspace-shell']:has([data-employer-theme]),
+  :root [class~='workspace-shell']:has([data-employer-theme]) [class~='workspace-main'] {
+    background: var(--employer-background) !important;
+  }
+}
+
+@layer workspace-chrome {
+  :root [class~='workspace-shell']:has([data-employer-theme]) [class~='kbc-workspace-topbar'] {
+    background: var(--employer-surface) !important;
+    border-color: var(--employer-line) !important;
+    color: var(--employer-ink) !important;
+  }
+
+  :root [class~='workspace-shell']:has([data-employer-theme]) [class~='kbc-workspace-topbar'] :is([class~='kbc-topbar-title'], [class~='kbc-topbar-user-name']) {
+    color: var(--employer-ink) !important;
+  }
+
+  :root [class~='workspace-shell']:has([data-employer-theme]) [class~='kbc-workspace-topbar'] :is([class~='kbc-topbar-subtitle'], small) {
+    color: var(--employer-muted) !important;
+  }
+
+  :root [class~='workspace-shell']:has([data-employer-theme]) [class~='kbc-workspace-switcher-button'] {
+    background: var(--employer-soft) !important;
+    border-color: var(--employer-line) !important;
+  }
+
+  :root [class~='workspace-shell']:has([data-employer-theme]) [class~='kbc-workspace-switcher-button'] * {
+    color: var(--employer-ink) !important;
+  }
+}

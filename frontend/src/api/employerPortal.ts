@@ -106,13 +106,22 @@ export interface EmployerLearnerCard {
   cohort: string;
   programmeStatus: string;
   onboardingStatus: string;
+  /** Recorded learner dates, matching the learner and employer profile headers. */
+  learnerStartDate?: string;
+  learnerEndDate?: string;
   /** On programme — their card leads with performance rather than paperwork. */
   isActive: boolean;
   /** Documents this employer can sign right now but hasn't. */
   outstandingCount: number;
   documentsTotal: number;
   /** Student Home's canonical OTJ hours and percentage, included in the list response. */
-  otjhProgress: { actual: number | null; planned: number | null; percent: number | null } | null;
+  otjhProgress: {
+    actual: number | null;
+    planned: number | null;
+    percent: number | null;
+    /** Canonical programme hours due by today; absent on older responses. */
+    targetToDate?: number | null;
+  } | null;
 }
 
 /** A review awaiting (or carrying) the employer's signature. */
@@ -347,13 +356,13 @@ export function fetchEmployerLearnerPlan(
  * behind the portal's employer-owns-this-learner check. Meeting and booking
  * links come back empty: the employer's view is read-only.
  */
-function overviewPart<T>(employerId: string, kind: string, learnerId: string, part: string, signal?: AbortSignal) {
-  return request<T>(`${BASE}/${employerId}/learner/${kind}/${learnerId}/overview/${part}/`, { signal });
+function overviewPart<T>(employerId: string, kind: string, learnerId: string, part: string, signal?: AbortSignal, performance = false) {
+  return request<T>(`${BASE}/${employerId}/learner/${kind}/${learnerId}/overview/${part}/${performance ? '?performance=1' : ''}`, { signal });
 }
 
 /** Existing learner projections, authorized through the employer's own routes. */
-export async function fetchEmployerLearningOverview(employerId: string, kind: LearnerKind, learnerId: string, signal?: AbortSignal) {
-  const data = await overviewPart<DashboardOverviewPayload>(employerId, kind, learnerId, 'dashboard', signal);
+export async function fetchEmployerLearningOverview(employerId: string, kind: LearnerKind, learnerId: string, signal?: AbortSignal, performance = false) {
+  const data = await overviewPart<DashboardOverviewPayload>(employerId, kind, learnerId, 'dashboard', signal, performance);
   if (!data?.metrics?.otjh || !data.metrics.ksb || !Array.isArray(data.programme)
     || !Array.isArray(data.modules) || !Array.isArray(data.hours?.months)) {
     throw new Error('Could not load learner progress. Please try again.');
@@ -378,13 +387,17 @@ export function fetchEmployerLearnerWeek(employerId: string, kind: LearnerKind, 
   return overviewPart<OverviewWeek>(employerId, kind, learnerId, 'week', signal);
 }
 
-/** Attendance-register totals: the figure the learner's dashboard and the coach case file show. */
+/** Employer attendance counts, with recording completion deduplicated by lecture. */
 export interface EmployerLearnerAttendance {
   sessions: number;
   present: number;
   absent: number;
   late: number;
   attendanceRate: number;
+  mode?: 'live' | 'recorded' | 'mixed';
+  livePresent?: number;
+  recordedPresent?: number;
+  recordedTotal?: number;
 }
 
 export function fetchEmployerLearnerAttendance(employerId: string, kind: LearnerKind, learnerId: string, signal?: AbortSignal) {

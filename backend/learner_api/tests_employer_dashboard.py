@@ -41,12 +41,15 @@ class EmployerDashboardMetricsTests(SimpleTestCase):
         }
         self.attendance_rows = {key: [self.attendance_row('present'), self.attendance_row('late'),
                                      self.attendance_row('absent')] for key in (101, 102, 103)}
+        self.session_targets = {101: 20, 102: 30, 103: 40}
         patches = [
             patch.dict("os.environ", {"LEARNER_API_REQUIRE_AUTH": "1"}),
             patch("login.permissions.authenticate_request", side_effect=lambda request: self.account),
             patch.object(employer_portal, "_employer_or_404", return_value=(SimpleNamespace(pk=7), None)),
             patch.object(employer_portal, "SOURCE_MODELS", {"apprenticeship": self.model}),
             patch.object(employer_portal.timezone, "localdate", return_value=date(2026, 10, 21)),
+            patch('learner_api.employer_attendance.read_plan_session_target',
+                  side_effect=lambda source: self.session_targets[source.pk]),
         ]
         for item in patches:
             item.start()
@@ -156,10 +159,10 @@ class EmployerDashboardMetricsTests(SimpleTestCase):
         response, _, _ = self.call()
         rows = json.loads(response.content)['learners']
         self.assertEqual(rows['101']['attendance'],
-                         {'sessions': 4, 'present': 3, 'absent': 1, 'late': 1, 'attendanceRate': 75})
+                         {'sessions': 20, 'present': 3, 'absent': 1, 'late': 1, 'attendanceRate': 15})
         self.assertIsNone(rows['102']['attendance'])
         self.assertEqual(rows['103']['attendance'],
-                         {'sessions': 1, 'present': 0, 'absent': 1, 'late': 0, 'attendanceRate': 0})
+                         {'sessions': 40, 'present': 0, 'absent': 1, 'late': 0, 'attendanceRate': 0})
 
     def test_unavailable_home_progress_does_not_fall_back_to_saved_snapshots(self):
         self.home_progress[101] = None
@@ -465,7 +468,8 @@ class EmployerLearnerListProgressTests(SimpleTestCase):
         profile_filter.return_value.values.return_value = [
             {'id': 1117, 'enrolment_id': 1526},
             {'id': 1118, 'enrolment_id': 1527},
-            {'id': 1119, 'enrolment_id': 1528},
+            {'id': 1119, 'enrolment_id': 1528,
+             'start_date': date(2026, 10, 1), 'end_date': date(2026, 10, 21)},
         ]
         self.addCleanup(profile_query.stop)
         bulk = patch('learner_api.canonical_learning.metrics_bulk', return_value=metrics)
@@ -475,15 +479,45 @@ class EmployerLearnerListProgressTests(SimpleTestCase):
         plan_reader = plan.start()
         self.addCleanup(plan.stop)
 
-        employer_portal._attach_learner_otjh_progress(cards, learners)
+        with patch('coach_api.views.timezone.localdate', return_value=date(2026, 10, 11)):
+            employer_portal._attach_learner_otjh_progress(cards, learners)
 
         bulk_reader.assert_called_once_with([1526, 1527, 1528], learner_workspace=True)
-        plan_reader.assert_called_once_with(learners[2], {'id': 1119, 'enrolment_id': 1528})
+        plan_reader.assert_called_once_with(learners[2], {
+            'id': 1119, 'enrolment_id': 1528,
+            'start_date': date(2026, 10, 1), 'end_date': date(2026, 10, 21),
+        })
         self.assertEqual(cards, [
-            {'id': '1526', 'otjhProgress': {'actual': 5, 'planned': 568.73, 'percent': 0.88}},
-            {'id': '1527', 'otjhProgress': {'actual': 3, 'planned': 0, 'percent': None}},
-            {'id': '1528', 'otjhProgress': {'actual': 0, 'planned': 250, 'percent': 0}},
+            {'id': '1526', 'otjhProgress': {'actual': 5, 'planned': 568.73, 'percent': 0.88, 'targetToDate': None}},
+            {'id': '1527', 'otjhProgress': {'actual': 3, 'planned': 0, 'percent': None, 'targetToDate': None}},
+            {'id': '1528', 'otjhProgress': {'actual': 0, 'planned': 250, 'percent': 0, 'targetToDate': 125}},
         ])
+
+    def test_list_target_uses_same_programme_window_as_learner_dashboard(self):
+        source = SimpleNamespace(pk=1526)
+        profile = {'id': 1117, 'enrolment_id': 1526,
+                   'start_date': date(2026, 10, 1), 'end_date': date(2026, 10, 21)}
+        with patch.object(employer_portal.LearnerProfile.objects, 'filter') as profiles, \
+                patch('learner_api.canonical_learning.metrics_bulk', return_value={
+                    1526: {'otjh': {'actual': 5, 'planned': 200}},
+                }), patch('coach_api.views.timezone.localdate', return_value=date(2026, 10, 11)):
+            profiles.return_value.values.return_value = [profile]
+            for start, end, expected in (
+                (None, None, 100),  # Profile dates, halfway through the programme.
+                (date(2026, 10, 21), date(2026, 11, 1), 0),
+                (date(2026, 9, 1), date(2026, 10, 1), 200),
+                (date(2026, 10, 11), date(2026, 10, 11), None),
+            ):
+                with self.subTest(start=start, end=end):
+                    source.start_date, source.end_date = start, end
+                    cards = [{'id': '1526'}]
+                    employer_portal._attach_learner_otjh_progress(cards, [source])
+                    self.assertEqual(cards[0]['otjhProgress']['targetToDate'], expected)
+                    self.assertEqual(cards[0]['otjhProgress']['percent'], 2.5)
+            profiles.return_value.values.return_value = [profile, dict(profile, id=2222)]
+            source.start_date, source.end_date = None, None
+            employer_portal._attach_learner_otjh_progress(cards, [source])
+            self.assertIsNone(cards[0]['otjhProgress']['targetToDate'])
 
     def test_unresolved_canonical_metric_stays_unavailable_in_initial_list(self):
         learners = [SimpleNamespace(pk=1526)]

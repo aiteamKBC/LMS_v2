@@ -186,7 +186,7 @@ def overview_subjects(learning):
     return subjects
 
 
-def read_overview(source, kind, owner, profile, request):
+def read_overview(source, kind, owner, profile, request, *, employer_performance=False):
     from .overview_week import read_week
     from .module_progress import aggregate_module_progress
     from .dashboard_metrics import coach_otjh_target_to_date
@@ -223,6 +223,10 @@ def read_overview(source, kind, owner, profile, request):
     historical_hours = defaultdict(list)
     for row in actual_rows:
         historical_hours[row['groupId']].append(row['hours'])
+    assignments = None
+    if employer_performance:
+        from .employer_performance import module_assignments
+        assignments = module_assignments(source, kind, displayed, components=native.get('components', []))
     chart_modules = []
     for module in displayed:
         entry = ledger.get(str(module['moduleId']))
@@ -233,6 +237,8 @@ def read_overview(source, kind, owner, profile, request):
             'attendance': attendance_by_module[module['id']],
             'hours': {'actual': actual, 'planned': module['detail'].get('total_otjh')},
             'ksb': {key: entry['ksb'][key] for key in ('completed', 'total')} if entry else None})
+        if assignments is not None:
+            chart_modules[-1]['assignments'] = assignments[module['id']]
         duplicate_rows = [a for a in module['_subject']['activities'] if duplicates.get(a.get('dedupe'), 0) > 1]
         if duplicate_rows:
             # Only cross-subject duplicate identities leave the reader. Browser

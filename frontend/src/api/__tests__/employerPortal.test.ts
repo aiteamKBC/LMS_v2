@@ -22,6 +22,14 @@ describe('employer portal responses', () => {
     expect(fetch.mock.calls.every(call => call[1].credentials === 'include' && call[1].signal === signal)).toBe(true);
   });
 
+  it('opts into employer assignment counts without changing the learner overview request', async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify(dashboardOverviewFixture())));
+    vi.stubGlobal('fetch', fetch);
+    await fetchEmployerLearningOverview('9', 'commercial', '265', undefined, true);
+    expect(fetch).toHaveBeenCalledWith('/learner_api/employer-portal/9/learner/commercial/265/overview/dashboard/?performance=1',
+      expect.objectContaining({ credentials: 'include' }));
+  });
+
   it('rejects incomplete projection payloads instead of fabricating empty progress', async () => {
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response('{}'))));
     await expect(fetchEmployerLearningOverview('9', 'commercial', '265')).rejects.toThrow('Could not load learner progress');

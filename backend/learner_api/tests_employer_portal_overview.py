@@ -105,6 +105,20 @@ class EmployerPortalOverviewTests(SimpleTestCase):
         self.assertEqual(response.status_code, 403)
         read.assert_not_called()
 
+    def test_attendance_reads_owned_delivery_totals_and_rejects_another_learners_records(self):
+        attendance = {'sessions': 10, 'present': 8, 'absent': 2, 'late': 0, 'attendanceRate': 80,
+                      'mode': 'mixed', 'livePresent': 6, 'recordedPresent': 2, 'recordedTotal': 10}
+        with mock.patch('learner_api.employer_attendance.read_attendance', return_value=attendance) as read:
+            response = self.get('attendance')
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(json.loads(response.content), {'attendance': attendance})
+            read.assert_called_once_with(self.learner, 'commercial')
+            read.reset_mock()
+            self.learner.employer_id = 10
+            self.assertEqual(self.get('attendance').status_code, 403)
+            self.assertEqual(self.get('attendance', employer_id=8).status_code, 404)
+            read.assert_not_called()
+
     def test_an_employer_cannot_name_another_employer(self):
         with mock.patch("learner_api.training_plan_dashboard.read_dashboard") as read:
             response = self.get("schedule", employer_id=8)
@@ -494,6 +508,31 @@ class EmployerPortalOverviewTests(SimpleTestCase):
         with mock.patch("learner_api.canonical_learning.require_profile", return_value={}), \
                 mock.patch("learner_api.monthly_logs.content_response", side_effect=ServiceError("Activity not found", "not_found", 404)):
             self.assertEqual(self.logs(month="2026-09", row_id=4).status_code, 404)
+
+
+class EmployerPortalLearnerListDatesTests(SimpleTestCase):
+    def test_list_returns_each_learners_recorded_dates_without_enrolment_fallback(self):
+        learners = [SimpleNamespace(
+            pk=101 + index, learner_type=kind, username="Test Learner", email="",
+            programme="Programme", cohort="Cohort", programme_status="Active",
+            onboarding_status="", start_date="2020-01-01", end_date="2029-01-01",
+            learner_start_date=start, learner_end_date=end,
+        ) for index, (kind, start, end) in enumerate([
+            ("apprenticeship", "2026-10-01", "2027-10-25"),
+            ("commercial", None, None),
+        ])]
+        manager = mock.MagicMock()
+        manager.filter.return_value.order_by.return_value = learners
+        empty_rows = {("apprenticeship", 101): [], ("commercial", 102): []}
+        with mock.patch.object(employer_portal, "SOURCE_MODELS", {"apprenticeship": SimpleNamespace(all_learners=manager)}), \
+                mock.patch.object(employer_portal, "_review_signing_rows_for", return_value=empty_rows), \
+                mock.patch.object(employer_portal, "_document_signing_rows_for", return_value=empty_rows), \
+                mock.patch.object(employer_portal, "_attach_learner_otjh_progress"):
+            cards = employer_portal._learner_cards(9)
+        manager.filter.assert_called_once_with(employer_id=9)
+        self.assertEqual([(card["kind"], card["learnerStartDate"], card["learnerEndDate"]) for card in cards], [
+            ("apprenticeship", "2026-10-01", "2027-10-25"), ("commercial", "", ""),
+        ])
 
 
 class EmployerPortalLearnerDetailTests(SimpleTestCase):
