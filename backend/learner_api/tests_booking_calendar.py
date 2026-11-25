@@ -362,7 +362,7 @@ class RescheduleEndpointTests(SimpleTestCase):
         mirror = SimpleNamespace(id=248, email="learner@example.com")
         record = self.scheduled_record()
         record.event_key = "progress-review:248:3:2026-09-08"
-        record.learner_id = 248
+        record.learner_profile_id = 248
 
         source_model = Mock()
         source_model.all_learners.filter.return_value.first.return_value = learner

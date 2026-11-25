@@ -177,6 +177,7 @@ class MonthlyFocusTests(SimpleTestCase):
         record.scheduled_date=date(2026,10,3); record.scheduled_time=None; record.duration_minutes=60
         record.meeting_provider='teams'; record.owner_name='Synthetic coach'; record.owner_email='coach@example.test'
         overlay = NoBody(); overlay.source_review_id=1; overlay.status='awaiting-signature'; overlay.completed_at=None
+        overlay.owner_email = 'coach@example.test'
         result = apply_imported_state({'status':'not-scheduled'},record,overlay,compact=True)
         self.assertEqual(result['status'],'awaiting-signature')
         self.assertEqual(result['date'],'2026-10-03')

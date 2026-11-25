@@ -58,7 +58,10 @@ export function DeliveryCalendarEditor(props: Props) {
   useEffect(() => { callbacks.current.onHolidaysChange(JSON.parse(signature) as CurriculumHoliday[]); }, [signature]);
   useEffect(() => { callbacks.current.onReadyChange(ready); }, [ready]);
 
-  const update = (patch: Partial<DeliveryCalendarPolicy>) => onChange({ ...policy, ...patch });
+  const customizedPolicy = { ...policy, excludedHolidayIds: [...new Set([
+    ...policy.excludedHolidayIds, ...(inherited ? (inheritedExcludedIds || []).map(String) : []),
+  ])] };
+  const update = (patch: Partial<DeliveryCalendarPolicy>) => onChange({ ...customizedPolicy, ...patch });
   const toggleHoliday = (id: string) => update({ excludedHolidayIds: policy.excludedHolidayIds.includes(id)
     ? policy.excludedHolidayIds.filter(item => item !== id) : [...policy.excludedHolidayIds, id] });
   const label = CALENDAR_COUNTRIES.find(item => item[0] === policy.country)?.[1] || policy.country;
@@ -111,12 +114,13 @@ export function DeliveryCalendarEditor(props: Props) {
             aria-label={`Remove ${row.label}`} onClick={() => update({ manualHolidays: policy.manualHolidays.filter(item => item.id !== row.id) })}>Remove</button>}
         </label>)}
       </fieldset>
+    </>}
       <button ref={extraHolidayToggle} type="button" className="text-xs font-semibold text-primary-700"
         aria-expanded={showExtraHoliday} aria-controls={extraHolidayId} onClick={() => setShowExtraHoliday(!showExtraHoliday)}>
-        {showExtraHoliday ? 'Hide extra holiday form' : 'Add an extra holiday (optional)'}
+        {showExtraHoliday ? 'Hide custom holiday form' : 'Add custom holiday'}
       </button>
       <div id={extraHolidayId} hidden={!showExtraHoliday}>{showExtraHoliday && <fieldset className="space-y-2">
-        <legend className="text-xs font-semibold">Extra holiday for this {module ? 'module' : 'cohort'} (optional)</legend>
+        <legend className="text-xs font-semibold">Custom holiday for this {module ? 'module' : 'cohort'} (optional)</legend>
         <p className="text-xs text-foreground-500">Use this for a one-off break, such as a college break. Leave it empty if no extra holiday is needed.</p>
         <label className="block text-xs">Holiday name<input className="mt-1 w-full rounded-lg border p-2" placeholder="e.g. College break" value={manualName} onChange={event => setManualName(event.target.value)} /></label>
         <div className="flex gap-2">
@@ -131,7 +135,6 @@ export function DeliveryCalendarEditor(props: Props) {
           extraHolidayToggle.current?.focus();
         }}>Add holiday</button>
       </fieldset>}</div>
-    </>}
     {!module && value === null && <button type="button" className="text-xs font-semibold text-primary-700" onClick={() => onChange(policy)}>Customize England calendar</button>}
     {!module && value !== null && <button type="button" className="text-xs font-semibold text-primary-700" onClick={() => onChange(null)}>Restore England default</button>}
     <p className="text-xs text-foreground-500">Changes apply to this {module ? 'module' : 'cohort'}. Existing Teams meetings are updated separately.</p>

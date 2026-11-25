@@ -878,7 +878,7 @@ describe('Programme workspace', { timeout: 15000 }, () => {
 
   it('shows the component figures as loading, not as zeros, until the summary answers', async () => {
     const api = await import('@/lib/curriculumApi');
-    let finishSummary: (rows: Awaited<ReturnType<typeof api.fetchCurriculumComponentSummary>>) => void = () => {};
+    let finishSummary: ((rows: Awaited<ReturnType<typeof api.fetchCurriculumComponentSummary>>) => void) | undefined;
     vi.mocked(api.fetchCurriculumComponentSummary).mockImplementationOnce(() => new Promise(resolve => { finishSummary = resolve; }));
 
     await renderWorkspace();
@@ -887,7 +887,9 @@ describe('Programme workspace', { timeout: 15000 }, () => {
     expect(screen.getByText('Loading components')).toBeInTheDocument();
     expect(screen.queryByText(/weeks? (?:has|have) no content/)).not.toBeInTheDocument();
 
-    finishSummary(summaryOf(components));
+    // Loading UI can render before the summary request has actually started.
+    await vi.waitFor(() => expect(finishSummary).toBeTypeOf('function'));
+    await act(async () => finishSummary!(summaryOf(components)));
 
     await vi.waitFor(() => expect(screen.queryByText('Checking which weeks have content…')).not.toBeInTheDocument());
     expect(screen.queryByText('Loading components')).not.toBeInTheDocument();

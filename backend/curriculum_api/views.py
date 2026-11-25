@@ -1,3 +1,4 @@
+from .template_ksbs import authoring_transaction as template_authoring_transaction
 from config.time_zones import calendar_zone, local_clock_to_utc
 import base64
 import contextlib
@@ -61,6 +62,7 @@ from .teams_calendar_checks import (CalendarMismatch, attendee_differences, atte
                                     dropped_sessions_sentence, sessions_a_rewrite_would_drop,
                                     unconfirmed_attendee_detail, utc_datetime, verify_calendar, read_calendar_instances)
 
+from learner_api.ksb_domain import official_progress_relation
 from learner_api.ksb_exclusions import and_not_excluded
 from learner_api.progress_rules import (
     progress_achievement_status,
@@ -107,7 +109,7 @@ STAFF_PROFILE_PHONE_PATTERN = re.compile(r'^[+()\d\s.\-]{7,20}$')
 CURRICULUM_CACHE_TTL_SECONDS = 1800
 # Programme payloads that carry learner figures: learner counts on the
 # programme, its cohorts and groups (``Learner.learners``), and learner KSB
-# progress (``learner_progress_ksbs``). No curriculum epoch covers those
+# progress (``ksb_learner_progress``). No curriculum epoch covers those
 # tables -- they are written by learner, hours and progress code, management
 # commands and imports outside any curriculum request -- so this TTL is their
 # only freshness bound. Under the global epoch any curriculum save anywhere
@@ -1202,6 +1204,8 @@ def quote_ident(value):
 
 
 def table_name(table):
+    from .canonical_read_sql import ksb_physical_table
+    table = ksb_physical_table(table)
     # PostgreSQL uses the dedicated ``curriculum`` schema; sqlite (tests) keeps
     # the tables in the default schema, so drop the schema qualifier there to
     # stay consistent with authoring_table_name().
@@ -1211,6 +1215,8 @@ def table_name(table):
 
 
 def column_names(table):
+    from .canonical_read_sql import ksb_physical_table
+    table = ksb_physical_table(table)
     global _TABLE_COLUMNS_LISTED
     if native_only():
         from .free_course_contract import COLUMNS
@@ -1262,6 +1268,8 @@ def has_column(table, column):
 
 
 def table_exists(table):
+    from .canonical_read_sql import ksb_physical_table
+    table = ksb_physical_table(table)
     # Cached because this runs on hot read paths and the schema does not change
     # under us; invalidate_curriculum_cache() clears it, as does a process restart.
     # A failed probe is deliberately not cached, so a transient error does not
@@ -1340,7 +1348,8 @@ def ensure_program_config_archive_columns():
             'color': 'varchar(32)',
             'description': 'text',
             'status': 'varchar(32)',
-            'ksb_profile_source_id': 'varchar(128)',
+            'standard_ref': 'text',
+            'standard_version': 'text',
             'required_otjh': 'numeric(8, 2)',
             'display_order': 'integer',
         })
@@ -4605,7 +4614,8 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
     if repeat != 'none':
         pruned, holiday_warnings = prune_study_week_fillers(
             microsoft_graph_request, owner_key, event_id, clean_str(series.get('module_catalogue_id')),
-            targets, graph_settings, current_occurrences, allow_delete=not people_only,
+            targets, graph_settings, current_occurrences, allow_delete=not people_only and notify_attendees,
+            allow_uninvited_delete=not people_only,
         )
         stale_deletions = [item for item in stale_deletions if item.get('instance_id') not in pruned]
         warnings.extend(holiday_warnings)
@@ -5835,6 +5845,14 @@ def note_live_rows(table, rows):
         note_rows(table, rows)
     except Exception:
         logger.debug('Unable to note a write for live sync.', exc_info=True)
+    if str(table or '').split('.')[-1].strip('"') == 'modules':
+        try:
+            from .bunny_module_collections import queue_module
+            for row in rows:
+                queue_module(row)
+        except Exception as failure:
+            # The scheduled collection scanner recovers an interrupted save hook.
+            logger.warning('Module live collection queue needs recovery (%s).', type(failure).__name__)
     # Learner content entries of these rows' modules (never raises; on any
     # doubt it retires all modules).
     from . import content_cache
@@ -6739,7 +6757,8 @@ def build_module_session_plan(start_value, number_of_sessions, delivery_days, ho
     if week_limit is None and len(sessions) < session_count:
         warnings.append('Could not generate the full session plan from the supplied delivery pattern.')
 
-    return {
+    from curriculum_api.live_holiday_policy import with_closed_weeks
+    return with_closed_weeks({
         'sessions': sessions,
         'slots': curriculum_slots,
         'skippedHolidays': skipped,
@@ -6749,7 +6768,7 @@ def build_module_session_plan(start_value, number_of_sessions, delivery_days, ho
         # Stated rather than dropped, because callers render the pair.
         'originalEndDate': sessions[-1]['date'] if sessions else '',
         'warnings': warnings,
-    }
+    }, holidays_by_date, start, first_weekday=first_weekday)
 
 
 def module_calendar_end_date(start_value, week_count, module=None):
@@ -7724,7 +7743,7 @@ def permanently_delete_programme_structure(plan, force_content=False):
         wipe(AUTHORING_WEEKS_TABLE, [
             curriculum_in_clause('id', child.get('weekIds')),
         ])
-    wipe('tutor_module_notifications', [module_clause])
+    # Notification history is retained; its RESTRICT FK may refuse this delete.
     wipe('module_completion_criteria', [module_clause])
     wipe('module_details', [module_clause])
     wipe(LIVE_SESSIONS_TABLE, [module_clause])
@@ -8092,50 +8111,16 @@ def active_ksb_profiles(ksb_profiles):
 
 
 def programme_config_ksb_source(config):
-    """(source_type, source_id) a programme row stores, or ('', '').
-
-    The one reading of ``curriculum.programmes.ksb_profile_source_id``. Coverage,
-    Achievement and the programme card all go through it, so they cannot
-    disagree about which source a programme applies.
-    """
-    stored = normalise_ksb_profile_source_value((config or {}).get('ksb_profile_source_id'))
-    return split_ksb_source('', stored) if stored else ('', '')
+    """Programme source comes from the official standard/version pair."""
+    config = config or {}
+    reference, version = config.get('standard_ref'), config.get('standard_version')
+    if reference and version:
+        return 'standard', f"{reference.lower()}-v{version.replace('.', '-')}"
+    return '', ''
 
 
 def programme_applied_ksb_profile(config, ksb_profiles, *programme_names):
-    """The manual KSB profile a programme applies, or None.
-
-    The stored source decides (programme_config_ksb_source):
-
-    - a standard: no manual profile speaks for the programme. Applying a standard
-      never unlinks the programme from a profile's ``programme_ids``, so a
-      profile still listing it -- archived or not -- is a leftover link. Reading
-      it made a programme on ST0845 call itself "Empty KSB profile";
-    - a profile: that profile, whatever its state, because the row chose it;
-    - nothing: the legacy match by programme name, against active profiles only,
-      so an archived profile cannot name a programme by accident.
-    """
-    source_type, source_id = programme_config_ksb_source(config)
-    if source_type == 'standard':
-        return None
-    if source_id:
-        wanted = normalise(source_id)
-        for profile in ksb_profiles or []:
-            profile_id = clean_str(profile.get('id'))
-            identities = {
-                profile_id,
-                clean_str(profile.get('ksb_profile_id')),
-                ksb_profile_source_id(profile),
-                f'ksb-{profile_id}' if profile_id else '',
-            }
-            if wanted in {normalise(value) for value in identities if value}:
-                return profile
-        return None
-    active = active_ksb_profiles(ksb_profiles)
-    for name in programme_names:
-        profile = get_ksb_profile_for_program(name, active)
-        if profile:
-            return profile
+    """Manual profiles are retired; programme names cannot assign standards."""
     return None
 
 
@@ -8184,7 +8169,7 @@ def applied_standard_required_codes(config, cache):
     manual profile matched by its name: the name match kept Marketing Executive
     and Marketing Manager on their profiles' counts after both moved to
     standards, and gave 0 to programmes no profile names. None means the
-    programme applies no standard (or it is not in standard_ksbs), so the
+    programme applies no standard (or it is not in ksb_standard_definitions), so the
     caller keeps the profile match. ``cache`` is per build, keyed by standard.
     """
     source = clean_str((config or {}).get('ksb_profile_source_id'))
@@ -8225,48 +8210,10 @@ def ksb_profile_context_ids(profile, key, primary_value=''):
 
 
 def set_programme_modules_ksb_source(programme_values, source_value):
-    raw_targets = unique([clean_str(value) for value in programme_values if clean_str(value)])
-    targets = {normalise(value) for value in raw_targets if normalise(value)}
-    source_value = normalise_ksb_profile_source_value(source_value)
-    if not raw_targets:
-        return 0
-    ensure_module_authoring_tables()
-    if connection.vendor == 'postgresql':
-        placeholders = ', '.join(['%s'] * len(raw_targets))
-        params = [source_value, datetime.utcnow(), *raw_targets]
-        with connection.cursor() as cursor:
-            cursor.execute(
-                f'''
-                update {authoring_table_name(AUTHORING_MODULES_TABLE)}
-                set ksb_profile_source_id = %s, updated_at = %s
-                where programme_id in ({placeholders})
-                   or programme_id in (
-                       select programme_id from {table_name('programmes')} where name in ({placeholders}))
-                ''',
-                [*params, *raw_targets],
-            )
-            # Raw SQL across a programme's modules: no helper reported it.
-            # Rare, so retiring every module's learner content costs little.
-            from . import content_cache
-            content_cache.retire_all()
-            return cursor.rowcount
-    updated = 0
-    for module in authoring_fetch_all(AUTHORING_MODULES_TABLE):
-        module_programme_values = [
-            module.get('programme_id'),
-            module.get('programme_name'),
-        ]
-        if not any(normalise(value) in targets for value in module_programme_values):
-            continue
-        module_id = clean_str(module.get('module_catalogue_id'))
-        if not module_id:
-            continue
-        update_authoring_rows(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_id], {
-            'ksb_profile_source_id': source_value,
-            'updated_at': datetime.utcnow(),
-        })
-        updated += 1
-    return updated
+    """Module selectors inherit the programme pair; there is no copied column."""
+    from . import content_cache
+    content_cache.retire_all()
+    return 0
 
 
 def program_config_by_id(program_configs):
@@ -8878,7 +8825,7 @@ def get_module_rows():
 @scoped_curriculum_read
 def get_ksb_profile_rows():
     # curriculum.ksb_profiles was removed: a programme takes its KSBs from its
-    # apprenticeship standard (standard_ksbs). Kept as an empty source so the
+    # apprenticeship standard (ksb_standard_definitions). Kept as an empty source so the
     # callers that still pass profiles through need no change.
     return []
 
@@ -8890,7 +8837,7 @@ _SKILLS_ENGLAND_ROWS = (None, None)
 
 @scoped_curriculum_read
 def get_skills_england_ksb_rows():
-    if not table_exists('standard_ksbs'):
+    if not table_exists('ksb_standard_definitions'):
         return []
     # Re-read only when the table changed: its digest rides the request's one
     # lookup round trip, so an unchanged table costs nothing.
@@ -8901,7 +8848,7 @@ def get_skills_england_ksb_rows():
         return cached_rows
     rows = fetch_all(f'''
         select *
-        from {table_name("standard_ksbs")}
+        from {table_name("ksb_standard_definitions")}
         order by standard_ref, standard_version, ksb_type, ksb_code, id
     ''')
     if digest:
@@ -9226,11 +9173,18 @@ def teams_non_delivery_reason(targets, time_zone='Europe/London', holiday_rows=N
         zone = ZoneInfo('Europe/London')
     holidays = get_holiday_rows_safe() if holiday_rows is None else (holiday_rows or [])
     policy = None
+    closure_plan = {}
     if module_catalogue_id:
         from curriculum_api.delivery_calendar import module_policy, policy_holidays
         module = authoring_module_exists(module_catalogue_id) or {}
+        if module:
+            from curriculum_api.live_holiday_policy import module_closure_plan
+            closure_plan = module_closure_plan(module)
         policy = module_policy(module)
-        if policy is not None:
+        if module.get('cohort_id'):
+            from curriculum_api.delivery_calendar import module_holidays
+            holidays = module_holidays(module, module_cohort_selected_holidays(module))
+        elif policy is not None:
             holidays = policy_holidays(policy, module.get('start_date'), module.get('end_date'), holidays)
     for target in targets or []:
         instant = (
@@ -9247,6 +9201,8 @@ def teams_non_delivery_reason(targets, time_zone='Europe/London', holiday_rows=N
         else:
             from curriculum_api.calendar_policy import non_delivery_reason
             reason = non_delivery_reason(local.date(), policy, holidays)
+        from curriculum_api.live_holiday_policy import closed_date_reason
+        reason = closed_date_reason(closure_plan, local.date()) or reason
         if reason:
             session_number = parse_int(
                 target.get('session_number') or target.get('sessionNumber'), 0,
@@ -10541,7 +10497,7 @@ def programme_learner_ksb_progress(programme_id, required_codes=None):
     can never disagree:
 
       * weighted progress continues to come from the Component Progress
-        snapshot (``learner_progress_ksbs``); the separate learner/KSB count
+        snapshot (``ksb_learner_progress``); the separate learner/KSB count
         also accepts an explicit KSB declaration in a submitted reflection.
       * per KSB, achieved weight is capped at the mapped weight, so one
         over-weighted activity cannot push the programme past 100%.
@@ -11044,6 +11000,7 @@ def delivery_slots_by_catalogue(
                 groups.get(clean_str(module_row.get('group_id'))) or {},
                 week_count,
                 holidays=holidays,
+                weeks=weeks_by_catalogue.get(catalogue_id),
             )
         except (Exception, AssertionError):
             # One module's plan failing leaves that module on its stored dates;
@@ -11137,7 +11094,9 @@ def authoring_session_links_by_catalogue(
     # which is the index its planned slot is numbered by.
     weeks_by_catalogue = defaultdict(list)
     for week_row in week_rows:
-        weeks_by_catalogue[clean_str(week_row.get('module_catalogue_id'))].append(week_row)
+        weeks_by_catalogue[clean_str(week_row.get('module_catalogue_id'))].append({
+            **week_row, 'components': live_components_by_week.get(clean_str(week_row.get('id')), []),
+        })
     plans_by_catalogue = delivery_slots_by_catalogue(
         weeks_by_catalogue,
         modules_by_catalogue=modules_by_catalogue,
@@ -11571,6 +11530,19 @@ def module_delivery_session_plan(module, session_count, start, holidays=None, we
         from curriculum_api.delivery_calendar import module_holidays
         holidays = module_holidays(module, holidays)
     applied_holidays = [*(holidays or []), *(own_holidays if isinstance(own_holidays, list) else [])]
+    from curriculum_api.live_holiday_policy import with_closed_weeks
+
+    def finish_plan(plan):
+        # Keep candidate slots and their numbers stable. Live creation and Teams
+        # booking consume the same explicit closure windows, without catch-up.
+        first_day = (first_weekly_session_day(start, weekly)
+                     if clean_str(module.get('schedule_mode') or module.get('scheduleMode')) == 'custom'
+                     and len(weekly) > 1 and module_week_starts_on(module) else None)
+        weekday = WEEKDAY_INDEX[str(first_day).lower()] if first_day else (0 if delivery_days else start.weekday() if start else 0)
+        result = with_closed_weeks(plan, holiday_details_by_date(applied_holidays), start,
+                                   module.get('end_date') or module.get('endDate'), weekday)
+        return apply_session_overrides(result, module)
+
     if calendar_weeks:
         from .study_weeks import build_study_week_plan
         if not start or week_count <= 0:
@@ -11581,7 +11553,7 @@ def module_delivery_session_plan(module, session_count, start, holidays=None, we
         for session in plan['sessions']:
             clock, end, duration = module_session_clock({**module, 'session_overrides': {}}, session_date=session['date'])
             session.update(startTime=clock, endTime=end, durationMinutes=duration)
-        return apply_session_overrides(plan, module)
+        return finish_plan(plan)
     plan = build_module_session_plan(
         start, session_count, delivery_days, applied_holidays, week_count=week_count,
         week_starts_on=first_weekly_session_day(start, weekly)
@@ -11599,7 +11571,7 @@ def module_delivery_session_plan(module, session_count, start, holidays=None, we
         for session in plan['sessions']:
             clock, end, duration = module_session_clock({**module, 'session_overrides': {}}, session_date=session.get('date'))
             session.update(startTime=clock, endTime=end, durationMinutes=duration)
-        return apply_session_overrides(plan, module)
+        return finish_plan(plan)
     warnings = plan.get('warnings') or []
     if not start:
         return {'sessions': [], 'slots': [], 'skippedHolidays': [], 'finalEndDate': '', 'originalEndDate': '', 'warnings': warnings}
@@ -11623,7 +11595,7 @@ def module_delivery_session_plan(module, session_count, start, holidays=None, we
         }
         for index in range(fallback_count)
     ]
-    return apply_session_overrides({
+    return finish_plan({
         'sessions': sessions,
         # No weekday to skip onto means no slot can ever be closed, so the
         # curriculum spine is the session list: one open slot each, no reading
@@ -11645,7 +11617,7 @@ def module_delivery_session_plan(module, session_count, start, holidays=None, we
         'finalEndDate': sessions[-1]['date'] if sessions else '',
         'originalEndDate': sessions[-1]['date'] if sessions else '',
         'warnings': warnings,
-    }, module)
+    })
 
 
 def module_delivery_plan(module, session_count, start, holidays=None):
@@ -12176,7 +12148,7 @@ def module_week_session_plan(module_row, week_count=0):
     ).get('sessions') or []
 
 
-def module_week_delivery_slots(module_row, group_row, week_count, *, holidays=None):
+def module_week_delivery_slots(module_row, group_row, week_count, *, holidays=None, weeks=None):
     """Every planned delivery slot of each authored week, in delivery order.
 
     **A week owns one planned slot per delivery day its group runs.** A group
@@ -12211,7 +12183,9 @@ def module_week_delivery_slots(module_row, group_row, week_count, *, holidays=No
     slots_by_week_number = defaultdict(list)
     for planned_session in session_plan:
         slots_by_week_number[parse_int(planned_session.get('weekNumber'), 0)].append(planned_session)
-    slots_by_week = [list(slots_by_week_number.get(index + 1) or []) for index in range(week_count)]
+    from curriculum_api.week_plan_alignment import week_plan_offset
+    offset = 0 if module_week_boundary_mode(delivery_module) == 'calendar' else week_plan_offset(weeks, session_plan)
+    slots_by_week = [list(slots_by_week_number.get(index + 1 - offset) or []) for index in range(week_count)]
     return slots_by_week, session_plan
 
 
@@ -13454,7 +13428,7 @@ def curriculum_standards(request):
     standards = cached_curriculum_value('skills-england-standards', build_skills_england_standards)
     return reference_json_response(request, {
         'schema': CURRICULUM_SCHEMA,
-        'sourceTable': 'standard_ksbs',
+        'sourceTable': 'ksb_standard_definitions',
         'count': len(standards),
         'results': standards,
     })
@@ -13467,7 +13441,7 @@ def curriculum_standard_detail(request, identifier):
         return json_error('Skills England standard not found.', status=404)
     return reference_json_response(request, {
         'schema': CURRICULUM_SCHEMA,
-        'sourceTable': 'standard_ksbs',
+        'sourceTable': 'ksb_standard_definitions',
         **standard,
     })
 
@@ -15012,6 +14986,8 @@ def find_existing_authoring_catalogue_id_for_payload(payload):
 
 
 def authoring_table_name(table):
+    from .canonical_read_sql import ksb_physical_table
+    table = ksb_physical_table(table)
     if connection.vendor == 'postgresql':
         return table_name(table)
     return quote_ident(table)
@@ -15063,7 +15039,7 @@ def provision_module_authoring_tables():
     their parents' ids and read names through them, a module names its tutor by
     ``tutor_id``, a group's coaches live in ``group_coaches``, a cohort's holiday
     choices in ``cohort_calendar_holidays``, and a KSB mapping belongs to its
-    component and points at ``standard_ksbs``. Foreign keys are left out so the
+    component and points at ``ksb_standard_definitions``. Foreign keys are left out so the
     SQLite harness can seed rows in any order; ``standard_ksb_id`` is nullable
     here because the harness carries no Skills England catalogue to resolve it.
     """
@@ -15094,7 +15070,6 @@ def provision_module_authoring_tables():
                 session_week_day varchar(255),
                 session_start_time varchar(32),
                 session_end_time varchar(32),
-                ksb_profile_source_id varchar(128),
                 schedule_mode varchar(16) not null default 'group',
                 week_starts_on varchar(9),
                 week_boundary_mode varchar(16),
@@ -15124,7 +15099,6 @@ def provision_module_authoring_tables():
             cursor.execute(f"alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists learner_roster_mode varchar(32) not null default 'inherited'")
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists teams_shared_source_module_id varchar(128)')
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists ksb_remap_report text')
-            cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists ksb_profile_source_id varchar(128)')
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists session_week_day varchar(255)')
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists session_start_time varchar(32)')
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists session_end_time varchar(32)')
@@ -15163,8 +15137,6 @@ def provision_module_authoring_tables():
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column teams_shared_source_module_id varchar(128)')
             if 'ksb_remap_report' not in columns:
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column ksb_remap_report text')
-            if 'ksb_profile_source_id' not in columns:
-                cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column ksb_profile_source_id varchar(128)')
             if 'session_week_day' not in columns:
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column session_week_day varchar(255)')
             if 'session_start_time' not in columns:
@@ -15251,7 +15223,7 @@ def provision_module_authoring_tables():
             )
         ''')
         cursor.execute(f'''
-            create table if not exists {authoring_table_name('standard_ksbs')} (
+            create table if not exists {authoring_table_name('ksb_standard_definitions')} (
                 id {serial_key},
                 standard_ref text not null,
                 standard_version text not null default '',
@@ -15268,8 +15240,8 @@ def provision_module_authoring_tables():
         cursor.execute(f'''
             create table if not exists {authoring_table_name(AUTHORING_KSB_MAPPINGS_TABLE)} (
                 id varchar(128) primary key,
-                component_id varchar(128) not null,
-                ksb_id varchar(255),
+                component_id varchar(128),
+                template_component_id varchar(128),
                 classification varchar(32) not null default 'secondary',
                 created_at timestamp not null default current_timestamp,
                 updated_at timestamp not null default current_timestamp,
@@ -15423,7 +15395,7 @@ def provision_module_authoring_tables():
         AUTHORING_MODULES_TABLE, AUTHORING_WEEKS_TABLE, AUTHORING_COMPONENTS_TABLE,
         AUTHORING_KSB_MAPPINGS_TABLE, AUTHORING_COMPLETION_TABLE, AUTHORING_ADVANCED_TABLE,
         COHORT_AUTHORING_DETAILS_TABLE, GROUPS_TABLE, MODULE_TEAMS_SHARES_TABLE,
-        'standard_ksbs', 'cohort_calendar_holidays', 'tutors', 'coaches', 'group_coaches',
+        'ksb_standard_definitions', 'cohort_calendar_holidays', 'tutors', 'coaches', 'group_coaches',
     ):
         _TABLE_COLUMNS_CACHE.pop(f'{CURRICULUM_SCHEMA}.{table}', None)
         _TABLE_COLUMNS_CACHE.pop(table, None)
@@ -16186,6 +16158,8 @@ def authoring_upsert(table, key_columns, payload, allow_null_columns=None):
     writable = column_names(table)
     payload, staff_nullable = curriculum_names.store_staff(table, payload, writable)
     payload, shaped_nullable = write_shape.normalise(table, payload, writable)
+    if table == AUTHORING_KSB_MAPPINGS_TABLE and 'standard_ksb_id' in writable:
+        payload = ksb_mapping_placement.reuse_mapping_rows([payload])[0]
     nullable = set(SOFT_DELETE_COLUMNS) | set(allow_null_columns or ()) | shaped_nullable | staff_nullable
     values = {
         key: value
@@ -18173,11 +18147,11 @@ def component_summary_ksb_codes(catalogue_ids):
     None off Postgres or without the standard KSB table; the summary then
     leaves ``ksbCodes`` out and the page falls back to the full component read.
     """
-    if connection.vendor != 'postgresql' or not catalogue_ids or not table_exists('standard_ksbs'):
+    if connection.vendor != 'postgresql' or not catalogue_ids or not table_exists('ksb_standard_definitions'):
         return None
     # A mapping's code is its standard KSB's; both rows are filtered by status.
     code_sql = 'standard.ksb_code'
-    join_sql = f' join {authoring_table_name("standard_ksbs")} as standard on standard.id = mapping.standard_ksb_id'
+    join_sql = f' join {authoring_table_name("ksb_standard_definitions")} as standard on standard.id = mapping.standard_ksb_id'
     clauses = [
         f'component.module_catalogue_id in ({", ".join(["%s"] * len(catalogue_ids))})',
         archive_state.live_sql('component'),
@@ -18595,6 +18569,19 @@ def save_component_builder_payload(payload, component_id=None):
         sibling_rows = authoring_fetch_all(AUTHORING_COMPONENTS_TABLE, 'module_catalogue_id = %s and week_id = %s', [module_catalogue_id, week_id])
         display_order = len(sibling_rows)
     module_row = (authoring_fetch_all(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_catalogue_id]) or [{}])[0]
+    if stored_component_type(payload.get('type')) == 'live_session':
+        from curriculum_api.live_holiday_policy import module_closure_plan, closed_week_ids, closed_date_reason
+        retained = (frontend_component_type(existing_row.get('type')) == 'live-session'
+                    and not existing_row.get('deleted_at')
+                    and clean_str(existing_row.get('week_id')) == week_id
+                    and clean_str(existing_row.get('module_catalogue_id')) == module_catalogue_id)
+        if not retained:
+            week_rows = active_week_rows(authoring_fetch_all(
+                AUTHORING_WEEKS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], 'display_order, week_number, id'))
+            plan = module_closure_plan(module_row, week_rows)
+            if week_id in closed_week_ids(module_row, week_rows, plan) or closed_date_reason(plan, settings.get('sessionDate')):
+                raise ModuleAuthoringValidationError([{'path': 'type', 'message':
+                    'This is a holiday week. Add reading, quizzes or other content instead of a Live session.'}])
     incoming_mappings = payload.get('ksbMappings') if isinstance(payload.get('ksbMappings'), list) else None
     if incoming_mappings is None and 'ksbRefs' in payload:
         incoming_mappings = [
@@ -18887,6 +18874,31 @@ def apply_shared_teams_settings_to_weeks(module, weeks):
                 merged['teamsCalendarBinding'] = 'matched'
             component['settings'] = merged
             index += 1
+        # Projection happens after the alias's own plan was stamped. Its heading
+        # must describe the confirmed main meeting it now opens, without moving
+        # the alias's week/component rows or changing the source booking.
+        main = next((item for item in week.get('components') or []
+                     if normalise_component_type(item.get('type')) == 'live_session'
+                     and not (item.get('settings') or {}).get('extraTeamsMeetingUrl')
+                     and clean_str((item.get('settings') or {}).get('teamsMeetingScope')).lower() != 'additional'), None)
+        settings = (main or {}).get('settings') or {}
+        confirmed = clean_str(settings.get('sessionDate'))[:10]
+        start = clean_str(module.get('start_date') or module.get('startDate'))[:10]
+        end = clean_str(module.get('end_date') or module.get('endDate'))[:10]
+        if (settings.get('teamsOccurrenceId') and settings.get('teamsLiveSessionId')
+                and settings.get('teamsCalendarBinding') not in ('unverified', 'missing', 'ambiguous')
+                and confirmed and (not start or confirmed >= start) and (not end or confirmed <= end)):
+            from datetime import date as calendar_date
+            try:
+                day = calendar_date.fromisoformat(confirmed)
+            except ValueError:
+                continue
+            week['sessionDate'] = confirmed
+            week['sessionDay'] = day.strftime('%A')
+            if settings.get('sessionTime'):
+                week['sessionStartTime'] = settings['sessionTime']
+            if settings.get('durationMinutes'):
+                week['sessionDurationMinutes'] = settings['durationMinutes']
     return weeks
 
 
@@ -19149,7 +19161,7 @@ def preserve_additional_meeting_settings(payload_settings, stored_row):
     return {**payload_settings, **kept, 'liveSessionUrl': join_url, 'teamsMeetingUrl': join_url}
 
 
-def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series_settings, occurrence_rows, *, create_missing=False, dry_run=False, unresolved_components=None):
+def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series_settings, occurrence_rows, *, create_missing=False, dry_run=False, unresolved_components=None, align_to_week_plan=False):
     """Write a tracked Teams meeting onto the weeks of a module.
 
     A module's live sessions and its meeting's sessions are one list, read in
@@ -19170,6 +19182,10 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
     from it. The ``created`` count is the one that answers that question: the
     update pass rewrites every existing live-session component every time, so it
     is never zero and never means work is outstanding.
+
+    ``align_to_week_plan`` explicitly repairs content-to-calendar bindings by
+    each authored week's delivery slots. It never edits occurrences, sends to
+    Microsoft or creates components; ordinary restores keep booked identities.
     """
     module_row = (authoring_fetch_all(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_catalogue_id]) or [{}])[0]
     group_rows = authoring_fetch_all(GROUPS_TABLE, 'group_id = %s', [module_row.get('group_id')]) if module_row.get('group_id') else []
@@ -19200,13 +19216,22 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
     structure_rows = [{**week, 'components': components_by_week.get(clean_str(week.get('id')), [])} for week in week_rows]
     session_rows = module_structure_uses_session_rows(structure_rows, module_stored_session_count(module_row), delivery_days_per_week(module_row))
     session_plan = module_week_session_plan(module_row, 0 if session_rows else len(week_rows))
+    from curriculum_api.week_plan_alignment import week_plan_offset
+    from curriculum_api.weekly_schedule import module_week_boundary_mode
+    week_offset = 0 if session_rows or module_week_boundary_mode(module_row) == 'calendar' else week_plan_offset(structure_rows, session_plan)
     external_calendar = clean_str(series_row.get('meeting_type')) == 'linked-external'
     external_slots = []
-    if external_calendar:
+    if external_calendar or align_to_week_plan:
         # Imported occurrences already exist in Microsoft. Moving curriculum
         # content changes which occurrence delivers it, not that occurrence's
         # date, attendance or recordings.
-        external_slots, _external_plan = module_week_delivery_slots(module_row, group_row, len(week_rows))
+        external_slots, _external_plan = module_week_delivery_slots(module_row, group_row, len(week_rows), weeks=structure_rows)
+    if align_to_week_plan:
+        create_missing = False
+    closed_week_identifiers = set()
+    if create_missing:
+        from curriculum_api.live_holiday_policy import module_closure_plan, closed_week_ids
+        closed_week_identifiers = closed_week_ids(module_row, structure_rows, module_closure_plan(module_row, structure_rows))
     session_start_time, _session_end_time, session_duration = module_session_clock(module_row, group_row)
     default_points = live_session_component_points() if create_missing else 0
     now = datetime.utcnow()
@@ -19214,6 +19239,21 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
     created = 0
     handled_component_ids = set()
     claimed_occurrence_ids = set()
+
+    def occurrence_on_planned_slot(planned):
+        # A repair must not let obsolete IDs or dates steal a neighbour's
+        # meeting. Match the business-local date and, when needed, its clock.
+        planned_date = format_date(planned.get('date'))
+        matches = [row for row in occurrence_rows
+                   if planned_date and occurrence_local_date(row, series_settings) == planned_date
+                   and clean_str(row.get('status')).lower() not in TEAMS_OFF_CALENDAR_OCCURRENCE_STATUSES | {'failed'}]
+        clock = clean_str(planned.get('startTime'))[:5]
+        if len(matches) > 1 and clock:
+            matches = [row for row in matches
+                       if occurrence_local_start(row, series_settings).strftime('%H:%M') == clock]
+        if len(matches) == 1 and clean_str(matches[0].get('id')) not in claimed_occurrence_ids:
+            return matches[0], 'matched'
+        return None, 'ambiguous' if matches else 'missing'
 
     def free_occurrence_on(date_value):
         """The unclaimed session Microsoft holds on one date, if there is one."""
@@ -19223,7 +19263,7 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
                      if clean_str(row.get('id')) not in claimed_occurrence_ids
                      and occurrence_local_date(row, series_settings) == date_value), None)
 
-    def occurrence_for_component(existing_settings, slot_index):
+    def occurrence_for_component(existing_settings, slot_index, planned=None):
         """Which booked session a live-session component owns.
 
         Paired by DATE, never by counting. Session numbers cannot carry this:
@@ -19236,13 +19276,12 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
 
         In order of authority:
 
-        1. The date this component itself currently runs on -- where its own
-           meeting sits, which is what keeps a booked session with its invited
-           attendees while a plan moves around it.
-        2. The date its week is planned for, which is what dates a component
-           that has never been booked, and what re-pairs one whose stored date
-           was left on another session's day.
-        3. For a component with no date at all -- neither its own nor a planned
+        1. An existing tracked occurrence keeps its identity while the plan
+           moves around it.
+        2. An unbooked component takes its week's planned date. A copied date
+           is not a booking and must not take the following week's meeting.
+        3. With no planned date, its authored date can identify a meeting.
+        4. For a component with no date at all -- neither its own nor a planned
            one for its week -- the next unclaimed session in order, which is
            what fills a freshly created series.
 
@@ -19268,12 +19307,15 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
         )), None)
         if tracked:
             return tracked
+        if planned is None:
+            planned = session_plan[slot_index] if slot_index < len(session_plan) else {}
+        planned_date = format_date(planned.get('date'))
+        if planned_date and not live_session_booked_on_module_calendar(existing_settings):
+            return free_occurrence_on(planned_date)
         stored_date = clean_str(existing_settings.get('sessionDate'))[:10]
         found = free_occurrence_on(stored_date)
         if found:
             return found
-        planned = session_plan[slot_index] if slot_index < len(session_plan) else {}
-        planned_date = format_date(planned.get('date'))
         found = free_occurrence_on(planned_date)
         if found or stored_date or planned_date:
             return found
@@ -19289,7 +19331,7 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
         `occurrence_for_component`.
         """
         existing_settings = existing_settings if isinstance(existing_settings, dict) else {}
-        if not occurrence and stored_calendar_series(series_row):
+        if not occurrence:
             saved_link = clean_str(existing_settings.get('liveSessionUrl') or existing_settings.get('teamsMeetingUrl') or existing_link)
             if saved_link:
                 # A failed match is not an instruction to erase an existing
@@ -19297,10 +19339,9 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
                 # binding; a later verified update can match it again.
                 return {**existing_settings, 'liveSessionUrl': saved_link,
                         'teamsMeetingUrl': clean_str(existing_settings.get('teamsMeetingUrl')) or saved_link,
-                        'teamsCalendarBinding': 'missing'}
+                        'teamsCalendarBinding': 'missing', 'teamsStartDateTimeUtc': ''}
             empty_settings = {key: '' for key in ('teamsMeetingUrl', 'liveSessionUrl', 'teamsEventId', 'teamsOnlineMeetingId', 'teamsOccurrenceId', 'teamsLiveSessionId', 'teamsSessionNumber', 'sessionDateTimeUtc', 'teamsStartDateTimeUtc')}
-            if 'teamsCalendarBinding' in existing_settings:
-                empty_settings['teamsCalendarBinding'] = 'missing'
+            empty_settings['teamsCalendarBinding'] = 'missing'
             override = clean_str(existing_settings.get('liveSessionLinkOverride'))
             if override:
                 empty_settings['liveSessionUrl'] = override
@@ -19346,8 +19387,7 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
                     planned_settings['sessionDateTimeUtc'] = planned_instant
                     planned_settings['teamsStartDateTimeUtc'] = planned_instant
         attached = {**shared_series_settings, **planned_settings, **session_settings}
-        if 'teamsCalendarBinding' in existing_settings:
-            attached['teamsCalendarBinding'] = 'matched' if occurrence else 'missing'
+        attached['teamsCalendarBinding'] = 'matched'
         # A bulk authoring replacement intentionally changes the join URL while
         # leaving the Teams meeting identity and occurrence metadata intact.
         # Keep that explicit override when the calendar is re-attached after a
@@ -19361,8 +19401,13 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
 
     session_index = 0
     sessions_per_week = delivery_days_per_week(module_row)
+    sessions_by_week = defaultdict(list)
+    for session in session_plan:
+        if parse_int(session.get('weekNumber'), 0) > 0:
+            sessions_by_week[parse_int(session['weekNumber'], 0)].append(session)
     for week_index, week_row in enumerate(week_rows):
         week_id = clean_str(week_row.get('id'))
+        week_slots = sessions_by_week.get(week_index + 1 - week_offset, [])
         live_rows = [row for row in components_by_week.get(week_id, []) if frontend_component_type(row.get('type')) == 'live-session']
         for live_index, row in enumerate(live_rows):
             existing_settings = component_builder_settings(row)
@@ -19414,6 +19459,9 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
                     existing_settings, series_row, planned, occurrence_rows, claimed_occurrence_ids,
                     series_settings.get('sessionTimeZone') or graph_timezone_iana({}),
                 )
+                if (attached is not None and attached.get('teamsCalendarBinding') != 'matched'
+                        and unresolved_components is not None):
+                    unresolved_components.append(clean_str(row.get('id')))
                 session_index += 1
                 handled_component_ids.add(clean_str(row.get('id')))
                 if attached is not None:
@@ -19426,11 +19474,19 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
                             })
                         updated += 1
                 continue
-            occurrence = occurrence_for_component(existing_settings, session_index)
+            if align_to_week_plan:
+                slots = external_slots[week_index] if week_index < len(external_slots) else []
+                planned = slots[live_index] if live_index < len(slots) else {}
+                occurrence, binding = occurrence_on_planned_slot(planned)
+            else:
+                planned = (week_slots[live_index] if live_index < len(week_slots) else {}) if sessions_by_week else None
+                occurrence = occurrence_for_component(existing_settings, session_index, planned)
+                binding = 'matched' if occurrence else 'missing'
             if occurrence:
                 claimed_occurrence_ids.add(clean_str(occurrence.get('id')))
             settings_for_week = settings_for_session(session_index, occurrence, existing_settings, row.get('live_sessions_link'))
-            if not occurrence and settings_for_week.get('teamsCalendarBinding') == 'missing' and unresolved_components is not None:
+            settings_for_week['teamsCalendarBinding'] = binding
+            if not occurrence and unresolved_components is not None:
                 unresolved_components.append(clean_str(row.get('id')))
             session_index += 1
             handled_component_ids.add(clean_str(row.get('id')))
@@ -19452,11 +19508,19 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
                 # structure payload's backward-compatible week-header walk.
                 session_index += 1
             continue
-        missing_count = 0 if session_rows else max(0, sessions_per_week - len(live_rows))
+        # Restore links only for verified bookings in this week's open slots.
+        # Reading/holiday weeks and leading general materials must not acquire
+        # a Live component just because the recurring master has a join URL.
+        closed_week = week_id in closed_week_identifiers or (bool(session_plan) and (not week_slots or any(slot.get('skippedHolidays') for slot in week_slots)))
+        capacity = len(week_slots) if session_plan else sessions_per_week
+        missing_count = 0 if session_rows or closed_week else max(0, capacity - len(live_rows))
         for offset in range(missing_count):
-            occurrence = occurrence_for_component({}, session_index)
-            if occurrence:
-                claimed_occurrence_ids.add(clean_str(occurrence.get('id')))
+            slot = week_slots[len(live_rows) + offset] if week_slots else None
+            occurrence = occurrence_for_component({}, session_index, slot)
+            if not occurrence:
+                session_index += 1
+                continue
+            claimed_occurrence_ids.add(clean_str(occurrence.get('id')))
             settings_for_week = settings_for_session(session_index, occurrence)
             session_index += 1
             join_url = clean_str(settings_for_week.get('liveSessionUrl') or settings_for_week.get('teamsMeetingUrl'))
@@ -19589,9 +19653,11 @@ def curriculum_module_teams_meeting_restore(request, module_catalogue_id):
     # path must never author anything: only a person pressing "re-attach" may.
     body = json_body(request) if request.method == 'POST' else None
     create_missing = truthy(body.get('createMissingComponents')) if isinstance(body, dict) else False
+    align_to_week_plan = truthy(body.get('alignToWeekPlan')) if isinstance(body, dict) else False
 
     updated_components = 0
     created_components = 0
+    unresolved_components = []
     # Opt-in on GET, because GET is also the Module Builder's silent restore and
     # that path must stay as cheap as it is. ``?probe=1`` asks the same walk what
     # re-attaching would create, so the UI can hide the button when the answer
@@ -19607,6 +19673,8 @@ def curriculum_module_teams_meeting_restore(request, module_catalogue_id):
             settings_update,
             occurrence_rows,
             create_missing=create_missing,
+            align_to_week_plan=align_to_week_plan,
+            unresolved_components=unresolved_components,
         )
     elif truthy(request.GET.get('probe')):
         _would_update, pending_components = attach_teams_meeting_to_module_weeks(
@@ -19642,6 +19710,7 @@ def curriculum_module_teams_meeting_restore(request, module_catalogue_id):
         'verificationPending': verification_pending,
         'updatedComponents': updated_components,
         'createdComponents': created_components,
+        'unresolvedComponentIds': unresolved_components,
         'meeting': settings_update,
         'calendar': {
             'title': clean_str(sessions[0].get('module_title')),
@@ -20541,6 +20610,7 @@ def apply_module_session_plan_to_weeks(module, group_row, weeks, *, holidays=Non
         else:
             slots_by_week, session_plan = module_week_delivery_slots(
                 module, group_row, len(weeks), holidays=holidays,
+                weeks=weeks,
             )
     except ValueError as exc:
         from curriculum_api.country_calendars import CalendarUnavailable
@@ -20643,26 +20713,36 @@ def apply_module_session_plan_to_weeks(module, group_row, weeks, *, holidays=Non
                 if planned_rescheduled:
                     planned_settings['sessionRescheduled'] = True
                 component['settings'] = planned_settings
-            first_settings = live_components[0].get('settings')
+            first_main = next((component for component in live_components
+                               if not clean_str((component.get('settings') or {}).get('extraTeamsMeetingUrl'))
+                               and clean_str((component.get('settings') or {}).get('teamsMeetingScope')).lower() != 'additional'), None)
+            first_settings = (first_main or {}).get('settings')
             first_settings = first_settings if isinstance(first_settings, dict) else {}
             first_number = parse_int(first_settings.get('teamsSessionNumber'), 0)
             first_numbered = next(
                 (item for item in session_plan if first_number > 0 and item.get('sessionNumber') == first_number),
                 None,
             )
-            if first_numbered:
-                # Teams numbering can omit orientation and additional events.
-                # Keep a confirmed date that already fits this authored week's
-                # slots; a changed plan still moves the header when it no
-                # longer fits. Mirrors applyModuleWeekSessionPlan.
-                confirmed_date = (
-                    format_date(first_settings.get('sessionDate'))
-                    if clean_str(first_settings.get('teamsLiveSessionId')) else ''
-                )
-                first_planned = next(
-                    (slot for slot in slots if slot.get('date') == confirmed_date),
-                    first_numbered,
-                )
+            confirmed_date = (
+                format_date(first_settings.get('sessionDate'))
+                if clean_str(first_settings.get('teamsLiveSessionId')) and first_number > 0
+                and first_settings.get('teamsCalendarBinding') not in {'missing', 'ambiguous', 'unverified'} else ''
+            )
+            delivery_start = format_date(module.get('start_date') or module.get('startDate'))
+            delivery_end = format_date(module.get('end_date') or module.get('endDate'))
+            confirmed_in_delivery = (confirmed_date
+                                     and (not delivery_start or confirmed_date >= delivery_start)
+                                     and (not delivery_end or confirmed_date <= delivery_end))
+            if confirmed_in_delivery:
+                # Occurrence numbers omit orientation and reading weeks. The
+                # heading describes the meeting this card actually opens;
+                # schedule drift is reported by the calendar sync verdict. A
+                # booking outside a newly edited module window keeps the
+                # existing planned-heading drift behavior.
+                first_planned = {'date': confirmed_date, 'day': parse_date(confirmed_date).strftime('%A'),
+                                 'rescheduled': bool(first_settings.get('sessionRescheduled'))}
+            elif first_numbered:
+                first_planned = first_numbered
         # The week runs on the day its live session is delivered on. A closed
         # delivery slot is not this week -- it is a reading week of its own,
         # which the plan's `slots` spine keeps in the curriculum at the closed
@@ -21139,10 +21219,20 @@ def week_template_revision(template_id):
     if not ident:
         return ''
     ensure_week_template_tables()
-    return record_revision((
+    revision = record_revision((
         ('template', WEEK_TEMPLATES_TABLE, 'id = %s', [ident], 'id'),
         ('components', WEEK_TEMPLATE_COMPONENTS_TABLE, 'week_template_id = %s', [ident], 'id'),
     ))
+    if not revision:
+        return ''
+    with connection.cursor() as cursor:
+        cursor.execute('''SELECT m.id,m.template_component_id,m.standard_ksb_id,m.classification,
+                m.weight,m.weight_class,m.status
+            FROM curriculum.ksb_component_mappings m
+            JOIN curriculum.week_template_components c ON c.id=m.template_component_id
+            WHERE c.week_template_id=%s ORDER BY m.id''', [ident])
+        mappings = cursor.fetchall()
+    return hashlib.sha256(json.dumps([revision,mappings],default=str).encode()).hexdigest()[:32]
 
 
 @with_course_storage
@@ -23228,6 +23318,7 @@ def authoring_mapping_payload(module_catalogue_id, mapping, week_id=None, compon
         'module_catalogue_id': module_catalogue_id,
         'week_id': week_id,
         'component_id': component_id,
+        'standard_ksb_id': mapping.get('standard_ksb_id') or mapping.get('standardKsbId'),
         'ksb_id': mapping.get('ksbId') or mapping.get('ksb_id') or mapping.get('code') or mapping.get('ksb_code'),
         'ksb_code': code,
         'ksb_description': mapping.get('description') or mapping.get('ksbDescription') or '',
@@ -23253,6 +23344,7 @@ def component_ksb_mapping_json_item(mapping_payload):
     ksb_id = clean_str(mapping_payload.get('ksb_id') or mapping_payload.get('ksbId') or code)
     return {
         'id': clean_str(mapping_payload.get('id')),
+        **({'standard_ksb_id': mapping_payload['standard_ksb_id']} if mapping_payload.get('standard_ksb_id') else {}),
         'ksb_id': ksb_id,
         'ksb_code': code,
         'description': clean_str(mapping_payload.get('ksb_description') or mapping_payload.get('description')),
@@ -23271,6 +23363,7 @@ def component_ksb_mapping_api_item(mapping):
     ksb_id = clean_str(mapping.get('ksb_id') or mapping.get('ksbId') or code)
     return {
         'id': clean_str(mapping.get('id')),
+        **({'standardKsbId': mapping['standard_ksb_id']} if mapping.get('standard_ksb_id') else {}),
         'ksbId': ksb_id,
         'code': code,
         'description': clean_str(mapping.get('description') or mapping.get('ksb_description')),
@@ -23290,6 +23383,7 @@ def component_ksb_mappings_from_row(row, projection_rows=None):
         return [
             component_ksb_mapping_json_item({
                 'id': mapping.get('id'),
+                'standard_ksb_id': mapping.get('standardKsbId') or mapping.get('standard_ksb_id'),
                 'ksb_id': mapping.get('ksbId') or mapping.get('ksb_id'),
                 'ksb_code': mapping.get('code') or mapping.get('ksbCode') or mapping.get('ksb_code'),
                 'ksb_description': mapping.get('description') or mapping.get('ksbDescription') or mapping.get('ksb_description'),
@@ -23380,7 +23474,8 @@ def sync_component_ksb_projection(component_id, component_row=None, module_row=N
         update_authoring_rows(AUTHORING_COMPONENTS_TABLE, 'id = %s', [component_id], {'ksb_mappings': json_db_value(json_items)})
     authoring_soft_delete(AUTHORING_KSB_MAPPINGS_TABLE, 'component_id = %s', [component_id], deleted_by=deleted_by)
     authoring_bulk_upsert(AUTHORING_KSB_MAPPINGS_TABLE, ['id'], projection_payloads)
-    sync_progress_ksbs({component_id: json_items}, actor=deleted_by)
+    persisted = ksb_mapping_placement.component_items([component_id])
+    sync_progress_ksbs({component_id: persisted.get(component_id, [])}, actor=deleted_by)
     return json_items
 
 
@@ -23868,6 +23963,24 @@ def save_module_authoring_structure(
             calendar_update = policy_write(payload, existing_module_row, AUTHORING_MODULES_TABLE)
         except ValueError as exc:
             raise ModuleAuthoringValidationError([{'path': 'calendarPolicy', 'message': str(exc)}]) from exc
+    # A stale builder or copied week must not introduce Live components into
+    # closed weeks. Only stored Live identities in the same week are historical.
+    from curriculum_api.calendar_policy import merge_policy
+    from curriculum_api.live_holiday_policy import without_new_closed_live
+    closure_module = {**existing_module_row, 'module_catalogue_id': module_catalogue_id,
+        'cohort_id': cohort_id, 'group_id': group_id, 'schedule_mode': schedule_mode,
+        'session_week_day': session_week_day, 'weekly_schedule': weekly_schedule,
+        'week_boundary_mode': week_boundary_mode, 'week_starts_on': week_starts_on,
+        'weeks_number': authored_week_count, 'sessions_number': stored_sessions_number,
+        'start_date': payload.get('startDate', payload.get('start_date', existing_module_row.get('start_date'))),
+        'end_date': payload.get('endDate', payload.get('end_date', existing_module_row.get('end_date'))),
+        'calendar_policy': merge_policy(payload, existing_module_row)}
+    stored_live_rows = (list(stored_rows.get(AUTHORING_COMPONENTS_TABLE) or []) if light else
+        authoring_fetch_all(AUTHORING_COMPONENTS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id]))
+    weeks = without_new_closed_live(closure_module, weeks, stored_live_rows)
+    checklist, quality_score = module_authoring_quality_check({**payload, 'weekStructure': weeks})
+    declared_total = otjh_hours_from_minutes(sum(component_expected_otjh_minutes(component)
+        for week in weeks for component in week.get('components') or []))
     saved_module_row = None
     with transaction.atomic():
         saved_module_row = authoring_upsert(AUTHORING_MODULES_TABLE, ['module_catalogue_id'], {
@@ -24077,13 +24190,16 @@ def save_module_authoring_structure(
         # Learner progress carries a snapshot of each component's KSBs. A light
         # save re-syncs only the components whose mappings it changed: the rest
         # already match, and each one costs a read of learner progress.
-        sync_progress_ksbs({
-            component['id']: as_json_value(component.get('ksb_mappings'), [])
+        changed_mapping_components = [
+            component['id']
             for component in component_payloads
             if not light or authoring_comparable('ksb_mappings', component.get('ksb_mappings')) != authoring_comparable(
                 'ksb_mappings', (stored_components_by_id.get(component['id']) or {}).get('ksb_mappings'))
             or not authoring_row_is_active(stored_components_by_id.get(component['id']) or {})
-        }, actor='curriculum-module-save')
+        ]
+        persisted_mappings = ksb_mapping_placement.component_items(changed_mapping_components)
+        sync_progress_ksbs({component_id: persisted_mappings.get(component_id, [])
+                            for component_id in changed_mapping_components}, actor='curriculum-module-save')
 
         criteria = payload.get('completionCriteria') or {}
         defaults = default_completion_payload()
@@ -27435,7 +27551,7 @@ def curriculum_module_structure(request, module_catalogue_id):
             # inside it (mappings_with_inferred_sources) asks whether a code
             # exists in a standard or a profile once per mapping row that has no
             # stored source, and each of those questions is a whole-table read of
-            # standard_ksbs or ksb_profiles. Memoised for the scope, a module
+            # ksb_standard_definitions or ksb_profiles. Memoised for the scope, a module
             # with thirty unsourced mappings costs two reads instead of ninety.
             with curriculum_read_scope(targeted_child_reads=True):
                 if is_training_alias:
@@ -28449,14 +28565,14 @@ def component_source_inputs_fingerprint():
     """What a mapping's inferred KSB source depends on beyond the curriculum epoch.
 
     The component reads infer a mapping's source from the Skills England KSBs
-    (``standard_ksbs``). It is not written through a curriculum handler, so no
+    (``ksb_standard_definitions``). It is not written through a curriculum handler, so no
     epoch bump retires a cached read when it changes. This is its row count and
     newest stamp: one round trip, taken when a cached entry passes its ttl, so
     the entry is rebuilt only when it has moved (see cached_curriculum_value's
     ``fingerprint``).
     """
     parts = []
-    for table in ('standard_ksbs',):
+    for table in ('ksb_standard_definitions',):
         if not table_exists(table):
             parts.append((table, None))
             continue
@@ -28549,7 +28665,7 @@ def curriculum_component_collection(request):
                 # authoring data, written only through curriculum handlers
                 # that bump the epoch, so any edit retires this at once. The
                 # one input that bumps nothing is the Skills England list a
-                # mapping's source is inferred from (standard_ksbs, changed by
+                # mapping's source is inferred from (ksb_standard_definitions, changed by
                 # manual import), hence the same 60s bound coverage keeps.
                 # Keyed on the sorted, de-duped id set: order never changes
                 # the rows.
@@ -29732,7 +29848,7 @@ def coverage_entry(request, scope='', identifier=''):
     through curriculum handlers, which bump the shared epoch and retire the
     entry at once (modules, weeks, components, KSB mappings, programme configs,
     KSB profiles). The exception is the Skills England requirement list: it is
-    read straight from standard_ksbs at build time, and that table changes by
+    read straight from ksb_standard_definitions at build time, and that table changes by
     manual SQL import, which bumps nothing. The 60s expiry is what bounds how
     long coverage can lag such an import, so it stays until the import path
     invalidates the curriculum cache itself.
@@ -29777,7 +29893,7 @@ def coverage_entry(request, scope='', identifier=''):
             return {name: encode_json_entry(coverage_part(dict(result), name)) for name in COVERAGE_PART_VIEWS}
 
         # Past its 60s an entry is re-checked against the one input no epoch
-        # covers (standard_ksbs / ksb_profiles, see the docstring) and kept when
+        # covers (ksb_standard_definitions / ksb_profiles, see the docstring) and kept when
         # it has not moved, instead of being rebuilt every minute.
         return cached_curriculum_value(
             f'{key}:parts-v4', build_parts, ttl=60, fingerprint=component_source_inputs_fingerprint,
@@ -30329,7 +30445,7 @@ def out_of_scope_progress_count(learner_ids, predicate, predicate_params):
             from "Learner"."learner_progress_entries" p
             cross join lateral (
                 select count(distinct k.ksb_code) as n
-                from "Learner"."learner_progress_ksbs" k
+                from ''' + official_progress_relation() + ''' k
                 where k.progress_id = p.id''' + not_excluded + '''
             ) codes
             where p.learner_id = any(%s) and not ''' + predicate,
@@ -30425,7 +30541,7 @@ def progress_consumption_rows(learner_ids, codes=None, scope_predicate=None, ach
                     select k.ksb_code,
                            coalesce(max(k.weight), 0) as weight,
                            coalesce(max(nullif(k.weight_class, '')), 'soft') as weight_class
-                    from "Learner"."learner_progress_ksbs" k
+                    from ''' + official_progress_relation() + ''' k
                     -- Rows the KSB standards migration registered as not
                     -- counting drop out here; the activity and its hours stay.
                     where k.progress_id = p.id''' + not_excluded + code_sql + '''
@@ -30504,7 +30620,7 @@ def learner_progress_ksb_consumption(learner_ids, programme_ksb_codes, component
     says which of the two placed the row: ``component`` (it is in the scope's live
     content) or ``lineage`` (the row's own stamped reference).
 
-    The join to ``learner_progress_ksbs`` is a LEFT join, and that is the point:
+    The join to ``ksb_learner_progress`` is a LEFT join, and that is the point:
     most completed components carry no KSB snapshot at all, and an inner join
     made every one of them invisible — taking their off-the-job hours and their
     place in the activity feed with them. A row with no KSB comes back with an
@@ -30513,7 +30629,7 @@ def learner_progress_ksb_consumption(learner_ids, programme_ksb_codes, component
     """
     if not learner_ids or connection.vendor != 'postgresql':
         return {}, [], []
-    if not learner_schema_table_exists('learner_progress_entries') or not learner_schema_table_exists('learner_progress_ksbs'):
+    if not learner_schema_table_exists('learner_progress_entries') or not learner_schema_table_exists('ksb_learner_progress'):
         return {}, [], []
     code_filter = {coverage_normalise_code(code) for code in programme_ksb_codes if coverage_normalise_code(code)}
     scope_filter = {clean_str(value) for value in (component_ids or []) if clean_str(value)}
@@ -30676,7 +30792,7 @@ def learner_progress_ksb_totals(learner_ids, programme_ksb_codes, *, compact=Fal
     """
     if not learner_ids or connection.vendor != 'postgresql':
         return {}
-    if not learner_schema_table_exists('learner_progress_entries') or not learner_schema_table_exists('learner_progress_ksbs'):
+    if not learner_schema_table_exists('learner_progress_entries') or not learner_schema_table_exists('ksb_learner_progress'):
         return {}
     code_filter = sorted({
         coverage_normalise_code(code)
@@ -30703,7 +30819,7 @@ def learner_progress_ksb_totals(learner_ids, programme_ksb_codes, *, compact=Fal
                        p.component_ref, p.passed, p.submitted_at,
                        k.ksb_code, coalesce(max(k.weight), 0) as weight
                 from "Learner"."learner_progress_entries" p
-                join "Learner"."learner_progress_ksbs" k on k.progress_id = p.id''' + and_not_excluded('k', connection) + '''
+                join ''' + official_progress_relation() + ''' k on k.progress_id = p.id''' + and_not_excluded('k', connection) + '''
                 where p.learner_id = any(%s)
                   -- KSB snapshots are normalised to upper-case on every write.
                   -- Keep the indexed column bare so PostgreSQL can use
@@ -30847,7 +30963,7 @@ def reflection_submission_ksb_consumption(learners, programme_ksb_codes, compone
     Returns ``(declared_totals, rows, excluded_rows, unlinked_rows)``.
 
     ``declared_totals`` is *declared* weight, never achieved weight. The
-    Component Progress snapshot (``learner_progress_ksbs``) is the canonical
+    Component Progress snapshot (``ksb_learner_progress``) is the canonical
     achievement source — see ``learner_progress_ksb_consumption`` — so a
     reflection's KSB declaration is supplementary evidence *about the same
     activity*. Adding it to achieved totals would count one activity's KSBs
@@ -31176,7 +31292,7 @@ def learner_activity_trace(progress_rows, excluded_progress_rows, reflection_row
     Curriculum already share. That makes cross-layer checks a lookup rather than
     a match on titles, emails or enrolment source ids.
 
-    Achieved KSB weight stays in ``ksbSnapshot`` (from ``learner_progress_ksbs``)
+    Achieved KSB weight stays in ``ksbSnapshot`` (from ``ksb_learner_progress``)
     and reflection declarations stay in ``declaredReflectionKsbs``. They are
     deliberately separate lists: the same activity's KSBs must not be summed
     twice.
@@ -31952,7 +32068,7 @@ def scope_ksb_achievement(coverage_items, learner_consumption, learners, plan, l
     uncapped sum, reported so over-delivery stays visible rather than clipped.
 
     Codes are keyed by code alone. A code authored against two different KSB
-    sources appears once, because ``learner_progress_ksbs`` records a code and
+    sources appears once, because ``ksb_learner_progress`` records a code and
     not the source it was authored from — the same collapse
     ``learner_consumption_payload`` already makes.
     """
@@ -32088,9 +32204,9 @@ def scope_ksb_achievement(coverage_items, learner_consumption, learners, plan, l
         # them that way; the row table alone cannot be read for it.
         'byType': ksb_achievement_by_type(rows),
         'sources': {
-            'plannedWeight': 'curriculum.ksb_mappings.weight (whole scope)',
-            'expectedWeight': 'curriculum.ksb_mappings.weight (of each learner\'s group)',
-            'achievedWeight': 'Learner.learner_progress_ksbs.weight',
+            'plannedWeight': 'curriculum.ksb_component_mappings.weight (whole scope)',
+            'expectedWeight': 'curriculum.ksb_component_mappings.weight (of each learner\'s group)',
+            'achievedWeight': 'Learner.ksb_learner_progress.weight',
             'declaredWeight': 'Learner.learning_reflection_submissions.ksb_weights',
         },
     }
@@ -32264,7 +32380,7 @@ def _scope_learner_ksb_impact_payload(request, scope, identifier):
             'learnerActivityPlanCount': len(activity_plan),
         } if include_activity_plan else {}),
         'ksbAchievementPolicy': {
-            'achievedWeightSource': 'learner_progress_ksbs',
+            'achievedWeightSource': 'ksb_learner_progress',
             'reflectionKsbRole': 'supplementary_evidence',
             'reflectionKsbCountsTowardAchievedWeight': False,
             'reflectionLearnerResolution': 'progress_entry_id',
@@ -32576,14 +32692,14 @@ def achievement_inputs_fingerprint(programme_id, cache_key):
                 select
                     (select count(*)::text || ':' || coalesce(sum(hashtext(concat_ws('|', l.id, l.full_name,
                             l.programme_id, l.cohort_id, l.group_id, l.programme_status, l.lifecycle_status,
-                            l.updated_at))::bigint), 0) from "Learner".learners l),
+                            l.updated_at,l.standard_ref,l.standard_version))::bigint), 0) from "Learner".learners l),
                     (select count(*)::text || ':' || coalesce(sum(h::bigint), 0) from entries),
                     (select count(*)::text || ':' || coalesce(sum(hashtext(concat_ws('|', k.progress_id, k.position,
-                            k.ksb_code, k.weight, k.weight_class))::bigint), 0)
-                       from "Learner".learner_progress_ksbs k where k.progress_id in (select id from entries)),
-                    (select count(*)::text || ':' || coalesce(sum(hashtext(concat_ws('|', x.progress_id, x.position,
-                            x.ksb_code, x.status))::bigint), 0)
-                       from "Learner".learner_progress_ksb_exclusions x)
+                            k.ksb_code, k.weight, k.weight_class,k.standard_ksb_id,k.is_excluded,k.mapping_status))::bigint), 0)
+                       from "Learner".ksb_learner_progress k where k.progress_id in (select id from entries)),
+                    (select count(*)::text || ':' || coalesce(sum(hashtext(concat_ws('|', d.id,
+                            d.standard_ref,d.standard_version,d.ksb_code,d.ksb_description))::bigint), 0)
+                       from curriculum.ksb_standard_definitions d)
                 ''',
                 [programme_id, learner_ids],
             )
@@ -35116,6 +35232,7 @@ PERMANENT_DELETE_REFERENCES = {
         ('Learner', 'learner_progress_entries', 'group_id', 'progressEntries', None),
     ),
     'module': (
+        ('curriculum', 'tutor_module_notifications', 'module_catalogue_id', 'tutorNotifications', None),
         ('curriculum', 'live_session_learner_attendance', 'module_catalogue_id', 'attendance', None),
         ('curriculum', 'live_session_attendance_aliases', 'module_catalogue_id', 'attendanceAliases', None),
         ('curriculum', 'live_session_attendance_identity_rules', 'module_catalogue_id', 'attendanceIdentityRules', None),
@@ -35165,6 +35282,7 @@ def permanent_delete_reference_refusal(kind, identifier):
     if not blockers:
         return None
     labels = {
+        'tutorNotifications': 'tutor notification records',
         'learners': 'learner records', 'enrolmentAccounts': 'enrolment accounts',
         'progressEntries': 'learner progress entries', 'attendance': 'live-session attendance records',
         'attendanceAliases': 'attendance name links', 'attendanceIdentityRules': 'attendance identity rules',
@@ -37134,7 +37252,6 @@ def provision_week_template_tables():
                 group_id varchar(255),
                 group_name varchar(255),
                 status varchar(32) not null default 'draft',
-                ksb_mappings {json_type},
                 total_otjh numeric(8,2) not null default 0,
                 points integer not null default 0,
                 component_count integer not null default 0,
@@ -37157,7 +37274,6 @@ def provision_week_template_tables():
                 workplace_evidence_required boolean not null default false,
                 tutor_validation_required boolean not null default false,
                 coach_validation_required boolean not null default true,
-                ksb_mappings {json_type},
                 settings_json {json_type},
                 display_order integer not null default 0,
                 created_at timestamp not null default current_timestamp,
@@ -37295,12 +37411,16 @@ def get_week_template_row(template_id, *, include_deleted=False):
 
 
 def get_week_template_component_rows(template_id):
+    from . import template_ksbs
     ensure_week_template_tables()
-    return fetch_all(
+    rows = fetch_all(
         f'select * from {table_name(WEEK_TEMPLATE_COMPONENTS_TABLE)} '
-        f'where week_template_id = %s order by display_order asc',
-        [template_id],
-    )
+        f'where week_template_id = %s order by display_order asc', [template_id])
+    with connection.cursor() as cursor:
+        mappings = template_ksbs.items(cursor, [row['id'] for row in rows])
+    for row in rows:
+        row['ksb_mappings'] = mappings.get(row['id'], [])
+    return rows
 
 
 def week_template_component_payload(row):
@@ -37341,7 +37461,9 @@ def week_template_payload(row, components=None):
         'groupId': row.get('group_id') or '',
         'groupName': row.get('group_name') or '',
         'status': row.get('status') or 'draft',
-        'ksbMappings': as_json_value(row.get('ksb_mappings'), []),
+        'ksbMappings': ([mapping for component in components
+                        for mapping in as_json_value(component.get('ksb_mappings'), [])]
+                        if components is not None else row.get('ksb_mappings', [])),
         'totalOtjh': week_template_number(row.get('total_otjh')),
         'points': parse_int(row.get('points'), 0),
         'componentCount': parse_int(row.get('component_count'), 0),
@@ -37352,18 +37474,27 @@ def week_template_payload(row, components=None):
     }
 
 
+@transaction.atomic
 def save_week_template_components(template_id, components):
-    # Delete-then-reinsert the whole component list (same approach as the free
-    # programme module save). Returns the saved rows in display order.
+    from . import template_ksbs
+    # Preserve existing child identities; release mappings before removed children.
     ensure_week_template_tables()
-    delete_rows(WEEK_TEMPLATE_COMPONENTS_TABLE, 'week_template_id = %s', [template_id])
+    lock_record_row(WEEK_TEMPLATES_TABLE, 'id = %s', [template_id])
+    existing = {row['id']: row for row in get_week_template_component_rows(template_id)}
+    incoming_ids = [clean_str(component.get('id')) for component in components or [] if component.get('id')]
+    occupied = {row['id'] for row in fetch_all(
+        f'select id from {table_name(WEEK_TEMPLATE_COMPONENTS_TABLE)} where id=ANY(%s)', [incoming_ids])} if incoming_ids else set()
+    kept = set()
     saved = []
     for index, component in enumerate(components or []):
         component_id = clean_str(component.get('id')) or unique_prefixed_id('WTC')
         component_settings = component.get('settings') if isinstance(component.get('settings'), dict) else {}
         reflection_question = payload_reflection_question(component, component_settings)
         component_settings = {**component_settings, LEGACY_REFLECTION_QUESTION_SETTING: reflection_question}
-        row = insert_row(WEEK_TEMPLATE_COMPONENTS_TABLE, {
+        if component_id in kept:
+            raise ValueError('Duplicate template component identity.')
+        kept.add(component_id)
+        values = {
             'id': component_id,
             'week_template_id': template_id,
             'type': clean_str(component.get('type')) or 'reading',
@@ -37376,13 +37507,30 @@ def save_week_template_components(template_id, components):
             'workplace_evidence_required': bool(component.get('workplaceEvidenceRequired')),
             'tutor_validation_required': bool(component.get('tutorValidationRequired')),
             'coach_validation_required': payload_coach_validation(component),
-            'ksb_mappings': json_db_value(component.get('ksbMappings') or []),
             'settings_json': json_db_value(component_settings),
             'display_order': index,
             'created_at': datetime.utcnow(),
             'updated_at': datetime.utcnow(),
-        })
-        saved.append(row)
+        }
+        if component_id in existing:
+            values.pop('created_at')
+            update_rows(WEEK_TEMPLATE_COMPONENTS_TABLE, 'id = %s and week_template_id = %s',
+                        [component_id, template_id], values)
+        else:
+            # A copied template gets independent component and mapping identities.
+            if component_id in occupied:
+                component_id = unique_prefixed_id('WTC')
+                values['id'] = component_id
+            insert_row(WEEK_TEMPLATE_COMPONENTS_TABLE, values)
+        if 'ksbMappings' in component:
+            with connection.cursor() as cursor:
+                template_ksbs.replace(cursor, component_id, component.get('ksbMappings') or [])
+        saved.append(values)
+    removed = sorted(set(existing) - kept)
+    if removed:
+        with connection.cursor() as cursor:
+            cursor.execute('DELETE FROM curriculum.ksb_component_mappings WHERE template_component_id=ANY(%s)', [removed])
+            cursor.execute('DELETE FROM curriculum.week_template_components WHERE week_template_id=%s AND id=ANY(%s)', [template_id, removed])
     return saved
 
 
@@ -37435,6 +37583,7 @@ def week_template_detail_response(template_id, wrapper_key='weekTemplate', *, af
 
 
 @csrf_exempt
+@template_authoring_transaction
 def curriculum_week_template_collection(request):
     ensure_week_template_tables()
     if request.method == 'GET':
@@ -37458,7 +37607,17 @@ def curriculum_week_template_collection(request):
         search = clean_str(request.GET.get('search')).lower()
         if search:
             rows = [row for row in rows if search in clean_str(row.get('title')).lower()]
-        results = [week_template_payload(row) for row in rows]
+        from . import template_ksbs
+        template_ids = [row['id'] for row in rows]
+        with connection.cursor() as cursor:
+            cursor.execute(f'SELECT id,week_template_id FROM {table_name(WEEK_TEMPLATE_COMPONENTS_TABLE)} '
+                           'WHERE week_template_id=ANY(%s) ORDER BY display_order,id', [template_ids])
+            owners = cursor.fetchall()
+            mappings = template_ksbs.items(cursor, [owner[0] for owner in owners])
+        by_template = defaultdict(list)
+        for component_id, template_id in owners:
+            by_template[template_id].extend(mappings.get(component_id, []))
+        results = [week_template_payload({**row, 'ksb_mappings': by_template[row['id']]}) for row in rows]
         return curriculum_results_response(results)
 
     if request.method != 'POST':
@@ -37494,7 +37653,6 @@ def curriculum_week_template_collection(request):
         'course_type': course_type,
         **week_template_scope_fields(payload, course_type),
         'status': clean_str(payload.get('status')) or 'draft',
-        'ksb_mappings': json_db_value(payload.get('ksbMappings') or []),
         'total_otjh': total_otjh,
         'points': points,
         'component_count': component_count,
@@ -37509,6 +37667,7 @@ def curriculum_week_template_collection(request):
 
 
 @csrf_exempt
+@template_authoring_transaction
 def curriculum_week_template_detail(request, identifier):
     if request.method not in {'GET', 'PATCH', 'DELETE'}:
         return json_error('Method not allowed.', status=405)
@@ -37545,8 +37704,6 @@ def curriculum_week_template_detail(request, identifier):
         updates['summary'] = clean_str(payload.get('summary'))
     if 'learningOutcomes' in payload:
         updates['learning_outcomes'] = json_db_value(payload.get('learningOutcomes') or [])
-    if 'ksbMappings' in payload:
-        updates['ksb_mappings'] = json_db_value(payload.get('ksbMappings') or [])
     if 'status' in payload:
         updates['status'] = clean_str(payload.get('status')) or 'draft'
     if 'author' in payload:

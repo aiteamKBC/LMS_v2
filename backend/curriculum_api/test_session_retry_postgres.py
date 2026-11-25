@@ -45,6 +45,7 @@ class TranscriptRetryTests(TestCase):
         cursor.__enter__.return_value = cursor
         cursor.fetchone.return_value = None
         with patch.object(worker, 'connections', {'default': SimpleNamespace(cursor=lambda: cursor)}), \
+                patch.object(worker, 'archive_runtime_preflight', return_value='synthetic:instance:1:s3'), \
                 patch.object(worker.transaction, 'atomic', side_effect=nullcontext), \
                 patch('curriculum_api.session_captions.sync_pending_captions'), \
                 patch('curriculum_api.teams_people_refresh.sync_due_people', return_value={'checked': 0, 'failed': 0}):

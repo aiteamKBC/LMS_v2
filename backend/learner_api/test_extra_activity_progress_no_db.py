@@ -69,19 +69,20 @@ class MemoryCursor:
                     source_payload={**self.progress.get('source_payload', {}), **json.loads(params[11])},
                 )
                 self.rowcount = 1
-        elif normal.startswith('select position,ksb_code,ksb_definition_id,ksb_description'):
-            columns = ('position', 'ksb_code', 'ksb_definition_id', 'ksb_description',
-                       'source_type', 'source_id', 'classification', 'weight', 'weight_class')
-            self.result = [tuple(row[column] for column in columns) for row in self.ksbs]
-        elif 'from "learner".learner_ksb_assignments' in normal:
+        elif normal.startswith('select position,ksb_code,standard_ksb_id,ksb_description'):
+            columns = ('position', 'ksb_code', 'standard_ksb_id', 'ksb_description',
+                       'source_type', 'source_id', 'classification', 'weight', 'weight_class',
+                       'legacy_definition_snapshot', 'is_excluded', 'exclusion_reason', 'exclusion_metadata')
+            self.result = [tuple(row.get(column) for column in columns) for row in self.ksbs]
+        elif 'join curriculum.ksb_standard_versions' in normal:
             self.result = [(self.owner['id'], code, definition_id)
                            for code, definition_id in self.definition_ids.items()]
-        elif normal.startswith('delete from "learner".learner_progress_ksbs'):
+        elif normal.startswith('delete from "learner".ksb_learner_progress'):
             self.ksbs = []
-        elif normal.startswith('insert into "learner".learner_progress_ksbs'):
-            columns = ('progress_id', 'position', 'ksb_code', 'ksb_definition_id',
+        elif normal.startswith('insert into "learner".ksb_learner_progress'):
+            columns = ('progress_id', 'position', 'ksb_code', 'standard_ksb_id',
                        'ksb_description', 'source_type', 'source_id', 'classification',
-                       'weight', 'weight_class')
+                       'weight', 'weight_class', 'legacy_definition_snapshot', 'is_excluded', 'exclusion_reason', 'exclusion_metadata')
             self.ksbs.append(dict(zip(columns, params)))
             self.rowcount = 1
         elif normal.startswith('select id,progress_entry_id from "learner".evidence_files'):
@@ -144,7 +145,7 @@ class ExtraActivityProgressTests(SimpleTestCase):
         self.assertTrue(cursor.progress['accepted'])
         self.assertEqual(cursor.evidence, [('file-1', 500)])
         self.assertEqual(
-            [(row['ksb_code'], row['weight'], row['ksb_definition_id']) for row in cursor.ksbs],
+            [(row['ksb_code'], row['weight'], row['standard_ksb_id']) for row in cursor.ksbs],
             [('K1', 2, 701)],
         )
         open_month.assert_called_once_with(self.owner, '2026-10')
@@ -173,7 +174,7 @@ class ExtraActivityProgressTests(SimpleTestCase):
         self.assertEqual(result['progress_entry_id'], 500)
         self.assertEqual(cursor.inserts, 1)
         self.assertEqual(cursor.progress['actual_seconds'], 25200)
-        self.assertEqual(cursor.ksbs[0]['ksb_definition_id'], 701)
+        self.assertEqual(cursor.ksbs[0]['standard_ksb_id'], 701)
         open_month.assert_called_once_with(self.owner, '2026-10')
 
     def test_missing_profile_definition_keeps_new_extra_activity_link_null(self):
@@ -181,7 +182,7 @@ class ExtraActivityProgressTests(SimpleTestCase):
 
         self.run_sync(cursor, self.activity())
 
-        self.assertIsNone(cursor.ksbs[0]['ksb_definition_id'])
+        self.assertIsNone(cursor.ksbs[0]['standard_ksb_id'])
 
     def test_selected_activity_month_controls_the_canonical_month(self):
         cursor = MemoryCursor(owner=self.owner)

@@ -9,7 +9,7 @@ profile version during a rebuild.
 from collections import defaultdict
 
 
-DEFINITION_ID_KEYS = ("ksb_definition_id", "ksbDefinitionId")
+DEFINITION_ID_KEYS = ("standard_ksb_id", "standardKsbId", "ksb_definition_id", "ksbDefinitionId")
 
 
 def _text(value):
@@ -63,11 +63,17 @@ def assigned_definition_ids(cursor, learner_ids, mappings):
     if connection is not None and getattr(connection, "vendor", "postgresql") != "postgresql":
         return {}
     cursor.execute(
-        '''SELECT a.learner_id,upper(btrim(d.code)),d.id
-             FROM "Learner".learner_ksb_assignments a
-             JOIN curriculum.ksb_definitions d ON d.profile_version_id=a.profile_version_id
-            WHERE a.learner_id=ANY(%s) AND upper(btrim(d.code))=ANY(%s)
-            ORDER BY a.learner_id,upper(btrim(d.code)),d.id''',
+        '''SELECT l.id,upper(btrim(d.ksb_code)),d.id
+             FROM "Learner".learners l
+             LEFT JOIN curriculum.programmes p ON p.programme_id=l.programme_id
+             JOIN curriculum.ksb_standard_versions v
+               ON v.standard_ref=coalesce(l.standard_ref,p.standard_ref)
+              AND v.standard_version=coalesce(l.standard_version,p.standard_version)
+             JOIN curriculum.ksb_standard_definitions d
+               ON d.standard_ref=v.standard_ref AND d.standard_version=v.standard_version
+            WHERE l.id=ANY(%s) AND upper(btrim(d.ksb_code))=ANY(%s)
+              AND (l.standard_ref IS NULL OR p.standard_ref IS NULL OR l.standard_ref=p.standard_ref)
+            ORDER BY l.id,upper(btrim(d.ksb_code)),d.id''',
         [learners, codes],
     )
     candidates = defaultdict(set)
@@ -110,6 +116,22 @@ def attach_definition_ids(mappings, learner_id, assigned_ids, *, existing=()):
                 definition_id = next(iter(stored)) if len(stored) == 1 else None
             else:
                 definition_id = assigned_id
-        item["ksb_definition_id"] = definition_id
+        # Historical exclusions and snapshots survive a current mapping rewrite.
+        matches = existing_by_identity.get(identity, [])
+        if definition_id is not None:
+            canonical_matches = [old for old in existing or () if _definition_value(old)[1] == definition_id]
+            excluded_matches = [old for old in canonical_matches if _value(old, 'is_excluded', False)]
+            # Changing source labels must not reactivate an excluded official KSB.
+            if excluded_matches:
+                matches = excluded_matches[:1]
+            elif len(canonical_matches) == 1:
+                matches = canonical_matches
+        if len(matches) == 1:
+            for key in ('legacy_definition_snapshot', 'is_excluded', 'exclusion_reason', 'exclusion_metadata'):
+                value = _value(matches[0], key)
+                if value is not None:
+                    item[key] = value
+        item["standard_ksb_id"] = definition_id
+        item["ksb_definition_id"] = definition_id  # Historical API key, never a database column.
         result.append(item)
     return result

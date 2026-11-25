@@ -19,6 +19,7 @@ const AdminAccessLogsPage = lazyRoute(() => import("../pages/admin/access-logs/p
 const SystemAuditTrailPage = lazyRoute(() => import("../pages/admin/audit-trail/page"));
 const SystemAuditTrailPersonPage = lazyRoute(() => import("../pages/admin/audit-trail/person/page"));
 const AdminDashboard = lazyRoute(() => import("../pages/workspace/admin/page"));
+const DatabaseExplorerPage = lazyRoute(() => import("../pages/workspace/admin/database/page"));
 const AdvancedAdminWorkspace = lazyRoute(() => import("../pages/workspace/advanced-admin/page"));
 // Give this route one extra bounded reload if a Vite update is still in flight
 // when the first reload reaches it.
@@ -229,6 +230,7 @@ const MisTeamsSessionsPage = lazyRoute(() => import("../pages/mis/teams-sessions
 const MisTimetablesPage = lazyRoute(() => import("../pages/mis/timetables/page"));
 const MisTutorAssignmentPage = lazyRoute(() => import("../pages/mis/tutor-assignment/page"));
 const ModuleBuilder = lazyRoute(() => import("../pages/curriculum/module-builder/page"));
+const ModuleHoursPage = lazyRoute(() => import("../pages/curriculum/module-hours/page"));
 const LearnerModuleProgressPage = lazyRoute(() => import("../pages/curriculum/learner-module-progress/page"));
 const ModulesPage = lazyRoute(() => import("../pages/learner/my-learning/page"));
 const ExtraActivityPage = lazyRoute(() => import("../pages/learner/monthly-submission/ExtraActivityPage"));
@@ -458,6 +460,14 @@ const routes: RouteObject[] = [
   {
     path: "/workspace/admin",
     element: <AdminDashboard />,
+  },
+  {
+    path: "/workspace/admin/database",
+    element: <DatabaseExplorerPage />,
+  },
+  {
+    path: "/workspace/admin/database/:groupId",
+    element: <DatabaseExplorerPage />,
   },
   {
     path: "/workspace/advanced-admin",
@@ -1201,6 +1211,10 @@ const routes: RouteObject[] = [
   {
     path: "/curriculum/module-builder",
     element: <ModuleBuilder />,
+  },
+  {
+    path: "/curriculum/module-hours",
+    element: <ModuleHoursPage />,
   },
   {
     path: "/curriculum/learner-module-progress",

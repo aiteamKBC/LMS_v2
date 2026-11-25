@@ -353,7 +353,8 @@ def _lookup(kind, pk, event_key):
     if review is None:
         return None, None, None, _error("Review not found.", 404)
 
-    event = CoachCalendarEvent.objects.filter(event_key=event_key, learner_profile_id=pk).first()
+    from .calendar import _profile_id_for_enrolment
+    event = CoachCalendarEvent.objects.filter(event_key=event_key, learner_profile_id=_profile_id_for_enrolment(pk)).first()
     return learner, review, event, None
 
 

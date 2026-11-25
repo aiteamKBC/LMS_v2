@@ -210,7 +210,7 @@ describe('Module Builder keeps the reader\'s place in its address', { timeout: 1
 
     expect(await screen.findByRole('dialog', { name: 'Data Foundations learner progress' })).toBeInTheDocument();
     expect(screen.getByLabelText('Learner status')).toHaveValue('withdrawn');
-    expect(fetchLearnerAssignments).toHaveBeenCalledWith(expect.objectContaining({ scope: 'module', id: 'MOD-1' }));
+    expect(fetchLearnerAssignments).toHaveBeenCalledWith(expect.objectContaining({ scope: 'module', id: 'MOD-1' }), undefined, { assignedOnly: true });
     expect(screen.getByPlaceholderText('Search modules, tutors, cohorts...')).toHaveValue('Foundations');
     expect(within(screen.getByLabelText('Programme')).getByText('Data Analyst')).toBeInTheDocument();
     expect(within(screen.getByLabelText('Cohort')).getByText('Sept 2026')).toBeInTheDocument();

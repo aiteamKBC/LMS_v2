@@ -93,9 +93,9 @@ from learner_api.models import (
     LearnerProfile,
     StaffUser,
     learner_activity_events_relation_exists,
-    learner_ksbs_relation_exists,
 )
 from learner_api.constants import ACCESS_COACH, ACCESS_SUPER_ADMIN
+from learner_api.ksb_domain import official_progress_relation
 from learner_api.ksb_exclusions import and_not_excluded
 from learner_api import canonical_learning
 # The one audited shape for the submissions table, shared with the two learner
@@ -1928,7 +1928,7 @@ def fetch_caseload_learner_profiles(owner_email: str) -> list[LearnerProfile | S
     requested_owner = normalize_email(owner_email)
     learner_alias = get_learner_db_alias()
     prefetches = [
-        "ksb_assignment__profile_version__definitions",
+        "ksb_standard__definitions",
         "plan_modules__weeks__components",
         "progress_entries__ksb_links",
         "progress_entries__quiz_answers__correct_answers",
@@ -1937,8 +1937,6 @@ def fetch_caseload_learner_profiles(owner_email: str) -> list[LearnerProfile | S
     # Legacy relations are prefetched only where they still exist. A queryset
     # prefetch of a dropped table raises before LearnerProfile's own tolerant
     # accessors can fall back, which turned the whole caseload into a 500.
-    if learner_ksbs_relation_exists(learner_alias):
-        prefetches.insert(0, "assigned_ksbs")
     if learner_activity_events_relation_exists(learner_alias):
         prefetches.append("activity_events")
     queryset = (
@@ -1963,12 +1961,10 @@ def fetch_caseload_learner_profiles_by_ids(owner_email: str, profile_ids: list[i
     requested_owner = normalize_email(owner_email)
     learner_alias = get_learner_db_alias()
     prefetches = [
-        "ksb_assignment__profile_version__definitions", "plan_modules__weeks__components",
+        "ksb_standard__definitions", "plan_modules__weeks__components",
         "progress_entries__ksb_links", "progress_entries__quiz_answers__correct_answers",
         "progress_entries__quiz_answers__chosen_answers",
     ]
-    if learner_ksbs_relation_exists(learner_alias):
-        prefetches.insert(0, "assigned_ksbs")
     if learner_activity_events_relation_exists(learner_alias):
         prefetches.append("activity_events")
     rows_by_id = {
@@ -1999,14 +1995,12 @@ def fetch_all_learner_profiles(programme: str | None = None, cohort: str | None 
     """
     learner_alias = get_learner_db_alias()
     prefetches = [
-        "ksb_assignment__profile_version__definitions",
+        "ksb_standard__definitions",
         "plan_modules__weeks__components",
         "progress_entries__ksb_links",
         "progress_entries__quiz_answers__correct_answers",
         "progress_entries__quiz_answers__chosen_answers",
     ]
-    if learner_ksbs_relation_exists(learner_alias):
-        prefetches.insert(0, "assigned_ksbs")
     if learner_activity_events_relation_exists(learner_alias):
         prefetches.append("activity_events")
 
@@ -2028,11 +2022,9 @@ def fetch_caseload_dashboard_profiles(owner_email: str) -> list[LearnerProfile]:
     requested_owner = normalize_email(owner_email)
     learner_alias = get_learner_db_alias()
     dashboard_prefetches = [
-        "ksb_assignment__profile_version__definitions",
+        "ksb_standard__definitions",
         "plan_modules__weeks__components",
     ]
-    if learner_ksbs_relation_exists(learner_alias):
-        dashboard_prefetches.insert(0, "assigned_ksbs")
     queryset = (
         LearnerProfile.objects.annotate(coach_email_key=Lower(Trim("coach_email")))
         .filter(coach_email_key=requested_owner)
@@ -2166,7 +2158,7 @@ def caseload_completed_ksb_codes(rows) -> dict[int, set[str]]:
             cursor,
             '''SELECT p.learner_id,k.ksb_code
                FROM "Learner".learner_progress_entries p
-               JOIN "Learner".learner_progress_ksbs k ON k.progress_id=p.id
+               JOIN ''' + official_progress_relation() + ''' k ON k.progress_id=p.id
                WHERE p.learner_id=ANY(%s) AND p.deleted_at IS NULL
                  AND p.passed IS NOT FALSE
                  AND btrim(lower(coalesce(p.kind,''))) <> 'activity_event'
@@ -2421,34 +2413,6 @@ def coach_learner_personal_calendar_conflicts(
         timezone_offset_minutes,
         **exclusion,
     )
-
-
-def refresh_caseload_learner_ksb_snapshot(row: LearnerProfile | SimpleNamespace) -> None:
-    if not callable(getattr(row, "save", None)):
-        return
-    # An existing learner stays pinned to the KSB profile version assigned at
-    # enrolment (see replace_learner_ksbs) — once `ksb_assignment` exists,
-    # refresh_learner_ksb_snapshot can only ever re-derive and no-op via its
-    # own get_or_create calls. Skipping it here avoids opening a transaction
-    # + two get_or_create round-trips per learner on every `?live=1` caseload
-    # read — the same "unconditional per-row DB work on a read" shape as the
-    # sync_active_user bug fixed in learner_progression.advance_learner.
-    if getattr(row, "ksb_assignment", None) is not None:
-        return
-    source = getattr(row, "_caseload_source", None) or resolve_caseload_source_row(row)
-    if source is None:
-        return
-    try:
-        refresh_learner_ksb_snapshot(row, source, training_plan=getattr(row, "training_plan", None))
-        prefetched = getattr(row, "_prefetched_objects_cache", None)
-        if isinstance(prefetched, dict):
-            prefetched.pop("assigned_ksbs", None)
-    except Exception as exc:
-        logger.warning(
-            "Could not refresh live KSB snapshot for learner %s: %s",
-            getattr(row, "id", None),
-            exc,
-        )
 
 
 def resolve_schedule_window(
@@ -3525,7 +3489,6 @@ def serialize_caseload_learner(
     live_snapshot = {}
     source_row = getattr(row, "_caseload_source", None)
     if refresh_live_snapshots:
-        refresh_caseload_learner_ksb_snapshot(row)
         if callable(getattr(row, "save", None)) and hasattr(row, "training_plan_progress"):
             try:
                 # Keep coach-facing caseload cards aligned with the live learner
@@ -6239,7 +6202,7 @@ def build_catchup_calendar_event(
         "eventKey": record.event_key,
         "id": record.event_key,
         "ownerEmail": clean_text(record.owner_email),
-        "ownerName": clean_text(owner_name) or clean_text(record.owner_name) or "Med Maher",
+        "ownerName": clean_text(record.owner_name) or "Coach",
         "learnerId": str(record.learner_profile_id),
         **learner_detail_identity(learner),
         "learner": learner_name,
@@ -11726,7 +11689,6 @@ def coach_timetable_schedule_event(request):
             exclude_record=catchup_record,
         ):
             return JsonResponse({"detail": "This learner is busy at that time. Choose another time."}, status=409)
-        catchup_record.owner_name = owner_name or catchup_record.owner_name
         catchup_record.scheduled_date = scheduled_date
         catchup_record.scheduled_time = scheduled_time
         catchup_record.duration_minutes = duration_minutes
@@ -11791,11 +11753,7 @@ def coach_timetable_schedule_event(request):
                 "target_date": target_date,
             },
         )
-        record.owner_email = owner_email
-        record.owner_name = owner_name
         record.learner_id = learner_id
-        record.learner_name = clean_text(catchup_template_event.get("learner"))
-        record.learner_email = clean_text(catchup_template_event.get("email"))
         record.event_type = CATCH_UP_EVENT_TYPE
         record.sequence = int(catchup_template_event.get("sequence") or 1)
         record.target_date = target_date
@@ -11981,11 +11939,7 @@ def coach_timetable_schedule_event(request):
         if record.owner_email.casefold() != owner_email.casefold() or record.learner_id != int(base_event['learnerId']):
             return JsonResponse({'detail': 'The booking association changed. Reload the Review.'}, status=409)
 
-    record.owner_email = owner_email
-    record.owner_name = owner_name
     record.learner_id = int(base_event["learnerId"])
-    record.learner_name = clean_text(base_event.get("learner"))
-    record.learner_email = clean_text(base_event.get("email"))
     record.event_type = clean_text(base_event.get("source"))
     record.sequence = int(base_event.get("sequence") or 1)
     record.target_date = target_date
@@ -12315,7 +12269,6 @@ def coach_timetable_event_action(request):
             except LearnerCalendarConflict as exc:
                 return JsonResponse({"detail": str(exc)}, status=409)
 
-        catchup_record.owner_name = owner_name or catchup_record.owner_name
         catchup_record.last_graph_sync_error = public_graph_sync_warning(warning)
         catchup_record.save()
         if action == "complete":
@@ -12359,7 +12312,6 @@ def coach_timetable_event_action(request):
         )
         return JsonResponse({"detail": "This event does not have a Teams link. Retry calendar synchronization before continuing."}, status=409)
 
-    record.owner_name = owner_name
     warning = ""
     review_responses = None
     completion_source = base_event.get("source")
@@ -12537,7 +12489,6 @@ def coach_timetable_event_action(request):
         instance_row = curriculum_review_instances.get_review_instance(instance_row["id"])
         _sync_calendar_record_to_review_instance_status(instance_row)
         record.refresh_from_db()
-        record.owner_name = owner_name
     elif action == "complete":
         record.status = (
             CoachCalendarEvent.STATUS_AWAITING_SIGNATURE
@@ -12568,7 +12519,6 @@ def coach_timetable_event_action(request):
         except ValueError as exc:
             return JsonResponse({"detail": str(exc)}, status=400)
         record.refresh_from_db()
-        record.owner_name = owner_name
     elif action == "sign":
         record.status = CoachCalendarEvent.STATUS_COMPLETED
         record.manager_signed_at = timezone.now()

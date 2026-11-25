@@ -1,10 +1,10 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import { loadRecordingsLibrary, loadSessionResult, resolveRecordingUrl, type RecordingsLibrary } from '@/api/sessionResults';
-import { addDays, todayIso } from '../utils';
+import { addDays } from '../utils';
 import { buildCalendarLectures } from '../model';
 import CurriculumRecordingsPage from '../page';
 
@@ -32,7 +32,7 @@ vi.mock('@/api/sessionResults', async () => {
   return { ...actual, loadRecordingsLibrary: vi.fn(), loadSessionResult: vi.fn(), resolveRecordingUrl: vi.fn() };
 });
 
-const date = todayIso();
+const date = '2026-11-24';
 const at = (hour: number) => `${date}T${String(hour).padStart(2, '0')}:00:00Z`;
 const library: RecordingsLibrary = {
   recordingCount: 2, attentionChecked: true,
@@ -74,6 +74,10 @@ const renderPage = async (showAll = true) => {
 
 describe('Session recordings calendar', () => {
   beforeEach(() => {
+    // Keep UTC and Cairo on the fixture day, including when run near midnight.
+    // Date.now-only mocks below control status without changing calendar dates.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(`${date}T20:00:00Z`);
     calendarOverride.exclude = []; calendarOverride.unmatched = []; calendarOverride.fail = false; calendarOverride.choose = false;
     window.localStorage.removeItem('lms-recordings-calendar-account');
     window.localStorage.removeItem('lms-recordings-calendar-zone');
@@ -81,6 +85,7 @@ describe('Session recordings calendar', () => {
     vi.mocked(resolveRecordingUrl).mockReset().mockResolvedValue('https://storage.invalid/inline-video');
     vi.mocked(loadSessionResult).mockReset().mockResolvedValue({ sessions: [] });
   });
+  afterEach(() => vi.useRealTimers());
 
   it('converts the same UTC lecture across Cairo and London including the date boundary and daylight saving', () => {
     const sample = { ...library, deliveries: [], sessions: [{ ...(library.sessions ?? [])[0],

@@ -18,11 +18,14 @@ from django.views.decorators.http import require_GET
 from login.errors import safe_sqlstate
 from login.permissions import learner_self_or_staff
 from old_otjh.service import ServiceError
+from old_otjh.repository import request_read_scope
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 from curriculum_api.canonical_read_sql import module_expected_otjh_sql
 from curriculum_api.learning_storage import read_sql
 
 from .response_cache import cached_learner_read
+from .weekly_read_cache import weekly_read_scope
+from .subject_dates import schedule_read_scope
 from . import canonical_learning as canonical
 from .journal_sources import learner_journal_view, enabled as journal_enabled
 from .learner_detail import SOURCE_MODELS
@@ -376,34 +379,22 @@ def course_facts(owner, records, courses):
     membership exclusions. One canonical row contributes hours once per course.
     """
     from .course_catalogue_display import retain_learner_schedule
+    from .catalogue_fact_encoding import COURSE_FIELDS, fact_sql, restore_fact
     course_refs = {str(course['id']): str(course['source_course_ref']) for course in courses}
-    rows = canonical.query('''SELECT a.source_course_id,a.source_activity_id,
+    rows = canonical.query(f'''SELECT a.source_course_id,a.source_activity_id,
         a.source_activity_title,a.source_activity_type,a.source_section_ref,
         a.source_section_title,a.source_position AS position,
-        a.source_payload->'quiz_id' AS quiz_id,
-        a.source_payload->'activity_id' AS activity_id,
-        a.source_payload->'parent_activity_id' AS parent_activity_id,
-        a.source_payload->'section_title' AS payload_section_title,
-        coalesce(a.source_payload->'section_order',
-                 a.source_payload#>'{live_catalogue_recovery,section_order}') AS section_order,
-        coalesce(a.source_payload->'component_order',
-                 a.source_payload#>'{live_catalogue_recovery,component_order}') AS component_order,
-        a.source_payload->'created_at' AS created_at,
-        a.source_payload->'created_at_utc' AS created_at_utc
+        {fact_sql(COURSE_FIELDS, compact=True)} AS source_payload
         FROM curriculum.source_activities a
         WHERE a.source_course_id=ANY(%s) AND a.deleted_at IS NULL
           AND a.source_system='old_lms'
         ORDER BY a.source_course_id,a.source_position NULLS LAST,a.id''',
         [list(course_refs)]) if courses else []
     definitions = []
-    payload_fields = ('quiz_id', 'activity_id', 'parent_activity_id',
-                      'section_order', 'component_order', 'created_at', 'created_at_utc')
     for raw in rows:
         definition = dict(raw)
         source_course_id = str(definition.pop('source_course_id'))
-        payload_section_title = definition.pop('payload_section_title')
-        payload = {field: definition.pop(field) for field in payload_fields}
-        payload['section_title'] = payload_section_title
+        payload = restore_fact(definition.pop('source_payload'), [name for name, _ in COURSE_FIELDS])
         definition.update(source_course_ref=course_refs[source_course_id], source_payload=payload)
         definitions.append(definition)
     from .progress_demo import catalogue as demo_catalogue
@@ -707,7 +698,7 @@ def card_totals(cards):
             'subjectCount': sum(not c.get('previousLearningFor') for c in cards)}
 
 
-def load_context(source, owner, subject_id=None, *, purpose='catalogue', records_override=None, include_personal_replacements=False):
+def load_context(source, owner, subject_id=None, *, purpose='catalogue', records_override=None, include_personal_replacements=False, approved_replacements_only=False):
     """One request-local owner/assignment/ledger snapshot; no write-on-read path."""
     from .weekly_learning import build_learning_content_summary
     from .dashboard_tabs import install_request_caches
@@ -796,7 +787,8 @@ def load_context(source, owner, subject_id=None, *, purpose='catalogue', records
         content_source.learning_plan = content_plan
     with projection_stage('native_learning'):
         native = build_learning_content_summary(content_source, source.pk, learning_summary=True, assigned_modules=content_plan,
-            identities_only=True, preserve_legacy=True, strict=True, resolved_metadata=resolved)
+            identities_only=True, preserve_legacy=True, strict=True, resolved_metadata=resolved,
+            **({'include_presentation': False} if subject_id is None and purpose == 'catalogue' else {}))
     if resolved is not None:
         apply_catalogue_session_counts(modules, native['components'], resolved['weeks'])
     with projection_stage('live_credits'):
@@ -845,6 +837,10 @@ def load_context(source, owner, subject_id=None, *, purpose='catalogue', records
             ({key[8:] for key in {**imports, **replacements} if key[8:] not in approved_modules}
              | matched_modules) & set(ids)
         )) if transfers or include_personal_replacements else []
+        if approved_replacements_only and not include_personal_replacements:
+            # Catalogue cards revalidate saved approved matches; transfer review
+            # retains candidate provenance, including personal replacements.
+            settings_modules = sorted(matched_modules & set(ids))
         settings_ids = list(dict.fromkeys(c['componentId']
             for c in [*native['components'], *native.get('retiredQuizComponents', [])]
             if c.get('componentId') and c.get('moduleId') in settings_modules))
@@ -871,14 +867,32 @@ def load_context(source, owner, subject_id=None, *, purpose='catalogue', records
     return assigned, ids, records, native, courses, definitions, done, started, hours, metadata, credits
 
 
+@weekly_read_scope()
+@request_read_scope()
+@schedule_read_scope()
 def read_catalogue(source, kind, owner, *, upcoming_only=False):
-    assigned, ids, records, native, courses, definitions, done, started, hours, metadata, credits = load_context(source, owner)
+    assigned, ids, records, native, courses, definitions, done, started, hours, metadata, credits = load_context(
+        source, owner, approved_replacements_only=True)
     modules = metadata['modules']
     ksb_mappings = None
     if not upcoming_only:
         from .my_learning_ksbs import read_card_ksb_mappings
+        # Hidden Free courses still participate in global identity/lineage
+        # reconciliation above, but their card percentages are never returned.
+        # Keep every placement of a visible component ID in the mapping read.
+        free_ids = set(metadata.get('free_course_module_ids', []))
+        mapping_native = native
+        if free_ids:
+            # A hidden native import can contribute continuation activities to
+            # a visible historical card, so retain its mappings too.
+            hidden_only_ids = free_ids - {ref[8:] for ref in metadata['imported_courses']
+                if ref.startswith('current:')}
+            visible_ids = {str(c['componentId']) for bucket in ('components', 'retiredQuizComponents')
+                for c in native.get(bucket, []) if c.get('componentId') and c.get('moduleId') not in hidden_only_ids}
+            mapping_native = {**native, **{bucket: [c for c in native.get(bucket, [])
+                if str(c.get('componentId')) in visible_ids] for bucket in ('components', 'retiredQuizComponents')}}
         with projection_stage('card_ksbs'):
-            ksb_mappings = read_card_ksb_mappings(owner, native, metadata['record_ids'])
+            ksb_mappings = read_card_ksb_mappings(owner, mapping_native, metadata['record_ids'])
     with projection_stage('card_aggregation'):
         cards, summary = assemble_cards(native, metadata['current_subjects'], courses, definitions, done, started, hours, metadata, records, modules, credits,
                                        show_current_replacements=True, ksb_mappings=ksb_mappings)
@@ -1191,6 +1205,8 @@ def my_learning(request,kind,pk,subject_id=None,resource=None):
         return JsonResponse({'error':'Learner not found.'},status=404)
     try:
         with projection_stage('source'):
+            # load_context installs the normalized plan, so legacy JSON projection
+            # cannot improve this read and must not become an assignment source.
             source=model.all_learners.only(*SOURCE_FIELDS).get(pk=pk)
             # Learner plan routes show normalized assignments, not historical
             # course memberships. Ordinary My Learning keeps its history view.

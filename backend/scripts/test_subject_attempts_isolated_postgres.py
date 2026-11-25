@@ -44,7 +44,12 @@ def development_schema():
         digest = connection.execute('''SELECT count(*),md5(string_agg(md5(to_jsonb(a)::text),'' ORDER BY id))
             FROM "Learner".subject_activity_attempts a''').fetchone()
         assert len(columns) == 19 and sum(row[1] == 'f' for row in constraints) == 6
-        assert all(row[3] for row in constraints) and len(indexes) == 4 and len(triggers) == 3
+        assert all(row[3] for row in constraints) and len(triggers) == 3
+        # Additional validated lookup indexes are part of the current contract;
+        # clone them all without mistaking their presence for schema corruption.
+        assert {'subject_activity_attempts_pkey', 'subject_activity_attempts_learner_activity_idx',
+                'subject_attempt_free_learner_component_idx', 'subject_attempt_monthly_target_idx'} <= {
+                    name for name, _ in indexes}
         return columns, constraints, indexes, triggers, functions, digest
     finally:
         connection.rollback()
@@ -82,9 +87,7 @@ def prepare(port, directory, schema):
                 actual_seconds_total bigint,actual_updated_at timestamptz,actual_summary jsonb,UNIQUE(id,learner_id));
             CREATE TABLE "Learner".progress_transfer_items (enrolment_id integer,course_ref text);
             CREATE TABLE "Learner".learner_activity_sources (learner_id bigint,canonical_progress_id bigint,source_catalog_activity_id bigint);
-            CREATE TABLE "Learner".free_course_hours_migration (old_progress_id bigint,learner_id bigint,free_course_id text,free_component_id text);
-            CREATE TABLE "Learner".free_course_hours_migration_additional (LIKE "Learner".free_course_hours_migration);
-            CREATE TABLE "Learner".free_course_hours_migration_remaining (LIKE "Learner".free_course_hours_migration);
+            CREATE TABLE "Learner".learner_progress_entries (id bigint PRIMARY KEY,learner_id bigint,free_course_ref varchar(128),free_component_ref varchar(128));
             INSERT INTO enrolment."Created_users" VALUES (11),(12);
             INSERT INTO "Learner".learners VALUES (501,11,101),(502,12,102);
             INSERT INTO curriculum.source_lms_groups VALUES (50),(60);
@@ -275,7 +278,7 @@ def main():
     args = parser.parse_args()
     schema = development_schema()
     config = prepare(args.port,args.data_directory,schema)
-    print('Local schema copied: 19 columns, six FKs, four indexes, three triggers; synthetic records only.',flush=True)
+    print(f'Local schema copied: 19 columns, six FKs, {len(schema[2])} indexes, three triggers; synthetic records only.',flush=True)
     try:
         passed = run(config)
     finally:

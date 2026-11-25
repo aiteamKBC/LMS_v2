@@ -72,11 +72,11 @@ class ProgressKsbBreakdownTests(unittest.TestCase):
         self.assertEqual(calls[1].args[1], [315])
         sql = calls[1].args[0]
         self.assertIn('k.progress_id=p.id', sql)
-        self.assertEqual(sql.split('WHERE')[1].split('ORDER BY')[0].strip(),
+        self.assertEqual(sql.rsplit('WHERE', 1)[1].split('ORDER BY')[0].strip(),
                          'p.learner_id=%s AND p.deleted_at IS NULL')
         for call in calls:
             self.assertTrue(call.args[0].startswith('SELECT'))
-            for forbidden in ['aptem_id', 'Aptem_users', 'aptem_component_ksbs', 'curriculum.', 'legacy_aptem_component']:
+            for forbidden in ['aptem_id', 'Aptem_users', 'aptem_component_ksbs', 'curriculum.ksb_component_mappings', 'legacy_aptem_component']:
                 self.assertNotIn(forbidden, call.args[0])
 
     def test_evidence_reader_matches_only_exact_code_and_returns_point_metadata(self):
@@ -121,7 +121,8 @@ class ProgressKsbBreakdownTests(unittest.TestCase):
         tree = ast.parse(Path(__file__).with_name('dashboard_metrics.py').read_text())
         endpoint = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'learner_metrics')
         self.assertEqual([ast.unparse(item) for item in endpoint.decorator_list],
-                         ['require_GET', "learner_self_or_staff(kwarg='pk')", 'journal_sources.learner_journal_view'])
+                         ['require_GET', "learner_self_or_staff(kwarg='pk')", 'journal_sources.learner_journal_view',
+                          "cached_learner_read('metrics')"])
         endpoint.decorator_list = []
         source = SimpleNamespace(pk=125, aptem_id=1055)
         model = MagicMock()

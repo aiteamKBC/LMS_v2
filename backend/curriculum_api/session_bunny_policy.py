@@ -7,7 +7,7 @@ import time
 from datetime import datetime, timezone
 from urllib.parse import urlencode
 
-from .bunny_stream import VideoImportError
+from .bunny_stream import VideoImportError, library_secret
 from .session_results_policy import instant
 
 BUNNY_CONTAINER = 'bunny-stream'
@@ -31,7 +31,7 @@ def bunny_recording(metadata):
 
 
 def signed_embed(library_id, video_id, *, now=None):
-    key = os.environ.get('BUNNY_STREAM_TOKEN_KEY', '').strip()
+    key = library_secret(library_id, 'TOKEN_KEY')
     if not key:
         raise VideoImportError('Bunny playback security key is not configured.')
     if not str(library_id).isdigit() or not re.fullmatch(r'[0-9a-fA-F-]{36}', str(video_id)):

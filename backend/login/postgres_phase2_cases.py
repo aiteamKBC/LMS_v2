@@ -366,7 +366,7 @@ class ProgressCacheCases(unittest.TestCase):
     def setUp(self):
         cache.clear()
         cache_versions.reset_for_tests()
-        truncate('"Learner".learner_progress_ksbs', '"Learner".learner_progress_entries', '"Learner".learners')
+        truncate('"Learner".ksb_learner_progress', '"Learner".learner_progress_entries', '"Learner".learners')
         self.a = LearnerProfile.objects.create(email='p1@example.invalid')
         self.b = LearnerProfile.objects.create(email='p2@example.invalid')
         for profile, codes in ((self.a, ['K1', 'S2']), (self.b, ['B3'])):
@@ -444,7 +444,7 @@ class ProgressCacheCases(unittest.TestCase):
 
         def raw():
             with connection.cursor() as cur:
-                cur.execute('UPDATE "Learner".learner_progress_ksbs SET ksb_code=%s WHERE ksb_code=%s', ['K7', 'K1'])
+                cur.execute('UPDATE "Learner".ksb_learner_progress SET ksb_code=%s WHERE ksb_code=%s', ['K7', 'K1'])
             bump_learners([self.a.pk])  # what each raw SQL writer now does
         self.assert_all_refresh_after(raw)
 

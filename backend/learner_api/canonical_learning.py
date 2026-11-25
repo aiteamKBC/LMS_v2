@@ -12,6 +12,7 @@ from old_otjh import repository
 from old_otjh.repository import query
 from old_otjh.service import ServiceError
 from .ksb_exclusions import not_excluded_sql
+from .ksb_domain import official_progress_relation, point_counts_sql
 from .learner_coach_columns import owner_coach_sql
 from .monthly_log_sources import decoded, number, row
 from .current_learning import (
@@ -22,7 +23,7 @@ UK = ZoneInfo('Europe/London')
 
 
 def _ksb_not_excluded(alias='k'):
-    """Skip KSB rows the standards migration registered as not counting."""
+    """Retained adapter for readers not yet moved to the canonical relation."""
     return not_excluded_sql(alias, repository._query_alias.get() or repository.DB)
 
 
@@ -169,6 +170,9 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
     It never restricts the learner-wide reconciliation population by month.
     """
     from learner_api.projection_performance import projection_stage
+    from learner_api.catalogue_fact_encoding import (
+        PROGRESS_FIELDS, SOURCE_FIELDS, JOURNAL_FIELDS, HISTORICAL_FIELDS, fact_sql, restore_fact,
+    )
 
     # My Learning needs lineage/completion and canonical seconds, never KSB
     # metrics or reporting-history bodies. Presence of segments still gates
@@ -218,7 +222,7 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
                 THEN jsonb_build_object('retakeTimeChoice',progress.source_payload->'retakeTimeChoice','original_source_ref',progress.source_payload->'original_source_ref')
                 ELSE progress.source_payload END AS source_payload,
                 progress.feed_kind,to_jsonb(progress)->'actual_basis' AS actual_basis"""
-            payload = 'to_jsonb(p)'
+            payload = fact_sql([(field, f'p.{field}') for field in PROGRESS_FIELDS], compact=True)
         elif training_summary or monthly_summary:
             if monthly_log_summary:
                 columns += ''',CASE WHEN jsonb_typeof(progress.source_payload)='object'
@@ -248,18 +252,13 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
     historical_payload = ("jsonb_build_object('source_system',h.source_system,"
         "'source_course_ref',h.source_course_ref,'source_activity_id',h.source_activity_id)"
         if training_summary or monthly_log_summary else 'to_jsonb(h)')
-    source_payload = ('''jsonb_build_object(
-                'source_system',s.source_system,'source_activity_id',s.source_activity_id,
-                'completed',s.completed,'source_course_ref',c.source_course_ref,
-                'activity_status',s.activity_status)''' if monthly_log_summary else '''jsonb_build_object(
-                'source_id',s.id,'source_system',s.source_system,'source_activity_id',s.source_activity_id,
-                'completed',s.completed,
-                'source_course_ref',c.source_course_ref,'source_course_id',c.id,
-                'course_title',c.source_course_title,'catalogue_id',a.id,
-                'component_ref',coalesce(nullif(s.curriculum_component_ref,''),a.curriculum_component_ref),
-                'module_ref',c.curriculum_module_ref,'group_ref',c.curriculum_group_ref,
-                'activity_status',s.activity_status,
-                'source_activity_kind',a.source_activity_kind)''')
+    if catalogue_summary:
+        historical_payload = fact_sql(HISTORICAL_FIELDS, compact=True)
+    source_payload = ('''jsonb_build_object('source_system',s.source_system,
+        'source_activity_id',s.source_activity_id,'completed',s.completed,
+        'source_course_ref',c.source_course_ref,'activity_status',s.activity_status)'''
+        if monthly_log_summary else fact_sql(SOURCE_FIELDS, compact=catalogue_summary))
+    journal_payload = fact_sql(JOURNAL_FIELDS, compact=catalogue_summary)
     document_cte = ''' , activity_documents AS (
             SELECT d.progress_id,jsonb_agg(jsonb_build_object(
                 'id',d.id,'display_name',d.display_name,'content_type',d.content_type) ORDER BY d.id) AS payload
@@ -270,9 +269,8 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
         )''' if monthly_log_summary else ''
     ksb_cte = '' if catalogue_summary else f''', progress_ksbs AS (
         SELECT k.progress_id,jsonb_agg(k.ksb_code ORDER BY k.position) AS payload
-        FROM "Learner".learner_progress_ksbs k
+        FROM {official_progress_relation()} k
         JOIN canonical p ON p.id=k.progress_id
-        WHERE {_ksb_not_excluded()}
         GROUP BY k.progress_id
     )'''
     with projection_stage('ledger_read'):
@@ -296,9 +294,7 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
               {"AND coalesce(s.source_system,'') IN ('','old_lms')" if monthly_log_summary else ''}
             GROUP BY s.canonical_progress_id
         ), journal_routes AS (
-            SELECT j.progress_id,jsonb_agg(jsonb_build_object(
-                'group_id',j.group_id,'activity_id',j.activity_id,'source_ref',j.source_ref,
-                'source_system',s.source_system,'month',j.month,'activity_date',j.activity_date) ORDER BY j.id) AS payload,
+            SELECT j.progress_id,jsonb_agg({journal_payload} ORDER BY j.id) AS payload,
                 sum(j.planned_hours) AS planned
             FROM "Learner".learner_journal_rows j
             JOIN canonical p ON j.progress_id=p.id AND j.learner_id=p.learner_id
@@ -335,12 +331,19 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
     journal_enabled = journal_sources.enabled()
     loaded = []
     for record in records:
-        item = {**decoded(record['payload'], {}), **{
+        facts = decoded(record['payload'], {})
+        if catalogue_summary:
+            facts = restore_fact(facts, PROGRESS_FIELDS)
+        item = {**facts, **{
             field: decoded(record.get(field), [])
             for field in ('ksbs', 'segments', 'sources', 'journal_routes', 'historical_components')}}
         if monthly_log_summary:
             item['_monthly_documents'] = decoded(record.get('activity_documents'), [])
             item['_monthly_documents_loaded'] = True
+        if catalogue_summary:
+            for field, schema in (('sources', SOURCE_FIELDS), ('journal_routes', JOURNAL_FIELDS),
+                                  ('historical_components', HISTORICAL_FIELDS)):
+                item[field] = [restore_fact(value, [name for name, _ in schema]) for value in item[field]]
         if journal_enabled and record.get('journal_planned_hours') is not None:
             item['expected_otjh'] = float(record['journal_planned_hours'])
             item['journal_planned_hours'] = float(record['journal_planned_hours'])
@@ -1394,19 +1397,7 @@ def read_ksb_point_counts(learner_id):
     needed to reproduce its KSB counts here.
     """
     from .progress_cache import value
-    sql = '''WITH links AS (
-        SELECT DISTINCT ON (k.ksb_code,p.id) k.ksb_code AS code,p.id,
-            k.ksb_description AS description,k.position,p.accepted,
-            (p.activity_status='completed' AND p.accepted IS TRUE) AS achieved
-        FROM "Learner".learner_progress_entries p
-        JOIN "Learner".learner_progress_ksbs k ON k.progress_id=p.id
-        WHERE p.learner_id=%s AND p.deleted_at IS NULL AND k.ksb_code IS NOT NULL
-          AND ''' + _ksb_not_excluded() + '''
-        ORDER BY k.ksb_code,p.id,k.position
-    ) SELECT code,(array_agg(description ORDER BY id,position))[1] AS description,
-        count(*) AS "evidenceCount",count(*) FILTER (WHERE achieved) AS completed,
-        count(*) FILTER (WHERE accepted IS TRUE) AS "pointsAchieved"
-        FROM links GROUP BY code ORDER BY min(id),code'''
+    sql = point_counts_sql()
     alias = repository._query_alias.get() or repository.DB
     return value(sql, [alias], learner_id, lambda: query(sql, [learner_id]))
 
@@ -1651,12 +1642,10 @@ def metrics_bulk(learner_ids, *, learner_workspace=False, include_ksb_points=Fal
 
     progress_ids = list(records_by_progress)
     if progress_ids:
-        definition_columns = ",to_jsonb(k)->>'ksb_definition_id' AS ksb_definition_id,d.code AS definition_code" if include_ksb_points else ''
-        definition_join = "LEFT JOIN curriculum.ksb_definitions d ON d.id::text=to_jsonb(k)->>'ksb_definition_id'" if include_ksb_points else ''
+        definition_columns = ",k.standard_ksb_id::text AS ksb_definition_id,k.ksb_code AS definition_code" if include_ksb_points else ''
         for item in query(f'''SELECT k.progress_id,k.ksb_code{definition_columns}
-            FROM "Learner".learner_progress_ksbs k
-            {definition_join}
-            WHERE k.progress_id=ANY(%s) AND {_ksb_not_excluded()}
+            FROM {official_progress_relation()} k
+            WHERE k.progress_id=ANY(%s)
             ORDER BY k.progress_id,k.position''', [progress_ids]):
             record = records_by_progress.get(int(item['progress_id']))
             if record is not None:

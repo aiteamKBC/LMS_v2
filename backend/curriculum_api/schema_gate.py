@@ -59,7 +59,7 @@ TABLE_OWNER_MIGRATION = {
     'modules': 'curriculum_api.0001_ksb_mapping_source_metadata',
     'components': 'curriculum_api.0001_ksb_mapping_source_metadata',
     'groups': 'curriculum_api.0005_create_groups_table',
-    'tutor_module_notifications': 'curriculum_api.0049_tutor_module_notifications',
+    'tutor_module_notifications': 'curriculum_api.0100_normalized_tutor_notifications',
     'free_courses': 'curriculum_api.0029_rename_free_programme_modules_to_free_courses',
     'free_programme_components': 'curriculum_api.0030_free_courses_week_link_and_ids',
     'free_course_weeks': 'curriculum_api.0034_split_free_courses_and_weeks',

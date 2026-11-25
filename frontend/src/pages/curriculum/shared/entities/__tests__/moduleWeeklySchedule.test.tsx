@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createGroupModule, previewModuleSessionPlan, previewTutorAvailabilityRoster, updateCurriculumModule } from '@/lib/curriculumApi';
+import { createGroupModule, previewModuleSessionPlan, previewTutorAvailabilityRoster, fetchTutorNotificationOptions, updateCurriculumModule } from '@/lib/curriculumApi';
 import type { CurriculumGroup, CurriculumModule } from '@/lib/curriculumApi';
 import { ModuleFormDrawer, type ModuleFormTarget } from '../moduleForm';
 import { moduleFormTarget } from "../moduleForm.helpers";
@@ -21,6 +21,7 @@ vi.mock('@/lib/curriculumApi', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/curriculumApi')>()),
   createGroupModule: vi.fn(), updateCurriculumModule: vi.fn(),
   previewModuleSessionPlan: vi.fn(), previewTutorAvailabilityRoster: vi.fn(),
+  fetchTutorNotificationOptions: vi.fn(),
 }));
 
 const group = {
@@ -48,6 +49,7 @@ async function choose(field: string, value: string) {
 describe('module drawer group-owned scheduling', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(fetchTutorNotificationOptions).mockResolvedValue({ tutors: [{ id: 'TUTOR-1', name: 'Tutor One' }], assignments: [] });
     vi.mocked(createGroupModule).mockResolvedValue({ created: [{ moduleCatalogueId: 'MOD-NEW' }] } as never);
     vi.mocked(updateCurriculumModule).mockResolvedValue({ updated: true } as never);
     vi.mocked(previewModuleSessionPlan).mockResolvedValue({ sessions: [], finalEndDate: '', warnings: [], skippedHolidays: [] });

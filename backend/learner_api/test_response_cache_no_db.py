@@ -55,6 +55,18 @@ class ResponseCacheTests(unittest.TestCase):
         self.assertEqual(second['X-Learner-Cache'], 'hit')
         self.assertEqual(second['Cache-Control'], 'private, no-store')
 
+    def test_source_ksb_change_invalidates_both_role_responses(self):
+        learner = request()
+        coach = request(account=Account(2, 'coach'))
+        for req in (learner,coach):
+            self.view(req,kind='commercial',pk=7)
+            self.view(req,kind='commercial',pk=7)
+        self.assertEqual(self.calls,2)
+        cache.set(response_cache.CACHE_GENERATION_KEY,'new-source-version')
+        for req in (learner,coach):
+            self.view(req,kind='commercial',pk=7)
+        self.assertEqual(self.calls,4)
+
     def test_viewers_and_query_strings_are_kept_apart(self):
         self.view(request(), kind='commercial', pk=7)
         self.view(request(account=Account(2, 'coach')), kind='commercial', pk=7)
@@ -84,10 +96,46 @@ class ResponseCacheTests(unittest.TestCase):
             self.view(request(), kind='commercial', pk=7)
         self.assertEqual(self.calls, 2)
 
-    def test_local_runserver_defaults_to_five_minute_cache(self):
+    def test_local_runserver_keeps_reader_specific_defaults(self):
         with mock.patch.dict(os.environ, {}, clear=True), \
              mock.patch.object(response_cache.sys, 'argv', ['manage.py', 'runserver']):
-            self.assertEqual(response_cache.ttl_seconds(), 300)
+            self.assertEqual(response_cache.ttl_seconds(), 0)
+            self.assertEqual(response_cache.ttl_seconds(default=30), 30)
+    def test_opt_in_default_is_limited_to_the_selected_reader(self):
+        @response_cache.cached_learner_read('weekly', default_ttl=30)
+        def weekly(req, kind, pk):
+            self.calls += 1
+            return JsonResponse({'n': self.calls})
+
+        with mock.patch.dict(os.environ):
+            os.environ.pop('LEARNER_RESPONSE_CACHE_SECONDS', None)
+            first = weekly(request(), kind='commercial', pk=7)
+            second = weekly(request(), kind='commercial', pk=7)
+            self.assertEqual(first.content, second.content)
+            self.assertEqual(second['X-Learner-Cache'], 'hit')
+            self.assertEqual(self.calls, 1)
+            self.view(request(), kind='commercial', pk=7)
+            self.view(request(), kind='commercial', pk=7)
+            self.assertEqual(self.calls, 3)
+            response_cache.bump_learner('commercial', 7)
+            weekly(request(), kind='commercial', pk=7)
+            self.assertEqual(self.calls, 4)
+
+    def test_explicit_disable_and_expiry_override_the_reader_default(self):
+        @response_cache.cached_learner_read('weekly', default_ttl=30)
+        def weekly(req, kind, pk):
+            self.calls += 1
+            return JsonResponse({'n': self.calls})
+
+        with mock.patch.dict(os.environ, {'LEARNER_RESPONSE_CACHE_SECONDS': '0'}):
+            weekly(request(), kind='commercial', pk=7)
+            weekly(request(), kind='commercial', pk=7)
+        self.assertEqual(self.calls, 2)
+        weekly(request(), kind='commercial', pk=7)
+        stored = cache.get(response_cache._key(request(), 'weekly', 'commercial', 7))
+        cache.set(response_cache._key(request(), 'weekly', 'commercial', 7), stored, timeout=-1)
+        weekly(request(), kind='commercial', pk=7)
+        self.assertEqual(self.calls, 4)
 
     def test_concurrent_requests_wait_for_one_build(self):
         @response_cache.cached_learner_read('test')

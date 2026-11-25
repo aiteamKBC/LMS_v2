@@ -139,7 +139,7 @@ class PairingCase:
         with patch("learner_api.module_shift._rows", side_effect=_fake_rows), \
                 patch("learner_api.module_shift.EnrolmentUser") as model, \
                 patch("learner_api.module_shift.learner_profile_for_source",
-                      return_value=SimpleNamespace(id=211)), \
+                      return_value=SimpleNamespace(id=211, pk=211, learner_type='apprenticeship')), \
                 patch("learner_api.module_shift.connections",
                       {"enrolment": SimpleNamespace(cursor=lambda: cursor)}), \
                 patch("learner_api.module_shift.LearnerProgressEntry") as entry_model:
@@ -629,7 +629,7 @@ class RepointTests(SimpleTestCase):
         ksb_model.objects.filter.return_value.delete.assert_called_once()
         created = ksb_model.objects.bulk_create.call_args.args[0]
         self.assertEqual(len(created), 1)
-        self.assertEqual(ksb_model.call_args.kwargs['ksb_definition_id'], 501)
+        self.assertEqual(ksb_model.call_args.kwargs['standard_ksb_id'], 501)
 
     def test_unchanged_mapping_identity_keeps_its_historical_definition(self):
         existing = SimpleNamespace(
@@ -639,7 +639,12 @@ class RepointTests(SimpleTestCase):
 
         _counts, ksb_model = self._repoint([_entry("C-A3")], existing_ksbs=[existing])
 
-        self.assertEqual(ksb_model.call_args.kwargs['ksb_definition_id'], 707)
+        self.assertEqual(ksb_model.call_args.kwargs['standard_ksb_id'], 707)
+
+    def test_incompatible_explicit_official_identity_cannot_resolve_by_code(self):
+        mapping = dict(TARGET_CONTEXT['ksbMappings'][0], standardKsbId=999)
+        _counts, model = self._repoint([_entry('C-A3')], context={**TARGET_CONTEXT, 'ksbMappings':[mapping]})
+        self.assertIsNone(model.call_args.kwargs['standard_ksb_id'])
 
     def test_a_target_with_no_ksbs_of_its_own_leaves_the_existing_links(self):
         context = {**TARGET_CONTEXT, "ksbMappings": []}
@@ -725,7 +730,7 @@ class QuizShiftProgressTests(SimpleTestCase):
     """Quiz submissions have quiz_ref but no component_ref, unlike readings."""
 
     def setUp(self):
-        self.profile = SimpleNamespace(pk=211)
+        self.profile = SimpleNamespace(pk=211, id=211)
         self.slot = {
             "component_id": "C-AQ", "module_id": "MOD-A",
             "module_title": "Shift 1", "week_id": "W-A1", "week_title": "Lec1",

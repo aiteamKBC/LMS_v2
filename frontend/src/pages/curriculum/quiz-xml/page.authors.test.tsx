@@ -5,7 +5,6 @@ import type { ReactNode } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import QuizWorkspace from './page';
 import ManualQuizPage from './manual/page';
-import { defaultQuizGeneralSettings } from '@/lib/quizGeneralSettings';
 import { defaultQuizGradeSettings } from '@/lib/quizGradeSettings';
 
 // Author now means the authenticated creator. The previous editable-author
@@ -18,21 +17,10 @@ const quizzes = [1, 2].map(id => ({ id, title: `Sample quiz ${id}`, module: 'Sam
 const fetcher = vi.fn();
 const response = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
 let saveStatus: number;
-let savedDefaults: { general: typeof defaultQuizGeneralSettings; grades: typeof defaultQuizGradeSettings; revision: number };
-let defaultsStatus: number;
 
 beforeEach(() => {
   saveStatus = 201;
-  defaultsStatus = 200;
-  savedDefaults = { general: { ...defaultQuizGeneralSettings }, grades: structuredClone(defaultQuizGradeSettings), revision: 1 };
   fetcher.mockReset().mockImplementation((url: string, init?: RequestInit) => {
-    if (url === '/quiz_api/defaults/') {
-      if (init?.method === 'PUT') {
-        if (defaultsStatus !== 200) return Promise.resolve(response({ error: 'Quiz defaults changed. Reload them before saving your changes.' }, defaultsStatus));
-        savedDefaults = { ...JSON.parse(String(init.body)), revision: savedDefaults.revision + 1 };
-      }
-      return Promise.resolve(response({ ...savedDefaults, csrfToken: 'synthetic-token' }));
-    }
     if (init?.method === 'POST' && url === '/quiz_api/quizzes/create-with-questions/') return Promise.resolve(response({ ...quizzes[0], id: 3 }, 201));
     if (init?.method === 'POST' && url === '/quiz_api/quizzes/') return Promise.resolve(saveStatus === 201
       ? response({ ...quizzes[0], id: 3, title: 'New quiz', author: 'Server-confirmed creator' }, 201)
@@ -45,40 +33,14 @@ beforeEach(() => {
   vi.stubGlobal('AppIcon', AppIcon);
 });
 
-it('saves shared defaults with CSRF and the loaded revision, and reloads them on another visit', async () => {
+it('has no global settings controls or requests after retiring the defaults store', async () => {
   await mount();
   fireEvent.click(screen.getByRole('button', { name: /More/ }));
-  fireEvent.click(screen.getByRole('button', { name: 'General Settings' }));
-  fireEvent.click(await screen.findByRole('button', { name: 'Unlimited attempts' }));
-  fireEvent.click(screen.getByRole('option', { name: 'Limited attempts' }));
-  fireEvent.change(screen.getByTitle('Attempt limit'), { target: { value: '2' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }));
-  await waitFor(() => expect(screen.queryByText('General Quiz Settings')).not.toBeInTheDocument());
-  const mutation = fetcher.mock.calls.find(([, init]) => init?.method === 'PUT')!;
-  expect(JSON.parse(mutation[1].body)).toMatchObject({ revision: 1, general: { attemptMode: 'limited', attemptLimit: 2 } });
-  expect(mutation[1].headers['X-CSRFToken']).toBe('synthetic-token');
-  cleanup();
-  await mount();
-  fireEvent.click(screen.getByRole('button', { name: /More/ }));
-  fireEvent.click(screen.getByRole('button', { name: 'General Settings' }));
-  expect(await screen.findByTitle('Attempt limit')).toHaveValue(2);
+  expect(screen.queryByRole('button', { name: 'General Settings' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Grade Settings' })).not.toBeInTheDocument();
+  expect(fetcher.mock.calls.some(([url]) => url.includes('/defaults/'))).toBe(false);
 });
 
-it('keeps a rejected defaults draft visible and reloads the server settings explicitly', async () => {
-  defaultsStatus = 409;
-  await mount();
-  fireEvent.click(screen.getByRole('button', { name: /More/ }));
-  fireEvent.click(screen.getByRole('button', { name: 'General Settings' }));
-  fireEvent.click(await screen.findByRole('button', { name: 'Unlimited attempts' }));
-  fireEvent.click(screen.getByRole('option', { name: 'Limited attempts' }));
-  fireEvent.change(screen.getByTitle('Attempt limit'), { target: { value: '2' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }));
-  expect(await screen.findByRole('alert')).toHaveTextContent('Quiz defaults changed');
-  expect(screen.getByTitle('Attempt limit')).toHaveValue(2);
-  expect(savedDefaults.general.attemptMode).toBe('unlimited');
-  fireEvent.click(screen.getByRole('button', { name: /Reload saved settings/ }));
-  await waitFor(() => expect(screen.getByTitle('Attempt limit')).toHaveValue(3));
-});
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 async function mount() {
@@ -151,8 +113,7 @@ it('opens the manual builder with automatic creator attribution', async () => {
   expect(screen.getByText('Your account will be recorded as the author.')).toBeVisible();
 });
 
-it('creates a manual quiz and its questions atomically with shared settings and a per-quiz override', async () => {
-  savedDefaults.general = { ...savedDefaults.general, attemptMode: 'limited', attemptLimit: 2, retakeAfterPass: false };
+it('creates a manual quiz and its questions without global defaults and with per-quiz overrides', async () => {
   await mount();
   fireEvent.click(screen.getByRole('link', { name: 'Manual Quiz' }));
   await waitFor(() => expect(screen.getAllByRole('button', { name: 'Save Manual Quiz' })[0]).toBeEnabled());
@@ -160,16 +121,18 @@ it('creates a manual quiz and its questions atomically with shared settings and 
   fireEvent.change(screen.getByPlaceholderText('Write the question learners will answer'), { target: { value: 'Choose the first option' } });
   for (const label of ['A', 'B', 'C', 'D']) fireEvent.change(screen.getByPlaceholderText(`Option ${label}`), { target: { value: label } });
   fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
-  expect(screen.getByLabelText('Maximum attempts')).toHaveValue(2);
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Limited attempts to retake quizzes' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Retake After Pass' }));
+  expect(screen.getByLabelText('Maximum attempts')).toHaveValue(3);
   fireEvent.change(screen.getByLabelText('Maximum attempts'), { target: { value: '4' } });
   fireEvent.click(screen.getAllByRole('button', { name: 'Save Manual Quiz' })[0]);
   await waitFor(() => expect(fetcher.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(1));
   const [url, init] = fetcher.mock.calls.find(([, init]) => init?.method === 'POST')!;
   expect(url).toBe('/quiz_api/quizzes/create-with-questions/');
   expect(JSON.parse(init.body)).toMatchObject({ title: 'Configured manual quiz', limitAttempts: true, attemptLimit: 4,
-    retakeAfterPass: false, gradeSettings: savedDefaults.grades,
+    retakeAfterPass: false, gradeSettings: { ...defaultQuizGradeSettings, resultDisplay: 'grade_percentage', coursePageDisplay: 'inside_quiz' },
     initialQuestions: [{ text: 'Choose the first option', answers: [{ text: 'A', isCorrect: true }, { text: 'B', isCorrect: false }, { text: 'C', isCorrect: false }, { text: 'D', isCorrect: false }] }] });
-  expect(savedDefaults.general.attemptLimit).toBe(2);
+  expect(fetcher.mock.calls.some(([url]) => url.includes('/defaults/'))).toBe(false);
 });
 
 it('uploads without a multipart author override and retains the server attribution', async () => {

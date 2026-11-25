@@ -465,6 +465,23 @@ def revision_trail(request):
     }
     with transaction.atomic():
         result = derived.read_hybrid(recover=False, **hybrid)
+        # Coverage begins at the earliest authoritative event, not at a source
+        # row's timestamp or the start of the requested page/window. Do not use
+        # the retired recovery boundary cache: earlier revisions may be imported.
+        history_types = sorted(system_writes.entity_types_for_workspace(workspace))
+        if entity_filter in history_types:
+            history_types = [entity_filter]
+        revision_started = dict.fromkeys(history_types)
+        if history_types:
+            moments = curriculum_views.fetch_all(
+                f'SELECT entity_type, MIN(created_at) AS first_event_at FROM {revisions_table} '
+                f'WHERE entity_type IN ({", ".join(["%s"] * len(history_types))}) GROUP BY entity_type',
+                history_types,
+            )
+            for moment in moments:
+                revision_started[moment['entity_type']] = (
+                    iso(moment['first_event_at']) if moment['first_event_at'] is not None else None
+                )
 
     total = result['total']
     page = result['page']
@@ -507,12 +524,9 @@ def revision_trail(request):
         # False for a filter only the log can answer, and when it failed.
         'recoveredHistory': False,
         'recoveryFailed': False,
-        # Where each record type's revision history begins. Recovered events of
-        # that type stop strictly before it; null means the log has none yet.
-        'revisionStartedAt': {
-            entity: (moment.isoformat() if moment is not None else None)
-            for entity, moment in sorted(result['boundaries'].items())
-        },
+        # Null means no authoritative event timestamp exists for this type.
+        # Source-table timestamps are never consulted, even for unlogged types.
+        'revisionStartedAt': revision_started,
         # The log records the signed-in account on every write, so the trail can
         # name one. Rows older than the log still carry none, and are shown as
         # such rather than attributed to whoever happens to be nearby.

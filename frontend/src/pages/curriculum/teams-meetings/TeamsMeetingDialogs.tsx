@@ -373,6 +373,7 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
   const [forwardNotice, setForwardNotice] = useState('');
   const [updateConfirmOpen, setUpdateConfirmOpen] = useState(false);
   const actionFeedbackId = useId();
+  const invitationFeedbackId = useId();
   const actionFeedbackRef = useRef<HTMLParagraphElement>(null);
   const onSecondTab = Boolean(secondTab) && activeTab === 'second';
   // Coming back from the additional-meeting tab: a week may have been booked or
@@ -405,10 +406,17 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
     || (externalCalendar && !selected?.summary ? 'Check this module\'s saved meeting links before updating its existing Teams calendar.' : '')
     || (selected && !(selectedForDisplay || selected).sessions.length
       ? 'This module has no saved live sessions. Add a Live session, save the module, then reopen Teams.' : '');
-  const actionError = selected?.summary ? updateDrawer.error
+  const updateWaitReason = !selected?.summary || updateProgress ? ''
+    : detailLoading ? 'Loading the saved meeting details. Save will be available when loading finishes.'
+      : updateDrawer.saving ? 'Checking the saved meeting before saving your changes. Your edits are kept.'
+        : busy ? 'A Teams calendar action is in progress. Wait for it to finish before saving.' : '';
+  const actionError = selected?.summary ? updateDrawer.error || detailError
     : createProgress || (createRecovery && createRecovery.phase !== 'failed') ? ''
       : createRecovery?.phase === 'failed' ? createRecovery.message : createDrawer.error;
-  const actionMessage = actionBlockedReason || actionError;
+  const actionMessage = actionBlockedReason || updateWaitReason || actionError;
+  const invitationError = updateDrawer.error || detailError;
+  const invitationMessage = actionBlockedReason || updateWaitReason || invitationError
+    || (originalRolesBlocked ? 'Meeting permissions must be verified before saving. Use Retry role check above.' : '');
   const explainBlockedAction = () => actionFeedbackRef.current?.focus({ preventScroll: true });
   // Who the author has typed in but not saved. Named under the comparison so a
   // reader can see why Microsoft does not have them.
@@ -1039,12 +1047,26 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                       Save without notifying saves added people without an LMS email. Microsoft may still send a calendar update. Use Save and email added people to request their LMS schedule email.
                     </p>
                   )}
+                  {invitationMessage && (
+                    <p id={invitationFeedbackId} role="status" aria-label="Teams save status" aria-live="polite" aria-atomic="true"
+                      className={`rounded-lg border p-3 text-[12px] leading-relaxed ${invitationError && !updateWaitReason && !actionBlockedReason
+                        ? 'border-red-200 bg-red-50 text-red-700'
+                        : 'border-primary-200 bg-primary-50 text-foreground-700'}`}>
+                      {invitationMessage}
+                      {detailError && !detailLoading && (
+                        <button type="button" onClick={() => void loadDetail(selected.summary!.liveSessionId)}
+                          disabled={Boolean(busy) || updateDrawer.saving || Boolean(updateProgress)}
+                          className="ml-2 font-semibold underline disabled:opacity-50">Retry meeting details</button>
+                      )}
+                    </p>
+                  )}
                   <div className="flex flex-wrap items-center justify-end gap-3">
                     {updateDrawer.dirty && <span className="text-[11px] font-semibold text-amber-700">Changes not sent yet</span>}
                     <button
                       type="button"
                       onClick={() => void saveInvitations(selected)}
                       disabled={peopleRefreshing || !updateDrawer.dirty || updateDrawer.saving || Boolean(busy) || (Boolean(blockedReason) || originalCalendarBlocked || originalRolesBlocked) || detailLoading || !graphConfigured}
+                      aria-describedby={invitationMessage ? invitationFeedbackId : undefined}
                       title="Save people and settings without an LMS email. Microsoft may send a calendar update. Session dates and join links stay unchanged."
                       className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[12px] font-bold text-primary-700 transition-smooth hover:bg-primary-100 disabled:cursor-not-allowed disabled:opacity-50"
                     >
@@ -1056,6 +1078,7 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                         type="button"
                         onClick={() => void saveInvitations(selected, { invite: true })}
                         disabled={peopleRefreshing || !updateDrawer.dirty || updateDrawer.saving || Boolean(busy) || (Boolean(blockedReason) || originalCalendarBlocked || originalRolesBlocked) || detailLoading || !graphConfigured}
+                        aria-describedby={invitationMessage ? invitationFeedbackId : undefined}
                         title="Save these changes, then send an individual LMS schedule email to the people you added. No LMS email is sent to existing invitees, and no session date moves."
                         className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[12px] font-bold text-white shadow-sm transition-colors hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
                       >

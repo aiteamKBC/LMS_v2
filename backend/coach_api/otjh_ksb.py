@@ -126,9 +126,9 @@ def project_ksbs(records):
 
 def search_ksb_activities(learner_id, search):
     # Literal substring search, matching the browser's former includes().
-    return {'codes': [row['code'] for row in canonical.query('''SELECT DISTINCT k.ksb_code AS code
+    return {'codes': [row['code'] for row in canonical.query(f'''SELECT DISTINCT k.ksb_code AS code
         FROM "Learner".learner_progress_entries p
-        JOIN "Learner".learner_progress_ksbs k ON k.progress_id=p.id
+        JOIN {canonical.official_progress_relation()} k ON k.progress_id=p.id
         WHERE p.learner_id=%s AND p.deleted_at IS NULL AND k.ksb_code IS NOT NULL
           AND strpos(lower(coalesce(nullif(p.component_title,''),'Learning activity ' || p.id::text)),%s)>0''',
         [learner_id, search.strip().lower()])]} if search.strip() else {'codes': []}

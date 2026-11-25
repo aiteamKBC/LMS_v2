@@ -108,6 +108,92 @@ class AttachmentTests(unittest.TestCase):
             self.assertEqual(settings['sessionPurpose'], 'Keep outline')
             self.assertEqual(settings['recordingUrl'], 'https://example.invalid/saved-recording')
 
+    def test_restore_never_creates_live_in_a_closed_week_even_if_the_series_has_an_extra_occurrence(self):
+        self.components = []
+        self.n.update(live_session_component_points=lambda: 1, authoring_upsert=Mock())
+        self.n['module_week_session_plan'] = lambda *args: [
+            {'date': '2026-10-23', 'weekNumber': 1, 'skippedHolidays': ['2026-10-23']},
+            {'date': '2026-10-30', 'weekNumber': 2, 'skippedHolidays': []},
+        ]
+        self.n['uuid'] = uuid
+        updated, created = self.n['attach_teams_meeting_to_module_weeks'](
+            'MOD-1', self.series, {'sessionTimeZone': 'Africa/Cairo'}, self.occurrences, create_missing=True)
+        self.assertEqual((updated, created), (0, 1))
+        payload = self.n['authoring_upsert'].call_args.args[2]
+        self.assertEqual(payload['week_id'], 'WEEK-1')
+        self.assertEqual(payload['settings_json']['teamsOccurrenceId'], 'OCC-1')
+
+    def test_restore_does_not_create_an_unbooked_live_session_from_the_series_join_link(self):
+        self.components = []
+        self.n.update(live_session_component_points=lambda: 1, authoring_upsert=Mock())
+        self.n['module_week_session_plan'] = lambda *args: [
+            {'date': '2026-11-06', 'weekNumber': 1}, {'date': '2026-11-13', 'weekNumber': 2}]
+        self.assertEqual(self.n['attach_teams_meeting_to_module_weeks'](
+            'MOD-1', self.series, {'sessionTimeZone': 'Africa/Cairo'}, self.occurrences, create_missing=True), (0, 0))
+        self.n['authoring_upsert'].assert_not_called()
+
+    def test_two_three_and_four_lives_keep_their_links_and_recordings_across_a_holiday_week(self):
+        from datetime import timedelta
+        for per_week in (2, 3, 4):
+            with self.subTest(lives_per_week=per_week):
+                self.writes = []
+                self.weeks = [{'id': name} for name in ('GENERAL', 'OPEN-1', 'HOLIDAY', 'OPEN-3')]
+                self.components, self.occurrences, plan = [], [], []
+                for week in range(3):
+                    for position in range(per_week):
+                        day = (datetime(2027, 3, 1) + timedelta(days=week * 7 + position)).date().isoformat()
+                        plan.append({'date': day, 'weekNumber': week + 1,
+                                     'skippedHolidays': [day] if week == 1 else []})
+                        if week == 1:
+                            continue
+                        identity = f'{week}-{position}'
+                        number = len(self.occurrences) + 1
+                        self.components.append({'id': 'COMP-' + identity, 'week_id': f'OPEN-{week + 1}',
+                            'type': 'live_session', 'settings_json': {'sessionDate': day,
+                                'teamsLiveSessionId': 'LIVE-1', 'teamsSessionNumber': number,
+                                'teamsOccurrenceId': 'OCC-' + identity,
+                                'recordingUrl': 'https://example.invalid/recordings/' + identity}})
+                        self.occurrences.append({'id': 'OCC-' + identity, 'session_number': number,
+                            'graph_event_id': 'EVENT-' + identity, 'scheduled_start': day + 'T09:00:00Z',
+                            'scheduled_end': day + 'T10:00:00Z', 'status': 'scheduled',
+                            'join_url': 'https://teams.microsoft.com/meet/' + identity})
+                self.n.update(module_week_session_plan=lambda *args: plan,
+                              delivery_days_per_week=lambda *args: per_week,
+                              live_session_component_points=lambda: 1, authoring_upsert=Mock())
+                self.assertEqual(self.n['attach_teams_meeting_to_module_weeks'](
+                    'MOD-1', self.series, {'sessionTimeZone': 'UTC'}, self.occurrences,
+                    create_missing=True), (per_week * 2, 0))
+                self.n['authoring_upsert'].assert_not_called()
+                for (component_id, written), component, occurrence in zip(self.writes, self.components, self.occurrences):
+                    settings = written['settings_json']
+                    self.assertEqual(component_id, component['id'])
+                    self.assertEqual(settings['teamsOccurrenceId'], occurrence['id'])
+                    self.assertEqual(settings['sessionDate'], component['settings_json']['sessionDate'])
+                    self.assertEqual(settings['recordingUrl'], component['settings_json']['recordingUrl'])
+                    self.assertEqual(settings['liveSessionUrl'], occurrence['join_url'])
+                    self.assertEqual(written['live_sessions_link'], occurrence['join_url'])
+
+    def test_four_confirmed_lives_on_one_day_keep_their_individual_ids_links_and_clocks(self):
+        self.weeks = [{'id': 'WEEK-0'}]
+        self.components, self.occurrences = [], []
+        for index, hour in enumerate((9, 11, 13, 15)):
+            self.components.append({'id': f'COMP-{index}', 'week_id': 'WEEK-0', 'type': 'live_session',
+                'settings_json': {'sessionDate': '2027-03-01', 'sessionTime': f'{hour:02}:00',
+                    'teamsLiveSessionId': 'LIVE-1', 'teamsOccurrenceId': f'OCC-{index}',
+                    'teamsSessionNumber': index + 1, 'recordingUrl': f'https://example.invalid/recording/{index}'}})
+            self.occurrences.append({'id': f'OCC-{index}', 'session_number': index + 1, 'status': 'scheduled',
+                'graph_event_id': f'EVENT-{index}', 'scheduled_start': f'2027-03-01T{hour:02}:00:00Z',
+                'scheduled_end': f'2027-03-01T{hour + 1:02}:00:00Z', 'join_url': f'https://teams.microsoft.com/meet/{index}'})
+        self.n['module_week_session_plan'] = lambda *args: [{'date': '2027-03-01', 'weekNumber': 1}]
+        self.assertEqual(self.n['attach_teams_meeting_to_module_weeks'](
+            'MOD-1', self.series, {'sessionTimeZone': 'UTC'}, self.occurrences), (4, 0))
+        for index, (_component_id, write) in enumerate(self.writes):
+            settings = write['settings_json']
+            self.assertEqual(settings['teamsOccurrenceId'], f'OCC-{index}')
+            self.assertEqual(settings['sessionTime'], self.components[index]['settings_json']['sessionTime'])
+            self.assertEqual(settings['liveSessionUrl'], self.occurrences[index]['join_url'])
+            self.assertEqual(settings['recordingUrl'], self.components[index]['settings_json']['recordingUrl'])
+
     def test_restore_replaces_a_stale_component_date_with_the_verified_occurrence(self):
         self.components[0]['settings_json'].update(
             sessionDate='2026-12-04', sessionDay='Friday', sessionTime='15:30',
@@ -201,6 +287,100 @@ class AttachmentTests(unittest.TestCase):
         # The second falls through to the date its own week is planned for.
         self.assertEqual(settings['COMP-1']['teamsOccurrenceId'], 'OCC-1')
         self.assertEqual(settings['COMP-1']['sessionDate'], '2026-10-30')
+
+    def test_align_to_week_plan_repairs_a_gap_and_duplicate_without_changing_meetings(self):
+        dates = ['2026-11-04', '2026-11-11', '2026-11-18', '2026-11-25',
+                 '2026-12-02', '2026-12-09', '2026-12-16']
+        self.weeks = [{'id': f'WEEK-{i}'} for i in range(len(dates))]
+        self.components = [{
+            'id': f'COMP-{i}', 'week_id': f'WEEK-{i}', 'type': 'live_session',
+            'settings_json': {'sessionDate': dates[min(i + (i >= 2), 6)],
+                              'teamsLiveSessionId': 'LIVE-1',
+                              'teamsSessionNumber': min(i + 1 + (i >= 2), 7),
+                              'sessionPurpose': 'Keep outline', 'teamsMeetingScope': 'main'},
+        } for i in range(len(dates))]
+        self.occurrences = [{
+            'id': f'OCC-{i}', 'session_number': i + 1, 'graph_event_id': f'EVENT-{i}',
+            'scheduled_start': f'{day}T09:00:00Z', 'scheduled_end': f'{day}T11:00:00Z',
+            'join_url': f'https://teams.example/{i}', 'status': 'completed' if i < 3 else 'scheduled',
+        } for i, day in enumerate(dates)]
+        plan = [{'date': day, 'startTime': '09:00'} for day in dates]
+        self.n['module_week_delivery_slots'] = lambda *args, **kwargs: ([[slot] for slot in plan], plan)
+        before = copy.deepcopy(self.occurrences)
+        unresolved = []
+        self.n['attach_teams_meeting_to_module_weeks'](
+            'MOD-1', self.series, {'sessionTimeZone': 'Europe/London'}, self.occurrences,
+            align_to_week_plan=True, unresolved_components=unresolved)
+        settings = {key: write['settings_json'] for key, write in self.writes}
+        self.assertEqual([settings[f'COMP-{i}']['sessionDate'] for i in range(7)], dates)
+        self.assertEqual([settings[f'COMP-{i}']['teamsOccurrenceId'] for i in range(7)],
+                         [f'OCC-{i}' for i in range(7)])
+        self.assertEqual([settings[f'COMP-{i}']['liveSessionUrl'] for i in range(7)],
+                         [f'https://teams.example/{i}' for i in range(7)])
+        self.assertTrue(all(value['sessionPurpose'] == 'Keep outline' for value in settings.values()))
+        self.assertEqual(unresolved, [])
+        self.assertEqual(self.occurrences, before)
+        for component in self.components:
+            component['settings_json'] = settings[component['id']]
+        self.writes.clear()
+        self.n['attach_teams_meeting_to_module_weeks'](
+            'MOD-1', self.series, {'sessionTimeZone': 'Europe/London'}, self.occurrences,
+            align_to_week_plan=True)
+        self.assertEqual({key: write['settings_json'] for key, write in self.writes}, settings)
+        self.assertEqual(self.occurrences, before)
+
+    def test_align_uses_each_weeks_slots_for_multi_day_delivery(self):
+        self.components[1]['week_id'] = 'WEEK-0'
+        plan = [{'date': '2026-10-23'}, {'date': '2026-10-30'}]
+        self.n['module_week_delivery_slots'] = lambda *args, **kwargs: ([plan, []], plan)
+        self.n['attach_teams_meeting_to_module_weeks'](
+            'MOD-1', self.series, {'sessionTimeZone': 'Africa/Cairo'}, self.occurrences,
+            align_to_week_plan=True, create_missing=True)
+        self.assertEqual([write['settings_json']['teamsOccurrenceId'] for _, write in self.writes],
+                         ['OCC-0', 'OCC-1'])
+
+    def test_restore_forwards_explicit_alignment_and_reports_unmatched_components(self):
+        self.n['json_body'] = lambda request: {'alignToWeekPlan': True, 'createMissingComponents': True}
+        attach = Mock(side_effect=lambda *args, **kwargs: (kwargs['unresolved_components'].append('COMP-1') or 1, 0))
+        self.n['attach_teams_meeting_to_module_weeks'] = attach
+        result = self.restore('POST')
+        self.assertTrue(attach.call_args.kwargs['align_to_week_plan'])
+        self.assertEqual(result['unresolvedComponentIds'], ['COMP-1'])
+
+    def test_shared_series_without_matching_occurrence_is_visibly_unresolved(self):
+        self.components[1]['settings_json'].update(sessionDate='2026-11-06', teamsMeetingScope='main')
+        self.n['module_week_session_plan'] = lambda *args: [{'date': '2026-10-23'}, {'date': '2026-11-06'}]
+        unresolved = []
+        self.n['attach_teams_meeting_to_module_weeks'](
+            'MOD-1', self.series, {'sessionTimeZone': 'Africa/Cairo',
+                                 'teamsLiveSessionId': 'LIVE-1', 'liveSessionUrl': self.series['join_url']},
+            self.occurrences, unresolved_components=unresolved)
+        settings = dict(self.writes)['COMP-1']['settings_json']
+        self.assertEqual(unresolved, ['COMP-1'])
+        self.assertEqual(settings['teamsCalendarBinding'], 'missing')
+        self.assertFalse(settings.get('teamsOccurrenceId'))
+        self.assertFalse(settings.get('teamsSessionNumber'))
+
+    def test_first_attachment_follows_the_week_plan_instead_of_stale_copied_dates(self):
+        self.components[0]['settings_json']['sessionDate'] = '2026-10-30'
+        self.n['module_week_session_plan'] = lambda *args: [
+            {'date': '2026-10-23', 'weekNumber': 1}, {'date': '2026-10-30', 'weekNumber': 2}]
+        settings = self.attach()
+        self.assertEqual(settings['COMP-0']['sessionDate'], '2026-10-23')
+        self.assertEqual(settings['COMP-0']['teamsOccurrenceId'], 'OCC-0')
+        self.assertEqual(settings['COMP-1']['sessionDate'], '2026-10-30')
+        self.assertEqual(settings['COMP-1']['teamsOccurrenceId'], 'OCC-1')
+
+    def test_align_does_not_guess_between_two_occurrences_on_the_same_date(self):
+        self.occurrences[1]['scheduled_start'] = self.occurrences[0]['scheduled_start']
+        plan = [{'date': '2026-10-23'}, {'date': '2026-10-30'}]
+        self.n['module_week_delivery_slots'] = lambda *args, **kwargs: ([[slot] for slot in plan], plan)
+        unresolved = []
+        self.n['attach_teams_meeting_to_module_weeks'](
+            'MOD-1', self.series, {'sessionTimeZone': 'Africa/Cairo'}, self.occurrences,
+            align_to_week_plan=True, unresolved_components=unresolved)
+        self.assertEqual(unresolved, ['COMP-0', 'COMP-1'])
+        self.assertTrue(all(not write['settings_json'].get('teamsOccurrenceId') for _, write in self.writes))
 
     def attach(self):
         self.n['attach_teams_meeting_to_module_weeks'](

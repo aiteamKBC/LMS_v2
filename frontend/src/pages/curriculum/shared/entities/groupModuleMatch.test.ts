@@ -16,11 +16,11 @@ describe('group module matching', () => {
     })).toBe(1);
   });
 
-  it('falls back to the display name for legacy module rows without a group ID', () => {
+  it('rejects a display-name match without a canonical group ID', () => {
     expect(moduleMatchesGroup(
       { group: 'Final Group', programmeId: 'PROGRAMME-1' },
       { groupId: 'GROUP-FINAL', groupName: 'Final Group', programmeId: 'PROGRAMME-1' },
-    )).toBe(true);
+    )).toBe(false);
   });
 
   it('keeps a module linked by group ID when its programme ID is stale', () => {

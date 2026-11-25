@@ -19,6 +19,24 @@ from .models import CurriculumVideoImport
 log = logging.getLogger(__name__)
 LABEL = 'English (LMS transcript)'
 JOURNAL = 'lmsEnglishCaptions'
+CAPTION_PAGE_SIZE = 50
+
+
+def _ready_assets(series_id):
+    """Materialize bounded pages before writing caption receipts or doing HTTP.
+
+    A named cursor cannot survive changing transactions through a transaction
+    pooler. Keyset pages also keep memory bounded for multi-part lectures.
+    """
+    assets = CurriculumVideoImport.objects.filter(
+        target_kind='live_session', target_id=series_id, status='ready').order_by('pk')
+    after = None
+    while True:
+        page = list((assets.filter(pk__gt=after) if after is not None else assets)[:CAPTION_PAGE_SIZE])
+        if not page:
+            return
+        yield from page
+        after = page[-1].pk
 
 
 def _waiting(asset_id, video_id):
@@ -109,8 +127,7 @@ def sync_series_captions(series_id, artifacts):
     recordings = {row['id']: row for row in artifacts if row.get('artifact_type') == 'recording'}
     if not recordings or not any(row.get('artifact_type') == 'transcript' for row in artifacts):
         return
-    assets = CurriculumVideoImport.objects.filter(target_kind='live_session', target_id=series_id, status='ready')
-    for asset in assets.iterator():
+    for asset in _ready_assets(series_id):
         recording = recordings.get(asset.component_id)
         if (not recording or asset.scope.get('series_id') != series_id
                 or asset.scope.get('occurrence_id') != recording.get('occurrence_id')

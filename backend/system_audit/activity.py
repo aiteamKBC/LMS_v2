@@ -62,18 +62,16 @@ logger = logging.getLogger(__name__)
 
 ACTIVITY_TABLE = 'activity_events'
 
-#: How long page activity is kept, and so the only window the Audit Trail reads.
-#: Rows older than this are deleted by ``purge_expired_activity``.
+#: Default Audit Trail read window. Stored activity history is retained in full.
 RETENTION_DAYS = 7
 DEFAULT_WINDOW_DAYS = RETENTION_DAYS
 MAX_WINDOW_DAYS = RETENTION_DAYS
 
-#: The purge runs at most this often per process, and deletes in batches so the
-#: first run -- which clears everything already past the window -- stays bounded.
+#: Legacy purge constants retained for callers; the compatibility hook is inert.
 PURGE_INTERVAL_SECONDS = 3600
 PURGE_BATCH = 5000
 PURGE_MAX_BATCHES = 40
-#: pg_try_advisory_xact_lock key: one of production's processes purges at a time.
+#: Former purge advisory-lock key; no request acquires it now.
 PURGE_LOCK_KEY = 7_202_609_240
 _PURGE = {}
 DEFAULT_PEOPLE_LIMIT = 200
@@ -213,50 +211,12 @@ def table():
 
 
 def purge_expired_activity():
-    """Delete page activity older than ``RETENTION_DAYS``. Never raises.
+    """Compatibility hook: retain all activity history.
 
-    Only ``activity_events``. Change history (``record_revisions``) also feeds
-    every record's History panel and sign-ins are the security log, so both are
-    kept and only left out of the Audit Trail's window. Curriculum Studio's page
-    activity is kept in full: its trail has no window.
-
-    Rows are told apart by their stored workspace, so without that column there
-    is no safe way to spare Curriculum Studio's, and nothing is deleted.
+    Report windows restrict reads only. History deletion requires a separately
+    approved maintenance operation; recording a new event must never purge it.
     """
-    started = time.monotonic()
-    last = _PURGE.get('last')
-    if last is not None and started - last < PURGE_INTERVAL_SECONDS:
-        return 0
-    _PURGE['last'] = started
-    if not activity_available() or not workspace_column_available():
-        return 0
-    kept = sorted(quality.UNLIMITED_WORKSPACES)
-    cutoff = datetime.utcnow() - timedelta(days=RETENTION_DAYS)
-    deleted = 0
-    try:
-        with transaction.atomic():
-            with connection.cursor() as cursor:
-                if connection.vendor == 'postgresql':
-                    cursor.execute('select pg_try_advisory_xact_lock(%s)', [PURGE_LOCK_KEY])
-                    if not cursor.fetchone()[0]:
-                        return 0
-                for _batch in range(PURGE_MAX_BATCHES):
-                    cursor.execute(
-                        f'delete from {table()} where id in ('
-                        f'select id from {table()} where occurred_at < %s '
-                        f"and coalesce(workspace, '') not in ({', '.join(['%s'] * len(kept))}) "
-                        f'limit {PURGE_BATCH})',
-                        [cutoff, *kept],
-                    )
-                    deleted += max(cursor.rowcount, 0)
-                    if cursor.rowcount < PURGE_BATCH:
-                        break
-    except Exception:
-        logger.warning('Could not delete expired LMS activity.', exc_info=True)
-        return 0
-    if deleted:
-        logger.info('Deleted %s LMS activity rows older than %s days.', deleted, RETENTION_DAYS)
-    return deleted
+    return 0
 
 
 # ------------------------------------------------------------------ helpers
@@ -500,10 +460,18 @@ def activity_record(request):
             if candidate and _ID_PATTERN.match(candidate):
                 target_id = candidate
                 target_type = clean(raw.get('targetType'), 40)
+        if 'detail' in raw and not isinstance(raw['detail'], dict):
+            return JsonResponse({'error': 'Event detail must be a JSON object.'}, status=400)
         duration = raw.get('durationMs')
         try:
+            negative_duration = duration is not None and float(duration) < 0
+        except (TypeError, ValueError, OverflowError):
+            negative_duration = False
+        if negative_duration:
+            return JsonResponse({'error': 'Event duration must be nonnegative.'}, status=400)
+        try:
             duration = int(duration)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             duration = None
         if duration is not None and not 0 <= duration <= 86_400_000:
             duration = None

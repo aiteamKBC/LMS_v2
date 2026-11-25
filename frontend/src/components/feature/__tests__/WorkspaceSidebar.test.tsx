@@ -423,8 +423,8 @@ it.each([
   ['/curriculum/recordings/42', 'Tutor session recordings'],
   ['/curriculum/coaching-recordings', 'Coach meetings'],
   ['/curriculum/coaching-recordings/42', 'Coach meetings'],
-  ['/curriculum/quality-demo', 'Quality Assurance'],
-  ['/curriculum/quality-demo?view=deep-dive', 'Deep Dive'],
+  ['/curriculum/quality', 'Quality Assurance'],
+  ['/curriculum/quality?view=deep-dive', 'Deep Dive'],
 ])('opens Recording Quality with only the matching destination selected on %s', (path, label) => {
   localStorage.setItem('kbc_sidebar_expanded', '[]');
   const { rail } = showWorkspace('curriculum', path);
@@ -446,9 +446,9 @@ it('lets Curriculum open each recording destination and toggle the group without
     ['Recording Quality', '/curriculum/recordings-hub'],
     ['Coach meetings', '/curriculum/coaching-recordings'],
     ['Tutor session recordings', '/curriculum/recordings'],
-    ['Quality Assurance', '/curriculum/quality-demo'],
+    ['Quality Assurance', '/curriculum/quality'],
     ['Quality Checks', '/curriculum/coaching-recordings/reviews'],
-    ['Deep Dive', '/curriculum/quality-demo?view=deep-dive'],
+    ['Deep Dive', '/curriculum/quality?view=deep-dive'],
   ]) {
     const link = within(rail).getByRole('link', { name });
     expect(link).toHaveAttribute('href', href);
@@ -461,10 +461,10 @@ it('lets Curriculum open each recording destination and toggle the group without
 it('opens Quality Assurance from the sidebar and keeps its active state distinct from Quality', async () => {
   const { rail } = showWorkspace('curriculum', '/curriculum/recordings-hub');
   const link = within(rail).getByRole('link', { name: 'Quality Assurance' });
-  expect(link).toHaveAttribute('href', '/curriculum/quality-demo');
+  expect(link).toHaveAttribute('href', '/curriculum/quality');
   expect(link.querySelector('svg')).toHaveClass('lucide-shield-check');
   await act(async () => { fireEvent.click(link); });
-  expect(screen.getByTestId('route')).toHaveTextContent('/curriculum/quality-demo');
+  expect(screen.getByTestId('route')).toHaveTextContent('/curriculum/quality');
   expect(link).toHaveAttribute('aria-current', 'page');
   expect(within(rail).getByRole('link', { name: 'Quality' })).not.toHaveAttribute('aria-current');
 });
@@ -472,7 +472,7 @@ it('opens Quality Assurance from the sidebar and keeps its active state distinct
 it.each([
   ['/curriculum/coaching-recordings/reviews?status=draft&type=PR', 'Quality Checks'],
   ['/curriculum/quality/forms?type=PR', 'Quality Checks'],
-  ['/curriculum/quality-demo?view=deep-dive', 'Deep Dive'],
+  ['/curriculum/quality?view=deep-dive', 'Deep Dive'],
 ])('opens Recording Quality with the quality pages as direct children on %s', (path, label) => {
   localStorage.setItem('kbc_sidebar_expanded', '[]');
   const { rail } = showWorkspace('curriculum', path);
@@ -506,12 +506,12 @@ it('preserves the hub permission without hiding the recording pages', () => {
 });
 
 it('toggles Recording Quality without changing the selected quality page', () => {
-  const { rail } = showWorkspace('curriculum', '/curriculum/quality-demo');
+  const { rail } = showWorkspace('curriculum', '/curriculum/quality');
   const toggle = within(rail).getByRole('button', { name: 'Toggle Recording Quality pages' });
   fireEvent.click(toggle);
   expect(toggle).toHaveAttribute('aria-expanded', 'false');
   expect(within(rail).queryByRole('link', { name: 'Quality Assurance' })).toBeNull();
-  expect(screen.getByTestId('route')).toHaveTextContent('/curriculum/quality-demo');
+  expect(screen.getByTestId('route')).toHaveTextContent('/curriculum/quality');
   fireEvent.click(toggle);
   expect(toggle).toHaveAttribute('aria-expanded', 'true');
   expect(within(rail).getByRole('link', { name: 'Quality Assurance' })).toHaveAttribute('aria-current', 'page');
@@ -538,7 +538,7 @@ it('keeps the Quality Assurance permission gate on its overview and both childre
 
 it('honours each moved page restriction without hiding the other recording destinations', () => {
   denied.add('curriculum-quality-checks');
-  const { rail } = showWorkspace('curriculum', '/curriculum/quality-demo');
+  const { rail } = showWorkspace('curriculum', '/curriculum/quality');
   expect(within(rail).queryByRole('link', { name: 'Quality Checks' })).toBeNull();
   expect(within(rail).getByRole('link', { name: 'Quality Assurance' })).toBeVisible();
   expect(within(rail).getByRole('link', { name: 'Deep Dive' })).toBeVisible();
@@ -547,9 +547,9 @@ it('honours each moved page restriction without hiding the other recording desti
 
 it.each([
   ['Coach meetings', '/curriculum/coaching-recordings'],
-  ['Quality Assurance', '/curriculum/quality-demo'],
+  ['Quality Assurance', '/curriculum/quality'],
   ['Quality Checks', '/curriculum/coaching-recordings/reviews'],
-  ['Deep Dive', '/curriculum/quality-demo?view=deep-dive'],
+  ['Deep Dive', '/curriculum/quality?view=deep-dive'],
 ])('opens %s from the mobile menu and closes the drawer', async (name, href) => {
   showWorkspace('curriculum', '/curriculum/recordings');
   fireEvent.click(screen.getByRole('button', { name: 'Open mobile navigation' }));

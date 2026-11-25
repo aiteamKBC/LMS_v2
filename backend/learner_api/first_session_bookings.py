@@ -6,7 +6,7 @@
         caseOwner: {name, email}, bookedAt, bookedDate, sessionDate,
         sessionTime, durationMinutes, meetingLink, state, status, syncState}]}
 
-Read only. The source is "Coach".coach_calendar_event (``event_type =
+Read only. The source is "Learner".coach_calendar_event (``event_type =
 'first-session'``), not the ``First_session_booked*`` columns on
 enrolment."Created_users": the learner now books the session from their own
 calendar (calendar.learner_calendar_book), and that path never writes those
@@ -27,7 +27,6 @@ from __future__ import annotations
 import logging
 
 from django.db import DatabaseError
-from django.db.models.functions import Lower, Trim
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
@@ -77,53 +76,19 @@ def booking_state(record) -> str:
 
 
 def resolve_learners(records):
-    """Map each calendar row to its enrolment."Created_users" learner.
-
-    ``learner_id`` on a calendar row is not always an enrolment id: the learner's
-    own booking stores the enrolment id, but a coach booking stores the id of
-    the "Learner".learners profile. The two id spaces overlap, so an id alone
-    could name the wrong person -- the row's learner email decides, the same
-    way calendar._learner_calendar_record accepts a row as a learner's.
-
-    Order: enrolment id with a matching email, then profile id with a matching
-    email (through the profile's enrolment link), then the email alone. A row
-    that matches none is returned unmatched rather than guessed.
-    """
-    ids = {r.learner_id for r in records if r.learner_id}
-    emails = {_email(r.learner_email) for r in records} - {""}
-
+    """Resolve calendar profile IDs through their canonical enrolment link only."""
+    ids = {r.learner_profile_id for r in records if r.learner_profile_id}
     profiles = {
-        p.id: p
-        for p in LearnerProfile.objects.filter(id__in=ids).only("id", "email", "enrolment_id")
+        p.id: p for p in LearnerProfile.objects.filter(id__in=ids).only('id', 'enrolment_id')
     }
-    enrolment_ids = ids | {p.enrolment_id for p in profiles.values() if p.enrolment_id}
-    fields = ("id", "username", "email", "programme_id", "case_owner", "learner_type")
-    by_id = {u.id: u for u in EnrolmentUser.all_learners.filter(id__in=enrolment_ids).only(*fields)}
-    by_email = {}
-    if emails:
-        matches = (
-            EnrolmentUser.all_learners.annotate(email_key=Lower(Trim("email")))
-            .filter(email_key__in=emails)
-            .only(*fields)
-            .order_by("id")
-        )
-        for u in matches:
-            by_email.setdefault(_email(u.email), u)
-
-    resolved = {}
-    for record in records:
-        email = _email(record.learner_email)
-        learner = by_id.get(record.learner_id)
-        if learner is not None and email and _email(learner.email) != email:
-            learner = None
-        if learner is None:
-            profile = profiles.get(record.learner_id)
-            if profile is not None and profile.enrolment_id and (not email or _email(profile.email) == email):
-                learner = by_id.get(profile.enrolment_id)
-        if learner is None and email:
-            learner = by_email.get(email)
-        resolved[record.pk] = learner
-    return resolved
+    enrolment_ids = {p.enrolment_id for p in profiles.values() if p.enrolment_id}
+    fields = ('id', 'username', 'email', 'programme_id', 'case_owner', 'learner_type')
+    learners = {u.id: u for u in EnrolmentUser.all_learners.filter(id__in=enrolment_ids).only(*fields)}
+    return {
+        record.pk: learners.get(profiles[record.learner_profile_id].enrolment_id)
+        if record.learner_profile_id in profiles else None
+        for record in records
+    }
 
 
 def serialize_booking(record, learner):
@@ -141,10 +106,9 @@ def serialize_booking(record, learner):
         "learnerName": _text(learner.username if learner is not None else "") or _text(record.learner_name),
         "learnerEmail": _text(learner.email if learner is not None else "") or _text(record.learner_email),
         "programme": _text(learner.programme) if learner is not None else "",
-        # Who the meeting is with -- the case owner it was booked against. Falls
-        # back to the learner's recorded case owner for a row with no name.
+        # The meeting owner comes from owner_coach_id, never the current case owner.
         "caseOwner": {
-            "name": _text(record.owner_name) or (_text(learner.case_owner) if learner is not None else ""),
+            "name": _text(record.owner_name),
             "email": _text(record.owner_email),
         },
         "bookedAt": created.isoformat() if created else None,

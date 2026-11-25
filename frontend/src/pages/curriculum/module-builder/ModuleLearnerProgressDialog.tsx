@@ -167,7 +167,7 @@ export function ModuleLearnerProgressDialog({ moduleName, moduleId, impact, assi
   const ksbRows = impactData.learnerKsbConsumption || [];
   const log = impactData.moduleProgressOtjh ?? impactData.activityLogOtjh;
   const hoursSource = impactData.moduleProgressOtjh ? 'Live attendance + accepted Activity Log' : 'Activity Log accepted hours';
-  const activity = (impact as CurriculumScopeLearnerKsbImpactResponse & { activityLogProgress?: ActivityLogProgress }).activityLogProgress;
+  const activity = (impactData as CurriculumScopeLearnerKsbImpactResponse & { activityLogProgress?: ActivityLogProgress }).activityLogProgress;
   const [removingLearnerId, setRemovingLearnerId] = useState<string | null>(null);
   const [status, setStatus] = useState(() => moduleLearnerStatus(initialStatus));
   const [search, setSearch] = useState('');

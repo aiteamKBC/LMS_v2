@@ -137,6 +137,7 @@ vi.mock('@/lib/curriculumApi', async importOriginal => ({
   fetchCurriculumOverview: vi.fn(async () => ({ programmes, cohorts: [], groups: [], modules })),
   fetchCurriculumDeliveryScope: vi.fn(async () => ({ cohorts: [], groups: [] })),
   fetchCurriculumHolidays: vi.fn(async () => []),
+  fetchFreeCourseAuthoringCatalogue: vi.fn(async () => ({ courses: [] })),
 }));
 
 // The deep-link effect reads window.location.search rather than the router, so

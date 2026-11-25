@@ -374,6 +374,96 @@ describe('Teams Meetings page', () => {
     expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['Data Foundations', 'LIVE-1'], ['Risk Management', 'LIVE-2'],
+  ])('explains a pending meeting read for %s and keeps edits until saving becomes available', async (name, liveId) => {
+    window.localStorage.setItem('curriculumTeamsAutoSync', 'off');
+    let release!: (value: Awaited<ReturnType<typeof loadTeamsMeetingArtifacts>>) => void;
+    vi.mocked(loadTeamsMeetingArtifacts).mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    await renderPage();
+    await screen.findByText(name);
+    await userEvent.click(within(rowFor(name)).getByRole('button', { name: 'Detail' }));
+    const dialog = within(await screen.findByRole('dialog'));
+    const attendees = await dialog.findByRole('combobox', { name: 'Attendees' });
+    fireEvent.change(attendees, { target: { value: 'added@example.invalid' } });
+    fireEvent.keyDown(attendees, { key: 'Enter' });
+    const save = dialog.getByRole('button', { name: 'Save without notifying' });
+    const invite = dialog.getByRole('button', { name: 'Save and email added people' });
+    const update = dialog.getByRole('button', { name: 'Update Teams calendar' });
+    const feedback = dialog.getByRole('status', { name: 'Teams save status' });
+    expect(feedback).toHaveTextContent('Loading the saved meeting details.');
+    expect(save).toBeDisabled();
+    expect(invite).toBeDisabled();
+    expect(update).toBeDisabled();
+    expect(save).toHaveAccessibleDescription(/Loading the saved meeting details/);
+    expect(invite).toHaveAccessibleDescription(/Loading the saved meeting details/);
+    expect(update).toHaveAccessibleDescription(/Loading the saved meeting details/);
+    await userEvent.click(save);
+    expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
+    await act(async () => { release({ ...artifacts, series: { ...artifacts.series, id: liveId } } as never); });
+    await waitFor(() => expect(save).toBeEnabled());
+    expect(dialog.getByRole('button', { name: 'Remove added@example.invalid' })).toBeVisible();
+    expect(dialog.queryByRole('status', { name: 'Teams save status' })).not.toBeInTheDocument();
+    await userEvent.click(save);
+    await waitFor(() => expect(updateTeamsMeetingSchedule).toHaveBeenCalledWith(liveId, expect.objectContaining({
+      peopleOnly: true, invitationsOnly: true, attendees: expect.arrayContaining(['added@example.invalid']),
+    }), expect.anything()));
+  });
+
+  it('offers a read retry beside Save after a failure without losing the invitation edit', async () => {
+    window.localStorage.setItem('curriculumTeamsAutoSync', 'off');
+    vi.mocked(loadTeamsMeetingArtifacts).mockRejectedValueOnce(new Error('The meeting details request timed out.'));
+    await renderPage();
+    await screen.findByText('Data Foundations');
+    await userEvent.click(within(rowFor('Data Foundations')).getByRole('button', { name: 'Detail' }));
+    const dialog = within(await screen.findByRole('dialog'));
+    const feedback = await dialog.findByRole('status', { name: 'Teams save status' });
+    expect(feedback).toHaveTextContent('The meeting details request timed out.');
+    const attendees = dialog.getByRole('combobox', { name: 'Attendees' });
+    fireEvent.change(attendees, { target: { value: 'added@example.invalid' } });
+    fireEvent.keyDown(attendees, { key: 'Enter' });
+    let release!: (value: Awaited<ReturnType<typeof loadTeamsMeetingArtifacts>>) => void;
+    vi.mocked(loadTeamsMeetingArtifacts).mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    await userEvent.click(within(feedback).getByRole('button', { name: 'Retry meeting details' }));
+    expect(dialog.getByRole('button', { name: 'Save without notifying' })).toBeDisabled();
+    expect(feedback).toHaveTextContent('Loading the saved meeting details.');
+    expect(dialog.getByRole('button', { name: 'Remove added@example.invalid' })).toBeVisible();
+    expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
+    expect(createTeamsMeeting).not.toHaveBeenCalled();
+    await act(async () => { release(artifacts as never); });
+    await waitFor(() => expect(dialog.getByRole('button', { name: 'Save without notifying' })).toBeEnabled());
+    expect(dialog.getByRole('button', { name: 'Remove added@example.invalid' })).toBeVisible();
+    expect(dialog.queryByRole('button', { name: 'Retry meeting details' })).not.toBeInTheDocument();
+  });
+
+  it('shows the save preparation and its failure beside Save while retaining the edit for retry', async () => {
+    window.localStorage.setItem('curriculumTeamsAutoSync', 'off');
+    let reject!: (reason: Error) => void;
+    updateTeamsMeetingSchedule.mockImplementationOnce(() => new Promise((_resolve, rejectPromise) => { reject = rejectPromise; }));
+    await renderPage();
+    await screen.findByText('Data Foundations');
+    await userEvent.click(within(rowFor('Data Foundations')).getByRole('button', { name: 'Detail' }));
+    const dialog = within(await screen.findByRole('dialog'));
+    const attendees = await dialog.findByRole('combobox', { name: 'Attendees' });
+    fireEvent.change(attendees, { target: { value: 'added@example.invalid' } });
+    fireEvent.keyDown(attendees, { key: 'Enter' });
+    const save = dialog.getByRole('button', { name: 'Save without notifying' });
+    await waitFor(() => expect(save).toBeEnabled());
+    await userEvent.click(save);
+    expect(dialog.getByRole('status', { name: 'Teams save status' })).toHaveTextContent('Checking the saved meeting before saving your changes.');
+    expect(save).toBeDisabled();
+    await act(async () => { reject(new Error('The saved calendar could not be verified. Retry.')); });
+    const feedback = dialog.getByRole('status', { name: 'Teams save status' });
+    expect(feedback).toHaveTextContent('The saved calendar could not be verified. Retry.');
+    expect(save).toHaveAccessibleDescription('The saved calendar could not be verified. Retry.');
+    expect(save).toBeEnabled();
+    expect(dialog.getByRole('button', { name: 'Remove added@example.invalid' })).toBeVisible();
+    await userEvent.click(save);
+    await waitFor(() => expect(updateTeamsMeetingSchedule).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(save).toBeDisabled());
+    expect(dialog.queryByRole('status', { name: 'Teams save status' })).not.toBeInTheDocument();
+  });
+
   it('checks future calendars for cancellation without creating or updating Microsoft meetings', async () => {
     const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-08-01T08:00:00Z'));
     try {
@@ -981,7 +1071,8 @@ describe('Teams Meetings page', () => {
     expect(dialog.getByRole('button', { name: 'Remove staff@example.invalid' })).toBeVisible();
     await userEvent.click(dialog.getByRole('button', { name: action }));
     if (action === 'Update Teams calendar') await userEvent.click(dialog.getByRole('button', { name: 'Confirm update' }));
-    expect(await screen.findByText(/Teams supports up to 10 co-organizers/)).toBeVisible();
+    const errorScope = action === 'Update Teams calendar' ? screen : within(dialog.getByRole('status', { name: 'Teams save status' }));
+    expect(await errorScope.findByText(/Teams supports up to 10 co-organizers/)).toBeVisible();
     expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
     expect(createTeamsMeeting).not.toHaveBeenCalled();
     await userEvent.click(dialog.getByRole('button', { name: 'Remove staff@example.invalid' }));
@@ -1138,7 +1229,8 @@ describe('Teams Meetings page', () => {
     confirmMock.mockImplementationOnce(async options => { await options.onConfirm(); return true; });
     vi.mocked(readImportedMeetingEditor).mockRejectedValueOnce(new Error('Microsoft is unavailable. Retry.'));
     await userEvent.click(dialog.getByRole('button', { name: 'Sync people and roles from Teams' }));
-    expect(await dialog.findByText('Microsoft is unavailable. Retry.')).toBeVisible();
+    expect(await within(dialog.getByRole('status', { name: 'Teams save status' })).findByText('Microsoft is unavailable. Retry.')).toBeVisible();
+    expect(dialog.getByRole('button', { name: 'Save without notifying' })).toHaveAccessibleDescription('Microsoft is unavailable. Retry.');
     expect(dialog.getByRole('button', { name: 'Remove unsaved@example.invalid' })).toBeVisible();
     expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
     confirmMock.mockImplementationOnce(async options => { await options.onConfirm(); return true; });

@@ -10,7 +10,7 @@ from . import canonical_learning as canonical
 from . import current_learning, my_learning as learning
 from . import course_catalogue_display as display
 from . import training_plan_dashboard as schedule
-from .tests_my_learning_no_db import component, native, metadata
+from .tests_my_learning_no_db import component, native, metadata, catalogue_sql_rows
 
 
 def large_facts(replacements=False):
@@ -58,7 +58,7 @@ class CataloguePerformanceTests(SimpleTestCase):
             'created_at':None,'created_at_utc':None} for kind in ('material','quiz')]
         record={'id':1,'accepted':True,'actual_seconds':3600,'sources':[
             {'source_system':'old_lms','source_course_ref':'50','source_activity_id':kind+':7'} for kind in ('material','quiz')]}
-        with patch.object(canonical,'query',return_value=definitions),patch.object(canonical,'counts_as_completed',wraps=canonical.counts_as_completed) as completion,patch.object(canonical,'counts_as_actual',wraps=canonical.counts_as_actual) as actual:
+        with patch.object(canonical,'query',return_value=catalogue_sql_rows(definitions)),patch.object(canonical,'counts_as_completed',wraps=canonical.counts_as_completed) as completion,patch.object(canonical,'counts_as_actual',wraps=canonical.counts_as_actual) as actual:
             _,done,_,hours,_=learning.course_facts({'id':9},[record],[{'id':3,'source_course_ref':'50'}])
         self.assertEqual(done,{('50','material:7'),('50','quiz:7')})
         self.assertEqual(hours['50'],1)
@@ -126,7 +126,7 @@ class CataloguePerformanceTests(SimpleTestCase):
         self.assertNotIn('to_jsonb(s)',sql);self.assertNotIn('to_jsonb(h)',sql)
         self.assertNotIn("jsonb_build_object('id',s.id)",sql)
         self.assertIn("'[{}]'::jsonb AS payload",sql)
-        self.assertIn("'source_activity_id',h.source_activity_id",sql)
+        self.assertIn('jsonb_build_array(h.source_system,h.source_course_ref,h.source_activity_id)',sql)
         self.assertIn('s.learner_id=p.learner_id',sql)
         self.assertIn('progress.deleted_at IS NULL',sql)
 

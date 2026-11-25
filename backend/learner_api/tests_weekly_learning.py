@@ -188,6 +188,11 @@ class ReadOnlyIdentityTests(SimpleTestCase):
 
 class WeeklyLearningEndpointTests(SimpleTestCase):
     def call(self, view, account, *, kind='commercial', method='get', error=None, missing=False):
+        # Each call installs a different database fixture; it must not inherit a
+        # successful response from an earlier fixture. Cache hits are covered by
+        # test_response_cache_no_db with a consistent source and explicit TTLs.
+        from django.core.cache import cache
+        cache.clear()
         model = MagicMock()
         model.DoesNotExist = type('Missing', (Exception,), {})
         source = SimpleNamespace(pk=201, id=201, _weekly_training_plan=[], _weekly_learning_plan=[])
@@ -289,6 +294,32 @@ class FakeCursor:
 
 
 class ResolveFromMasterOptionTests(SimpleTestCase):
+    def test_batched_assessment_read_keeps_component_values_and_per_module_order(self):
+        class BatchCursor(FakeCursor):
+            def execute(self, sql, params=None):
+                super().execute(sql, params)
+                if 'FROM curriculum.components WHERE' in sql:
+                    self.rows = [
+                        ('C2', 'W0', 'M2', 'reading', 'Second', 'Body 2', {}, None, 2, [], False, None, False),
+                        ('C1', 'W1', 'M1', 'reading', 'First', 'Body 1', {}, None, 1, [], False, None, False)]
+                    self.rows = [row for row in self.rows if row[2] in params[0]]
+
+        results, reads = [], []
+        for batched in (False, True):
+            cursor = BatchCursor()
+            connection = MagicMock()
+            connection.cursor.return_value = cursor
+            with patch.object(learner_detail, 'connections', {'enrolment': connection}):
+                results.append(learner_detail._resolve_from_master([], [], [],
+                    assigned_modules=[{'moduleId': 'M1'}, {'moduleId': 'M2'}],
+                    compact=True, live_session_ids=False, batch_modules=batched,
+                    resolved_metadata={'module_titles': {'M1': 'One', 'M2': 'Two'},
+                        'weeks': [('W1', 'M1', 'Week 1', 1, 1), ('W0', 'M2', 'Week 2', 1, 1)]}))
+            reads.append(sum('FROM curriculum.components WHERE' in sql for sql in cursor.statements))
+        self.assertEqual(results[1], results[0])
+        self.assertEqual([component['componentId'] for component in results[1][2]], ['C1', 'C2'])
+        self.assertEqual(reads, [2, 1])
+
     def resolve(self, **options):
         cursor = FakeCursor()
         connection = MagicMock()

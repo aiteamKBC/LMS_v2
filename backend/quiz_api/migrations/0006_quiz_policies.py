@@ -1,6 +1,4 @@
 """Add opt-in rules without activating or rewriting existing quizzes/history."""
-import json
-
 from django.db import migrations, models
 
 
@@ -28,13 +26,8 @@ def install(apps, schema_editor):
             ADD COLUMN IF NOT EXISTS policy_enabled boolean NOT NULL DEFAULT false,
             ADD COLUMN IF NOT EXISTS attempt_limit integer NOT NULL DEFAULT 3 CHECK (attempt_limit BETWEEN 1 AND 20),
             ADD COLUMN IF NOT EXISTS grade_settings jsonb''')
-        cursor.execute('''CREATE TABLE IF NOT EXISTS curriculum.quiz_defaults (
-            id integer PRIMARY KEY CHECK (id=1), general jsonb NOT NULL, grades jsonb NOT NULL,
-            revision integer NOT NULL DEFAULT 1 CHECK (revision > 0),
-            updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)''')
-        cursor.execute('''INSERT INTO curriculum.quiz_defaults (id,general,grades)
-            VALUES (1,%s::jsonb,%s::jsonb) ON CONFLICT (id) DO NOTHING''',
-                       [json.dumps(GENERAL), json.dumps(GRADES)])
+        # Global defaults were retired. Keep the historical state transition for
+        # 0007, but never recreate its physical table during fresh/replayed setup.
 
 
 class Migration(migrations.Migration):

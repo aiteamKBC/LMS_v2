@@ -195,8 +195,8 @@ class DashboardMetricsTests(SimpleTestCase):
                 # Keep only the parent's matching archive event, including the
                 # nested KSB read; an arbitrary parent stamp can expose ghosts.
                 self.assertIn(visible_child_sql('c'), query)
-                self.assertIn("lower(btrim(coalesce(mapping.status, ''))) <> 'inactive'", query)
-                self.assertIn('JOIN curriculum.standard_ksbs', query)
+                self.assertIn("mapping.status='active'", query)
+                self.assertIn('JOIN curriculum.ksb_standard_definitions', query)
                 self.assertEqual(params, [['module-one', 'module-two']])
 
     def test_migrated_metrics_keep_audited_inventory_and_refresh_saved_progress(self):

@@ -43,6 +43,7 @@ from .my_learning import my_learning
 from . import progress_transfer
 from . import support_tickets
 from . import reading_ocr
+from . import user_archive
 
 from curriculum_api import session_results
 from .session_recovery import link_catchup
@@ -111,6 +112,8 @@ urlpatterns = [
     path("enrolment-users/import/", learner_import.import_students, name="enrolment-users-import"),
     path("enrolment-users/options/", views.enrolment_user_options, name="enrolment-user-options"),
     path("enrolment-users/<int:pk>/", views.enrolment_user_detail, name="enrolment-user-detail"),
+    path("enrolment-users/<int:pk>/archive/", user_archive.archive_user, name="enrolment-user-archive"),
+    path("enrolment-users/<int:pk>/restore/", user_archive.restore_user, name="enrolment-user-restore"),
     path("enrolment-users/<int:pk>/fields/", views.enrolment_user_fields, name="enrolment-user-fields"),
     path("enrolment-users/<int:pk>/finish/", views.enrolment_user_finish, name="enrolment-user-finish"),
     # The learner's learning plan: their group's modules, editable within the

@@ -11,6 +11,7 @@ from decimal import Decimal, InvalidOperation
 from django.db import connection
 
 from learner_api.ksb_definition_links import assigned_definition_ids, attach_definition_ids
+from learner_api.ksb_write_scope import mutable_progress_ids
 
 
 def _text(value):
@@ -26,7 +27,7 @@ def _weight(value):
         return None
 
 
-def normalise_mappings(mappings):
+def normalise_mappings(mappings, *, deduplicate=True):
     """Return the exact learner snapshot shape, in deterministic order."""
     result = []
     seen = set()
@@ -39,11 +40,11 @@ def normalise_mappings(mappings):
         source_type = _text(mapping.get('source_type') or mapping.get('sourceType'))
         source_id = _text(mapping.get('source_id') or mapping.get('sourceId'))
         identity = (code, source_type, source_id)
-        if identity in seen:
+        if deduplicate and identity in seen:
             continue
         seen.add(identity)
         row = {
-            'position': len(result),
+            'position': len(result) if deduplicate else mapping.get('position', len(result)),
             'ksb_code': code,
             'ksb_description': _text(
                 mapping.get('ksb_description') or mapping.get('description') or mapping.get('ksbDescription')
@@ -54,10 +55,12 @@ def normalise_mappings(mappings):
             'weight': _weight(mapping.get('weight')),
             'weight_class': _text(mapping.get('weight_class') or mapping.get('weightClass')).lower(),
         }
-        for key in ('ksb_definition_id', 'ksbDefinitionId'):
+        for key in ('standard_ksb_id', 'standardKsbId', 'ksbDefinitionId'):
             if key in mapping:
-                row[key] = mapping.get(key)
+                row['standard_ksb_id'] = mapping.get(key)
                 break
+        for key in ('legacy_definition_snapshot', 'is_excluded', 'exclusion_reason', 'exclusion_metadata'):
+            row[key] = bool(mapping.get(key)) if key == 'is_excluded' else mapping.get(key)
         result.append(row)
     return result
 
@@ -84,17 +87,21 @@ def sync_progress_ksbs(mappings_by_component, *, actor='curriculum-ksb-sync'):
         return {'components': len(desired), 'progress_rows': 0, 'revisions': 0}
 
     with connection.cursor() as cursor:
+        allowed = mutable_progress_ids(cursor, desired)
+        if not allowed:
+            return {'components': len(desired), 'progress_rows': 0, 'revisions': 0}
         cursor.execute('''
             SELECT p.id,p.learner_id,p.reporting_month,
                    coalesce(nullif(p.curriculum_component_ref,''),nullif(p.component_ref,'')) AS component_id,
-                   k.position,k.ksb_code,k.ksb_definition_id,k.ksb_description,k.source_type,k.source_id,
-                   k.classification,k.weight,k.weight_class
+                   k.position,k.ksb_code,k.standard_ksb_id,k.ksb_description,k.source_type,k.source_id,
+                   k.classification,k.weight,k.weight_class,k.legacy_definition_snapshot,
+                   k.is_excluded,k.exclusion_reason,k.exclusion_metadata
             FROM "Learner".learner_progress_entries p
-            LEFT JOIN "Learner".learner_progress_ksbs k ON k.progress_id=p.id
+            LEFT JOIN "Learner".ksb_learner_progress k ON k.progress_id=p.id
             WHERE p.deleted_at IS NULL
-              AND coalesce(nullif(p.curriculum_component_ref,''),nullif(p.component_ref,''))=ANY(%s)
+              AND p.id=ANY(%s)
             ORDER BY p.id,k.position
-        ''', [list(desired)])
+        ''', [allowed])
         columns = [column[0] for column in cursor.description]
         records = [dict(zip(columns, row)) for row in cursor.fetchall()]
 
@@ -108,8 +115,9 @@ def sync_progress_ksbs(mappings_by_component, *, actor='curriculum-ksb-sync'):
             })
             if record['position'] is not None:
                 item['ksbs'].append({key: record.get(key) for key in (
-                    'position', 'ksb_code', 'ksb_definition_id', 'ksb_description', 'source_type', 'source_id',
-                    'classification', 'weight', 'weight_class',
+                    'position', 'ksb_code', 'standard_ksb_id', 'ksb_description', 'source_type', 'source_id',
+                    'classification', 'weight', 'weight_class', 'legacy_definition_snapshot',
+                    'is_excluded', 'exclusion_reason', 'exclusion_metadata',
                 )})
 
         definition_ids = assigned_definition_ids(
@@ -119,13 +127,15 @@ def sync_progress_ksbs(mappings_by_component, *, actor='curriculum-ksb-sync'):
         )
         changed = []
         for progress_id, item in progress.items():
-            current_rows = normalise_mappings(item['ksbs'])
+            current_rows = normalise_mappings(item['ksbs'], deduplicate=False)
             next_rows = attach_definition_ids(
                 desired.get(item['component_id'], []),
                 item['learner_id'],
                 definition_ids,
                 existing=current_rows,
             )
+            for row in next_rows:
+                row.pop('ksb_definition_id', None)
             if _snapshot(current_rows) != _snapshot(next_rows):
                 changed.append((progress_id, item, next_rows, current_rows))
 
@@ -146,19 +156,20 @@ def sync_progress_ksbs(mappings_by_component, *, actor='curriculum-ksb-sync'):
                 _text(actor) or 'curriculum-ksb-sync',
             ])
             cursor.execute(
-                'DELETE FROM "Learner".learner_progress_ksbs WHERE progress_id=%s',
+                'DELETE FROM "Learner".ksb_learner_progress WHERE progress_id=%s',
                 [progress_id],
             )
             if next_rows:
                 cursor.executemany('''
-                    INSERT INTO "Learner".learner_progress_ksbs
-                        (progress_id,position,ksb_code,ksb_definition_id,ksb_description,source_type,source_id,
-                         classification,weight,weight_class)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    INSERT INTO "Learner".ksb_learner_progress
+                        (progress_id,position,ksb_code,standard_ksb_id,ksb_description,source_type,source_id,
+                         classification,weight,weight_class,legacy_definition_snapshot,is_excluded,exclusion_reason,exclusion_metadata)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s::jsonb)
                 ''', [[
-                    progress_id, row['position'], row['ksb_code'], row['ksb_definition_id'], row['ksb_description'],
+                    progress_id, row['position'], row['ksb_code'], row['standard_ksb_id'], row['ksb_description'],
                     row['source_type'], row['source_id'], row['classification'],
-                    row['weight'], row['weight_class'],
+                    row['weight'], row['weight_class'], json.dumps(row['legacy_definition_snapshot']) if row.get('legacy_definition_snapshot') is not None else None,
+                    row.get('is_excluded', False), row.get('exclusion_reason'), json.dumps(row['exclusion_metadata']) if row.get('exclusion_metadata') is not None else None,
                 ] for row in next_rows])
 
     # Raw SQL above: retire the cached KSB progress of every learner touched.

@@ -113,7 +113,8 @@ def week_rows(modules, today):
     return result
 
 
-def read_weekly_learning(context, selection=None, *, module_id=None, include_weeks=True, include_actions=False):
+def read_weekly_learning(context, selection=None, *, module_id=None, include_weeks=True, include_actions=False,
+                         module_navigation=False, prefer_current=True):
     from learner_api.weekly_hours import module_activity_hours, selected_activity_hours, activity_hours_index
     from learner_api.learning_plan import _effective_plan_ids
     from learner_api import canonical_learning
@@ -273,7 +274,37 @@ def read_weekly_learning(context, selection=None, *, module_id=None, include_wee
             ORDER BY {component_week},c.display_order,c.id''',
             ([owner['id'], sorted(content_ids), *detail_params] if canonical_only else detail_params))
         components = [row for row in rows(cur) if row['has_content'] or row['is_quiz']]
-        register, live_credits = read_weekly_live_evidence(source, owner, schedule_ids, sorted(content_ids))
+        evidence_ids, credit_ids = schedule_ids, sorted(content_ids)
+        scheduled = []
+        if module_navigation and include_weeks:
+            # The Student panel displays one module's rail at a time. Keep the
+            # complete identity population for ledger/quiz ambiguity and picker
+            # membership, but resolve expensive attendance only for that rail.
+            provisional = []
+            activity_counts = defaultdict(int)
+            for component in components:
+                activity_counts[(component['module_catalogue_id'], component['week_id'])] += 1
+            for week in weeks:
+                provisional.append({**week, 'totalActivities': 0 if week['kind'] == 'reading-week'
+                                    else activity_counts[(week['moduleId'], week['weekId'])]})
+            from learner_api.attendance_lectures import read_native_occurrences
+            scheduled = read_native_occurrences(source, module_ids=schedule_ids)
+            scheduled_markers = {(week['moduleId'], week['startDate']) for week in weeks
+                                 if week_live_session(scheduled, week, now)}
+            visible = display_weeks(visible_week_rows(provisional, scheduled_markers), policies, today)
+            current = (next((week for week in visible if week['moduleId'] == default_module and week['status'] == 'current'), None)
+                       or next((week for week in visible if week['status'] == 'current'), None)) if prefer_current else None
+            retained = {week['moduleId'] for week in visible}
+            if current:
+                module_id = current['moduleId']
+            elif default_module in retained or not prefer_current:
+                module_id = default_module
+            else:
+                module_id = next((row['id'] for row in active + future + past + default_candidates
+                                  if row['id'] in retained), None)
+            evidence_ids = [module_id] if module_id else []
+            credit_ids = sorted(content_ids.intersection(evidence_ids))
+        register, live_credits = read_weekly_live_evidence(source, owner, evidence_ids, credit_ids)
         credits_by_component = {credit['componentId']: credit for credit in live_credits}
         progress_query = context.profile.progress_entries.filter(kind__in=['quiz', 'video', 'component', 'quiz_reading'])
         from django.db.models import Q
@@ -339,6 +370,16 @@ def read_weekly_learning(context, selection=None, *, module_id=None, include_wee
                 'sessionDurationMinutes': (finish - start).total_seconds() / 60 if finish else None}
             markers[(row['module_catalogue_id'], row['day'].isoformat())] = derived_session(
                 row['start'], row['finish'], row['status'], row['attended'], now)
+        if module_navigation and include_weeks:
+            # Shared deliveries may have generated slots and no local series.
+            # Read their compact schedule to preserve picker membership without
+            # resolving another module's reviewed attendance/learning credits.
+            for week in weeks:
+                if week['moduleId'] not in evidence_ids:
+                    session = week_live_session(scheduled, week, now)
+                    if session:
+                        markers.setdefault((week['moduleId'], week['startDate']),
+                            {'state': session['sessionState'], 'attended': session['attended']})
         register_by_module = defaultdict(list)
         for row in register:
             register_by_module[row.get('module_catalogue_id')].append(row)
@@ -455,8 +496,11 @@ def read_weekly_learning(context, selection=None, *, module_id=None, include_wee
     hours_by_component = activity_hours_index(module_hours, module_components)
     for activity in activities:
         activity['actualHours'] = round(hours_by_component[str(activity['id'])], 4)
-    return compact_weekly(weeks=navigation_weeks if include_weeks else (selected_navigation,), selected=selected_navigation,
+    result = compact_weekly(weeks=navigation_weeks if include_weeks else (selected_navigation,), selected=selected_navigation,
         summary={'ksbCount': len(codes), 'achievedKsbCount': len(achieved),
                  'otjhHours': completed_hours, 'plannedOtjhHours': planned,
                  'untimedActivities': sum(item['expectedHours'] is None for item in activities)},
         live_session=live, activities=activities)
+    if module_navigation and include_weeks:
+        result['weeks'] = [week for week in result['weeks'] if week['moduleId'] == selected['moduleId']]
+    return result

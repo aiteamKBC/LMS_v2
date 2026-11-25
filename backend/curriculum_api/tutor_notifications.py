@@ -1,63 +1,16 @@
-"""Email a tutor about a module they are assigned to.
+"""Manual tutor assignment emails with a canonical, retained notification ledger.
 
-Sent on request only: staff press "Email tutor" on the module workspace
-(``module_tutor_email`` below). Assigning a tutor no longer mails them -- see
-``schedule_assignment_notifications``, kept as a no-op so the write paths that
-call it need not change. The reconcile machinery described next is retained
-for ``dispatch_assignment_notifications`` and the ledger, which still records
-every manual send.
-
-Why a reconcile pass instead of a hook per write
-------------------------------------------------
-A tutor becomes attached to a module through several unrelated paths: the
-programme creation/edit wizard (``save_tree_group_modules``), the staffing
-screen (``update_staffing_assignment``), a group PATCH that carries ``tutor``,
-a staff-profile POST/PATCH that carries ``assignedModuleIds``, and the mirror
-rebuild that derives ``tutors.assigned_module_ids`` from
-``curriculum.modules.tutor_name``. Hooking a "send mail" call into each of them
-would mean five chances to miss one, and each of those paths writes several
-modules in a loop -- so per-write hooks also produce a mail per module rather
-than one mail per save.
-
-Instead this module reconciles. After a write commits it compares the set of
-(tutor, module) pairs that currently exist against a ledger of pairs already
-mailed, and sends one grouped message per tutor for whatever is new. The pass is
-idempotent, so calling it from an extra place costs a few reads and nothing
-else, and a path nobody remembered to wire up is still covered the next time any
-curriculum write happens.
-
-The ledger
-----------
-``curriculum.tutor_module_notifications`` -- one row per (tutor identity,
-module) pair that has been mailed. Rows are claimed *before* the send so a crash
-mid-send cannot produce a duplicate, and a failed send is left recorded as
-``failed`` with an attempt count so it retries on later passes but cannot loop
-forever against a permanently bad address.
-
-Rows for pairs that no longer exist are deleted, which is deliberate: a tutor
-taken off a module and put back on it later is told about it again.
-
-Seeding
--------
-Migration ``0049`` creates the table already populated with every assignment
-that existed at the time. Without that, the first reconcile after deployment
-would read the entire back catalogue as "new" and mail every tutor about every
-module they have ever been given. The runtime bootstrap path below seeds the
-same way for local/SQLite provisioning.
-
-Failure policy
---------------
-Nothing here may break a curriculum save. The whole pass runs after commit and
-swallows its own exceptions -- an assignment that saved but did not mail is a
-notification bug, not a data-loss bug, and is recoverable on the next pass.
+Assignments come only from modules.tutor_id; profile data comes from tutors.
+Automatic assignment hooks remain disabled. Explicit reconcile calls group new
+assignments, while manual sends intentionally permit resends. History survives
+renames, email changes, reassignment and archival. Database RESTRICT constraints
+protect it from parent deletion.
 """
 from __future__ import annotations
 
 import json
 import logging
 import os
-import threading
-from datetime import datetime
 
 from django.db import connection, transaction
 from django.http import JsonResponse
@@ -67,7 +20,7 @@ from curriculum_api.canonical_read_sql import module_expected_otjh_sql
 
 from login import email_azure
 
-from . import schema_gate
+from . import schema_gate, tutor_notification_schema
 
 logger = logging.getLogger(__name__)
 
@@ -79,12 +32,6 @@ NOTIFICATION_TABLE = 'tutor_module_notifications'
 #: been decommissioned would otherwise be retried on every curriculum write for
 #: the life of the deployment.
 MAX_SEND_ATTEMPTS = 3
-
-#: Collapses the many writes of one save into a single pass. See
-#: ``schedule_assignment_notifications``.
-_state = threading.local()
-
-_TABLE_READY = False
 
 
 def _views():
@@ -116,116 +63,60 @@ def notifications_enabled():
 # ---------------------------------------------------------------------------
 
 def ensure_notification_table():
-    """Verify the ledger exists; provision it only outside production.
-
-    Schema is migration-owned, so
-    a request path that finds it missing gets a named error rather than silently
-    issuing DDL.
-    """
-    global _TABLE_READY
-    if _TABLE_READY:
-        return
-    if not schema_gate.runtime_bootstrap_allowed():
-        schema_gate.require_tables(NOTIFICATION_TABLE)
-        _TABLE_READY = True
-        return
-    provision_notification_table()
+    """Read-only final-schema gate. Provisioning is explicit, never a GET side effect."""
+    schema_gate.require_tables(NOTIFICATION_TABLE)
+    with connection.cursor() as cursor:
+        tutor_notification_schema.verify(cursor, connection.vendor)
 
 
 def provision_notification_table():
-    """Create the ledger (and seed it) for the test runner / local bootstrap."""
-    global _TABLE_READY
+    """Create and seed the final schema in an explicitly authorized bootstrap."""
     views = _views()
     already_present = views.table_exists(NOTIFICATION_TABLE)
-    with connection.cursor() as cursor:
-        if connection.vendor == 'postgresql':
-            cursor.execute(
-                f'create schema if not exists {views.quote_ident(views.CURRICULUM_SCHEMA)}'
-            )
-        cursor.execute(
-            'create table if not exists '
-            + views.table_name(NOTIFICATION_TABLE)
-            + """ (
-                id varchar(160) primary key,
-                tutor_key varchar(320) not null default '',
-                tutor_id varchar(128) not null default '',
-                tutor_name varchar(255) not null default '',
-                tutor_email varchar(255) not null default '',
-                module_catalogue_id varchar(128) not null default '',
-                status varchar(32) not null default 'sent',
-                attempts integer not null default 0,
-                detail text not null default '',
-                created_at timestamp not null default current_timestamp,
-                updated_at timestamp not null default current_timestamp
-            )"""
-        )
-        cursor.execute(
-            'create index if not exists curriculum_tutor_notify_key_idx on '
-            + views.table_name(NOTIFICATION_TABLE)
-            + ' (tutor_key)'
-        )
+    with transaction.atomic(), connection.cursor() as cursor:
+        tutor_notification_schema.create_table(cursor, connection.vendor)
+        tutor_notification_schema.verify(cursor, connection.vendor)
+        if not already_present:
+            seed_existing_assignments()
     views._TABLE_COLUMNS_CACHE.pop(f'{views.CURRICULUM_SCHEMA}.{NOTIFICATION_TABLE}', None)
-    _TABLE_READY = True
-    if not already_present:
-        seed_existing_assignments()
-
-
-def ledger_id(tutor_key, module_id):
-    """Primary key for a pair. Deterministic, so a concurrent insert collides."""
-    return f'{tutor_key}|{module_id}'[:160]
 
 
 def seed_existing_assignments():
-    """Record every current assignment as already-notified, sending nothing.
-
-    Called once, when the ledger is first created. See the module docstring.
-    """
+    """Seed canonical pairs without claiming delivery or altering existing history."""
     views = _views()
-    try:
-        assignments = current_assignments()
-    except Exception:
-        logger.warning('Could not seed the tutor assignment ledger.', exc_info=True)
-        return
-    seeded = 0
-    for tutor_key, entry in assignments.items():
-        for module_id in entry['modules']:
-            try:
-                views.insert_row(NOTIFICATION_TABLE, {
-                    'id': ledger_id(tutor_key, module_id),
-                    'tutor_key': tutor_key,
-                    'tutor_id': entry['tutor']['id'],
-                    'tutor_name': entry['tutor']['name'],
-                    'tutor_email': entry['tutor']['email'],
-                    'module_catalogue_id': module_id,
-                    'status': 'seeded',
-                    'attempts': 0,
-                    'detail': 'Recorded when the notification ledger was created.',
-                })
-                seeded += 1
-            except Exception:
-                logger.debug('Could not seed ledger row for %s.', module_id, exc_info=True)
-    logger.info('Seeded %s existing tutor module assignments (no mail sent).', seeded)
+    with connection.cursor() as cursor:
+        cursor.execute(f'''INSERT INTO {views.table_name(NOTIFICATION_TABLE)}
+            (tutor_id,module_catalogue_id,status,attempts,detail)
+            SELECT t.id,m.module_catalogue_id,'seeded',0,
+                   'Recorded when the notification ledger was created.'
+            FROM {views.table_name('modules')} m
+            JOIN {views.table_name('tutors')} t ON t.id=m.tutor_id
+            WHERE 1=1
+            ON CONFLICT (tutor_id,module_catalogue_id) DO NOTHING''')
 
 
-# ---------------------------------------------------------------------------
-# Current state
-# ---------------------------------------------------------------------------
+def _tutor_profile(tutor_id):
+    views = _views()
+    rows = views.fetch_all(
+        f'SELECT id,name,email FROM {views.table_name("tutors")} WHERE id=%s',
+        [tutor_id])
+    if not rows:
+        return None
+    return {key: views.clean_str(rows[0].get(key)) for key in ('id','name','email')}
+
+
+def _assigned_tutor_id(module_id):
+    views = _views()
+    rows = views.fetch_all(
+        f'SELECT tutor_id FROM {views.table_name("modules")} WHERE module_catalogue_id=%s',
+        [module_id])
+    return views.clean_str(rows[0].get('tutor_id')) if rows else ''
+
 
 def current_assignments():
-    """Every live tutor-to-module pair, keyed by tutor identity.
-
-    Returns ``{tutor_key: {'tutor': {...}, 'modules': {catalogue_id: detail}}}``.
-
-    Only tutors with an email address appear: there is nowhere to send for the
-    others, and leaving them out keeps the pair out of the ledger so they are
-    notified once an address is filled in.
-
-    The tutors come from the staff directory and the assignment from
-    ``curriculum.modules.tutor_name`` -- the module row is the only thing that
-    says who teaches it, so there is no second list here to disagree with it.
-    """
+    """Current canonical pairs, grouped by tutors.id for explicit grouped dispatch."""
     views = _views()
-    tutor_rows = views.get_staff_profile_rows('tutor')
+    tutor_rows = views.fetch_all(f'SELECT id,name,email FROM {views.table_name("tutors")}')
     module_rows = views.safe_authoring_module_rows()
     _annotate_module_otjh(module_rows)
     if not tutor_rows or not module_rows:
@@ -249,9 +140,8 @@ def current_assignments():
         # of the mail; losing the mail costs the tutor the assignment.
         logger.debug('Could not read groups/cohorts for assignment mail.', exc_info=True)
 
-    # Indexed once so the tutor loop below is a name comparison rather than a
-    # row read per pair. Descriptions are built lazily, because only the handful
-    # of modules that actually match ever need one.
+    assigned_ids = {row['module_catalogue_id']: row['tutor_id'] for row in views.fetch_all(
+        f'SELECT module_catalogue_id,tutor_id FROM {views.table_name("modules")}')}
     live_modules = []
     for module_row in module_rows:
         module_id = views.clean_str(module_row.get('module_catalogue_id'))
@@ -260,20 +150,20 @@ def current_assignments():
             continue
         live_modules.append((
             module_id,
-            views.staff_assignment_key(module_row.get('tutor_name')),
+            views.clean_str(assigned_ids.get(module_id)),
             module_row,
         ))
 
     assignments = {}
     for tutor in tutor_rows:
-        name = views.staff_profile_name(tutor)
-        email = views.staff_profile_email(tutor)
-        tutor_key = views.staff_assignment_key(name) or email.lower()
-        if not tutor_key or tutor_key == 'unassigned' or not email:
+        name = views.clean_str(tutor.get('name'))
+        email = views.clean_str(tutor.get('email'))
+        resolved_tutor_id = views.clean_str(tutor.get('id'))
+        if not resolved_tutor_id or not email:
             continue
         modules = {}
-        for module_id, module_tutor_key, module_row in live_modules:
-            if module_tutor_key != tutor_key:
+        for module_id, assigned_id, module_row in live_modules:
+            if assigned_id != resolved_tutor_id:
                 continue
             modules[module_id] = describe_module(
                 module_row,
@@ -281,7 +171,7 @@ def current_assignments():
                 cohorts_by_id.get(views.clean_str(module_row.get('cohort_id'))),
             )
         if modules:
-            assignments[tutor_key] = {
+            assignments[resolved_tutor_id] = {
                 'tutor': {
                     'id': views.clean_str(tutor.get('id')),
                     'name': name,
@@ -390,35 +280,8 @@ def ledger_rows():
 
 
 def schedule_assignment_notifications():
-    """Queue one reconcile pass for after the current transaction commits.
-
-    Registered on the transaction rather than run inline for two reasons: a save
-    that later rolls back must not have mailed anybody, and a wizard save that
-    writes twenty modules should mail once, not twenty times. Only the
-    last-registered callback of a transaction does the work -- earlier ones see
-    a newer token and return.
-
-    If that last callback is discarded by a nested rollback the pass is simply
-    skipped; because it is a full diff rather than an increment, the next
-    curriculum write picks up whatever it missed.
-    """
-    # Automatic assignment emails are switched off: staff send them from the
-    # module workspace when they choose to. Every assignment write still calls
-    # this, so it stays callable and does nothing.
+    """Automatic assignment emails remain disabled."""
     return
-    token = getattr(_state, 'token', 0) + 1
-    _state.token = token
-
-    def run():
-        if getattr(_state, 'token', 0) != token:
-            return
-        _state.token = 0
-        dispatch_assignment_notifications()
-
-    try:
-        transaction.on_commit(run)
-    except Exception:
-        logger.debug('Could not schedule tutor assignment notifications.', exc_info=True)
 
 
 def dispatch_assignment_notifications():
@@ -439,126 +302,90 @@ def dispatch_assignment_notifications():
 
 
 def _dispatch():
-    views = _views()
     ensure_notification_table()
-    assignments = current_assignments()
-    ledger = {views.clean_str(row.get('id')): row for row in ledger_rows()}
-
-    live_ids = set()
     batches = []
-
-    for tutor_key, entry in assignments.items():
-        pending = []
-        for module_id, detail in entry['modules'].items():
-            row_id = ledger_id(tutor_key, module_id)
-            live_ids.add(row_id)
-            existing = ledger.get(row_id)
-            if existing is None:
-                pending.append((row_id, module_id, detail, 0))
-                continue
-            status = views.clean_str(existing.get('status')).lower()
-            attempts = int(existing.get('attempts') or 0)
-            if status == 'failed' and attempts < MAX_SEND_ATTEMPTS:
-                pending.append((row_id, module_id, detail, attempts))
-        if pending:
-            batches.append(_notify(entry, pending))
-
-    _forget_stale_rows(live_ids, ledger)
+    for entry in current_assignments().values():
+        result = _notify(entry, list(entry['modules'].items()))
+        if result:
+            batches.append(result)
     return batches
 
 
-def _notify(entry, pending):
-    """Claim the pending pairs in the ledger, then mail one message for them.
+def _upsert_ledger_row(tutor_id, module_id, *, manual=False):
+    """Atomically claim an attempt; never copy a stale application-side count.
 
-    The claim happens first and unconditionally. If the process dies between the
-    claim and the send the tutor misses a mail; the other order would re-send
-    the same mail on every later pass, which is the worse of the two failures.
-    """
-    tutor = entry['tutor']
-    modules = [detail for _, _, detail, _ in pending]
-
-    for row_id, module_id, _, attempts in pending:
-        _upsert_ledger_row(row_id, tutor, module_id, 'pending', attempts, '')
-
-    subject, html, text = email_azure.tutor_assignment_message(
-        tutor_name=tutor['name'],
-        modules=modules,
-        workspace_url=workspace_url(),
-    )
-    sent, detail = email_azure.send_mail(
-        to=tutor['email'], subject=subject, html_body=html, text_body=text
-    )
-
-    status = 'sent' if sent else 'failed'
-    for row_id, module_id, _, attempts in pending:
-        _upsert_ledger_row(
-            row_id,
-            tutor,
-            module_id,
-            status,
-            attempts + 1,
-            '' if sent else (detail or '')[:500],
-        )
-    if sent:
-        logger.info(
-            'Emailed %s about %s newly assigned module(s).', tutor['email'], len(pending)
-        )
-    else:
-        logger.warning(
-            'Could not email %s about %s newly assigned module(s): %s',
-            tutor['email'], len(pending), detail,
-        )
-    return {
-        'tutor': tutor['email'],
-        'modules': [module_id for _, module_id, _, _ in pending],
-        'sent': sent,
-    }
-
-
-def _upsert_ledger_row(row_id, tutor, module_id, status, attempts, detail):
-    views = _views()
-    payload = {
-        'tutor_key': row_id.split('|', 1)[0],
-        'tutor_id': tutor['id'],
-        'tutor_name': tutor['name'],
-        'tutor_email': tutor['email'],
-        'module_catalogue_id': module_id,
-        'status': status,
-        'attempts': attempts,
-        'detail': detail,
-        'updated_at': datetime.utcnow(),
-    }
-    updated = views.update_rows(NOTIFICATION_TABLE, 'id = %s', [row_id], payload)
-    if not updated:
-        try:
-            views.insert_row(NOTIFICATION_TABLE, {'id': row_id, **payload})
-        except Exception:
-            # A concurrent pass claimed the same deterministic key first. That is
-            # the collision doing its job, not an error.
-            logger.debug('Ledger row %s already claimed.', row_id, exc_info=True)
-
-
-def _forget_stale_rows(live_ids, ledger):
-    """Drop ledger rows whose assignment no longer exists.
-
-    Keeps a re-assignment notifiable, and stops the ledger growing without bound
-    as modules and tutors are deleted.
+    Call inside the transaction containing delivery and completion. PostgreSQL
+    holds the conflicting row lock until completion, serializing sends for the
+    same pair. Reconcile contenders recheck eligibility after waiting; explicit
+    manual requests each count as an intentional resend.
     """
     views = _views()
-    stale = [row_id for row_id in ledger if row_id and row_id not in live_ids]
-    for row_id in stale:
+    table = views.table_name(NOTIFICATION_TABLE)
+    condition = '' if manual else "WHERE ledger.status='failed' AND ledger.attempts < %s"
+    now = "(clock_timestamp() AT TIME ZONE 'UTC')" if connection.vendor == 'postgresql' else 'CURRENT_TIMESTAMP'
+    params = [tutor_id, module_id] + ([] if manual else [MAX_SEND_ATTEMPTS])
+    with connection.cursor() as cursor:
+        cursor.execute(f'''INSERT INTO {table} AS ledger
+            (tutor_id,module_catalogue_id,status,attempts,detail)
+            VALUES (%s,%s,'pending',1,'')
+            ON CONFLICT (tutor_id,module_catalogue_id) DO UPDATE
+            SET status='pending', attempts=ledger.attempts+1, detail='',
+                updated_at={now}
+            {condition}
+            RETURNING attempts''', params)
+        row = cursor.fetchone()
+    return row[0] if row else None
+
+
+def _notify(entry, pending, *, manual=False):
+    """One grouped message, with sorted pair locks and atomic attempt accounting."""
+    views = _views()
+    tutor_id = entry['tutor']['id']
+    with transaction.atomic():
+        # Re-read canonical recipient just before the send, including after a
+        # concurrent sender held the tutor lock. Lock order is stable per batch.
+        if connection.vendor == 'postgresql':
+            with connection.cursor() as cursor:
+                cursor.execute(f'SELECT id FROM {views.table_name("tutors")} WHERE id=%s FOR NO KEY UPDATE', [tutor_id])
+                if cursor.fetchone() is None:
+                    raise ValueError('Tutor no longer exists.')
+        tutor = _tutor_profile(tutor_id)
+        if not tutor or not tutor['email']:
+            raise ValueError('Tutor has no current email address.')
+        claimed = []
+        for module_id, detail in sorted(pending):
+            if connection.vendor == 'postgresql':
+                with connection.cursor() as cursor:
+                    cursor.execute(f'SELECT tutor_id FROM {views.table_name("modules")} WHERE module_catalogue_id=%s FOR SHARE', [module_id])
+                    row = cursor.fetchone()
+                    if not row or row[0] != tutor_id:
+                        raise ValueError('Module assignment changed; refresh before sending.')
+            if _upsert_ledger_row(tutor_id, module_id, manual=manual) is not None:
+                claimed.append((module_id, detail))
+        if not claimed:
+            return None
+        subject, html, text = email_azure.tutor_assignment_message(
+            tutor_name=tutor['name'], modules=[detail for _,detail in claimed],
+            workspace_url=workspace_url())
         try:
-            views.delete_rows(NOTIFICATION_TABLE, 'id = %s', [row_id])
+            sent, failure = email_azure.send_mail(
+                to=tutor['email'], subject=subject, html_body=html, text_body=text)
         except Exception:
-            logger.debug('Could not drop stale ledger row %s.', row_id, exc_info=True)
+            logger.exception('Tutor notification transport failed.')
+            sent, failure = False, 'Email transport failed.'
+        now = "(clock_timestamp() AT TIME ZONE 'UTC')" if connection.vendor == 'postgresql' else 'CURRENT_TIMESTAMP'
+        with connection.cursor() as cursor:
+            for module_id, _ in claimed:
+                cursor.execute(f'''UPDATE {views.table_name(NOTIFICATION_TABLE)}
+                    SET status=%s,detail=%s,updated_at={now}
+                    WHERE tutor_id=%s AND module_catalogue_id=%s''',
+                    ['sent' if sent else 'failed', '' if sent else (failure or '')[:500],
+                     tutor_id,module_id])
+        return {'tutor': tutor['email'], 'modules': [mid for mid,_ in claimed], 'sent': sent}
 
-
-# ---------------------------------------------------------------------------
-# Manual send, from the module workspace
-# ---------------------------------------------------------------------------
 
 def _module_tutor(module_id):
-    """``(module_row, tutor or None, tutor_key)`` for a live module, or ``(None, None, '')``."""
+    """``(module_row, tutor or None, resolved_tutor_id)`` for a live module, or ``(None, None, '')``."""
     views = _views()
     module_id = views.clean_str(module_id)
     module_row = next((
@@ -568,23 +395,17 @@ def _module_tutor(module_id):
     ), None)
     if module_row is None:
         return None, None, ''
-    tutor_key = views.staff_assignment_key(module_row.get('tutor_name'))
-    if not tutor_key or tutor_key == 'unassigned':
-        return module_row, None, ''
-    for profile in views.get_staff_profile_rows('tutor') or []:
-        name = views.staff_profile_name(profile)
-        if views.staff_assignment_key(name) == tutor_key:
-            return module_row, {
-                'id': views.clean_str(profile.get('id')), 'name': name,
-                'email': views.staff_profile_email(profile),
-            }, tutor_key
-    return module_row, {'id': '', 'name': views.clean_str(module_row.get('tutor_name')), 'email': ''}, tutor_key
+    tutor_id = _assigned_tutor_id(module_id)
+    return module_row, _tutor_profile(tutor_id) if tutor_id else None, tutor_id
 
 
-def _last_send(tutor_key, module_id):
+def _last_send(resolved_tutor_id, module_id):
     views = _views()
     ensure_notification_table()
-    row = next((r for r in ledger_rows() if views.clean_str(r.get('id')) == ledger_id(tutor_key, module_id)), None)
+    rows = views.fetch_all(
+        f'SELECT status,updated_at FROM {views.table_name(NOTIFICATION_TABLE)} '
+        'WHERE tutor_id=%s AND module_catalogue_id=%s', [resolved_tutor_id,module_id])
+    row = rows[0] if rows else None
     if row is None:
         return None
     updated = row.get('updated_at')
@@ -595,49 +416,18 @@ def _last_send(tutor_key, module_id):
 
 
 def module_tutor_status(module_id):
-    module_row, tutor, tutor_key = _module_tutor(module_id)
+    module_row, tutor, resolved_tutor_id = _module_tutor(module_id)
     if module_row is None:
         return None
     return {
         'moduleId': module_id,
         'tutor': {'name': tutor['name'], 'hasEmail': bool(tutor['email'])} if tutor else None,
-        'lastSent': _last_send(tutor_key, module_id) if tutor else None,
+        'lastSent': _last_send(resolved_tutor_id, module_id) if tutor else None,
     }
 
 
-def _tutor_profile_by_key(tutor_key):
-    """The staff directory row for a tutor key, or None."""
-    views = _views()
-    if not tutor_key or tutor_key == 'unassigned':
-        return None
-    for profile in views.get_staff_profile_rows('tutor') or []:
-        name = views.staff_profile_name(profile)
-        if views.staff_assignment_key(name) == tutor_key:
-            return {
-                'id': views.clean_str(profile.get('id')), 'name': name,
-                'email': views.staff_profile_email(profile),
-            }
-    return None
-
-
-def tutor_email_status(module_ids, tutor_name=''):
-    """Which of these deliveries this tutor has already been emailed about.
-
-    The ledger is the only record of that, and it is keyed on (tutor, module),
-    so the answer is per tutor by construction: a module whose tutor changed
-    reports nothing for the new name, and the row the previous tutor earned is
-    never read for them. That is what keeps the drawer's tick from carrying one
-    tutor's "already notified" over to the next.
-
-    ``tutor_name`` evaluates the state against a name that is not stored yet.
-    The module drawer asks while the author is still choosing, and the honest
-    answer for a tutor they have only selected is that tutor's record, not the
-    one still written on the module row.
-
-    Only a ``sent`` row counts as emailed. A ``failed`` one is a record that the
-    attempt happened, not that the tutor heard anything -- so a delivery whose
-    send failed reads as not emailed, and the drawer offers to send it again.
-    """
+def tutor_email_status(module_ids, tutor_id=''):
+    """Preview an explicit canonical tutor ID, or each module's saved assignment."""
     views = _views()
     ordered = []
     for value in module_ids or []:
@@ -645,22 +435,20 @@ def tutor_email_status(module_ids, tutor_name=''):
         if module_id and module_id not in ordered:
             ordered.append(module_id)
 
-    override_key = views.staff_assignment_key(tutor_name) if views.clean_str(tutor_name) else ''
-    tutor = _tutor_profile_by_key(override_key) if override_key else None
+    override_key = views.clean_str(tutor_id)
+    tutor = _tutor_profile(override_key) if override_key else None
     if override_key and tutor is None:
-        # A name the directory does not hold is still the name this module
-        # carries; it simply has no address to write to.
-        tutor = {'id': '', 'name': views.clean_str(tutor_name), 'email': ''}
+        raise ValueError('Tutor not found.')
 
     deliveries = []
     for module_id in ordered:
         if override_key:
-            tutor_key = override_key
+            resolved_tutor_id = override_key
         else:
-            _row, stored_tutor, tutor_key = _module_tutor(module_id)
+            _row, stored_tutor, resolved_tutor_id = _module_tutor(module_id)
             if tutor is None and stored_tutor is not None:
                 tutor = stored_tutor
-        last = _last_send(tutor_key, module_id) if tutor_key else None
+        last = _last_send(resolved_tutor_id, module_id) if resolved_tutor_id else None
         deliveries.append({
             'moduleId': module_id,
             'emailed': bool(last and last.get('status') == 'sent'),
@@ -711,14 +499,14 @@ def send_tutor_email(module_ids):
 
     resolved = []
     for module_id in ordered:
-        module_row, tutor, tutor_key = _module_tutor(module_id)
+        module_row, tutor, resolved_tutor_id = _module_tutor(module_id)
         if module_row is None:
             return {'error': 'Module not found.'}, 404
         if tutor is None:
             return {'error': 'Assign a tutor to this module before emailing them.'}, 409
         if not tutor['email']:
             return {'error': f"{tutor['name']} has no email address in the staff directory."}, 409
-        resolved.append((module_id, module_row, tutor, tutor_key))
+        resolved.append((module_id, module_row, tutor, resolved_tutor_id))
 
     first_key = resolved[0][3]
     if any(key != first_key for _id, _row, _tutor, key in resolved):
@@ -727,6 +515,7 @@ def send_tutor_email(module_ids):
 
     groups = {views.clean_str(r.get('group_id')): r for r in views.authoring_fetch_all(views.GROUPS_TABLE)}
     cohorts = {views.clean_str(r.get('cohort_id')): r for r in views.authoring_fetch_all(views.COHORT_AUTHORING_DETAILS_TABLE)}
+    _annotate_module_otjh([row for _,row,_,_ in resolved])
     details = [
         describe_module(
             module_row,
@@ -737,23 +526,10 @@ def send_tutor_email(module_ids):
     ]
 
     ensure_notification_table()
-    rows = ledger_rows()
-    attempts_by_row = {}
-    for module_id, _row, _tutor, tutor_key in resolved:
-        row_id = ledger_id(tutor_key, module_id)
-        previous = next((r for r in rows if views.clean_str(r.get('id')) == row_id), None)
-        attempts_by_row[row_id] = (module_id, int((previous or {}).get('attempts') or 0))
-
-    subject, html, text = email_azure.tutor_assignment_message(
-        tutor_name=tutor['name'], modules=details, workspace_url=workspace_url(),
-    )
-    sent, failure = email_azure.send_mail(to=tutor['email'], subject=subject, html_body=html, text_body=text)
-    # One mail, so one verdict: every module in it is recorded the same way.
-    for row_id, (module_id, attempts) in attempts_by_row.items():
-        _upsert_ledger_row(row_id, tutor, module_id, 'sent' if sent else 'failed', attempts + 1,
-                           '' if sent else (failure or '')[:500])
+    result = _notify({'tutor': tutor}, list(zip(ordered, details)), manual=True)
+    sent = result['sent']
     if not sent:
-        logger.warning('Could not email %s about modules %s: %s', tutor['email'], ', '.join(ordered), failure)
+        logger.warning('Requested tutor notification failed for %d modules.', len(ordered))
         return {'error': f'The email to {tutor["name"]} could not be sent. Please try again.', 'code': 'send_failed'}, 502
     logger.info('Emailed %s about %d module(s) on request.', tutor['email'], len(ordered))
     return {
@@ -767,6 +543,15 @@ def send_tutor_email(module_ids):
 def send_module_tutor_email(module_id):
     """Email this one module's tutor about it now. See ``send_tutor_email``."""
     return send_tutor_email([module_id])
+
+
+def notification_options(module_ids):
+    """Canonical choices and saved IDs for the notification preview selector."""
+    views = _views()
+    return {
+        'tutors': views.fetch_all(f'SELECT id,name FROM {views.table_name("tutors")} ORDER BY name,id'),
+        'assignments': [{'moduleId': mid, 'tutorId': _assigned_tutor_id(mid)} for mid in module_ids],
+    }
 
 
 @require_role('admin', 'staff')
@@ -792,7 +577,13 @@ def modules_tutor_email(request):
         raw = request.GET.get('moduleIds') or ''
         module_ids = [part for part in raw.split(',') if part.strip()]
         try:
-            return JsonResponse(tutor_email_status(module_ids, request.GET.get('tutor') or ''), status=200)
+            if request.GET.get('options') == '1':
+                return JsonResponse(notification_options(module_ids))
+            if request.GET.get('tutor'):
+                return JsonResponse({'error': 'Use canonical tutorId.'}, status=400)
+            return JsonResponse(tutor_email_status(module_ids, request.GET.get('tutorId') or ''), status=200)
+        except ValueError as exc:
+            return JsonResponse({'error': str(exc)}, status=404)
         except Exception:
             logger.exception('Could not read the tutor email status for modules %s', module_ids)
             return JsonResponse({'error': 'The tutor email status could not be loaded.'}, status=502)

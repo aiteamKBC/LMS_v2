@@ -19,6 +19,7 @@ from zoneinfo import ZoneInfo
 ROOT = Path(__file__).parent
 sys.path.insert(0, str(ROOT.parent))
 from learner_api.hour_review_status import review_hour_totals
+from learner_api.ksb_domain import official_progress_relation
 
 
 class ServiceError(Exception):
@@ -36,7 +37,7 @@ def functions(filename, scope, names=None):
 
 
 def adapter(query):
-    scope = dict(query=query, json=json, math=math, hashlib=hashlib, re=re,
+    scope = dict(official_progress_relation=official_progress_relation, query=query, json=json, math=math, hashlib=hashlib, re=re,
                  datetime=datetime, escape=escape, UK=ZoneInfo('Europe/London'), ServiceError=ServiceError,
                  # KSB exclusion registry: absent here, as on a database the
                  # standards migration has not touched (no filter applied).

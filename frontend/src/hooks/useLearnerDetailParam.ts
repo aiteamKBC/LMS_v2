@@ -20,12 +20,14 @@ export function useLearnerDetailParam(
   kind: string | undefined, id: string | undefined, refreshOnFocus: LearnerDetailRefreshOnFocus = false,
   /** false defers the read (and reports no data) until a consumer needs it. */
   enabled = true,
+  /** Assessment lists need activity/progress facts without dashboard hour totals. */
+  quizView = false,
 ) {
   const session = useCaseFileSession();
   const account = useContext(AuthContext)?.auth.account;
   const accountKey = JSON.stringify([account?.id, account?.role, account?.access, account?.subjectType, account?.subjectId, account?.learnerType]);
   const isRealMode = kind === 'commercial' || kind === 'apprenticeship';
-  const identity = isRealMode && id && enabled ? `${kind}:${id}` : null;
+  const identity = isRealMode && id && enabled ? `${kind}:${id}${quizView ? ':quiz' : ''}` : null;
   const [state, setState] = useState<{
     identity: string; real: LearnerDetail | null; loading: boolean; loadError: string | null;
     accountKey: string; session: typeof session; request: object; isFetching: boolean;
@@ -51,14 +53,14 @@ export function useLearnerDetailParam(
     const onReturn = () => {
       if (document.visibilityState !== 'visible' || Date.now() - lastRefresh < 1000) return;
       // A failed read is never cached, so an error always retries.
-      if (onlyWhenExpired && !hasLoadError.current && peekLearnerDetail(learnerKind, learnerId)) return;
+      if (onlyWhenExpired && !hasLoadError.current && peekLearnerDetail(learnerKind, learnerId, false, quizView)) return;
       lastRefresh = Date.now();
       refresh();
     };
     // Saves in this tab drop the shared entry. Unrelated saves leave it in place.
     const unsubscribe = onlyWhenExpired
       ? subscribeLearnerReadInvalidation(() => {
-        if (!peekLearnerDetail(learnerKind, learnerId, true)) refresh();
+        if (!peekLearnerDetail(learnerKind, learnerId, true, quizView)) refresh();
       })
       : undefined;
     window.addEventListener('focus', onReturn);
@@ -70,30 +72,31 @@ export function useLearnerDetailParam(
       window.removeEventListener('online', onReturn);
       document.removeEventListener('visibilitychange', onReturn);
     };
-  }, [refreshOnFocus, identity, refresh, session]);
+  }, [refreshOnFocus, identity, refresh, session, quizView]);
 
   useEffect(() => {
     if (!isRealMode || !id || !identity) return;
     let cancelled = false;
-    const cached = session ? undefined : peekLearnerDetail(kind as LearnerKind, id, true);
+    const cached = session ? undefined : peekLearnerDetail(kind as LearnerKind, id, true, quizView);
     setState((previous) => {
       const sameAccount = !previous || previous.accountKey === accountKey;
       const real = previous?.identity === identity && sameAccount && previous.session === session
         ? previous.real : sameAccount ? cached ?? null : null;
       return { identity, accountKey, session, request, real, loading: !real, loadError: null, isFetching: true };
     });
-    (session ? session.detail(refreshTick > 0) : fetchLearnerDetail(kind as LearnerKind, id, { revalidate: refreshTick > 0 }))
+    (session ? session.detail(refreshTick > 0) : fetchLearnerDetail(kind as LearnerKind, id,
+      { revalidate: refreshTick > 0, ...(quizView ? { quizView: true } : {}) }))
       .then((data) => { if (!cancelled) setState({ identity, accountKey, session, request, real: data, loading: false, loadError: null, isFetching: false }); })
       .catch((error) => {
         if (!cancelled) setState((previous) => ({ identity, accountKey, session, request, real: previous?.identity === identity && previous.accountKey === accountKey && previous.session === session ? previous.real : null, loading: false, loadError: error instanceof Error ? error.message : 'Could not load learner', isFetching: false }));
       });
     return () => { cancelled = true; };
-  }, [isRealMode, kind, id, identity, refreshTick, session, accountKey, request]);
+  }, [isRealMode, kind, id, identity, refreshTick, session, accountKey, request, quizView]);
 
   // Staff can move directly between View pages. Hide the previous learner in
   // the first render of the new URL, before the next request effect runs.
   const current = identity && state?.identity === identity && state.accountKey === accountKey && state.session === session ? state : null;
-  const cached = !session && !current && identity && id && (!state || state.accountKey === accountKey) ? peekLearnerDetail(kind as LearnerKind, id, true) : undefined;
+  const cached = !session && !current && identity && id && (!state || state.accountKey === accountKey) ? peekLearnerDetail(kind as LearnerKind, id, true, quizView) : undefined;
   // Cover the render before the request effect runs, including cached mounts
   // and manual refreshes. Only the current effect may settle fetching state.
   const isFetching = !!identity && (!current || current.request !== request || current.isFetching);

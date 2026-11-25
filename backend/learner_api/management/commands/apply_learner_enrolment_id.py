@@ -57,14 +57,8 @@ TARGETS = [
     ("learners", "bridge", None),
     ("learning_reflection_submissions", "direct", "learner_id"),
     ("calendar_connections", "direct", "learner_id"),
-    ("learner_attendance_details", "profile", "learner_id"),
-    # NB: "Learner".verified_teams_attendance is deliberately absent. It is a
-    # VIEW — a filtered projection of learner_attendance_details where
-    # source='microsoft_teams' — so it has no rows of its own to link. Adding
-    # the column to its base table above is what links that data; re-listing
-    # the column in the view is a separate, cosmetic change and is not done
-    # here (a view cannot be ALTERed, and rebuilding one to add a column risks
-    # reordering it).
+    # Attendance stores only canonical learner_id. Its JOIN view obtains
+    # enrolment/name/email from learners; never recreate denormalized columns.
 ]
 
 UNIQUE_INDEX = "learners_enrolment_id_uniq"

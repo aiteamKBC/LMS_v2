@@ -80,7 +80,7 @@ def _progress(learner):
     records = query('''SELECT to_jsonb(p) AS payload,
         coalesce(nullif(p.component_title,''),q.title) AS activity_title,
         coalesce((SELECT jsonb_agg(k.ksb_code ORDER BY k.position)
-                  FROM "Learner".learner_progress_ksbs k WHERE k.progress_id=p.id),'[]'::jsonb) AS ksbs
+                  FROM "Learner".ksb_learner_progress k WHERE k.progress_id=p.id),'[]'::jsonb) AS ksbs
         FROM "Learner".learner_progress_entries p
         JOIN "Learner".learners l ON l.id=p.learner_id
         LEFT JOIN curriculum.quizzes q ON q.id::text=p.quiz_ref AND p.kind='quiz'

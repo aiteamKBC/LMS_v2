@@ -259,9 +259,10 @@ class ActivityViewerProjectionTests(SimpleTestCase):
                 return [('C-MOVED', 7)]
             if 'FROM curriculum.quizzes' in sql:
                 return [(7, 'Quiz', [], 10, 'minutes')]
-            if 'FROM curriculum.ksb_mappings mapping' in sql:
+            if 'FROM curriculum.ksb_component_mappings mapping' in sql:
                 self.assertEqual(params, [['C-OWNED', 'C-MOVED']])
-                return [('C-MOVED', 'K1', 'Knowledge', 'knowledge', 1, None)]
+                self.assertIn('standard_ksb.id = mapping.standard_ksb_id', sql)
+                return [('C-MOVED', 'K1', 'Knowledge', 'knowledge', 1, None, 17)]
             return []
 
         cursor.fetchall.side_effect = fetch_rows
@@ -280,6 +281,7 @@ class ActivityViewerProjectionTests(SimpleTestCase):
             [('C-OWNED', 'M1', 'W-OLD'), ('C-MOVED', 'M1', 'W-OLD')],
         )
         self.assertEqual(components[1]['ksbMappings'][0]['code'], 'K1')
+        self.assertEqual(components[1]['ksbMappings'][0]['standardKsbId'], 17)
         component_sql = next(call.args[0] for call in cursor.execute.call_args_list
                              if 'FROM curriculum.components WHERE' in call.args[0])
         self.assertIn('id = ANY(%s)', component_sql)

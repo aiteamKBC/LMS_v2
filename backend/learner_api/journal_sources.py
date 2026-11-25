@@ -1,4 +1,4 @@
-"""Request-scoped journal reads; coach callers retain their existing sources."""
+"""Request-scoped journal reads with shared canonical KSB sources for both roles."""
 from contextvars import ContextVar
 from contextlib import contextmanager
 from functools import wraps
@@ -8,9 +8,19 @@ import re
 _current = ContextVar('learner_journal_sources', default=False)
 TABLES = {
     'manual_learner_activities': '"Learner".learner_journal_rows',
-    'learner_journal_row_ksbs': '"Learner".learner_journal_row_ksbs',
-    'learner_activity_ksbs': '"Learner".learner_activity_ksbs',
-    'activity_ksbs': 'curriculum.source_activity_ksbs',
+    'learner_journal_row_ksbs': '''(SELECT j.id AS row_id,j.learner_id,j.aptem_id,j.ksb_snapshot AS ksbs,
+        coalesce((j.ksb_metadata->>'version')::bigint,1) AS version,
+        j.ksb_metadata->>'created_by' AS created_by,j.ksb_metadata->>'updated_by' AS updated_by,
+        (j.ksb_metadata->>'created_at')::timestamptz AS created_at,
+        (j.ksb_metadata->>'updated_at')::timestamptz AS updated_at
+        FROM "Learner".learner_journal_rows j WHERE j.ksb_snapshot IS NOT NULL)''',
+    'learner_activity_ksbs': '''(SELECT m.learner_id,l.aptem_id,m.activity_id,m.ksbs,m.source_preference,
+        m.source_metadata,m.version,m.created_by,m.updated_by,m.created_at,m.updated_at
+        FROM "Learner".ksb_learner_activity_mappings m
+        JOIN "Learner".learners l ON l.id=m.learner_id
+        WHERE m.source_kind='learner_activity' AND NOT EXISTS (
+            SELECT 1 FROM "Learner".learners other WHERE other.aptem_id=l.aptem_id AND other.id<>l.id))''',
+    'activity_ksbs': None,  # Shared canonical projection supplied by table().
     'manual_activity_documents': '"Learner".manual_activity_documents',
     'evidence_content_classification': '"Learner".evidence_content_classification',
     'evidence_overrides': '"Learner".evidence_overrides',
@@ -47,7 +57,10 @@ def standard_monthly_reads():
 
 
 def table(name):
-    return TABLES[name] if enabled() else f'structured_manual_activities.{name}'
+    if name == 'activity_ksbs':
+        from curriculum_api.source_activity_ksbs import relation
+        return relation()
+    return TABLES[name] if enabled() or name in ('learner_journal_row_ksbs', 'learner_activity_ksbs') else f'structured_manual_activities.{name}'
 
 
 def retained_journal_sql(sql):
@@ -56,9 +69,11 @@ def retained_journal_sql(sql):
     Only the explicitly migrated relations are eligible; values remain bound
     parameters and signatures/ownership queries keep their original tables.
     """
-    if not enabled():
-        return sql
     for name, target in TABLES.items():
+        if name == 'activity_ksbs':
+            target = table(name)
+        elif not enabled() and name not in ('learner_journal_row_ksbs', 'learner_activity_ksbs'):
+            continue
         sql = re.sub(r'(?<![\w])"?structured_manual_activities"?\."?'
                      + re.escape(name) + r'"?(?![\w])', lambda _: target, sql)
     return sql

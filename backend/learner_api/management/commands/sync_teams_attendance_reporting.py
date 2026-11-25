@@ -21,10 +21,7 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         database = router.db_for_write(LearnerProfile) or "default"
-        # Every sync path needs the additive reporting schema. Previously this
-        # preflight ran only with --replace-legacy, so ordinary scheduled syncs
-        # could fetch provider evidence but fail before publishing the canonical
-        # learner register.
+        # Validate the canonical table and identity JOIN view without schema writes.
         ensure_teams_attendance_reporting_columns(database)
 
         if options["replace_legacy"]:

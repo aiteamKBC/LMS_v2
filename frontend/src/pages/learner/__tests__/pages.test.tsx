@@ -87,6 +87,10 @@ function tabResponse(url: string, value: unknown, field: string) {
 }
 
 function payload(url: string): unknown {
+  if (/\/monthly-submission\/[^/]+\/[^/]+\/dates\/$/.test(url)) return { activity_dates: {} };
+  if (/\/monthly-submission\/[^/]+\/[^/]+\/$/.test(url)) return {
+    learner: { id: '125', name: 'Test learner' }, components: [], componentMarkingStatus: {}, videoProgress: [], componentProgress: [],
+  };
   if (url.includes('/curriculum/cache-epoch/')) return { epoch: 0, changes: [] };
   if (url.includes('/dashboard/') && url.includes('/monthly/plan/')) {
     const month = new URL(url, 'http://localhost').searchParams.get('month') || '2026-09';

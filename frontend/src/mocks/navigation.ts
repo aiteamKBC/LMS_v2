@@ -662,6 +662,7 @@ export const adminNavItems: SidebarNavItem[] = [
     label: 'Platform',
     icon: 'ri-settings-4-line',
     children: [
+      { id: 'admin-database', label: 'Database', icon: 'ri-database-2-line', href: '/workspace/admin/database' },
       { id: 'admin-documents', label: 'Documents', icon: 'ri-folder-line', href: '/admin/documents' },
       { id: 'admin-evidence', label: 'Evidence', icon: 'ri-folder-shield-2-line', href: '/admin/evidence' },
       { id: 'admin-certificates', label: 'Certificates', icon: 'ri-award-line', href: '/workspace/admin/certificates' },

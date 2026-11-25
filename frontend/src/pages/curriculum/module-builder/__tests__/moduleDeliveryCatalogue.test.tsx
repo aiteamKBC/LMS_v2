@@ -199,9 +199,25 @@ vi.mock('@/lib/curriculumApi', async importOriginal => ({
   fetchCurriculumHolidays: vi.fn(async () => []),
   // The tab badge reads the free-course count on mount (page.tsx); unmocked it
   // hits the network and the undefined catalogue crashes the whole page.
-  fetchFreeCourseAuthoringCatalogue: vi.fn(async () => ({ revision: 'test', courses: [] })),
+  fetchFreeCourseAuthoringCatalogue: vi.fn(async () => ({ revision: 'test', courses: freeDocuments().map(document => document.course) })),
+  fetchFreeCourseAuthoringCatalogueWithDocuments: vi.fn(async () => ({ revision: 'test', courses: freeDocuments().map(document => document.course), documents: freeDocuments() })),
+  fetchFreeCourseAuthoringCourse: vi.fn(async (id: string) => freeDocuments().find(document => document.course.courseId === id)),
   fetchCurriculumScopeLearnerKsbImpact: (...args: unknown[]) => fetchCurriculumScopeLearnerKsbImpact(...args),
 }));
+
+// The independent Free Course workspace reads its canonical documents, not
+// module-authoring payloads. Keep real catalogue/editor behavior in these tests.
+function freeDocuments() {
+  return modules.filter(module => module.isFreeCourse).map(module => ({
+    schemaVersion: '1', scope: 'course', revision: 'free-revision-1',
+    course: { courseId: module.moduleCatalogueId, courseName: module.name, description: '', coverImageUrl: '',
+      displayOrder: 0, courseType: 'free', isForSale: Boolean(module.isForSale), price: module.price ?? null, currency: 'GBP' },
+    weeks: Array.from({ length: module.weeks || 0 }, (_, index) => ({ freeCourseWeekId: `W-${module.id}-${index}`,
+      weekNumber: index + 1, title: `Week ${index + 1}`, summary: '', learningOutcomes: [], status: 'active',
+      holidayNoteEnabled: false, holidayNote: '', displayOrder: index, components: [] })),
+    integrity: { status: 'ok', issues: [], legacyQuizReferenceCount: 0 },
+  }));
+}
 
 async function renderCatalogue(search = '', expectedTitle = 'Data Foundations') {
   window.history.replaceState({}, '', `/curriculum/module-builder${search}`);
@@ -440,7 +456,7 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
     await renderCatalogue();
     expect(screen.getByRole('button', { name: 'New module' })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Free course' }));
-    expect(screen.getByTestId('module-form-defaults')).toHaveAttribute('data-free-course', 'true');
+    expect(await screen.findByLabelText('Course name')).toBeVisible();
   });
 
   it('keeps standalone free courses visible in All modules without a programme', async () => {
@@ -463,30 +479,32 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
     await renderCatalogue('?catalogue=free', 'Paid independent study');
     const card = cardFor('Paid independent study');
     expect(card.getByText('For sale · £49.99')).toBeInTheDocument();
-    await userEvent.click(card.getByRole('button', { name: 'Edit course' }));
-    expect(screen.getByTestId('module-form-defaults')).toHaveAttribute('data-price', '49.99');
+    await userEvent.click(card.getByRole('button', { name: 'Edit' }));
+    expect(await screen.findByLabelText('Price (GBP)')).toHaveValue('49.99');
   });
 
   it('filters independent free courses without delivery restrictions and restores the module filters', async () => {
     const user = userEvent.setup();
     modules.push({ id: 'MOD-FREE', moduleCatalogueId: 'MOD-FREE', name: 'Independent study',
       isFreeCourse: true, programme: '', programmeId: '', weeks: 2, lessons: 1, assignments: 0 } as CurriculumModule);
-    await renderCatalogue('?programme=Data+Analyst&cohort=COHORT-1&group=GROUP-1&tutor=Tutor+One');
+    await renderCatalogue('?programme=PROG-DATA&cohort=COHORT-1&group=GROUP-1&tutor=Tutor+One');
     await waitFor(() => expect(screen.getByLabelText('Group')).toHaveTextContent('Group A'));
     expect(screen.queryByText('Independent study')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Free courses' })).toHaveTextContent('1');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Free courses' })).toHaveTextContent('1'));
 
     await user.click(screen.getByRole('button', { name: 'Free courses' }));
+    await screen.findByRole('heading', { name: 'Independent study', level: 3 });
     expect(screen.getAllByRole('article')).toHaveLength(1);
-    expect(cardFor('Independent study').getByRole('button', { name: 'Edit components' })).toBeInTheDocument();
+    expect(cardFor('Independent study').getByRole('button', { name: 'Edit' })).toBeInTheDocument();
     expect(screen.queryByLabelText('Programme')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Free courses' })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByRole('button', { name: 'Active' })).toHaveAttribute('aria-pressed', 'false');
     expect(screen.getByRole('button', { name: 'All modules' })).toHaveAttribute('aria-pressed', 'false');
 
     await user.type(screen.getByPlaceholderText('Search modules, tutors, cohorts...'), 'missing');
-    expect(screen.getByText('No free courses match the current search.')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Free courses' })).toHaveTextContent('0');
+    expect(screen.getByText('No free courses match this search')).toBeInTheDocument();
+    expect(screen.getByText('0 shown')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Free courses' })).toHaveTextContent('1');
     await user.clear(screen.getByPlaceholderText('Search modules, tutors, cohorts...'));
     await user.click(screen.getByRole('button', { name: 'All modules' }));
     expect(screen.getByLabelText('Programme')).toHaveTextContent('Data Analyst');
@@ -508,9 +526,9 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
     vi.mocked(fetchModuleCatalogueActivity).mockImplementation(() => new Promise(() => {}));
     await renderCatalogue('?catalogue=free', 'Independent study');
     expect(screen.getAllByRole('article')).toHaveLength(1);
-    await user.click(cardFor('Independent study').getByRole('button', { name: 'Edit course' }));
-    expect(screen.getByTestId('module-form-defaults')).toHaveAttribute('data-free-course', 'true');
-    expect(screen.getByTestId('module-form-defaults')).toHaveAttribute('data-editing-id', 'MOD-FREE');
+    await user.click(cardFor('Independent study').getByRole('button', { name: 'Edit' }));
+    expect(await screen.findByLabelText('Course name')).toBeVisible();
+    expect(screen.getByLabelText('Course name')).toHaveValue('Independent study');
   });
 
   it('keeps the free-course filter in the address when opening content and returning', async () => {
@@ -531,15 +549,17 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
     await screen.findByText('Data Foundations');
     await user.click(screen.getByRole('button', { name: 'Free courses' }));
     await waitFor(() => expect(screen.getByTestId('history-location')).toHaveTextContent('catalogue=free'));
-    await user.click(cardFor('Independent study').getByRole('button', { name: 'Edit components' }));
+    await screen.findByRole('heading', { name: 'Independent study', level: 3 });
+    await user.click(cardFor('Independent study').getByRole('button', { name: 'Edit' }));
     await screen.findByText('Course structure');
-    await waitFor(() => expect(screen.getByTestId('history-location')).toHaveTextContent('module=MOD-FREE'));
-    expect(router.state.location.search).toContain('catalogue=free');
+    await waitFor(() => expect(screen.getByTestId('history-location')).toHaveTextContent('freeCourse=MOD-FREE'));
+    expect(new URLSearchParams(router.state.location.search).get('returnTo')).toBe('/curriculum/module-builder?catalogue=free');
     await act(async () => { await router.navigate(-1); });
-    await waitFor(() => expect(router.state.location.search).not.toContain('module='));
+    await waitFor(() => expect(router.state.location.search).not.toContain('freeCourse='));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Free courses' })).toHaveAttribute('aria-pressed', 'true'));
+    await screen.findByRole('heading', { name: 'Independent study', level: 3 });
     expect(screen.getAllByRole('article')).toHaveLength(1);
-    expect(cardFor('Independent study').getByRole('button', { name: 'Edit course' })).toBeInTheDocument();
+    expect(cardFor('Independent study').getByRole('button', { name: 'Edit' })).toBeInTheDocument();
   });
 
   it('defaults to dated live teaching from both LMS sources and reveals the rest only with All modules', async () => {

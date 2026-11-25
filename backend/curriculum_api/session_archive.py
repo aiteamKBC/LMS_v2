@@ -349,11 +349,25 @@ def archive_series(series_id, *, lease_id=None, artifact_ids=None):
             continue
         occurrence = by_id[session['id']]
         prefix = archive_prefix(series, occurrence, modules[0] if modules else {})
+        phase = 'preparing'
         try:
             client = client or storage_client()
-            client.get_blob_client(CONTAINER, prefix + '/attendance.csv').upload_blob(attendance_csv(session['attendance']).encode('utf-8'), overwrite=True)
+            phase = 'exporting'
+            csv_data = attendance_csv(session['attendance']).encode('utf-8')
+            phase = 'uploading_csv'
+            client.get_blob_client(CONTAINER, prefix + '/attendance.csv').upload_blob(csv_data, overwrite=True)
+            phase = 'reading'
             raw = read('SELECT raw_data FROM curriculum.live_session_attendance WHERE occurrence_id=%s', [session['id']])
-            client.get_blob_client(CONTAINER, prefix + '/teams-attendance-original.json').upload_blob(json.dumps(raw, default=str).encode('utf-8'), overwrite=True)
-        except Exception:
-            errors.append(f"Could not archive attendance for session {session['sessionNumber']}.")
+            phase = 'serializing'
+            raw_data = json.dumps(raw, default=str).encode('utf-8')
+            phase = 'uploading_original'
+            client.get_blob_client(CONTAINER, prefix + '/teams-attendance-original.json').upload_blob(raw_data, overwrite=True)
+        except Exception as failure:
+            status = getattr(failure, 'status_code', None) or getattr(getattr(failure, 'response', None), 'status_code', None)
+            status_label = f', HTTP {status}' if isinstance(status, int) and 400 <= status < 600 else ''
+            # Never include exception text, learner rows, URLs or credentials.
+            error = f"Could not archive attendance for session {session['sessionNumber']} during {phase} ({type(failure).__name__}{status_label}). Check worker logs and storage access."
+            log.warning('Attendance archive failed for session %s during %s (%s%s).',
+                        session['sessionNumber'], phase, type(failure).__name__, status_label)
+            errors.append(error)
     return errors

@@ -34,6 +34,8 @@ import { EditStaffModal } from './components/EditStaffModal';
 import { LearningPlanModal } from './components/LearningPlanModal';
 import { ShiftModuleModal } from './components/ShiftModuleModal';
 import { BulkAttendanceModeModal } from './components/BulkAttendanceModeModal';
+import { UserArchiveModal, type UserArchiveAction } from './components/UserArchiveModal';
+import archiveStyles from './components/UserArchive.module.css';
 import { TableBodySkeleton } from '@/components/feature/Skeletons';
 
 const enrolmentNav = roleNavMap.apprentice;
@@ -68,11 +70,12 @@ const EMPTY_FILTER: UsersFilter = {
   programmeStatus: '', niNumber: '', caseOwner: 'any', referenceNumber: '', attendanceMode: '', page: 1, pageSize: PAGE_SIZE,
 };
 const DIRECTORY_QUERY_DEFAULTS = {
-  search: '', summary: 'all', page: 1, name: '', email: '', groups: '', statuses: '',
+  search: '', summary: 'all', view: 'users', page: 1, name: '', email: '', groups: '', statuses: '',
   type: 'all', programme: '', cohort: '', programmeStatus: '', caseOwner: 'any', reference: '', attendanceMode: '',
 };
 const encodeFilterList = (values?: string[]) => (values || []).join('~');
 const decodeFilterList = (value: string) => value ? value.split('~').filter(Boolean) : [];
+const isArchived = (row: DirectoryRow) => isLearnerRow(row) && row.subscriptionStatus.trim().toLowerCase() === 'archived';
 
 function initials(name: string) {
   return name.split(' ').filter(Boolean).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
@@ -177,7 +180,7 @@ export default function UsersListPage() {
   const { isAdmin } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
-  const { state: query, setValues: setQueryValues, reset: resetQuery } = useListQueryState(DIRECTORY_QUERY_DEFAULTS);
+  const { state: query, setValues: setQueryValues } = useListQueryState(DIRECTORY_QUERY_DEFAULTS);
   const applied = useMemo<UsersFilter>(() => ({
     ...EMPTY_FILTER,
     userName: String(query.name), email: String(query.email),
@@ -201,6 +204,10 @@ export default function UsersListPage() {
   const [createOrgOpen, setCreateOrgOpen] = useState(false);
 
   const [rows, setRows] = useState<DirectoryRow[]>([]);
+  const archiveView = query.view === 'archive';
+  const archivedCount = rows.filter(isArchived).length;
+  const directoryRows = useMemo(() => rows.filter(row => isArchived(row) === archiveView), [rows, archiveView]);
+  const [archiveAction, setArchiveAction] = useState<{ row: UserListRow; action: UserArchiveAction } | null>(null);
   // Saved attendance modes keyed by learner id; a learner with no entry is on
   // Live Sessions. null while loading; 'failed' shows a dash, not a guess.
   const [attendanceModes, setAttendanceModes] = useState<Record<string, SavedAttendanceMode> | 'failed' | null>(null);
@@ -335,7 +342,7 @@ export default function UsersListPage() {
   );
 
   const searchTerm = quickSearch.trim().toLowerCase();
-  const filtered = useMemo(() => rows.filter((r) => {
+  const filtered = useMemo(() => directoryRows.filter((r) => {
     if (searchTerm && ![r.name, r.email, r.group, r.programme]
       .some((value) => (value ?? '').toLowerCase().includes(searchTerm))) return false;
     if (!matches(r, applied)) return false;
@@ -348,8 +355,18 @@ export default function UsersListPage() {
     }
     if (summaryFilter === 'active') return r.programmeStatus === 'Active';
     return true;
-  }), [rows, applied, summaryFilter, searchTerm, attendanceModes]);
+  }), [directoryRows, applied, summaryFilter, searchTerm, attendanceModes]);
+  // Creation checks every learner, while this table honours programme/status
+  // filters and the archive. Offer an explicit route to an exact email match
+  // without silently discarding the user's filters or matching similar names.
+  const lookupEmail = (searchTerm || applied.email || '').trim().toLowerCase();
+  const hiddenEmailMatches = lookupEmail.includes('@') && filtered.length === 0
+    ? rows.filter(row => isLearnerRow(row) && row.email.trim().toLowerCase() === lookupEmail)
+    : [];
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  useEffect(() => {
+    if (!loading && !error && page > totalPages) setQueryValues({ page: totalPages });
+  }, [loading, error, page, totalPages, setQueryValues]);
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   const exportUnavailable = loading || !!error || attendanceModes === null
     || (!!applied.attendanceMode && attendanceModes === 'failed');
@@ -362,10 +379,10 @@ export default function UsersListPage() {
   const showingEnd = filtered.length ? Math.min(page * PAGE_SIZE, filtered.length) : 0;
 
   // Every row originates in Created_users; summary counts use its Type.
-  const learners = rows.filter((r) => directoryCategory(r) === 'learners').length;
-  const admins = rows.filter((r) => directoryCategory(r) === 'admins').length;
-  const employerCount = rows.filter((r) => directoryCategory(r) === 'employers').length;
-  const active = rows.filter((r) => r.programmeStatus === 'Active').length;
+  const learners = directoryRows.filter((r) => directoryCategory(r) === 'learners').length;
+  const admins = directoryRows.filter((r) => directoryCategory(r) === 'admins').length;
+  const employerCount = directoryRows.filter((r) => directoryCategory(r) === 'employers').length;
+  const active = directoryRows.filter((r) => r.programmeStatus === 'Active').length;
 
   // Choosing a programme or cohort invalidates the levels below it, so a stale
   // cohort/group can't survive into a search for a different programme.
@@ -384,7 +401,7 @@ export default function UsersListPage() {
     attendanceMode: draft.attendanceMode || '',
   }, { resetPage: true });
   const updateQuickSearch = (value: string) => setQueryValues({ search: value }, { resetPage: true });
-  const reset = () => { setDraft(EMPTY_FILTER); resetQuery(); };
+  const reset = () => { setDraft(EMPTY_FILTER); setQueryValues({ ...DIRECTORY_QUERY_DEFAULTS, view: archiveView ? 'archive' : 'users' }); };
   const selectSummary = (next: SummaryFilter) => setQueryValues({ summary: next }, { resetPage: true });
   // Both kinds use Created_users IDs; keep the kind in existing action routes.
   const q = (row: UserListRow) => (row.source === 'commercial' ? '?source=commercial' : '');
@@ -478,19 +495,30 @@ export default function UsersListPage() {
           }
         />
 
+        <div role="group" aria-label="Directory view" className={archiveStyles.views}>
+          <button type="button" aria-pressed={!archiveView}
+            onClick={() => setQueryValues({ ...DIRECTORY_QUERY_DEFAULTS, view: 'users' })}>
+            <AppIcon name="ri-group-line" aria-hidden="true" />Users ({rows.length - archivedCount})
+          </button>
+          <button type="button" aria-pressed={archiveView}
+            onClick={() => setQueryValues({ ...DIRECTORY_QUERY_DEFAULTS, view: 'archive' })}>
+            <AppIcon name="ri-archive-line" aria-hidden="true" />Archive ({archivedCount})
+          </button>
+        </div>
+
         <div aria-label="User totals" className={design.metrics}>
-          <UserMetricCard icon="ri-group-line" label="Total users" value={rows.length} detail="Across all roles" active={summaryFilter === 'all'} onClick={() => selectSummary('all')} />
-          <UserMetricCard icon="ri-graduation-cap-line" label="Learners" value={learners} detail={`${rows.length ? Math.round((learners / rows.length) * 100) : 0}% of total`} active={summaryFilter === 'learners'} onClick={() => selectSummary('learners')} />
-          <UserMetricCard icon={<ShieldUser size={18} />} label="Admins" value={admins} detail={`${rows.length ? Math.round((admins / rows.length) * 100) : 0}% of total`} active={summaryFilter === 'admins'} onClick={() => selectSummary('admins')} />
-          <UserMetricCard icon={<Building2 size={18} />} label="Employers" value={employerCount} detail={`${rows.length ? Math.round((employerCount / rows.length) * 100) : 0}% of total`} active={summaryFilter === 'employers'} onClick={() => selectSummary('employers')} />
-          <ActiveProgrammeCard active={active} total={rows.length} selected={summaryFilter === 'active'} onClick={() => selectSummary('active')} />
+          <UserMetricCard icon="ri-group-line" label="Total users" value={directoryRows.length} detail={archiveView ? 'Archived learners' : 'Across all roles'} active={summaryFilter === 'all'} onClick={() => selectSummary('all')} />
+          <UserMetricCard icon="ri-graduation-cap-line" label="Learners" value={learners} detail={`${directoryRows.length ? Math.round((learners / directoryRows.length) * 100) : 0}% of total`} active={summaryFilter === 'learners'} onClick={() => selectSummary('learners')} />
+          <UserMetricCard icon={<ShieldUser size={18} />} label="Admins" value={admins} detail={`${directoryRows.length ? Math.round((admins / directoryRows.length) * 100) : 0}% of total`} active={summaryFilter === 'admins'} onClick={() => selectSummary('admins')} />
+          <UserMetricCard icon={<Building2 size={18} />} label="Employers" value={employerCount} detail={`${directoryRows.length ? Math.round((employerCount / directoryRows.length) * 100) : 0}% of total`} active={summaryFilter === 'employers'} onClick={() => selectSummary('employers')} />
+          <ActiveProgrammeCard active={active} total={directoryRows.length} selected={summaryFilter === 'active'} onClick={() => selectSummary('active')} />
         </div>
 
         {/* Filter card */}
         <div className={design.filterPanel}>
           <div className={design.filterBar}>
             <button type="button" className={design.filterToggle} aria-expanded={filtersOpen} aria-controls="users-filter-fields" onClick={() => setFiltersOpen(value => !value)}><ListFilter size={16} aria-hidden="true" />Filters</button>
-            <p>Showing {filtered.length} of {rows.length} users</p>
+            <p>Showing {filtered.length} of {directoryRows.length} users</p>
           </div>
           <div id="users-filter-fields" hidden={!filtersOpen} className="border-t border-foreground-100 p-4 md:p-5">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -545,7 +573,7 @@ export default function UsersListPage() {
             <div className="flex items-center gap-3">
               <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-primary-100 bg-primary-50 text-primary-600"><AppIcon name="ri-user-line" aria-hidden="true" /></span>
               <div className="flex items-center gap-2">
-                <h2 className="text-[15px] font-semibold text-foreground-900">Users ({filtered.length})</h2>
+                <h2 className="text-[15px] font-semibold text-foreground-900">{archiveView ? 'Archive' : 'Users'} ({filtered.length})</h2>
               </div>
             </div>
             <div role="search" aria-label="User directory" className="relative order-last w-full sm:order-none sm:ml-auto sm:w-[17rem]">
@@ -657,6 +685,10 @@ export default function UsersListPage() {
                         trigger={<MoreVertical size={16} aria-hidden="true" />} triggerClassName={design.rowMoreTrigger}
                         panelClassName={`${design.shellFont} ${design.rowMoreMenu}`}>{close => <>
                         <button type="button" className={btnSecondary} onClick={() => { close({ restoreFocus: false }); (openInPlace ?? (() => openUser(row)))(); }}><AppIcon name="ri-user-line" aria-hidden="true" />Open record</button>
+                        {isLearner && (archiveView ? <>
+                          <button type="button" className={btnSecondary} onClick={() => { close(); setArchiveAction({ row, action: 'restore' }); }}><AppIcon name="ri-arrow-go-back-line" aria-hidden="true" />Restore user</button>
+                          <button type="button" className={`${btnSecondary} text-red-600`} onClick={() => { close(); setArchiveAction({ row, action: 'delete' }); }}><AppIcon name="ri-delete-bin-line" aria-hidden="true" />Delete permanently</button>
+                        </> : <button type="button" className={btnSecondary} onClick={() => { close(); setArchiveAction({ row, action: 'archive' }); }}><AppIcon name="ri-archive-line" aria-hidden="true" />Move to archive</button>)}
                         {isLearner && PLAN_EDITABLE_STATUSES.includes(row.programmeStatus || '') ? (
                           <button
                             onClick={() => { close({ restoreFocus: false }); setPlanFor(row); }}
@@ -698,7 +730,7 @@ export default function UsersListPage() {
                             they have an account row). Hidden once they have
                             signed in — at that point a password reset is the
                             applicable action, not an invitation. */}
-                        {!row.hasSignedIn && (
+                        {!archiveView && !row.hasSignedIn && (
                           <SendInvitationButton
                             subjectType={isStaff ? 'staff' : isEmployer ? 'employer' : 'learner'}
                             subjectId={Number(row.id)}
@@ -709,7 +741,7 @@ export default function UsersListPage() {
                         )}
                         {/* For learners whose employer blocks our email: staff
                             send the same single-use link another way. */}
-                        {!row.hasSignedIn && isLearner && (
+                        {!archiveView && !row.hasSignedIn && isLearner && (
                           <CopyInvitationLinkButton subjectId={Number(row.id)} name={row.name} onIssued={refreshInPlace} />
                         )}
                       </>}</FloatingMenu>
@@ -776,7 +808,17 @@ export default function UsersListPage() {
                   </tr>
                   );
                 })}
-                {!loading && !error && pageRows.length === 0 && <tr><td colSpan={12} className="py-10 text-center text-[13px] text-foreground-400">{rows.length === 0 ? 'No users yet. Use “Create” to add the first learner.' : applied.attendanceMode && attendanceModes === 'failed' ? 'Attendance modes could not be loaded, so the attendance mode filter cannot be applied.' : applied.attendanceMode && attendanceModes === null ? <LoadingSkeleton label="Loading attendance modes…" variant="text" /> : 'No users match your filters.'}</td></tr>}
+                {!loading && !error && pageRows.length === 0 && <tr><td colSpan={12} className="py-10 text-center text-[13px] text-foreground-400">{archiveView && archivedCount === 0 ? 'No archived users.' : rows.length === 0 ? 'No users yet. Use “Create” to add the first learner.' : applied.attendanceMode && attendanceModes === 'failed' ? 'Attendance modes could not be loaded, so the attendance mode filter cannot be applied.' : applied.attendanceMode && attendanceModes === null ? <LoadingSkeleton label="Loading attendance modes…" variant="text" /> : 'No users match your filters.'}
+                  {hiddenEmailMatches.map(row => (
+                    <div key={`${row.source}:${row.id}`} className="mx-auto mt-3 max-w-lg rounded-xl border border-primary-200 bg-primary-50 px-4 py-3 text-foreground-700">
+                      <p>{row.name || 'This learner'} already exists{isArchived(row) ? ' in the archive' : ' outside the current filters'}.
+                        {' '}{row.programme ? `Programme: ${row.programme}.` : 'No programme is assigned.'}</p>
+                      <button type="button" className="mt-2 font-semibold text-primary-700 underline" onClick={() => setQueryValues({
+                        ...DIRECTORY_QUERY_DEFAULTS, view: isArchived(row) ? 'archive' : 'users', search: row.email.trim(),
+                      })}>Show existing learner</button>
+                    </div>
+                  ))}
+                </td></tr>}
               </tbody>
             </table>
           </div>
@@ -795,7 +837,8 @@ export default function UsersListPage() {
 
       {createModalOpen && <CreateUserModal onClose={() => setCreateModalOpen(false)} onCreated={load} />}
       {importModalOpen && <ImportLearnersModal onClose={() => setImportModalOpen(false)} onImported={applyLearnerImport} />}
-      {bulkOpen && <BulkAttendanceModeModal rows={rows} onClose={() => { setBulkOpen(false); loadAttendanceModes(); }} />}
+      {bulkOpen && <BulkAttendanceModeModal rows={rows.filter(row => !isArchived(row))} onClose={() => { setBulkOpen(false); loadAttendanceModes(); }} />}
+      {archiveAction && <UserArchiveModal row={archiveAction.row} action={archiveAction.action} onClose={() => setArchiveAction(null)} onSaved={load} />}
       {createAdminOpen && <CreateStaffModal variant="admin" onClose={() => setCreateAdminOpen(false)} onCreated={load} />}
       {createTutorOpen && <CreateStaffModal variant="tutor" onClose={() => setCreateTutorOpen(false)} onCreated={load} />}
       {editStaff && <EditStaffModal row={editStaff} onClose={() => setEditStaff(null)} onSaved={applyStaffUpdate} />}

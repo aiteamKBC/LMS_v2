@@ -7,7 +7,8 @@ import unittest
 from unittest.mock import Mock
 
 ROOT = Path(__file__).parent
-ns = {'json': json, 'GRADED_PROGRESS_KINDS': {'quiz'}}
+from learner_api import journal_sources
+ns = {'journal_sources': journal_sources, 'json': json, 'GRADED_PROGRESS_KINDS': {'quiz'}}
 
 def load(path, names):
     tree = ast.parse(path.read_text(encoding='utf-8'))
@@ -80,7 +81,7 @@ class LedgerKsbTests(unittest.TestCase):
         for learner_id, aptem_id in ((10, 42), (11, 43)):
             self.assertEqual(ns['read_accepted_ksb_rows'](cursor, SimpleNamespace(pk=learner_id, aptem_id=aptem_id), 'commercial'), [{'id': 1}])
             sql, parameters = cursor.execute.call_args.args
-            self.assertEqual(parameters, [learner_id, str(learner_id), 'commercial', aptem_id])
+            self.assertEqual(parameters, [learner_id, 'commercial', aptem_id])
             self.assertIn('r.accepted=true AND r.deleted_at IS NULL', sql)
             self.assertIn('j.row_id=r.id AND j.aptem_id=r.aptem_id', sql)
 

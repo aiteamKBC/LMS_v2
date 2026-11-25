@@ -10,7 +10,7 @@ from . import learner_ksb_sync as sync
 class FakeCursor:
     description = [
         ('id',), ('learner_id',), ('reporting_month',), ('component_id',),
-        ('position',), ('ksb_code',), ('ksb_definition_id',), ('ksb_description',), ('source_type',),
+        ('position',), ('ksb_code',), ('standard_ksb_id',), ('ksb_description',), ('source_type',),
         ('source_id',), ('classification',), ('weight',), ('weight_class',),
     ]
 
@@ -32,7 +32,12 @@ class FakeCursor:
 
     def execute(self, sql, params=None):
         self.executed.append((sql, params or []))
-        self.rows = self.definition_rows if 'learner_ksb_assignments' in sql else self.progress_rows
+        if "coalesce(m.source_preference" in sql:
+            self.rows = [(row[0], None, row[2], None, 'material') for row in self.progress_rows]
+        elif 'FOR UPDATE' in sql:
+            self.rows = [(row[0],) for row in self.progress_rows]
+        else:
+            self.rows = self.definition_rows if 'JOIN curriculum.ksb_standard_versions' in sql else self.progress_rows
 
     def executemany(self, sql, params):
         self.executed_many.append((sql, list(params)))
@@ -64,8 +69,8 @@ class LearnerKsbSyncTests(SimpleTestCase):
         self.assertEqual(len({params[3] for _, params in revisions}), 2)
         self.assertEqual(json.loads(revisions[0][1][4])['ksbs'][0]['ksb_code'], 'K1')
         self.assertEqual(json.loads(revisions[0][1][5])['ksbs'][0]['ksb_code'], 'K2')
-        self.assertEqual(json.loads(revisions[0][1][4])['ksbs'][0]['ksb_definition_id'], 901)
-        self.assertEqual(json.loads(revisions[0][1][5])['ksbs'][0]['ksb_definition_id'], 201)
+        self.assertEqual(json.loads(revisions[0][1][4])['ksbs'][0]['standard_ksb_id'], 901)
+        self.assertEqual(json.loads(revisions[0][1][5])['ksbs'][0]['standard_ksb_id'], 201)
         self.assertEqual(len(cursor.executed_many), 2)
         self.assertEqual(cursor.executed_many[0][1][0][3], 201)
         self.assertNotIn(
@@ -87,7 +92,7 @@ class LearnerKsbSyncTests(SimpleTestCase):
         self.assertEqual(result['progress_rows'], 0)
         self.assertEqual(cursor.executed_many, [])
         writes = '\n'.join(sql for sql, _params in cursor.executed)
-        self.assertNotIn('DELETE FROM "Learner".learner_progress_ksbs', writes)
+        self.assertNotIn('DELETE FROM "Learner".ksb_learner_progress', writes)
         self.assertNotIn('learner_progress_ksb_exclusions', writes)
 
     def test_normalisation_is_deterministic_and_deduplicates_mapping_identity(self):
@@ -102,4 +107,4 @@ class LearnerKsbSyncTests(SimpleTestCase):
 
     def test_explicit_definition_identity_survives_normalisation(self):
         rows = sync.normalise_mappings([{'code': 'K1', 'ksbDefinitionId': 44}])
-        self.assertEqual(rows[0]['ksbDefinitionId'], 44)
+        self.assertEqual(rows[0]['standard_ksb_id'], 44)
