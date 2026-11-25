@@ -180,7 +180,12 @@ class ReuseMappingRowsTests(SimpleTestCase):
         from curriculum_api import ksb_mapping_placement
         cursor = mock.MagicMock()
         cursor.__enter__.return_value = cursor
-        cursor.fetchall.return_value = stored
+        # The implementation first reads (component_id, standard_ksb_id, id),
+        # then reads (id, component_id) for the supplied payload identities.
+        cursor.fetchall.side_effect = [
+            stored,
+            [(row_id, component_id) for component_id, _standard_id, row_id in stored],
+        ]
         conn = mock.Mock(vendor='postgresql', cursor=mock.Mock(return_value=cursor))
         with mock.patch.object(ksb_mapping_placement, 'connection', conn):
             return ksb_mapping_placement.reuse_mapping_rows(payloads)

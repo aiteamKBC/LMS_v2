@@ -1,7 +1,6 @@
 """Read-only KSB coverage from a learner's non-deleted progress rows."""
 from .ksb_points import point_ratio
 from .ksb_domain import official_progress_relation
-from .ksb_exclusions import and_not_excluded
 
 
 def build_progress_breakdown(learner_id, entries):
@@ -45,13 +44,19 @@ def build_progress_breakdown(learner_id, entries):
 def read_breakdown(connection, learner_id, *, code=None):
     """The primary learner_id scopes coverage for every learner type."""
     with connection.cursor() as cursor:
-        code_filter = ' AND k.ksb_code=%s' if code is not None else ''
-        sql = ('''SELECT p.id,p.learner_id,p.component_title,p.activity_status,
+        code_filter = ' WHERE k.ksb_code=%s' if code is not None else ''
+        sql = ('''WITH canonical AS (
+                SELECT p.id,p.learner_id,p.component_title,p.activity_status,
+                    p.accepted,p.deleted_at,p.source_system,p.component_type,
+                    p.kind,p.module_title,p.submitted_at,p.reporting_ended_at
+                FROM "Learner".learner_progress_entries p
+                WHERE p.learner_id=%s AND p.deleted_at IS NULL
+            )
+            SELECT p.id,p.learner_id,p.component_title,p.activity_status,
                 p.accepted,p.deleted_at,p.source_system,k.ksb_code,k.ksb_description,
                 p.component_type,p.kind,p.module_title,p.submitted_at,p.reporting_ended_at
-            FROM "Learner".learner_progress_entries p
-            JOIN ''' + official_progress_relation() + ''' k ON k.progress_id=p.id''' + and_not_excluded('k', connection) + '''
-            WHERE p.learner_id=%s AND p.deleted_at IS NULL
+            FROM canonical p
+            JOIN ''' + official_progress_relation(progress_relation='canonical') + ''' k ON k.progress_id=p.id
             ''' + code_filter + ' ORDER BY p.id,k.position')
         from .progress_cache import rows as cached_rows
         fetched = cached_rows(cursor, sql, [learner_id, code] if code is not None else [learner_id], learner_id,

@@ -117,6 +117,7 @@ class Upcoming503DiagnosticTests(SimpleTestCase):
         with patch.object(dashboard, "measure_projection", return_value=Measurement()), \
              patch("learner_api.case_file_sources.source_for_case_file", return_value=SimpleNamespace(pk=285)), \
              patch.object(dashboard.canonical_learning, "require_profile", return_value={"id": 1}), \
+             patch.object(dashboard, "install_canonical_training_plan_module_ids", return_value=[]), \
              patch.object(dashboard, "read_dashboard", side_effect=error), \
              patch.object(dashboard, "capture_upcoming_database_error") as capture, \
              self.assertLogs("learner_api.training_plan_dashboard", level="ERROR"):
@@ -129,6 +130,7 @@ class Upcoming503DiagnosticTests(SimpleTestCase):
         with patch.object(dashboard, "measure_projection", return_value=Measurement()), \
              patch("learner_api.case_file_sources.source_for_case_file", return_value=SimpleNamespace(pk=285)), \
              patch.object(dashboard.canonical_learning, "require_profile", return_value={"id": 1}), \
+             patch.object(dashboard, "install_canonical_training_plan", return_value=[]), \
              patch.object(dashboard, "read_dashboard", side_effect=error), \
              patch.object(dashboard, "capture_upcoming_database_error") as other_capture, \
              self.assertLogs("learner_api.training_plan_dashboard", level="ERROR"):

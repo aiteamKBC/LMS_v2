@@ -269,8 +269,7 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
         )''' if monthly_log_summary else ''
     ksb_cte = '' if catalogue_summary else f''', progress_ksbs AS (
         SELECT k.progress_id,jsonb_agg(k.ksb_code ORDER BY k.position) AS payload
-        FROM {official_progress_relation()} k
-        JOIN canonical p ON p.id=k.progress_id
+        FROM {official_progress_relation(progress_relation='canonical')} k
         GROUP BY k.progress_id
     )'''
     with projection_stage('ledger_read'):
@@ -1643,10 +1642,13 @@ def metrics_bulk(learner_ids, *, learner_workspace=False, include_ksb_points=Fal
     progress_ids = list(records_by_progress)
     if progress_ids:
         definition_columns = ",k.standard_ksb_id::text AS ksb_definition_id,k.ksb_code AS definition_code" if include_ksb_points else ''
-        for item in query(f'''SELECT k.progress_id,k.ksb_code{definition_columns}
-            FROM {official_progress_relation()} k
-            WHERE k.progress_id=ANY(%s)
-            ORDER BY k.progress_id,k.position''', [progress_ids]):
+        for item in query(f'''WITH canonical AS MATERIALIZED (
+            SELECT p.id,p.learner_id
+            FROM "Learner".learner_progress_entries p
+            WHERE p.learner_id=ANY(%s) AND p.id=ANY(%s) AND p.deleted_at IS NULL
+        ) SELECT k.progress_id,k.ksb_code{definition_columns}
+            FROM {official_progress_relation(progress_relation='canonical')} k
+            ORDER BY k.progress_id,k.position''', [learner_profile_ids, progress_ids]):
             record = records_by_progress.get(int(item['progress_id']))
             if record is not None:
                 record['ksbs'].append(item['ksb_code'])

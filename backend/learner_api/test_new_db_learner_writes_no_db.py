@@ -131,7 +131,7 @@ class OfficialHoursPreservedTests(SimpleTestCase):
         }, [])
 
         self.ksb_model.assert_called_once()
-        self.assertEqual(self.ksb_model.call_args.kwargs['ksb_definition_id'], 501)
+        self.assertEqual(self.ksb_model.call_args.kwargs['standard_ksb_id'], 501)
 
     def test_quiz_reading_no_longer_rewrites_the_total(self):
         source = inspect.getsource(quiz_reading.quiz_reading)
