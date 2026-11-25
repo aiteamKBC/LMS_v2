@@ -28,17 +28,19 @@ describe('Database catalogue acceptance', () => {
     expect(totalTables).toBe(95);
     expect(new Set(schemaGroups.flatMap(group => group.tables.map(table => table.name))).size).toBe(95);
     for (const table of schemaGroups.flatMap(group => group.tables)) {
-      expect(table.description).toMatch(/[\u0600-\u06ff]/);
+      expect(table.description).toMatch(/[A-Za-z]/);
+      expect(table.description).not.toMatch(/[\u0600-\u06ff]/);
       expect(table.description.length).toBeGreaterThan(25);
       expect(table.description).not.toMatch(/foreign key|index|constraint|SQL|stores related data/i);
     }
   });
 
-  it('matches table names, group names and Arabic descriptions with group context', () => {
+  it('matches table names, group names and English descriptions regardless of case', () => {
     expect(searchCatalogue('  CALENDAR_HOLIDAYS ').flatMap(group => group.tables.map(table => table.name)))
       .toEqual(['calendar_holidays', 'cohort_calendar_holidays', 'module_calendar_holidays']);
     expect(searchCatalogue('Free Courses')[0].tables).toHaveLength(3);
-    expect(searchCatalogue('الإجازات').some(group => group.tables.some(table => table.name === 'calendar_holidays'))).toBe(true);
+    expect(searchCatalogue('  OFFICIAL AND LOCAL HOLIDAYS  ').some(group => group.tables.some(table => table.name === 'calendar_holidays'))).toBe(true);
+    expect(searchCatalogue('organises training cohorts')[0].tables.map(table => table.name)).toEqual(['cohorts']);
     expect(searchCatalogue('no-such-table')).toEqual([]);
   });
 
@@ -70,23 +72,23 @@ describe('Database Explorer', () => {
     expect(screen.getByRole('heading', { level: 1, name: 'Core Curriculum' })).toBeVisible();
     expect(screen.getByRole('region', { name: 'Core Curriculum tables' }).querySelectorAll('li')).toHaveLength(9);
     expect(screen.getByText('programmes')).toBeVisible();
-    const description = screen.getByText('ينظم الدفعات التدريبية ومواعيد بدايتها ونهايتها ضمن البرامج.');
-    expect(description).toHaveAttribute('lang', 'ar');
-    expect(description).toHaveAttribute('dir', 'rtl');
+    const description = screen.getByText('Organises training cohorts within programmes, including their start and end dates.');
+    expect(description).toHaveAttribute('lang', 'en');
+    expect(description).toHaveAttribute('dir', 'ltr');
     await user.click(within(screen.getByRole('navigation', { name: 'Breadcrumb' })).getByRole('link', { name: 'Database' }));
     expect(screen.getAllByRole('heading', { level: 2 })).toHaveLength(13);
   });
 
-  it('searches in Arabic, opens matching groups and preserves the search on return', async () => {
+  it('searches English descriptions, opens matching groups and preserves the search on return', async () => {
     show();
     const user = userEvent.setup();
-    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'الإجازات' } });
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'OFFICIAL AND LOCAL HOLIDAYS' } });
     expect(screen.getByText('calendar_holidays')).toBeVisible();
     expect(screen.queryByText('quizzes')).toBeNull();
     await user.click(screen.getByRole('link', { name: /Week Templates and Calendar/ }));
-    expect(screen.getByRole('searchbox')).toHaveValue('الإجازات');
+    expect(screen.getByRole('searchbox')).toHaveValue('OFFICIAL AND LOCAL HOLIDAYS');
     await user.click(screen.getByRole('link', { name: /Back to Database overview/ }));
-    expect(screen.getByRole('searchbox')).toHaveValue('الإجازات');
+    expect(screen.getByRole('searchbox')).toHaveValue('OFFICIAL AND LOCAL HOLIDAYS');
     await user.click(screen.getByRole('button', { name: 'Clear search' }));
     expect(screen.getAllByRole('heading', { level: 2 })).toHaveLength(13);
   });
