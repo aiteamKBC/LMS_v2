@@ -19,6 +19,7 @@ const AdminAccessLogsPage = lazyRoute(() => import("../pages/admin/access-logs/p
 const SystemAuditTrailPage = lazyRoute(() => import("../pages/admin/audit-trail/page"));
 const SystemAuditTrailPersonPage = lazyRoute(() => import("../pages/admin/audit-trail/person/page"));
 const AdminDashboard = lazyRoute(() => import("../pages/workspace/admin/page"));
+const DatabaseExplorerPage = lazyRoute(() => import("../pages/workspace/admin/database/page"));
 const AdvancedAdminWorkspace = lazyRoute(() => import("../pages/workspace/advanced-admin/page"));
 // Give this route one extra bounded reload if a Vite update is still in flight
 // when the first reload reaches it.
@@ -459,6 +460,14 @@ const routes: RouteObject[] = [
   {
     path: "/workspace/admin",
     element: <AdminDashboard />,
+  },
+  {
+    path: "/workspace/admin/database",
+    element: <DatabaseExplorerPage />,
+  },
+  {
+    path: "/workspace/admin/database/:groupId",
+    element: <DatabaseExplorerPage />,
   },
   {
     path: "/workspace/advanced-admin",
