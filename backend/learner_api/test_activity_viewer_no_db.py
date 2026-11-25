@@ -167,6 +167,47 @@ class ActivityViewerProjectionTests(SimpleTestCase):
         self.assertIs(owner, assignments[1])
         _sql, params = cursor.execute.call_args.args
         self.assertEqual(params, [9, 'MOVED-COMPONENT', 9])
+        self.assertEqual(cursor.execute.call_count, 1)
+
+    def test_component_authored_after_plan_snapshot_uses_one_current_owned_module(self):
+        connection = MagicMock()
+        cursor = connection.cursor.return_value.__enter__.return_value
+        cursor.fetchall.side_effect = [
+            [
+                (11, 'M1', False, None, None, None, None),
+                (22, 'M2', False, None, None, None, None),
+            ],
+            [(22, 'CURRENT-WEEK')],
+        ]
+        source = SimpleNamespace(pk=7)
+        profile = SimpleNamespace(pk=9, enrolment_id=7)
+        with patch.object(reader, 'connections', {'enrolment': connection}):
+            assignments, owner = reader._activity_plan_assignments(source, profile, 'NEW-COMPONENT')
+        self.assertEqual(assignments, [
+            {'moduleId': 'M1', 'weeks': []},
+            {'moduleId': 'M2', 'weeks': [
+                {'weekId': 'CURRENT-WEEK', 'components': [{'componentId': 'NEW-COMPONENT'}]},
+            ]},
+        ])
+        self.assertIs(owner, assignments[1])
+        self.assertEqual(cursor.execute.call_count, 2)
+        self.assertEqual(cursor.execute.call_args.args[1], [9, 'NEW-COMPONENT'])
+
+    def test_current_component_in_an_unassigned_or_ambiguous_module_is_rejected(self):
+        source = SimpleNamespace(pk=7)
+        profile = SimpleNamespace(pk=9, enrolment_id=7)
+        for current_owners in ([], [(11, 'W1'), (12, 'W1')]):
+            with self.subTest(current_owners=current_owners):
+                connection = MagicMock()
+                cursor = connection.cursor.return_value.__enter__.return_value
+                cursor.fetchall.side_effect = [
+                    [(11, 'M1', False, None, None, None, None)],
+                    current_owners,
+                ]
+                with patch.object(reader, 'connections', {'enrolment': connection}), \
+                     self.assertRaises(ServiceError) as caught:
+                    reader._activity_plan_assignments(source, profile, 'NOT-OWNED')
+                self.assertEqual(caught.exception.status, 404)
 
     def test_owner_query_rejects_a_profile_not_owned_by_the_requested_learner(self):
         connection = MagicMock()
