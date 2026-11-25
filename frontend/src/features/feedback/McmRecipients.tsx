@@ -3,6 +3,7 @@ import { feedbackApi, type FeedbackCoachRecipients } from '@/api/feedback';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import styles from './McmRecipients.module.css';
+import { McmDailyAssignments } from './McmDailyAssignments';
 
 const plural = (value: number, noun: string) => `${value} ${noun}${value === 1 ? '' : 's'}`;
 const reviewDate = (value: string | null) => value ? new Intl.DateTimeFormat('en-GB', {
@@ -10,6 +11,17 @@ const reviewDate = (value: string | null) => value ? new Intl.DateTimeFormat('en
 }).format(new Date(value)) : 'Date not recorded';
 
 export function McmRecipients({ formId }: { formId: number }) {
+  const [view, setView] = useState<'coach' | 'day'>('coach');
+  return <div className={styles.root}>
+    <div className={styles.viewSwitch} role="group" aria-label="MCM assignment view">
+      <button type="button" aria-pressed={view === 'coach'} onClick={() => setView('coach')}>By coach</button>
+      <button type="button" aria-pressed={view === 'day'} onClick={() => setView('day')}>Daily assignments</button>
+    </div>
+    {view === 'coach' ? <CoachRecipients formId={formId} /> : <McmDailyAssignments formId={formId} />}
+  </div>;
+}
+
+function CoachRecipients({ formId }: { formId: number }) {
   const prefix = useId();
   const [search, setSearch] = useState('');
   const [coach, setCoach] = useState('');
