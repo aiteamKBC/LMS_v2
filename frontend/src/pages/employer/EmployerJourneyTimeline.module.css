@@ -15,17 +15,12 @@
 .intro { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; padding: 0 24px 18px; }
 .intro p, .skipCount { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 11px; color: var(--employer-muted); }
 .skipCount { padding: 6px 10px; border-radius: 20px; color: var(--employer-warning); background: var(--employer-warning-soft); font-weight: 650; }
-.viewport { max-height: 650px; overflow: auto; overscroll-behavior-x: contain; scrollbar-width: thin; border-block: 1px solid var(--employer-line); }
+.viewport { overflow: auto; overscroll-behavior-x: contain; scrollbar-width: thin; border-block: 1px solid var(--employer-line); }
 .viewport:focus-visible, .section button:focus-visible, .section a:focus-visible { outline: 2px solid var(--employer-primary); outline-offset: -3px; }
-.canvas { width: 100%; --learner-width: 204px; }
-.moduleHeaders, .learnerRow { display: grid; grid-template-columns: var(--learner-width) repeat(var(--module-count), minmax(264px, 1fr)); }
-.moduleHeaders { position: sticky; top: 0; z-index: 5; background: var(--employer-surface); }
-.corner { position: sticky; left: 0; z-index: 6; display: flex; flex-direction: column; justify-content: center; gap: 9px; padding: 18px; border-right: 1px solid var(--employer-line); border-bottom: 1px solid var(--employer-line); background: var(--employer-surface); }
-.corner > span { font-size: 9px; letter-spacing: 1.3px; font-weight: 650; color: var(--employer-muted); }
-.corner strong { display: flex; align-items: center; gap: 4px; font-size: 12px; }
-.corner small { font-size: 10px; color: var(--employer-muted); }
-.moduleHeader, .cell { --module-color: hsl(var(--module-hue) 46% 38%); --module-tint: color-mix(in srgb, var(--module-color) 7%, var(--employer-surface)); }
-.moduleHeader { min-width: 0; position: relative; padding: 16px 18px 9px; border-top: 4px solid var(--module-color); border-right: 1px solid var(--employer-line); border-bottom: 1px solid var(--employer-line); background: var(--module-tint); }
+.canvas { display: grid; width: 100%; }
+.moduleSegment { --module-color: hsl(var(--module-hue) 46% 38%); --module-tint: color-mix(in srgb, var(--module-color) 7%, var(--employer-surface)); min-width: 0; display: flex; flex-direction: column; border-right: 1px solid var(--employer-line); background: var(--module-tint); }
+.moduleSegment:last-child { border-right: 0; }
+.moduleHeader { min-width: 0; position: relative; flex: 1; padding: 16px 18px 18px; border-top: 4px solid var(--module-color); }
 .moduleMeta { display: flex; justify-content: space-between; align-items: center; gap: 6px; color: var(--module-color); font-size: 9px; font-weight: 750; letter-spacing: 1px; }
 .moduleMeta > span:last-child { display: flex; align-items: center; gap: 4px; letter-spacing: 0; }
 .moduleHeader h3 { margin: 10px 0 5px; height: 38px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-size: 14px; line-height: 19px; overflow-wrap: anywhere; }
@@ -34,23 +29,12 @@
 .moduleStats { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px; margin-top: 10px; color: var(--employer-muted); font-size: 10px; }
 .moduleStats strong { color: var(--module-color); }
 .moduleStats > span:last-child { display: flex; align-items: center; gap: 2px; }
-.moduleRail { height: 5px; margin: 23px -19px 15px; position: relative; background: var(--module-color); }
-.moduleRail > span { display: grid; place-items: center; width: 27px; height: 27px; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); border: 3px solid var(--employer-surface); border-radius: 50%; background: var(--module-color); color: white; font-size: 9px; font-weight: 750; }
-.scale { display: flex; justify-content: space-between; margin-inline: 0; padding-inline: 0; font-size: 9px; color: var(--employer-muted); }
-.learnerRow { min-height: 104px; }
-.learnerRow:last-child > * { border-bottom: 0; }
-.learner { position: sticky; left: 0; z-index: 3; padding: 18px 14px; display: flex; flex-direction: column; justify-content: center; background: var(--employer-surface); border-right: 1px solid var(--employer-line); border-bottom: 1px solid var(--employer-line); }
-.learner a { display: flex; align-items: center; gap: 9px; min-width: 0; text-decoration: none; color: var(--employer-ink); }
-.avatar { display: grid; place-items: center; flex: 0 0 31px; height: 31px; border: 1px solid var(--employer-line); border-radius: 50%; background: var(--employer-soft); color: var(--employer-primary); font-size: 10px; font-weight: 750; }
-.learner a > span:last-child { min-width: 0; }
-.learner strong { display: block; font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
-.learner small { display: block; font-size: 10px; line-height: 1.5; color: var(--employer-muted); overflow-wrap: anywhere; }
-.rowStatus { margin-top: 6px; }
-.cell { position: relative; min-width: 0; background: var(--module-tint); border-right: 1px solid var(--employer-line); border-bottom: 1px solid var(--employer-line); }
-.cell[data-assigned='false'] { background: var(--employer-surface); }
-.laneRail { position: absolute; top: 60px; left: 8%; right: 8%; height: 3px; border-radius: 2px; background: color-mix(in srgb, var(--module-color) 16%, var(--employer-surface)); }
-.laneRail > span { display: block; height: 100%; background: var(--module-color); border-radius: inherit; opacity: .6; }
-.pin { position: absolute; top: 20px; z-index: 1; width: 36px; transform: translateX(-50%); display: flex; align-items: center; flex-direction: column; border: 0; padding: 0; background: transparent; color: var(--module-color); cursor: pointer; }
+.pinField { position: relative; height: 170px; flex: 0 0 170px; }
+.sharedRail { position: absolute; top: 73px; inset-inline: 0; height: 4px; background: var(--module-color); opacity: .55; }
+.scale { position: absolute; bottom: 12px; inset-inline: 48px; display: flex; justify-content: space-between; font-size: 9px; color: var(--employer-muted); }
+.connectors { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
+.connectors line { stroke: var(--module-color); stroke-width: 1; opacity: .45; }
+.pin { position: absolute; top: 20px; z-index: 1; width: 88px; transform: translateX(-50%); display: flex; align-items: center; flex-direction: column; border: 0; padding: 0; background: transparent; color: var(--module-color); cursor: pointer; }
 .pinHead { position: relative; display: grid; place-items: center; width: 35px; height: 43px; filter: drop-shadow(0 2px 2px #0002); }
 .pinHead::before { content: ''; position: absolute; top: 2px; width: 31px; height: 31px; border: 2px solid var(--employer-surface); border-radius: 50% 50% 50% 3px; background: var(--module-color); transform: rotate(-45deg); }
 .pinHead > span { position: relative; top: -3px; display: grid; place-items: center; width: 23px; height: 23px; border-radius: 50%; background: var(--employer-surface); color: var(--module-color); font-size: 9px; font-weight: 800; }
@@ -58,12 +42,12 @@
 .pin[data-state='skipped'] .pinCaption { border: 1px dashed var(--module-color); background: var(--employer-surface); }
 .pin[data-state='next'] .pinHead::before { opacity: .65; }
 .pin:hover .pinHead, .pin:focus-visible .pinHead { filter: drop-shadow(0 3px 4px #0004); }
-.pinCaption { position: absolute; top: 53px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 2px; white-space: nowrap; padding: 3px 5px; border-radius: 5px; background: var(--employer-surface); font-size: 9px; line-height: 1; font-weight: 700; }
-.pin[data-edge='start'] .pinCaption { left: 2px; transform: none; }
-.pin[data-edge='end'] .pinCaption { left: auto; right: 2px; transform: none; }
-.completed, .waiting { position: absolute; top: 29px; left: 8%; display: flex; align-items: center; gap: 4px; font-size: 10px; color: var(--employer-muted); }
-.completed { color: var(--module-color); }
-.unassigned { position: absolute; inset: 0; display: grid; place-items: center; color: var(--employer-muted); font-size: 10px; }
+.pinName { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; max-width: 84px; height: 28px; margin-top: 23px; font-size: 10px; font-weight: 650; line-height: 14px; color: var(--employer-ink); }
+.pinCaption { display: flex; align-items: center; gap: 2px; white-space: nowrap; margin-top: 4px; padding: 3px 5px; border-radius: 5px; background: var(--employer-surface); font-size: 9px; line-height: 1; font-weight: 700; }
+.noPins { position: absolute; top: 95px; inset-inline: 18px; margin: 0; text-align: center; color: var(--employer-muted); font-size: 10px; }
+.unplacedLearners { display: flex; flex-wrap: wrap; gap: 8px; padding: 14px 24px 0; }
+.unplacedLearners a { display: flex; flex-direction: column; gap: 4px; padding: 8px 11px; border: 1px solid var(--employer-line); border-radius: 8px; color: var(--employer-ink); text-decoration: none; font-size: 10px; }
+.unplacedLearners a span { color: var(--employer-muted); }
 .footer { display: flex; justify-content: space-between; gap: 18px; flex-wrap: wrap; padding: 16px 24px; background: var(--employer-surface); }
 .legend { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; font-size: 10px; color: var(--employer-ink); }
 .legend > span { display: flex; align-items: center; gap: 5px; }
@@ -89,7 +73,7 @@
 .tooltip dd { margin: 4px 0 0; font-weight: 650; }
 .tooltip .skipNote { display: flex; align-items: flex-start; gap: 5px; padding: 8px; border-radius: 7px; background: var(--employer-warning-soft); color: var(--employer-warning); }
 .skipNote svg { flex-shrink: 0; margin-top: 2px; }
-:global([data-theme='dark']) .moduleHeader, :global([data-theme='dark']) .cell { --module-color: hsl(var(--module-hue) 52% 72%); }
+:global([data-theme='dark']) .moduleSegment { --module-color: hsl(var(--module-hue) 52% 72%); }
 @media (max-width: 640px) {
   .header { padding: 18px 14px 14px; gap: 14px; }
   .headingIcon { width: 40px; height: 40px; border-radius: 11px; }
@@ -97,16 +81,7 @@
   .controls { width: 100%; }
   .arrows { margin-left: auto; }
   .intro { padding: 0 14px 14px; }
-  .canvas { --learner-width: 142px; }
-  .corner { padding: 12px; }
-  .corner > span { font-size: 8px; }
-  .corner strong { font-size: 11px; }
-  .corner small { font-size: 9px; }
-  .learner { padding: 12px 9px; }
-  .learner a { gap: 6px; }
-  .avatar { flex-basis: 25px; height: 25px; font-size: 9px; }
-  .learner strong { font-size: 10px; }
-  .learner small { font-size: 9px; }
+  .unplacedLearners { padding: 14px 14px 0; }
   .footer { padding: 14px; gap: 12px; }
   .legend { gap: 10px; }
 }

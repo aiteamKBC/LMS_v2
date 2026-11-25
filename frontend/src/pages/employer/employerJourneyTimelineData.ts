@@ -24,20 +24,24 @@ const progressLabel = (entry: JourneyEntry) => entry.percent == null ? 'Progress
 export function journeyPins(entries: JourneyEntry[]): JourneyPin[] {
   const dated = entries.filter(entry => entry.start).sort((a, b) => a.start.localeCompare(b.start)
     || a.end.localeCompare(b.end) || a.id.localeCompare(b.id));
-  const pins: JourneyPin[] = entries.filter(entry => !entry.start)
-    .map(entry => ({ ...entry, state: 'unplaced', label: progressLabel(entry) }));
-  if (!dated.length) return pins;
+  const undated = entries.filter(entry => !entry.start);
+  const unplaced = undated.find(entry => entry.percent != null && entry.percent > 0 && entry.percent < 100)
+    || [...undated].reverse().find(entry => entry.percent != null && entry.percent > 0) || undated[0];
+  if (!dated.length) return unplaced ? [{ ...unplaced, state: 'unplaced', label: progressLabel(unplaced) }] : [];
+  const pins: JourneyPin[] = [];
   let lastProgress = -1;
   dated.forEach((entry, index) => { if (entry.percent != null && entry.percent > 0) lastProgress = index; });
   const last = dated[lastProgress];
+  // Missing dates cannot justify extra markers or an inferred skip.
+  if (!last && unplaced?.percent != null && unplaced.percent > 0) {
+    return [{ ...unplaced, state: 'unplaced', label: progressLabel(unplaced) }];
+  }
   const frontier = last?.percent === 100 ? Math.min(lastProgress + 1, dated.length - 1) : Math.max(0, lastProgress);
   const current = dated[frontier];
   // Equal/overlapping schedules cannot prove that a learner has skipped a module.
   for (const entry of dated.slice(0, Math.max(0, lastProgress))) {
     if (entry.percent != null && entry.percent < 100 && entry.end && entry.end < last.start) {
       pins.push({ ...entry, state: 'skipped', label: 'Skipped ahead', ahead: last.title });
-    } else if (entry.percent != null && entry.percent > 0 && entry.percent < 100) {
-      pins.push({ ...entry, state: 'current', label: 'In progress' });
     }
   }
   pins.push({ ...current, state: current.percent === 100 ? 'complete' : frontier > lastProgress && lastProgress >= 0 ? 'next' : 'current',
