@@ -1,7 +1,7 @@
 """Read-source selection and its shared readiness cache; no writer or API imports."""
 from time import monotonic
 from django.db import connection
-from curriculum_api.free_course_contract import NATIVE_VIEWS
+from curriculum_api.catalogue.infrastructure.free_course_contract import NATIVE_VIEWS
 from .learning_relations import TABLES, REFERENCE_VIEWS
 from .storage_context import native_only
 

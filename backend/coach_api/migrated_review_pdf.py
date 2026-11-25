@@ -3,10 +3,10 @@
 No Native lifecycle dependency and no template, progress or intelligence lookup.
 The caller supplies the existing persisted learner/calendar display context.
 """
-from curriculum_api.review_pdf_presentation import (
-    EXPORTABLE_REVIEW_TYPES, REVIEW_TYPE_MCM, REVIEW_TYPE_PROGRESS_REVIEW,
-    render_review_pdf,
-)
+from curriculum_api.review_management.domain.pdf_policy import EXPORTABLE_REVIEW_TYPES
+from curriculum_api.review_management.domain.pdf_policy import REVIEW_TYPE_MCM
+from curriculum_api.review_management.domain.pdf_policy import REVIEW_TYPE_PROGRESS_REVIEW
+from curriculum_api.review_management.infrastructure.pdf_renderer import render_review_pdf
 
 from .migrated_reviews import render_sections
 from .migrated_template_sync import active_answers

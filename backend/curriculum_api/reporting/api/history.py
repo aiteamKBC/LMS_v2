@@ -41,6 +41,9 @@ def revision_trail(
     system_writes_change_workspaces, system_writes_revision_workspace_clause, timedelta, transaction,
     versioning_ACTOR_TYPES, versioning_ENTITY_TYPES, versioning_REVISIONS_TABLE, versioning_SOURCES,
     versioning_metadata_columns_available, versioning_qualified,
+    entity_types_for_workspace,
+    fetch_all,
+    iso,
 ):
     """The audit trail read from the revision log."""
     days = parse_bounded_int(
@@ -73,6 +76,10 @@ def revision_trail(
     )
     with transaction.atomic():
         result = derived_read_hybrid(recover=False, **hybrid)
+        revision_started = history_queries.revision_start_times(
+            workspace, entity_filter, entity_types_for_workspace=entity_types_for_workspace,
+            fetch_all=fetch_all, revisions_table=hybrid["revision_table"], iso=iso,
+        )
 
     payload = history_results.trail_payload(
         ACTIONS=ACTIONS, action_filter=action_filter, actor_type_filter=actor_type_filter,
@@ -87,6 +94,7 @@ def revision_trail(
         versioning_ACTOR_TYPES=versioning_ACTOR_TYPES, versioning_SOURCES=versioning_SOURCES,
         workspace=workspace,
     )
+    payload["revisionStartedAt"] = revision_started
     return JsonResponse(payload)
 
 

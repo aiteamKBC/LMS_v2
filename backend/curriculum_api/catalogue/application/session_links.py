@@ -78,6 +78,7 @@ def delivery_slots_by_catalogue(
                 groups.get(clean_str(module_row.get('group_id'))) or {},
                 week_count,
                 holidays=holidays,
+                weeks=weeks_by_catalogue.get(catalogue_id),
             )
         except (Exception, AssertionError):
             if strict:
@@ -180,7 +181,9 @@ def authoring_session_links_by_catalogue(
     # which is the index its planned slot is numbered by.
     weeks_by_catalogue = defaultdict(list)
     for week_row in week_rows:
-        weeks_by_catalogue[clean_str(week_row.get('module_catalogue_id'))].append(week_row)
+        weeks_by_catalogue[clean_str(week_row.get('module_catalogue_id'))].append({
+            **week_row, 'components': live_components_by_week.get(clean_str(week_row.get('id')), []),
+        })
     plans_by_catalogue = delivery_slots_by_catalogue(
         weeks_by_catalogue,
         modules_by_catalogue=modules_by_catalogue,

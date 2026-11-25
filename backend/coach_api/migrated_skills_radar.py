@@ -109,29 +109,17 @@ def read_programme_source(learner_id):
     select a standard merely because its codes overlap.
     """
     from learner_api.ksb_sources import resolve_source
+    from curriculum_api.canonical_read_sql import standard_source_sql
     with connections['default'].cursor() as cursor:
-        cursor.execute('''SELECT p.programme_id,p.name,p.ksb_profile_source_id
-            FROM "Learner".learners l JOIN curriculum.programmes p
-              ON NULLIF(btrim(l.programme),'') IS NOT NULL
-                 AND lower(btrim(p.name))=lower(btrim(l.programme))
-            WHERE l.id=%s ORDER BY p.programme_id LIMIT 2''', [learner_id])
-        rows = cursor.fetchall()
-        if not rows:
-            return None
-        if len(rows) > 1:
-            raise ValueError('The learner programme has more than one matching KSB source.')
-        programme_id, programme_name, source_value = rows[0]
-        if not source_value:
-            # Preserve the existing explicit profile-to-programme association
-            # used by the LMS when no source has been applied on the programme.
-            cursor.execute('''SELECT id FROM curriculum.ksb_profiles
-                WHERE COALESCE(is_active,true) AND
-                  (programme_ids @> to_jsonb(%s::text) OR programme_ids @> to_jsonb(%s::text))
-                ORDER BY id LIMIT 2''', [programme_id, programme_name])
-            profiles = cursor.fetchall()
-            if len(profiles) > 1:
-                raise ValueError('The learner programme has more than one matching KSB profile.')
-            source_value = profiles[0][0] if profiles else None
+        cursor.execute(f'''SELECT {standard_source_sql('v')}
+            FROM "Learner".learners l
+            LEFT JOIN curriculum.programmes p ON p.programme_id=l.programme_id
+            JOIN curriculum.ksb_standard_versions v
+              ON v.standard_ref=coalesce(l.standard_ref,p.standard_ref)
+             AND v.standard_version=coalesce(l.standard_version,p.standard_version)
+            WHERE l.id=%s AND (l.standard_ref IS NULL OR p.standard_ref IS NULL OR l.standard_ref=p.standard_ref)''', [learner_id])
+        row = cursor.fetchone()
+    source_value = row[0] if row else None
     if not source_value:
         return None
     source = resolve_source(source_value, using='default')

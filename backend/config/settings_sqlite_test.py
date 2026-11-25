@@ -19,7 +19,14 @@ from .settings import DATABASES, MIGRATION_MODULES
 if any(config.get('ENGINE') != 'django.db.backends.sqlite3' for config in DATABASES.values()):
     raise RuntimeError('settings_sqlite_test only permits SQLite database connections.')
 
-MIGRATION_MODULES = {**MIGRATION_MODULES, 'curriculum_api': None}
+# Learner's externally provisioned PostgreSQL schema migrations now depend on
+# curriculum's graph (0026 -> 0081). Both must be excluded in this SQLite-only
+# configuration. This does not disable migrations in application settings or
+# provision unmanaged tables; database integration runners must supply fixtures.
+# quiz_api.0005 also depends on learner_api.0001; keep that dependent graph
+# together. Its managed test models remain eligible for syncdb/fixture creation.
+MIGRATION_MODULES = {**MIGRATION_MODULES, 'curriculum_api': None, 'learner_api': None,
+                     'quiz_api': None}
 
 # ``learner_api``/``login`` (and anything else routed by
 # learner_api.routers.EnrolmentRouter) reads and writes via the 'enrolment'

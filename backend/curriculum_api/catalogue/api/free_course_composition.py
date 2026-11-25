@@ -3,7 +3,7 @@
 Owns HTTP/decorator and runtime capability composition. Application operations,
 domain policies, SQL and transaction behavior remain in their existing owners.
 Public signatures and response contracts are unchanged."""
-from curriculum_api import free_course_catalogue
+from curriculum_api.catalogue.infrastructure import free_course_rows as free_course_catalogue
 from curriculum_api import schema_compat
 from curriculum_api import versioning
 from curriculum_api.catalogue.api.adapters import request_bypasses_curriculum_cache
@@ -53,9 +53,9 @@ from curriculum_api.catalogue.infrastructure.runtime_config import logger
 from curriculum_api.catalogue.infrastructure.structure_runtime import free_programme_module_response
 from curriculum_api.catalogue.infrastructure.write_composition import authoring_delete
 from curriculum_api.catalogue.infrastructure.write_composition import free_programme_delete
-from curriculum_api.free_course_catalogue_store import FreeCourseInUse
-from curriculum_api.free_course_writer_mode import LEGACY
-from curriculum_api.free_course_writer_mode import require_mode
+from curriculum_api.catalogue.infrastructure.free_course_catalogue_store import FreeCourseInUse
+from curriculum_api.catalogue.infrastructure.free_course_writer_mode import LEGACY
+from curriculum_api.catalogue.infrastructure.free_course_writer_mode import require_mode
 from curriculum_api.http_cache import conditional_json_response
 from curriculum_api.http_cache import encode_json_entry
 from curriculum_api.meetings.api.adapters import module_future_teams_sessions
@@ -118,7 +118,7 @@ def save_free_programme_modules(programme_id, payload):
         from curriculum_api.legacy_free_course_adoption import adopted_courses as operation
         return operation(*args, **kwargs)
     def load_free_course_catalogue_store():
-        from curriculum_api import free_course_catalogue_store as operation
+        from curriculum_api.catalogue.infrastructure import free_course_catalogue_store as operation
         return operation
     return implementation(
         programme_id, payload,
@@ -182,7 +182,7 @@ def curriculum_free_programme_modules(request, programme_id):
 def _delete_single_free_course_rows(course_id):
     from curriculum_api.catalogue.application.free_programme_commands import _delete_single_free_course_rows as implementation
     def load_free_course_catalogue_store():
-        from curriculum_api import free_course_catalogue_store as operation
+        from curriculum_api.catalogue.infrastructure import free_course_catalogue_store as operation
         return operation
     return implementation(
         course_id,

@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { type ReactNode } from 'react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -78,7 +78,8 @@ it('preserves initial loading, error and retry', async () => {
   render(tree());
   expect(screen.queryByText('Official Planned Hours')).not.toBeInTheDocument();
   await act(async () => first.reject(new Error('Synthetic failure')));
-  expect(screen.getByRole('alert')).toHaveTextContent('Synthetic failure');
+  expect(screen.getByRole('alert')).toHaveTextContent('Could not load your learning data');
+  expect(screen.getByRole('alert')).not.toHaveTextContent('Synthetic failure');
   fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   expect(screen.queryByText('Official Planned Hours')).not.toBeInTheDocument();
@@ -92,13 +93,13 @@ it('suppresses cached official hours during revalidation and retry without erasi
   vi.mocked(api.peekLearnerDetail).mockReturnValue(payload());
   vi.mocked(api.fetchLearnerDetail).mockReturnValueOnce(first.promise).mockReturnValueOnce(retry.promise);
   render(tree());
-  expect(row('Official Planned Hours')).toHaveTextContent('Loading');
+  expect(within(row('Official Planned Hours')).getByRole('status', { name: /Loading/ })).toHaveAttribute('aria-busy', 'true');
   expect(row('Official Planned Hours')).not.toHaveTextContent('288h');
   expect(row('Component + Review Planned Hours')).toHaveTextContent('420h');
   await act(async () => first.reject(new Error('Refresh failed')));
   expect(screen.queryByText('Official Planned Hours')).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
-  expect(row('Official Planned Hours')).toHaveTextContent('Loading');
+  expect(within(row('Official Planned Hours')).getByRole('status', { name: /Loading/ })).toHaveAttribute('aria-busy', 'true');
   expect(row('Component + Review Planned Hours')).toHaveTextContent('420h');
   await act(async () => retry.resolve(payload(0)));
   expect(row('Official Planned Hours')).toHaveTextContent('0h');

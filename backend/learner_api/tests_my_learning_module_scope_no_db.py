@@ -15,7 +15,7 @@ from .tests_progress_transfer_no_db import item, saved
 
 
 class ModuleContextScopeTests(SimpleTestCase):
-    def context(self, selected, kind, *, transfers=None, component_settings=None, imported_links=None):
+    def context(self, selected, kind, *, transfers=None, component_settings=None, imported_links=None, approved_replacements_only=False):
         from . import (models, weekly_learning, student_activity, subject_origins,
                        previous_learning_groups, progress_transfer_store)
         plan = [{'moduleId': f'M{i}', 'moduleTitle': f'Module {i}',
@@ -66,7 +66,8 @@ class ModuleContextScopeTests(SimpleTestCase):
             stack.enter_context(patch.object(subject_origins, 'read_replacement_courses', return_value={}))
             stack.enter_context(patch.object(previous_learning_groups, 'read_previous_learning_groups', return_value={}))
             stack.enter_context(patch.object(progress_transfer_store, 'read_state', return_value=transfers if transfers is not None else saved('approved')))
-            result = learning.load_context(source, {'id': 9, 'progress_transfer_active': True}, selected)
+            result = learning.load_context(source, {'id': 9, 'progress_transfer_active': True}, selected,
+                approved_replacements_only=approved_replacements_only)
         self.assertEqual((source.training_plan, source.learning_plan), original)
         return result, reader
 
@@ -86,13 +87,15 @@ class ModuleContextScopeTests(SimpleTestCase):
             transfer['items'][0]['matchedComponents'] = {'C1': manual_completion(
                 transfer['items'][0], 'material:8', review['modules'][0]['targets'][0])}
             for links in ({'current:M1': 'legacy:50'}, {}):
-                with self.subTest(kind=kind, links=links):
-                    approved, _ = self.context('current:M1', kind, transfers=transfer,
-                                              component_settings=settings, imported_links=links)
-                    self.assertEqual(approved[9]['replacement_settings'], settings)
-                    projected = project_approved_learning(approved[3]['components'],
-                        approved[9]['replacement_settings'], transfer['items'])
-                    self.assertTrue(projected[0]['previousLearning']['completed'])
+                for approved_only in (False, True):
+                    with self.subTest(kind=kind, links=links, approved_only=approved_only):
+                        approved, _ = self.context('current:M1', kind, transfers=transfer,
+                            component_settings=settings, imported_links=links,
+                            approved_replacements_only=approved_only)
+                        self.assertEqual(approved[9]['replacement_settings'], settings)
+                        projected = project_approved_learning(approved[3]['components'],
+                            approved[9]['replacement_settings'], transfer['items'])
+                        self.assertTrue(projected[0]['previousLearning']['completed'])
 
     def test_current_module_reads_one_assignment_even_in_large_plans_for_both_kinds(self):
         for kind in ('commercial', 'apprenticeship'):
@@ -131,7 +134,7 @@ class ModuleContextScopeTests(SimpleTestCase):
 
 
 class TransferredModuleOpenTests(SimpleTestCase):
-    def open_module(self, kind, status, *, new_completion=False, http=False, overlap=False, duplicate=False):
+    def open_module(self, kind, status, *, new_completion=False, http=False, overlap=False, duplicate=False, records=None):
         from . import (weekly_learning, dashboard_training, training_plan_dashboard, live_session_progress,
                        teams_attendance, builder_activity_dates)
         source = SimpleNamespace(pk=7, id=7, email='learner@example.test', programme='Programme',
@@ -152,7 +155,7 @@ class TransferredModuleOpenTests(SimpleTestCase):
         meta = metadata()
         meta.update(imported_courses={'current:M1': 'legacy:50'}, progress_transfers=transfers['items'],
                     replacement_settings={'C0': {'legacySettings': {'sourceLessonId': 7}}})
-        context = ([{'moduleId': 'M1'}], ['M1'], [], content, [old], [], set(), set(), {}, meta, [])
+        context = ([{'moduleId': 'M1'}], ['M1'], records or [], content, [old], [], set(), set(), {}, meta, [])
         with ExitStack() as stack:
             stack.enter_context(patch.object(learning, 'load_context', return_value=context))
             stack.enter_context(patch.object(learning, 'connections', fake_connections()))
@@ -184,12 +187,22 @@ class TransferredModuleOpenTests(SimpleTestCase):
         return result, historical
 
     def test_current_progress_deduplicates_overlap_and_placements_but_keeps_old_snapshot(self):
+        # Snapshot hours describe the transfer; actual hours come from accepted
+        # canonical ledger records, allocated to its destination by recordIds.
+        records = [{'id': 1, 'learner_id': 9, 'accepted': True, 'actual_seconds': 7200}]
         for kind in ('commercial', 'apprenticeship'):
-            result, _ = self.open_module(kind, 'approved', new_completion=True, overlap=True, duplicate=True, http=True)
+            result, _ = self.open_module(kind, 'approved', new_completion=True, overlap=True, duplicate=True, http=True, records=records)
             credit = result['metadata']['module_credits']['current:M1']
             self.assertEqual((credit['progress'], credit['transferredProgress'], credit['actualHours']), (20, 40, 2))
             self.assertEqual(result['detail']['componentProgress'], [
                 {'componentId': 'C1', 'kind': 'component'}, {'componentId': 'C0', 'kind': 'component'}])
+
+    def test_transfer_snapshot_cannot_grant_actual_hours_without_accepted_ledger_evidence(self):
+        for kind in ('commercial', 'apprenticeship'):
+            for records in ([], [{'id': 1, 'learner_id': 9, 'accepted': False, 'actual_seconds': 7200}]):
+                with self.subTest(kind=kind, records=records):
+                    result, _ = self.open_module(kind, 'approved', records=records, http=True)
+                    self.assertEqual(result['metadata']['module_credits']['current:M1']['actualHours'], 0)
 
     def test_transferred_module_http_response_is_serializable_with_completion_credit(self):
         for kind in ('commercial', 'apprenticeship'):

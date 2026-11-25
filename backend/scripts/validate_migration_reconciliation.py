@@ -34,9 +34,9 @@ with patch.object(BaseDatabaseWrapper, 'ensure_connection', side_effect=Assertio
     with patch.object(socket.socket, 'connect', side_effect=AssertionError('Network forbidden')):
         suite = unittest.defaultTestLoader.loadTestsFromNames([
             'curriculum_api.test_migration_reconciliation_no_db',
-            'curriculum_api.test_live_session_register_no_db',
-            'curriculum_api.tests_parallel_attendance_register',
-            'curriculum_api.test_qr_attendance_delete_cleanup_no_db',
+            'curriculum_api.meetings.tests.test_live_session_register_no_db',
+            'curriculum_api.meetings.tests.tests_parallel_attendance_register',
+            'curriculum_api.meetings.tests.test_qr_attendance_delete_cleanup_no_db',
         ])
         result = unittest.TextTestRunner(verbosity=2).run(suite)
     if not result.wasSuccessful():
@@ -86,12 +86,10 @@ with patch.object(BaseDatabaseWrapper, 'ensure_connection', side_effect=Assertio
             condition = attempts.SQL.split('CHECK (', 1)[1].split(');', 1)[0]
             violations = connection.execute('SELECT count(*) FROM "Learner".subject_activity_attempts WHERE NOT (' + condition + ')').fetchone()[0]
             assert violations == 0, 'Existing attempts violate 0030'
-            for table in ('free_course_hours_migration', 'free_course_hours_migration_additional', 'free_course_hours_migration_remaining'):
-                columns = dict(connection.execute('''SELECT column_name,data_type FROM information_schema.columns
-                    WHERE table_schema='Learner' AND table_name=%s''', [table]).fetchall())
-                for field, kind in [('old_progress_id', 'bigint'), ('learner_id', 'bigint'),
-                                    ('free_course_id', 'text'), ('free_component_id', 'text'), ('original_progress', 'jsonb')]:
-                    assert columns.get(field) == kind, '0029 bridge schema mismatch'
+            columns = dict(connection.execute("""SELECT column_name,data_type FROM information_schema.columns
+                WHERE table_schema='Learner' AND table_name='learner_progress_entries'""").fetchall())
+            for field in ('free_course_ref', 'free_component_ref'):
+                assert columns.get(field) == 'character varying', 'Canonical Free Course identity column missing'
             normalize = lambda value: ''.join(value.lower().replace('(', '').replace(')', '').split())
             definitions = connection.execute('''SELECT conname,pg_get_constraintdef(oid),convalidated
                 FROM pg_constraint WHERE conrelid='"Learner".subject_activity_attempts'::regclass
@@ -103,7 +101,7 @@ with patch.object(BaseDatabaseWrapper, 'ensure_connection', side_effect=Assertio
             assert len(definitions) == 2
             for name, definition, validated in definitions:
                 assert validated and normalize(definition) == normalize(expected[name]), '0029 constraint mismatch'
-            print('0029 installed constraints/bridge types PASS; 0030 incompatible attempts:', violations)
+            print('Installed attempt constraints/canonical ledger identity types PASS; 0030 incompatible attempts:', violations)
             missing = connection.execute("""SELECT attendance_status,count(*)
                 FROM curriculum.live_session_learner_attendance
                 WHERE attendance_basis='teams' AND teams_attendance_status IS NULL

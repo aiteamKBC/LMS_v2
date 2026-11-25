@@ -3,6 +3,7 @@
 Owns HTTP/decorator and runtime capability composition. Application operations,
 domain policies, SQL and transaction behavior remain in their existing owners.
 Public signatures and response contracts are unchanged."""
+from curriculum_api.template_ksbs import authoring_transaction as template_authoring_transaction
 from curriculum_api.catalogue.api.adapters import curriculum_results_response
 from curriculum_api.catalogue.api.adapters import requested_expected_revision
 from curriculum_api.catalogue.api.cache_lifecycle import invalidate_curriculum_cache
@@ -37,6 +38,7 @@ WEEK_TEMPLATE_COURSE_TYPES = {'paid', 'free'}
 
 
 @csrf_exempt
+@template_authoring_transaction
 def curriculum_week_template_collection(request):
     from curriculum_api.catalogue.api.week_template_commands import curriculum_week_template_collection as implementation
     return implementation(
@@ -63,6 +65,7 @@ def curriculum_week_template_collection(request):
 
 
 @csrf_exempt
+@template_authoring_transaction
 def curriculum_week_template_detail(request, identifier):
     from curriculum_api.catalogue.api.week_template_commands import curriculum_week_template_detail as implementation
     return implementation(

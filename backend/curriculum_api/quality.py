@@ -179,6 +179,8 @@ def revision_trail(request):
         versioning_REVISIONS_TABLE=versioning.REVISIONS_TABLE, versioning_SOURCES=versioning.SOURCES,
         versioning_metadata_columns_available=versioning.metadata_columns_available,
         versioning_qualified=versioning.qualified,
+        entity_types_for_workspace=system_writes.entity_types_for_workspace,
+        fetch_all=fetch_all, iso=iso,
     )
 
 

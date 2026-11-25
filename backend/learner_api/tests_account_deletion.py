@@ -8,9 +8,9 @@ from django.db import DatabaseError
 from django.db.models import Q
 from django.test import RequestFactory, SimpleTestCase
 
-from .account_deletion import _ProfileCollector, _profiles_for_deletion, delete_learner_account
+from .account_deletion import _delete_profile, _profiles_for_deletion, delete_learner_account
 from .mappers import ValidationError
-from .models import LearnerKsb, LearnerProfile, LearnerProgressEntry
+from .models import LearnerActivityKsbMapping, LearnerProfile, LearnerProgressEntry
 from .views import enrolment_user_detail
 
 
@@ -88,29 +88,29 @@ class AccountDeletionTests(SimpleTestCase):
 
 
 class ProfileCollectorTests(SimpleTestCase):
-    """The retired learner_ksbs snapshot must not block a profile cascade."""
+    def test_canonical_mapping_release_is_scoped_to_deleted_profile(self):
+        with patch('learner_api.account_deletion.LearnerActivityKsbMapping.objects') as mappings, \
+             patch('learner_api.account_deletion.Collector') as collector:
+            profile = LearnerProfile(pk=901)
+            _delete_profile(profile)
+        mappings.using.assert_called_once_with('enrolment')
+        mappings.using.return_value.filter.assert_called_once_with(learner_id=901)
+        mappings.using.return_value.filter.return_value.delete.assert_called_once_with()
+        collector.return_value.collect.assert_called_once_with([profile])
+        collector.return_value.delete.assert_called_once_with()
 
-    def related(self, model, *, ksbs_table):
-        collector = _ProfileCollector(using="enrolment")
-        field = model._meta.get_field("learner")
-        with patch("learner_api.account_deletion.learner_ksbs_relation_exists", return_value=ksbs_table) as probe:
-            query = collector.related_objects(model, [field], [LearnerProfile(pk=901)])
-        return query, probe
-
-    def test_missing_legacy_ksb_table_is_skipped_without_sql(self):
-        query, probe = self.related(LearnerKsb, ksbs_table=False)
-        probe.assert_called_once_with("enrolment")
-        self.assertTrue(query.query.is_empty())
-        self.assertEqual(list(query), [])  # SimpleTestCase would reject a real query.
-
-    def test_present_legacy_ksb_table_is_still_cascaded(self):
-        query, _ = self.related(LearnerKsb, ksbs_table=True)
-        self.assertFalse(query.query.is_empty())
-        self.assertIn("learner_ksbs", str(query.query))
+    def test_mapping_release_failure_does_not_continue_account_deletion(self):
+        with patch('learner_api.account_deletion.LearnerActivityKsbMapping.objects') as mappings, \
+             patch('learner_api.account_deletion.Collector') as collector:
+            mappings.using.return_value.filter.return_value.delete.side_effect = DatabaseError('blocked')
+            with self.assertRaises(DatabaseError):
+                _delete_profile(LearnerProfile(pk=901))
+        collector.assert_not_called()
 
     def test_other_profile_children_are_untouched(self):
-        query, probe = self.related(LearnerProgressEntry, ksbs_table=False)
-        probe.assert_not_called()
+        from django.db.models.deletion import Collector
+        field = LearnerProgressEntry._meta.get_field('learner')
+        query = Collector(using='enrolment').related_objects(LearnerProgressEntry,[field],[LearnerProfile(pk=901)])
         self.assertFalse(query.query.is_empty())
 
 
@@ -140,3 +140,10 @@ class AccountDeletionEndpointTests(SimpleTestCase):
         response, _ = self.request_delete(failure=DatabaseError('blocked dependency'))
         self.assertEqual(response.status_code, 502)
         self.assertIn('Could not delete user account', json.loads(response.content)['error'])
+
+    def test_retained_history_returns_conflict_without_database_details(self):
+        from django.db import IntegrityError
+        response, _ = self.request_delete(failure=IntegrityError('private display_audit_learner_fk details'))
+        self.assertEqual(response.status_code, 409)
+        self.assertNotIn('private', response.content.decode())
+        self.assertIn('retained records', json.loads(response.content)['error'])

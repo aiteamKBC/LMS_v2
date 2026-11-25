@@ -195,6 +195,19 @@ def save_component_builder_payload(
         sibling_rows = authoring_fetch_all(AUTHORING_COMPONENTS_TABLE, 'module_catalogue_id = %s and week_id = %s', [module_catalogue_id, week_id])
         display_order = len(sibling_rows)
     module_row = (authoring_fetch_all(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_catalogue_id]) or [{}])[0]
+    if stored_component_type(payload.get('type')) == 'live_session':
+        from curriculum_api.live_holiday_policy import module_closure_plan, closed_week_ids, closed_date_reason
+        retained = (frontend_component_type(existing_row.get('type')) == 'live-session'
+                    and not existing_row.get('deleted_at')
+                    and clean_str(existing_row.get('week_id')) == week_id
+                    and clean_str(existing_row.get('module_catalogue_id')) == module_catalogue_id)
+        if not retained:
+            week_rows = active_week_rows(authoring_fetch_all(
+                AUTHORING_WEEKS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], 'display_order, week_number, id'))
+            plan = module_closure_plan(module_row, week_rows)
+            if week_id in closed_week_ids(module_row, week_rows, plan) or closed_date_reason(plan, settings.get('sessionDate')):
+                raise ModuleAuthoringValidationError([{'path': 'type', 'message':
+                    'This is a holiday week. Add reading, quizzes or other content instead of a Live session.'}])
     incoming_mappings = payload.get('ksbMappings') if isinstance(payload.get('ksbMappings'), list) else None
     if incoming_mappings is None and 'ksbRefs' in payload:
         incoming_mappings = [
@@ -267,3 +280,6 @@ def save_component_builder_payload(
         {week_id: week[0] if week else {'week_number': week_number}},
         {component_id: mappings},
     )
+
+from curriculum_api.catalogue.domain.content_validation import frontend_component_type
+from curriculum_api.catalogue.domain.archive_policy import active_week_rows

@@ -177,7 +177,7 @@ def curriculum_component_collection(
                 # authoring data, written only through curriculum handlers
                 # that bump the epoch, so any edit retires this at once. The
                 # one input that bumps nothing is the Skills England list a
-                # mapping's source is inferred from (standard_ksbs, changed by
+                # mapping's source is inferred from (ksb_standard_definitions, changed by
                 # manual import), hence the same 60s bound coverage keeps.
                 # Keyed on the sorted, de-duped id set: order never changes
                 # the rows.

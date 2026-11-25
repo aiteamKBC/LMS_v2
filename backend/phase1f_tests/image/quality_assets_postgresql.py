@@ -9,7 +9,7 @@ from django.conf import settings
 from django.db import connection, transaction
 from django.test import RequestFactory
 from curriculum_api import quality, programme_audit, versioning
-from curriculum_api.test_quality_assets_boundary_no_db import original_quality_assets, FrozenDateTime
+from curriculum_api.reporting.tests.test_quality_assets_boundary_no_db import original_quality_assets, FrozenDateTime
 
 
 @contextmanager

@@ -9,8 +9,8 @@ from django.db import connection, transaction
 from psycopg.types.json import Jsonb
 from curriculum_api import views
 from curriculum_api.catalogue.infrastructure import session_writes
-from curriculum_api.test_session_editing_boundary_no_db import MODULE, editing_scope
-from curriculum_api.test_holiday_boundary_no_db import request, response
+from curriculum_api.catalogue.tests.test_session_editing_boundary_no_db import MODULE, editing_scope
+from curriculum_api.catalogue.tests.test_holiday_boundary_no_db import request, response
 
 SCHEMA = 'phase1f_session_editing'
 TABLES = {'modules', 'weeks', 'components', 'groups'}

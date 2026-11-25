@@ -68,7 +68,6 @@ def curriculum_week_template_collection(
         'course_type': course_type,
         **week_template_scope_fields(payload, course_type),
         'status': clean_str(payload.get('status')) or 'draft',
-        'ksb_mappings': json_db_value(payload.get('ksbMappings') or []),
         'total_otjh': total_otjh,
         'points': points,
         'component_count': component_count,
@@ -144,8 +143,6 @@ def curriculum_week_template_detail(
         updates['summary'] = clean_str(payload.get('summary'))
     if 'learningOutcomes' in payload:
         updates['learning_outcomes'] = json_db_value(payload.get('learningOutcomes') or [])
-    if 'ksbMappings' in payload:
-        updates['ksb_mappings'] = json_db_value(payload.get('ksbMappings') or [])
     if 'status' in payload:
         updates['status'] = clean_str(payload.get('status')) or 'draft'
     if 'author' in payload:

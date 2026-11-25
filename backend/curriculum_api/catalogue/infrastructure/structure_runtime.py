@@ -4,7 +4,7 @@ Existing algorithms and call contracts are preserved; dependencies have explicit
 No import of the legacy views module.
 """
 from curriculum_api import curriculum_names
-from curriculum_api import free_course_catalogue
+from curriculum_api.catalogue.infrastructure import free_course_rows as free_course_catalogue
 from curriculum_api.catalogue.domain.archive_policy import programme_deleted_row
 from curriculum_api.catalogue.domain.archive_policy import row_has_deleted_at
 from curriculum_api.catalogue.domain.delivery_values import delivery_days_per_week

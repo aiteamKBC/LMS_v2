@@ -24,6 +24,9 @@ from psycopg.types.json import Jsonb
 
 from reconcile_aptem_evidence import database_url, digest, ids, insert
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from curriculum_api.source_activity_ksbs import relation as source_ksb_relation
+
 UK = ZoneInfo('Europe/London')
 ENDPOINT = 'https://kentbusinesscollege.org/wp-json/custom/v1/courses-progress'
 BASIS = 'old_lms:completion-confirmed-actual-time-unverified'
@@ -110,7 +113,7 @@ def read_state(cur, aptem_id, course_id, selected):
                        ('segments', 'learner_activity_reporting_segments')]:
         state[key] = cur.execute(f'SELECT * FROM "Learner".{table} WHERE learner_id=%s ORDER BY id', [owner['id']]).fetchall()
     state['journals'] = cur.execute('SELECT * FROM "Learner".learner_journal_rows WHERE canonical_learner_id=%s ORDER BY id', [owner['id']]).fetchall()
-    state['catalogue'] = cur.execute('''SELECT a.id,a.source_activity_id,a.source_activity_type,
+    state['catalogue'] = cur.execute(f'''SELECT a.id,a.source_activity_id,a.source_activity_type,
         a.curriculum_component_ref,a.source_section_ref,a.source_section_title,a.source_material_id,
         c.id AS course_id,c.source_course_ref,c.source_course_title,c.curriculum_module_ref,
         h.id AS historical_id,h.historical_only,
@@ -120,7 +123,7 @@ def read_state(cur, aptem_id, course_id, selected):
         JOIN "Learner".learner_source_course_memberships m
           ON m.source_course_id=c.id AND m.learner_id=%s AND m.deleted_at IS NULL
         LEFT JOIN curriculum.historical_components h ON h.source_catalog_activity_id=a.id AND h.deleted_at IS NULL
-        LEFT JOIN curriculum.source_activity_ksbs k ON k.activity_id=a.id
+        LEFT JOIN LATERAL {source_ksb_relation('a.id')} k ON k.activity_id=a.source_material_id
         WHERE c.source_system='old_lms' AND c.source_course_ref=%s
           AND a.source_system='old_lms' AND a.source_activity_kind='material' AND a.deleted_at IS NULL
           AND a.source_activity_id=ANY(%s) ORDER BY a.id,h.id''',

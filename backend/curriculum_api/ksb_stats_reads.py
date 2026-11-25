@@ -1,3 +1,4 @@
+from learner_api.ksb_domain import official_progress_relation
 """Narrow PostgreSQL inputs for programme KSB summary statistics."""
 from collections import Counter
 

@@ -1,3 +1,4 @@
+from learner_api.ksb_domain import official_progress_relation
 """Read-only module metrics from current activity identities and saved evidence.
 
 Only the moduleProgress projection calls this module. It never syncs records,
@@ -105,7 +106,7 @@ def apply_ksb_metrics(payload, records, read, table, connection):
         ids = list(dict.fromkeys(row['id'] for row in eligible))
         slots = ','.join(['%s'] * len(ids))
         selection, params = ('k.progress_id = ANY(%s)', [ids]) if connection.vendor == 'postgresql' else (f'k.progress_id IN ({slots})', ids)
-        rows = read(f'''SELECT k.progress_id,k.ksb_code,k.weight FROM {table('learner_progress_ksbs')} k
+        rows = read(f'''SELECT k.progress_id,k.ksb_code,k.weight FROM {official_progress_relation()} k
             WHERE {selection}{and_not_excluded('k', connection)}''', params)
         for row in rows:
             code = coverage_normalise_code(row.get('ksb_code'))

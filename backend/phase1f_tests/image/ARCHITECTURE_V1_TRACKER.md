@@ -5249,3 +5249,714 @@ Follow-up: the remaining consumer reverse imports were closed by the 2026-11-22 
 - Next recommended Identity & Placement batch: separately decide and migrate the
   legacy email/PK resolver and optional write-on-read repair, with DB/identity-owner
   approval and data evidence. Phase 2.2 was not started.
+### 2026-11-24 - Pinned dev meeting acceptance; remaining curriculum contracts OPEN
+
+- Started on Architecture at 2d06b0de038955f7ce68f4c9abdc336731c82d78 with a clean
+  working tree. This batch changes test contracts, fixtures and the test bundle
+  only; application bodies, writers, endpoints and views.py (1,188 lines) remain
+  unchanged. No commit, push, PR, branch switch, migration or live provider call.
+- Added meetings/tests/approved_dev_contracts.py and fixtures/approved_dev_99f81.json.
+  Seven reference bodies are extracted from actual approved upstream revision
+  99f81ec8c661519da17225ac8a7a566447967487, with source/fixture hashes verified.
+  The only textual adaptation retains existing readable punctuation in one
+  additional-week error message. Historical snapshots are unchanged.
+- Meeting source/signature/capability and behavior tests now use those pinned
+  references for the approved changes. Historical whole-file reconstruction
+  removes exactly four reviewed compatibility imports; new tests reject changed
+  or duplicate imports and retain unknown additions. The source loader and
+  delivery/calendar contracts share this explicit reference selection.
+- The cancellation audit distinguishes explicit cancellation from the single
+  approved opted-in holiday-padding site. It checks the exact DELETE site,
+  creation/schedule callers and people-only prohibition. Added synthetic tests
+  for missing targets, no holidays, cancelled/non-holiday occurrences and an
+  unproven later candidate preventing ALL deletion. Existing identity, tracked
+  session, history, exception, pagination and partial-failure guards still pass.
+- Targeted verification: 222/222 PASS across eight suites. Full mocked meeting
+  verification: 1,042 executed cases, zero failures/errors/skips, 41 suites PASS
+  and two BLOCKED by the unchanged migration exclusions (runner exit 1).
+  These counts overlap. The third PostgreSQL migration test remains blocked too.
+- Re-ran all 68 historical standalone suites under import/network/write guards:
+  467 cases; 45 suites PASS, 23 FAIL, with no newly failing suite relative to the
+  earlier 35 PASS / 33 FAIL result. Remaining failures cover old bodies, signatures
+  and imports in catalogue authoring, scheduling, storage and composition. They
+  need individual review against approved dev; do not delete or regenerate their
+  expectations. Full list: evidence/remaining-standalone.json below.
+- Frontend test-only preparation loads the real lazy FreeCourseMaterial renderer
+  before the saved-URL assertion, avoiding cold transformation consuming its
+  one-second UI wait. No component mock or assertion was weakened. Type-check
+  and focused ESLint PASS; the changed UI test is NOT runtime-verified yet.
+- Frontend verification remains BLOCKED/PARTIAL: default forks and threads
+  repeatedly timed out starting workers, before executing tests. A diagnostic
+  VM run before the fixture preparation executed 43 cases: 42 PASS and one cold
+  lazy-render wait failure. The original extra-request case passed there, which
+  does not explain or resolve its previously observed intermittent failure.
+  The same 117-file broad selection under VM threads reported seven failures
+  across two 36-case files (moduleDeliveryCatalogue, programmeWorkspace) before
+  being stopped to reduce host memory pressure (91% observed). A single-worker
+  retry of all 117 paths with vmMemoryLimit=512MB produced no file result after
+  prolonged startup/import and was stopped. Neither attempt is an acceptance
+  pass; preserve their reported failures for diagnosis, without assuming the
+  resource pressure caused them. Final focused default-pool attempt also ended
+  with "Timeout waiting for worker to respond", zero tests executed.
+- Evidence and exact selected commands/logs:
+  D:/Temp/HP/lms-acceptance-20261124/. Mocked backend command:
+  python -I -B backend/phase1f_tests/image/run_meeting_checks.py.
+  No PostgreSQL or HTTP integration rerun is claimed for this test-only batch.
+- Curriculum/Architecture V1 release acceptance and G01-G05 remain OPEN.
+  Finish frontend request-count diagnosis and the 23 remaining historical
+  contracts before treating acceptance as green or proceeding to release.
+
+### 2026-11-24 - Post-merge curriculum contract stabilization PASS (bounded)
+
+- Architecture at `fcdaa2a542412536cc51ff8ea5ee7846ad5a118f`; preserved the
+  pre-existing attendance fixture edit byte-for-byte. Application code, URLs,
+  writers and `views.py` (1,188 lines) are unchanged in this batch.
+- Closed all 23 failing historical contract suites. Added a fixed source-delta
+  fixture for the reviewed, accepted dev merge: study-week fields/validation,
+  calendar planning, explicit composition capabilities, native content reads,
+  profile-keyed marks and canonical Free Course behavior. The reference records
+  Git revision/blob identities and the pre-reconciliation archive fingerprint.
+  Every affected current file must match the approved AST before historical
+  extraction comparisons can reverse those exact deltas. Unknown changes fail;
+  all 62 existing catalogue JSON fixtures remain unchanged. This establishes
+  source compatibility with the reviewed changes, not endpoint/runtime parity.
+- Added 17 standalone cases: source-mutation/revert/import rejection, current
+  runtime fixture preservation, actual study-week mode/end-date/payload rules,
+  missing modules, the 104-week bound, legacy behavior, session precedence and
+  group delivery. Current behavior tests import actual owners, never restored
+  historical bodies. Updated the import bundle to carry the reference/helper;
+  inspected the generated archive successfully without starting Docker/Django.
+- Diagnosed the intermittent frontend failure by reproducing a certificate
+  request for an apprenticeship learner during the next commercial test. Awaited
+  cleanup/effect flushing before restoring fetch and clearing caches; retained
+  all exact request-count assertions and added request diagnostics. No request,
+  cache, component or endpoint implementation was changed.
+- Validation: 69 guarded DB-free backend suites, **484/484 PASS**, zero skips;
+  final frontend selection (compactModules, moduleDeliveryCatalogue,
+  programmeWorkspace, learnerCertificates), **118/118 PASS**. compactModules also
+  passed five consecutive full-file runs (43 each; overlapping evidence).
+  Type-check, focused ESLint, production build, syntax and diff checks PASS.
+- Changed: catalogue tests/parity/{approved_dev_contracts.py,
+  test_approved_dev_standalone.py, final_bindings_oracle.py,
+  test_final_bindings_standalone.py, test_read_dependencies_standalone.py,
+  test_read_consumer_imports_standalone.py}; catalogue tests/fixtures/
+  approved_dev_source_deltas.json; phase1f_tests/image/run_import_smoke.py;
+  frontend my-learning/compactModules.test.tsx; this tracker.
+- Evidence, exact commands, preimages, reproduced failure and final results:
+  `D:/Temp/HP/lms-curriculum-acceptance-20261124-next/`.
+- Remaining: full post-merge HTTP/PostgreSQL integration acceptance and blocked
+  migration checks; the full 117-file frontend selection was not rerun here.
+  No database/provider connection, Django startup, commit, PR or deployment.
+  G01-G05 and overall Curriculum/Architecture V1 release acceptance remain OPEN.
+
+### 2026-11-24 - Post-merge isolated runtime acceptance PARTIAL
+
+- Continued on Architecture at `fcdaa2a542412536cc51ff8ea5ee7846ad5a118f`.
+  Preserved all task-start changes. No application source, URL, schema migration
+  file or environment file changed; `views.py` remains 1,188 physical lines.
+- PostgreSQL/HTTP: **180/180 PASS**, zero skips, 16.906 seconds in the test body.
+  Ran the unchanged MembershipIntegration class and all 13 existing PostgreSQL
+  extension suites from integration.py. Includes GET/full/compact/assignedOnly,
+  real session authorization, profile/enrolment bridges, canonical/legacy IDs,
+  KSB counts, Home Summary/Programme List, persisted POST/DELETE and rollback.
+  The separate historical/mock fixture mega-suite was not selected in this run.
+- Isolation was checked before initdb/Django: existing pinned local images,
+  PostgreSQL network=none with only loopback, app sharing that namespace,
+  no published ports or host mounts, PostgreSQL data on tmpfs, read-only app
+  filesystem, synthetic credentials, all six aliases on 127.0.0.1/phase1f.
+  No real .env/settings, Neon, external database or provider was accessed.
+  Each created container was removed. This is minimal configured Django/HTTP
+  fixture evidence, not production startup hooks or live-provider acceptance.
+- Frontend: **114 files, 2,227/2,227 PASS**, zero skipped cases, 345.343 seconds.
+  Reused the earlier 117-file selection except the three dedicated Teams files:
+  teamsWeeklyModal, longStudyCalendarReview, teamsMeetingsPage. Network guard
+  blocked TCP/DNS/unmocked HTTP; existing consumer mocks remained in place.
+  No frontend code changed, so prior type-check/build results were not rerun.
+- Resolved four previously unexecuted migration checks: **4/4 PASS** on synthetic
+  SQLite :memory: only (0089/0091 repeatability/old-null values and 0071 immutable
+  history/rollback). No PostgreSQL or Django startup in that runner; one
+  SimpleTestCase requires configured dummy aliases. Initial missing-settings
+  runner error was corrected without changing any test or assertion.
+- The fifth existing check, StudyWeekPersistenceTests.
+  test_migration_refreshes_existing_read_views_and_preserves_legacy_rows,
+  was executed on fresh disposable PostgreSQL and **FAIL (one error)**.
+  Fixed its fixture's absent nullable learner_progress_ksbs.ksb_definition_id
+  from LearnerProgressKsb's model contract, and bundled the existing 0091 source
+  and free_course_storage.sql dependency. These are test setup changes only.
+- Confirmed remaining failure after that fixture correction: production
+  free_course_native_schema creates learning_components without status (the
+  free_course_contract.COLUMNS projection); attachment_reads.
+  authoring_component_counts_by_catalogue applies a status predicate to it.
+  PostgreSQL reports `column "status" does not exist`; the reader's broad catch
+  masks that first failure, then the current transaction is aborted during the
+  test's final create_delivery call. The test reached and passed its earlier
+  repeat-migration/old-row/view checks, but the whole scenario is NOT a pass.
+  No view column, archive rule, expected assertion or production fallback was
+  altered to hide this failure. Actual existing-database impact was not probed.
+- Changed this batch: phase1f_tests/image/{meeting_postgresql.py,
+  run_import_smoke.py, ARCHITECTURE_V1_TRACKER.md}. Syntax and git diff --check
+  PASS; no commit, PR, branch change or deployment.
+- Exact commands, fixed test selection, isolation/image IDs, preimages and
+  first/final error evidence: D:/Temp/HP/lms-runtime-acceptance-20261124-140512/.
+  Commands: `python -I -B <evidence>/run_runtime.py` (180 existing cases),
+  `python -I -B <evidence>/run_frontend.py` (114 explicit files),
+  `python -I -B <evidence>/run_memory.py` (four explicit cases),
+  `python -I -B <evidence>/run_runtime.py migration-postgres` (one explicit case).
+- Next bounded correction: reconcile the catalogue component reader's source
+  and archive predicate with the actual mixed/native read contract; preserve
+  ordinary/free-course identity and inactive/archived/deleted behavior. Keep
+  this failing persisted HTTP case as its baseline and review content_counts
+  for the same structural assumption. No further bulk extraction before this
+  acceptance blocker is addressed. G01-G05 and release acceptance remain OPEN.
+
+### 2026-11-24 - Component count read compatibility PASS; acceptance PARTIAL
+
+- Old: both count readers applied ordinary `status` predicates to
+  `learning_components`, whose native/mixed contract has no status column.
+  The attachment counter swallowed SQL errors and returned zero/partial counts.
+- New: one narrow infrastructure SQL builder filters ordinary components with
+  each caller's unchanged predicate, and native components by `deleted_at`.
+  It combines the two with UNION ALL before aggregation. Native-only scope
+  reads only the native view. IDs, cutover/converted visibility, grouping,
+  retired-type filtering and ordinary NULL semantics remain intact. The
+  normalized KSB query and ranking algorithm are unchanged. Failed attachment
+  reads now propagate to existing caller error handling instead of fake counts;
+  higher-level legacy catches have not been redesigned in this batch.
+- Production: catalogue/infrastructure/{component_count_sql.py (new),
+  attachment_reads.py, content_counts.py}. No writer, URL, model, migration,
+  environment or frontend changes. `views.py` is unchanged at 1,188 lines.
+- New regressions: catalogue/tests/{test_component_counts_standalone.py (11),
+  component_counts_postgresql.py (6)}. Tests use actual current count readers.
+  Historical source guards have a separate pinned two-file bug-fix record and
+  reject unknown edits; existing 62 legacy snapshots and the dev merge record
+  were not refreshed. Updated final_bindings_oracle, the historical content
+  source check, the KSB harness import closure and run_import_smoke bundling.
+- Verified: **495/495 standalone cases across 70 files PASS** (initial full
+  selection followed by the five affected suites after harness corrections);
+  **6/6 new PostgreSQL regressions PASS**; **180/180 existing PostgreSQL/HTTP
+  cases PASS**, zero skips, 12.070 seconds. No frontend or dedicated Teams suite
+  rerun. Syntax and git diff --check PASS. Catalogue's four-layer static graph:
+  277 -> 278 modules, **0 -> 0 cycles**; only two imports of the new SQL leaf.
+- The previously failing migration/HTTP case was rerun: the missing-status
+  failure is gone. Completing its disposable reference-view fixture using the
+  existing create_reference_views helper exposed a different failure:
+  `module_catalogue_id is ambiguous`. prepare_native_authoring_fixture adds
+  legacy KSB placement columns while the normalized projection also derives
+  them through component joins. The full scenario remains **FAIL (one error)**;
+  no assertion was bypassed and no KSB/schema production fix was made here.
+- All PostgreSQL runs used network-none disposable containers, synthetic rows,
+  all six aliases on loopback/phase1f, no host mounts/credentials, checked before
+  initdb/Django; containers removed afterward. No Neon/provider access or Git
+  publishing. Task-start unrelated changes preserved.
+- Evidence: `D:/Temp/HP/lms-component-read-fix-20261124/`. Exact commands:
+  `python -I -B <evidence>/run_standalone_parallel.py all`, then
+  `python -I -B <evidence>/run_focused.py focused-final`;
+  `python -I -B <evidence>/run_runtime.py component-postgres`,
+  `python -I -B <evidence>/run_runtime.py`, and
+  `python -I -B <evidence>/run_runtime.py migration-postgres`.
+- Next: reconcile the native migration fixture/preparation contract with the
+  normalized KSB schema, then rerun that complete persisted HTTP scenario.
+  Existing-database schema suitability is unverified. G01-G05 and Curriculum
+  release acceptance remain OPEN; this batch does not certify endpoint parity.
+
+### 2026-11-24 - Normalized KSB preparation and migration/HTTP regression PASS
+
+- Closed the previously failing StudyWeekPersistenceTests.
+  test_migration_refreshes_existing_read_views_and_preserves_legacy_rows,
+  including repeated 0091 execution, unchanged existing module rows and the
+  final real HTTP creation of a new calendar-mode module. Its assertions and
+  source were not changed.
+- Old: the native test fixture recreated module/week/code/description columns
+  on ksb_mappings. Normalized readers also projected those names, causing an
+  ambiguous module_catalogue_id. Native preparation read the physical copies,
+  and the mixed view could project NULL instead of authoritative KSB values.
+- New: free_course_native_schema.prepare and create_read_views use the existing
+  pure ksb_placement_reads.relation projection. Component ownership supplies
+  module/week; standard_ksbs supplies code/description. The fixture no longer
+  invents these four physical columns. SQL explicitly serializes the projected
+  whole row with to_jsonb(ksb_mappings.*), avoiding the same-named outer JSON
+  column. Existing mapping IDs, metadata, row ordering, duplicate codes across
+  different components and storage_version=2 protection are tested.
+- Final PostgreSQL selection: **12/12 PASS**, zero skips, 1.474 test seconds:
+  the original migration/HTTP case + five new native-KSB tests + six existing
+  component-reader regressions. **180/180 existing integration cases PASS**,
+  zero skips, 14.134 seconds. **75/75 standalone cases across eight relevant
+  suites PASS**, including KSB ranking/legacy aliases and historical guards.
+  Initial new-fixture duplicate mappings were corrected to use distinct
+  components, retaining the real component/standard unique index unchanged.
+- Historical snapshots remain unchanged. A separate pinned native-KSB source
+  delta is validated before historical layout comparisons; runtime tests call
+  current implementations. New dependency: the migration helper imports an
+  import-free SQL constructor; no new cycle, runtime settings or API dependency.
+- Changed: free_course_native_schema.py; tests_free_course_native_storage.py;
+  catalogue/tests/ksb_native_preparation_postgresql.py; catalogue/tests/parity/
+  {native_ksb_contracts.py, test_native_ksb_contracts_standalone.py,
+  final_bindings_oracle.py}; catalogue/tests/fixtures/native_ksb_preparation_fix.json;
+  phase1f_tests/image/run_import_smoke.py and this tracker.
+  No runtime writer/endpoint/model/migration-file/frontend/environment changes.
+  The existing migration-owned preparation helper changed; it was executed
+  only on synthetic disposable data. views.py stays at 1,188 lines.
+- Isolation checked before initdb/Django: network-none PostgreSQL, application
+  sharing loopback-only namespace, all six aliases on phase1f, no host mounts,
+  credentials or real .env; containers removed. No dedicated Teams tests,
+  Neon/provider access, commit, PR or deployment. Syntax/diff checks PASS;
+  unrelated task-start changes preserved.
+- Evidence: `D:/Temp/HP/lms-ksb-native-compat-20261124/`. Final commands:
+  `python -I -B <evidence>/run_runtime.py native-final`;
+  `python -I -B <evidence>/run_runtime.py`;
+  `python -I -B <evidence>/run_standalone_parallel.py final`.
+- Remaining, separately scoped: the full native storage cutover is not covered
+  by this preparation/0091 scenario. Static inspection still finds physical
+  KSB module-column assumptions in detach/verify_remaining_references. Review
+  those before attempting full cutover. Existing deployed read views were not
+  refreshed; any release-time refresh requires its own verified database plan.
+  G01-G05 and overall Curriculum release acceptance are not automatically closed.
+
+### 2026-11-24 - Canonical Free Course document read boundary PASS
+
+- Scope: source-only extraction of canonical catalogue/document reads. No storage
+  cutover, schema/migration, writer, URL, authentication, frontend or provider
+  behavior changes. Current Architecture HEAD remains fcdaa2a542412536cc51ff8ea5ee7846ad5a118f.
+- Before: free_course_authoring.py (910 lines) mixed canonical SQL, snapshot
+  control, revisions, integrity decisions, document assembly and HTTP/writers;
+  free_course_catalogue.py (219 lines) owned SQL plus API identity projection.
+- After: the two compatible entry modules are 273 and 20 lines respectively
+  (836 net lines removed). Existing HTTP/writer tail is byte-for-byte unchanged.
+  Actual responsibility owners under catalogue/:
+  - domain/free_course_integrity.py: identifier/settings validation and existing
+    quiz/course/week/component ownership and integrity decisions (249 lines).
+  - application/free_course_revisions.py: stable canonical values and revision
+    hashing (119); free_course_documents.py: response-document/identity projection
+    (162); free_course_queries.py: single/batched read orchestration (111).
+  - infrastructure/free_course_rows.py: existing canonical table selectors and
+    batching (206); free_course_document_reads.py: quiz SQL, schema availability
+    checks and read-only snapshot control (119). No provisioning or writer API.
+  - Existing HTTP adapters stay in place. Four legacy query entry points bind
+    the concrete reads capability; application/domain import no Django, SQL,
+    infrastructure, legacy views or providers. Public exports/signatures retained.
+- Preserved: exact SQL and parameters on synthetic PostgreSQL, repeatable-read
+  READ ONLY snapshots, inactive-versus-archived visibility, canonical/provenance
+  identity, legacy quiz diagnostics, ownership errors, ordering, revisions and
+  private/no-store Cookie-varying ETags. No misleading fallback was introduced;
+  existing legacy ownership diagnostics remain explicit and read-only.
+- Validation actually run: baseline 58/58 existing feature cases PASS; final
+  65/65 PASS (same 58 + five real PostgreSQL/original-source/HTTP checks + two
+  existing read-only PostgreSQL checks), zero skips. Existing shared integration
+  180/180 PASS, zero skips, 13.472 test seconds. Standalone 59/59 across eight
+  suites PASS, including nine new old/new parity and boundary tests. These
+  include 64 settings/ownership/status combinations and additional duplicate,
+  orphan, missing-target, revision, failure and snapshot cases.
+- The pinned task-start source oracle compiles the actual old read definitions;
+  runtime tests invoke the new implementations. Two existing test files changed
+  only mock ownership/call-count references. Original assertions retained. One
+  existing mocked catalogue test logs blocked database/cache-table attempts in
+  both baseline and final runs; SimpleTestCase prevents those operations.
+- Static four-layer catalogue graph: 278 -> 284 modules, 0 -> 0 cyclic components.
+  Syntax and git diff --check PASS; views.py unchanged at 1,188 lines. All unrelated
+  pre-existing changes preserved. No extra interfaces/classes/packages added.
+- Docker isolation checked before PostgreSQL initialization/Django: network=none,
+  loopback-only app namespace, no host mounts/ports/credentials, all six aliases
+  on disposable phase1f, synthetic data only. Containers removed. No Neon, Teams
+  suite, live provider, commit, PR, branch switch or deployment.
+- Evidence: D:/Temp/HP/lms-free-course-read-boundary-20261124/. Commands:
+  python -I -B <evidence>/run_runtime.py native-final;
+  python -I -B <evidence>/run_runtime.py;
+  python -I -B <evidence>/run_standalone_parallel.py final.
+  Source/test files are bundled by the existing run_import_smoke.py.
+- Remaining: root HTTP/writer adapters and other Curriculum areas still require
+  their own boundaries; the separate native cutover issue remains outside this
+  batch. HTTP feature checks use synthetic authentication, with existing shared
+  session/authorization regression coverage from the 180-case suite. This does
+  not prove deployed data suitability or full Curriculum completion. G01-G05
+  and release acceptance remain OPEN.
+
+### 2026-11-24 - Curriculum test ownership: relocation complete; existing failures remain
+
+- Root `test*.py`: 338 -> 19. Moved 319 existing files / 74,762 source lines
+  into existing feature test packages: catalogue/tests 186, directory/tests 14,
+  reporting/tests 23, meetings/tests 96. Basenames and all 4,644 test-function
+  definitions retained; no test assertions, fixtures or business rules replaced.
+  Total static Curriculum test-function inventory: 5,776 -> 5,776 (not a claim
+  that all those tests were executed).
+- Updated imports, source/fixture path anchors and 38 dependent test/runner/CI
+  files. The deployment workflow change is only its existing test module label;
+  no workflow was executed. Added meetings/tests/__init__.py for discovery,
+  without forwarding modules at the old paths. Its nine previously namespace-only
+  test modules (55 definitions) also become eligible for package discovery;
+  Teams discovery/execution was not run. Explicit runner selections are retained.
+- Independent before/after AST comparison: 319/319 equivalent after resolving
+  relocated imports and filesystem anchors. 81 frozen fixture files and 791
+  non-test application modules byte-identical. views.py remains 1,188 lines.
+  Static explicit-import graph: 1,264 -> 1,265 modules, 4 -> 4 cyclic components,
+  zero new cycles (includes function-local imports; not a runtime-cycle claim).
+- Validation actually run: existing shared PostgreSQL/HTTP 180/180 PASS before
+  and after; Free Course 65/65 PASS before and after; nine guarded standalone
+  suites 69/69 PASS after. Syntax checks and git diff --check PASS.
+- Expanded, explicit non-Teams selection: 42 boundary suites, 679 executions
+  both before and after. Discovery IDs, order and multiplicity match after module
+  path normalization. Final result in each: 677 passing methods, two failing
+  methods (five failure events including subtests), zero errors/skips. No new
+  failure. Existing failures remain in:
+  - catalogue/tests/test_attachment_preparation_boundary_no_db.py:
+    test_component_count_query_predicates_parameters_and_error_contract still
+    expects the historical swallowed-error/empty-count behavior.
+  - catalogue/tests/test_authoring_read_boundary_no_db.py:
+    test_summary_modes_preserve_values_and_sql_on_real_synthetic_grouped_reads
+    fails four include_content=False subcases expecting MOD-ONE/MOD-TWO.
+  Assertions were preserved, not weakened to obtain green results. An initial
+  temporary harness omitted a fixture and media URL patterns; both harness-only
+  omissions were corrected before the final paired comparison above.
+- Isolation: network-none Docker, no host mounts/credentials, dummy DB aliases
+  and blocked DB calls for boundary checks; existing disposable PostgreSQL only
+  for the 180/65 selections. All containers removed. No host Django, Neon, live
+  provider calls, Teams tests, production changes, commit, PR or deployment.
+- Evidence / exact commands: D:/Temp/HP/lms-curriculum-test-ownership-20261124/.
+  `python -I -B <evidence>/verify_moves.py`; `check_graph.py`;
+  `python -I -B <evidence>/run_boundaries.py before` / `after`;
+  `python -I -B <evidence>/final/run_runtime.py` / `native-final`;
+  `python -I -B <evidence>/final/run_standalone_parallel.py final`.
+  moves.json contains the complete old -> new file mapping; preimages and logs
+  preserve the actual task-start work, including prior uncommitted changes.
+- Remaining root tests: 13 Reviews-related files and six app/shared files,
+  including the mixed tests.py harness. Next: resolve the two existing catalogue
+  test-contract discrepancies explicitly, then complete the Reviews boundary and
+  its test ownership. Full Curriculum modernization and release gates remain OPEN.
+
+### 2026-11-24 - Reviews templates, classification and scheduling boundary: PASS
+
+- Resolved both catalogue test discrepancies: retain the approved count-reader
+  error propagation (compare the frozen swallowed-error behavior explicitly),
+  and bind grouped-count SQL to its synthetic SQLite source. No catalogue
+  production behavior changed; the original 679 boundary executions now pass.
+- Extracted 108 functions/constants from reviews.py, review_schedule.py and
+  review_types.py into review_management: 19 concrete modules across domain
+  (field validation, type identity, calendar recurrence), application (template
+  validation/results/commands and schedule orchestration), infrastructure
+  (existing SQL, section persistence, provisioning/readiness), and API (HTTP
+  and cache-callback composition). No generic repositories or new model layer.
+- Old files: reviews.py 1,228 -> 53; review_schedule.py 578 -> 30;
+  review_types.py 402 -> 27. Combined 2,208 -> 110 compatibility-export lines
+  (2,098 removed from legacy files). Existing callable signatures retained;
+  seven cache-dependent commands bind their existing callback at the API edge.
+  urls.py imports actual API owners; every URL registration/name/argument/order
+  has an identical AST. views.py stays 1,188 lines; only two readiness resets
+  now delegate to the single infrastructure flag owners.
+- Moved all 13 Review test files to review_management/tests, preserving all
+  240 existing test methods. Root test*.py count 19 -> 6. Updated five external
+  test references; no Coach/Learner application behavior changed. The template
+  test fixture now declares enrolment as well as default because its existing
+  missing-programme fallback reads the staff directory. Assertions unchanged.
+- Actual validation: 240/240 existing Review PostgreSQL/HTTP/PDF tests PASS
+  against both task-start and extracted code under the same synthetic setup;
+  683/683 boundary/owner-contract executions PASS (679 existing + 4 new);
+  shared PostgreSQL/HTTP 180/180 PASS; existing guarded standalone 69/69 PASS;
+  new guarded Review policy/source checks 6/6 PASS. Zero final failures/errors/
+  skips. No Teams suite executed. 85 prior fixture files remain byte-identical.
+  Historical source guards validate the entire new views AST before reversing
+  exactly two readiness calls; immutable dev/extraction snapshots were not edited.
+- Static explicit-import graph (including local imports): 1,265 -> 1,293
+  modules; four cyclic components remain, with the largest shrinking 60 -> 57
+  as all three old Review modules leave it. No new cyclic component or Review
+  feature cycle; domain has no Django/SQL/HTTP imports, and new application/
+  infrastructure modules do not import API or legacy views. Syntax and
+  git diff --check PASS. This does not claim the entire backend is cycle-free.
+- Isolation: network-none disposable Docker/PostgreSQL, no host mounts,
+  credentials or published ports; all six aliases restricted to the synthetic
+  database before Django/startup. Test-only fixture setup included the needed
+  placement/profile/staff/calendar tables and native synthetic identities.
+  The existing image lacked pypdf/reportlab: copied only existing local package
+  sources/font assets matching pinned 6.14.2/5.0.1, plus the existing logo, into
+  container tmpfs. No downloads, package installs, image/dependency changes or
+  provider operations. All task containers removed; no Neon or existing DB used.
+- Evidence/exact commands: D:/Temp/HP/lms-reviews-boundary-20261124/:
+  python -I -B run_reviews.py before / after; run_boundaries.py after;
+  run_domain.py; check_graph.py; scope-verification.json; task.diff; manifests
+  and isolation logs. Shared checks use the already reviewed
+  D:/Temp/HP/lms-curriculum-test-ownership-20261124/final/run_runtime.py and
+  run_standalone_parallel.py final. Initial incomplete-harness failures were
+  resolved without suppressing assertions or changing application behavior.
+- Remaining: review_instances.py is still 2,725 lines and byte-identical in
+  this batch; instance lifecycle/signatures, OTJH and PDF production ownership
+  are the next cohesive extraction. Six root app/shared test files remain,
+  including mixed tests.py. Full Reviews/Curriculum completion, live equivalence
+  and G01-G05/release acceptance remain OPEN. No commit, PR, push or deployment.
+
+### 2026-11-24 - Review Instance lifecycle and definition boundary: PASS
+
+- Extracted all 121 source symbols (90 functions) into 15 concrete modules in
+  review_management. review_instances.py: 2,725 -> 120 compatibility-export
+  lines, removing 2,605 lines from the legacy file. Existing function signatures
+  and all ten native-write decorators remain intact; no dynamic runtime proxy.
+- Domain: instance_rules, instance_definitions, occurrence_identity own frozen
+  signature requirements, eligibility, answer-safe section merging, required
+  fields, respondent roles, historical progress values and occurrence identity.
+  Application: learner_occurrences and instance_creation/definitions/answers/
+  progress/lifecycle/signatures/reopening coordinate the existing reads and
+  transactions. Infrastructure: instance_relations/schema/rows/calendar own
+  concrete reads, readiness, audit persistence and locked Calendar projections.
+  Existing concrete storage primitives remain the application write boundary;
+  no generic repository, new interface hierarchy or empty API package was added.
+- HTTP handlers remain in their current Coach/Learner owners; URLs, models,
+  migrations and handler files are unchanged. review_pdf imports the pure
+  policies directly, removing its return edge through the legacy instance
+  facade. views.py: 1,188 -> 1,186; one explicit reset delegates the same three
+  readiness flags to their sole owner, preserving the separate reopen gate.
+- Preserved source bodies/control flow and SQL after binding normalization.
+  Two exact answer/signature SELECT expressions became concrete infrastructure
+  readers; tests independently verify both SQL/parameters and call expansion.
+  Existing transaction nesting, row locks, conditional writes, historical
+  evidence capture and rollback behavior are unchanged. All 86 prior fixture
+  files remain byte-identical; the source guard pins the full new views AST.
+- Actual validation: original 240 Review tests PASS before/after; expanded
+  selection 262/262 PASS against task-start code and 264/264 PASS after extraction
+  (same 262 IDs/order plus two new public-contract/readiness tests). Includes
+  persisted reopen/signature history, Calendar identity/rollback, linked HTTP
+  consumers and two specifically selected Native source-boundary cases.
+  Shared PostgreSQL/HTTP 180/180 PASS; existing boundary selection 683/683 PASS;
+  guarded standalone 69 existing + 6 template/schedule + 8 instance tests PASS.
+  Zero final failures/errors/skips. Teams suites and live providers NOT RUN.
+- Expanded baseline initially exposed incomplete synthetic identities and stale
+  test doubles: supplied profiles 301/901/940-942, corrected Calendar stub
+  learner_profile_id fields, and modelled the mocked signature writer's existing
+  Calendar update. Applied identical fixture corrections to the frozen before
+  run and current tests; assertions remain intact. Internal mocks now bind to
+  the real extraction owners. No application bug fix was concealed in this move.
+- Static Curriculum explicit-import graph: 1,293 -> 1,311 modules, four cyclic
+  components before/after; largest 57 -> 55, with review_instances/review_pdf
+  leaving it. No new cyclic component/member or review_management cycle. Domain
+  imports are framework-free; no new API/legacy-views dependency from feature
+  Application/Infrastructure. Syntax and git diff --check PASS.
+- Isolation verified before startup: existing network-none disposable Docker/
+  PostgreSQL, no host mounts/credentials/ports, six aliases restricted to
+  synthetic loopback storage; provider/network/settings guards remain enabled.
+  Containers removed. No Neon, existing DB, host Django startup, environment
+  changes, commit, PR, push or deployment. Branch/HEAD stayed Architecture/fcdaa2a.
+- Exact commands/evidence: D:/Temp/HP/lms-review-instances-20261124/:
+  `python -I -B run_reviews.py before` / `after`; `run_boundaries.py after`;
+  `run_domain.py`; `check_graph.py`; scope-verification.json and task.diff.
+  Shared: D:/Temp/HP/lms-curriculum-test-ownership-20261124/final/run_runtime.py
+  and run_standalone_parallel.py final; prior Review run_domain.py supplies the
+  six template/schedule checks. Frozen preimages and initial/final logs retained.
+- Remaining: Review OTJH and PDF presentation ownership, then other root feature
+  families. Existing manual-addition read-error fallback and historical identity
+  compatibility remain unchanged; this batch does not claim their elimination.
+  Full Curriculum architecture, live equivalence and G01-G05/release gates remain
+  OPEN. No production acceptance or merge/deployment approval is implied.
+
+
+### 2026-11-24 - Review OTJH and signed PDF ownership: PASS
+
+- Before: root review_otjh.py 209 lines, review_pdf.py 105,
+  review_pdf_presentation.py 433 (747 total). After: 6 / 14 / 10 lines
+  (30 total; 717 lines removed from the root implementations). These are
+  explicit compatibility exports; existing Coach/Learner/Employer imports remain.
+- Moved 27 declarations into six concrete review_management modules:
+  domain/otjh_rules.py (15), domain/pdf_policy.py (63);
+  application/otjh_queries.py (178), application/pdf_export.py (35);
+  infrastructure/pdf_renderer.py (396); api/pdf_responses.py (47).
+  No new folders, generic interfaces, models, schema objects or duplicated SQL.
+- OTJH application code calls existing learner_occurrences, instance_rows and
+  template_rows owners directly. Live-template hours, claimability, raw planned
+  occurrences, completed-only actual hours, rounding, caching, ordering and error
+  behavior are unchanged. No writer/transaction/authorization change.
+- PDF policy owns exportability, frozen required-signature eligibility and
+  programme-date precedence. Application prepares information/coordinates export;
+  Infrastructure renders supplied saved data; API preserves status, headers,
+  filenames and historical-original-only downloads. Renderer logo path now resolves
+  the same existing curriculum_api/templates asset from its new location.
+  instance_definitions imports pure pdf_policy rather than the root HTTP facade.
+- Existing seven root Review modules are now compatibility export modules;
+  this does not certify every Review consumer or all Curriculum as modernized.
+- Exact original source is frozen in tests/fixtures/otjh_pdf_boundary.json,
+  hash 0f06e03ebeaf99d42e3ab66a505dea018a6cbbaf341a3e2d4a8acdfc93ce8e44.
+  Five new standalone checks compare all 27 AST declarations and pure rules;
+  five new runtime checks compare original/new hours, read calls, cache state,
+  error contracts, actual owner bindings, PDF bytes and HTTP headers. PDF byte
+  comparison fixes ReportLab metadata only in the test, not production.
+- Validation: 279/279 existing Review + migrated PDF presentation tests PASS
+  before; same 279 + five new runtime tests = 284/284 PASS after. Shared isolated
+  PostgreSQL/HTTP 180/180 PASS; standalone new 5 + instance 8 + template 6 =
+  19/19 PASS. No final failures/errors/skips. No existing assertions weakened.
+  Initial after bundles omitted two lazy-import modules; corrected test bundling,
+  retained failed logs and reran the full selection. No application workaround.
+- Source/import checks: 1,311 -> 1,320 Curriculum Python modules; four cyclic
+  components before/after, largest 55 -> 55; no new cyclic members/components or
+  review_management cycle. Syntax and git diff --check PASS. All 87 existing
+  fixture files unchanged. Six existing files changed plus ten new files, and
+  this tracker update; no source deletion outside the three extracted bodies.
+- Runtime isolation verified before initdb/Django: existing Docker images,
+  no external network, host mounts, ports or credentials; six aliases restricted
+  to disposable loopback PostgreSQL; containers removed. Teams suites, Neon,
+  live providers, host Django, commits, PRs and deployment NOT RUN.
+- Evidence/commands: D:/Temp/HP/lms-review-exports-20261124/ contains preimages.zip,
+  scope-verification.json, task.diff, before/after.log, isolation JSON and graph
+  evidence. Commands: python -I -B <evidence>/run_reviews.py before / after;
+  <evidence>/run_domain.py; <evidence>/check_graph.py. Existing guarded runners:
+  lms-review-instances-20261124/run_domain.py, lms-reviews-boundary-20261124/run_domain.py,
+  lms-curriculum-test-ownership-20261124/final/run_runtime.py (180 tests).
+- Remaining: OTJH read-error fallbacks still return zero/partial totals and cannot
+  distinguish unavailable from genuine zero; preserved for behavioral compatibility,
+  not certified as desirable reporting behavior. Root Attendance/media/other feature
+  families remain. Full Curriculum acceptance and G01-G05/release gates stay OPEN.
+
+### 2026-11-24 - Review facade retirement: implemented; extended baseline PARTIAL
+
+- Before: seven root compatibility modules, 260 lines total: reviews (53),
+  review_schedule (30), review_types (27), review_instances (120), review_otjh (6),
+  review_pdf (14), review_pdf_presentation (10). After: all seven files removed.
+  Coach, Learner, Employer, Progress Reviews, management commands and test mocks
+  import the existing concrete review_management owners directly. No new runtime
+  facade or business implementation; URLs, writers, SQL and identity rules unchanged.
+- Compared all 27 changed production files with task-start preimages: their ASTs
+  match after resolving only the reviewed import bindings. Preserved all preexisting
+  source fixtures. Test-only retired_review_exports.json pins 269 former bindings;
+  contract tests retain signatures, decorators, readiness lifetimes and PDF parity.
+  Three standalone guards reject retired files, imports and literal mock/import targets.
+- Validation: identical 288 Review/PDF tests PASS before and after; isolated shared
+  PostgreSQL/HTTP 180/180 PASS; guarded standalone policy/source checks 19/19 PASS;
+  retired-import guards 3/3 PASS. Syntax and git diff --check PASS. The initial
+  Review test bundle lacked template_schedule_boundary.json; included that fixture
+  and reran the complete 288-test selection without changing application behavior.
+- Additional exact six-suite consumer selection: 64 methods before and after,
+  59 passing and the same five failing methods (eight failure entries including
+  six subtests, two errors), zero skips. These are not new regressions or green
+  acceptance: three LearningPlanMeetings expectations no longer reach the expected
+  native projection, Employer document assertions expect learner_id where the
+  unchanged code uses enrolment_id, and one imported-calendar test reaches an
+  unmocked LearnerProfile query blocked by the DB-free environment. Existing
+  assertions and business rules were not changed to make these tests pass.
+  Initial consumer bundle omissions were corrected before the before/after comparison.
+- Static explicit-import graphs: Curriculum 1,320 -> 1,315 Python modules,
+  four cyclic components unchanged (largest 55). Full backend 3,447 -> 3,442,
+  ten components before/after; largest 309 -> 301. No new cyclic member or merged
+  component. Four Review API owner modules leave the existing large backend cycle
+  along with four deleted facades. Existing unrelated cycles remain.
+- Isolation proved before Django/initdb: no external network, host credentials,
+  mounts or ports. Review/shared runs use disposable PostgreSQL only; consumer
+  runs use six dummy aliases and blocked DB/socket operations. Containers removed.
+  Teams/booking/Graph suites NOT RUN under the local explicit-request-only rule;
+  their affected imports and mock targets were updated and syntax checked only.
+  No Neon, live providers, .env changes, Git mutations, PR or deployment.
+- Evidence: D:/Temp/HP/lms-review-import-cleanup-20261124/ holds preimages.zip,
+  task.diff, scope-verification.json, consumer-source-parity.json, assertion-review.json,
+  before/after.log, consumers-before/after.log, isolation JSON and both graph reports.
+  Commands: python -I -B run_reviews.py before / after; run_consumers.py before / after;
+  check_consumer_parity.py; check_graph.py; check_backend_graph.py. Standalone command:
+  python -I -B backend/curriculum_api/review_management/tests/test_retired_imports_standalone.py -v.
+  Existing guarded run_domain.py scripts: lms-review-exports-20261124,
+  lms-review-instances-20261124, lms-reviews-boundary-20261124. Shared runner:
+  lms-curriculum-test-ownership-20261124/final/run_runtime.py.
+- Remaining: the five preexisting consumer test failures need their own fixture/
+  behavior review; deferred Teams coverage remains unverified. Attendance/media
+  and other root feature families, known OTJH read-error fallbacks, full Curriculum
+  acceptance and G01-G05/release gates remain open. This is not release approval.
+
+### 2026-11-24 - Free Course ownership and canonical authoring boundary: PASS (scoped)
+
+- Before: 16 root free_course_*.py files, 3,409 lines, plus the 252-line storage
+  SQL asset. After: concrete owners under catalogue/api, application, domain and
+  infrastructure; no remaining root free_course_*.py files. The export-only
+  catalogue facade is retired; readers use infrastructure/free_course_rows.
+  The 119-line revision policy moved from application to domain. Tests/fixtures
+  remain under catalogue/tests. No new empty packages or generic repositories.
+- Actual separation: API composition binds four canonical create/update/delete/
+  clone use cases to explicit capabilities. Application orchestration imports
+  no Django, SQL, ORM, HTTP or providers. Sixteen original pure declarations
+  own validation, normalization, revision and replay decisions in domain.
+  Infrastructure owns 18 concrete SQL operations, exact cursor/transaction/lock
+  behavior, schema helpers, storage and video queue effects. Alignment decisions,
+  catalogue comparison/order rules and week identity also have pure owners.
+  Catalogue storage no longer resolves its dependencies through views.
+- URLs, authorization, payloads, canonical/legacy identities, writer-mode guards,
+  transaction boundaries and archived history are preserved. Root consumers and
+  six historical migration imports point to the new owners; migration operations
+  were not changed. No migration was run against an existing database. The active
+  legacy authoring/conversion/import and quiz flows are retained, not deleted as
+  dead code. Some still mix responsibilities and require a later cohesive split.
+- Validation: canonical read/contracts 65/65 PASS before/after; real disposable
+  PostgreSQL writer/history tests 11/11 PASS before/after; shared Membership and
+  Curriculum PostgreSQL/HTTP 180/180 PASS after; guarded standalone source/policy
+  checks 35/35 PASS. New guards expand the actual SQL adapters into application
+  bodies and compare them with task-start source; no independently rewritten oracle.
+- Additional feature selection originally executed 68 passing methods but failed
+  class setup for nine conversion-date cases, identically before/after. Rebound that
+  test setup to the actual extracted owners and explicit persistence doubles;
+  all nine test bodies/assertions are unchanged. Those nine PASS without Django,
+  and the full additional selection now reports 77/77 PASS, zero errors/skips.
+  Original failing logs retained. No production behavior changed to satisfy tests.
+- Scope checks: 32 existing production consumers are import-only changes; three
+  existing composition/document files additionally supply the explicit read
+  capability or re-export the moved identity function. All 89 existing JSON
+  fixtures unchanged. Syntax and git diff --check PASS. Static explicit-import
+  cycles: backend 10 -> 10 (largest 301 -> 300), Curriculum 4 -> 4 (55 -> 54).
+  This is not a claim that the preexisting import cycles are eliminated.
+- Isolation proved before initdb/Django: existing Docker images, no external
+  network, host mounts/credentials or published ports, six aliases limited to
+  disposable loopback PostgreSQL. Containers removed after each run. No Neon,
+  live providers, host Django, Teams tests, .env edits, Git mutations, PR or deploy.
+- Evidence: D:/Temp/HP/lms-free-course-ownership-20261124/ contains preimages.zip,
+  task.diff, task-changes.json, scope-verification.json, consumer-scope.json,
+  SQL/graph evidence and before/after logs. Commands: python -I -B -X utf8
+  <evidence>/{before,after,writer-before,writer-after,extended-before,extended-after}/run_runtime.py
+  native-final; <evidence>/after/run_runtime.py runtime; guarded final_test_*.py;
+  check_graph.py and final_scope.py. Failed intermediate fixture-bundle runs are
+  retained; corrected test bindings did not weaken assertions.
+- Remaining: the preexisting legacy authoring endpoint has an unresolved
+  transaction global; it was not changed or certified by this batch. Legacy
+  import/conversion/quiz orchestration, root Attendance/media families, earlier
+  Review consumer failures and deferred Teams validation remain. Full Curriculum
+  acceptance, G01-G05 and release approval stay OPEN.
+
+### 2026-11-25 - Free Course workflow boundaries: implemented; acceptance PARTIAL
+
+- Before: authoring, conversion and Quiz API files contained 703 lines; the
+  infrastructure importer contained another 155 lines of mixed orchestration.
+  After: the three API files total 309 lines (168/53/88), plus a 25-line import
+  composition entry. Four application owners coordinate structure edits,
+  conversion, Quiz operations and imports; four domain owners hold delta,
+  placement, ownership/revision and import preparation rules; concrete SQL/ORM,
+  locks and transaction operations have infrastructure owners. No generic
+  repositories, interface hierarchy or new package layer was introduced.
+- The old infrastructure/free_course_import.py is removed after updating its
+  management command and test consumers. Its behavior remains in explicit
+  application/domain/storage owners. No active legacy flow or fallback was
+  deleted merely because of its name. Existing writer-mode gates are preserved.
+  API URLs, decorators, payloads, error mapping, IDs, lock order, rollback and
+  on-commit timing are unchanged; no models/migrations/settings were edited.
+- Final checks: existing feature selection 77/77 PASS; canonical read/contracts
+  65/65 PASS; disposable PostgreSQL writer/history 19/19 PASS (11 existing + 8
+  new real Quiz ORM/link/rollback cases); shared Membership/Curriculum HTTP and
+  PostgreSQL 180/180 PASS. Guarded standalone checks 43/43 PASS (35 existing + 8
+  new source/policy cases). New parity compares frozen actual implementations
+  with current code: 24 Quiz, 13 authoring, 11 conversion, 9 import workflow,
+  8 delta and 5 import preparation scenarios. No independent rewritten oracle.
+  Synthetic authoring tests explicitly bind its existing transaction dependency;
+  they do not establish that its unresolved production global is fixed.
+- Historical conversion/storage/command suites: 34 executed before AND after,
+  with identical 2 PASS / 19 FAIL / 13 ERROR / 0 SKIP outcomes. Evidence includes
+  missing KSB fixture data, incomplete historical total_otjh/migration fixtures,
+  and the correctly disabled legacy writer. These are not 32 newly introduced
+  regressions, but persisted legacy import/conversion acceptance remains OPEN.
+  Existing assertions are unchanged; mocks now target actual owners.
+- Static explicit-import graph: backend cycles 10 -> 10, largest 300 -> 300;
+  Curriculum cycles 4 -> 4, largest 54 -> 54. Domain/application owners have no
+  Django/HTTP/SQL/infrastructure imports. Existing 90 JSON fixtures are unchanged.
+  Syntax, whitespace and git diff --check PASS. One extra API composition file
+  was eliminated during review to avoid enlarging an existing import cycle.
+- Isolation proved before initdb/Django: existing Docker images, network none,
+  loopback-only disposable PostgreSQL, six restricted aliases, no mounts/host
+  credentials/published ports. Task containers removed. No Neon, live providers,
+  Teams tests, host Django, Git mutations, PR or deployment.
+- Evidence: D:/Temp/HP/lms-free-course-workflows-20261125/ contains task-start
+  preimages, task.diff, task-changes.json, scope-verification.json, dependency
+  graph, guarded standalone logs and all before/after/final Docker logs.
+  Commands: python -I -B -X utf8 <evidence>/final-{after,reads,writers}/run_runtime.py
+  native-final; final-after/run_runtime.py runtime; run_standalone.py; prior
+  lms-free-course-ownership-20261124/final_test_*.py guards (five selected
+  non-Teams suites); check_graph.py; final_scope.py; git diff --check.
+- Remaining: legacy authoring's id-only course projection/adoption-required409
+  and unresolved transaction global are unchanged, not certified as repaired.
+  Complete historical import/conversion fixtures and acceptance separately;
+  existing cross-context Quiz API dependency and import cycles remain. Other
+  root feature families, previous Review failures and deferred Teams validation
+  remain; this batch does not close full Curriculum acceptance or G01-G05.

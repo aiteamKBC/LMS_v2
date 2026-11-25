@@ -3,6 +3,8 @@
 Run with unittest after selecting settings_sqlite_test and NAME=:memory:.
 This module refuses schema setup on file-backed or PostgreSQL connections.
 """
+import curriculum_api.review_management.infrastructure.instance_rows as review_infrastructure_instance_rows
+
 from copy import copy, deepcopy
 import json
 from contextlib import ExitStack
@@ -64,7 +66,7 @@ class ReviewRescheduleTests(TestCase):
         self.stack.enter_context(patch.object(views, 'stored_coach_meeting_snapshot', side_effect=lambda *a, **kw: deepcopy(self.snapshot)))
         self.stack.enter_context(patch.object(views, 'coach_meeting_expected_attendees', return_value=self.snapshot['attendance']['expectedAttendees']))
         self.stack.enter_context(patch('coach_api.reconciliation_links.for_calendar', return_value=None))
-        self.stack.enter_context(patch.object(views.curriculum_review_instances, 'get_review_instance', side_effect=lambda *a, **kw: deepcopy(self.instance)))
+        self.stack.enter_context(patch.object(review_infrastructure_instance_rows, 'get_review_instance', side_effect=lambda *a, **kw: deepcopy(self.instance)))
         for name in ('lock_learner_calendar', 'ensure_learner_calendar_available', 'ensure_coach_booking_available', 'england_non_delivery_reason'):
             self.stack.enter_context(patch.object(views, name, return_value=None))
         self.original_slot = (self.record.scheduled_date, self.record.scheduled_time, 60)

@@ -1,0 +1,1744 @@
+{
+  "accepted_merge": "fcdaa2a542412536cc51ff8ea5ee7846ad5a118f",
+  "upstream_revisions": [
+    "99f81ec8c661519da17225ac8a7a566447967487",
+    "564cd94c988c7e597bae7c60ff189c4ff0b58526"
+  ],
+  "historical_checkout": "606aca43df97967e8cb1fab45c5a794cc0635246 plus preserved uncommitted architecture extraction",
+  "historical_archive_sha256": "5e79bdbdc4060191532a8ac1cdeade9437492da5712cd66eebb1b545fabe6e28",
+  "purpose": "Exact reviewed dev deltas only; restore old layout solely for historical extraction guards. Does not establish runtime parity.",
+  "files": {
+    "curriculum_api/catalogue/api/calendar_editing.py": {
+      "historical_ast_sha256": "fefbe86f115aad4e7caac5d5e767abca9265969714ef608f36092bbaff8b4edb",
+      "approved_ast_sha256": "a2600e700e5284c86001b25391879a89a2b2002d76af7992981ab08a97acbd3c",
+      "approved_git_blob": "6eb5e883b380d85f319f09fd5dba0fa9f08adf11",
+      "changed_symbols": [
+        "curriculum_preview_module_session_plan",
+        "curriculum_preview_tutor_availability"
+      ],
+      "edits": [
+        {
+          "start": 5,
+          "approved": [
+            "from curriculum_api.weekly_schedule import module_week_boundary_mode"
+          ],
+          "historical": []
+        },
+        {
+          "start": 105,
+          "approved": [
+            "        if module_week_boundary_mode(payload) and (not module_week_starts_on(payload)):",
+            "            raise ValueError('Choose the first day of the study week.')"
+          ],
+          "historical": []
+        },
+        {
+          "start": 114,
+          "approved": [
+            "    try:",
+            "        return JsonResponse(preview_module_session_plan(payload, weekly, module_schedule_view=module_schedule_view, module_delivery_session_plan=module_delivery_session_plan, parse_date=parse_date, parse_int=parse_int, build_module_session_plan=build_module_session_plan, first_weekly_session_day=first_weekly_session_day, module_week_starts_on=module_week_starts_on, module_session_clock=module_session_clock))",
+            "    except ValueError as exc:",
+            "        if module_week_boundary_mode(payload) or (payload.get('endDate') and payload.get('weeksNumber')):",
+            "            return json_error(str(exc), fields=['weeksNumber', 'endDate'])",
+            "        raise"
+          ],
+          "historical": [
+            "    return JsonResponse(preview_module_session_plan(payload, weekly, module_schedule_view=module_schedule_view, module_delivery_session_plan=module_delivery_session_plan, parse_date=parse_date, parse_int=parse_int, build_module_session_plan=build_module_session_plan, first_weekly_session_day=first_weekly_session_day, module_week_starts_on=module_week_starts_on, module_session_clock=module_session_clock))"
+          ]
+        },
+        {
+          "start": 147,
+          "approved": [
+            "        module_week_boundary_mode(payload)"
+          ],
+          "historical": []
+        }
+      ]
+    },
+    "curriculum_api/catalogue/api/group_commands.py": {
+      "historical_ast_sha256": "e3aeb4829b6547bbbd2aaa9df861469beb0e2e3be2e80e54a568168a3c52236f",
+      "approved_ast_sha256": "53e41b67304428045272c2b85f3fb05951b841ecbba9260d4b83da8726ede852",
+      "approved_git_blob": "7df733a070fb08b62fec756e65b989bc43dccc83",
+      "changed_symbols": [
+        "curriculum_group_modules"
+      ],
+      "edits": [
+        {
+          "start": 5,
+          "approved": [
+            "from curriculum_api.weekly_schedule import module_week_boundary_mode"
+          ],
+          "historical": []
+        },
+        {
+          "start": 253,
+          "approved": [
+            "            if module_week_boundary_mode(item) and (not module_week_starts_on(item)):",
+            "                raise ValueError('Choose the first day of the study week.')",
+            "            if module_week_boundary_mode(item) and parse_int(item.get('weeksNumber') or item.get('weeks'), 0) > 104:",
+            "                raise ValueError('Choose between 1 and 104 study weeks.')"
+          ],
+          "historical": []
+        },
+        {
+          "start": 306,
+          "approved": [
+            "                end_date = item.get('endDate') or module_calendar_end_date(start_date, item_weeks, item) or cohort.get('endDate')"
+          ],
+          "historical": [
+            "                end_date = item.get('endDate') or module_calendar_end_date(start_date, item_weeks) or cohort.get('endDate')"
+          ]
+        },
+        {
+          "start": 313,
+          "approved": [
+            "                structure_payload = module_attachment_authoring_payload(item, group, cohort, catalogue_id, module_name, session_count, start_date, end_date, current_structure)"
+          ],
+          "historical": [
+            "                structure_payload = module_attachment_authoring_payload({**item, 'weekStructure': attachment_week_structure({**item, 'startDate': start_date, 'endDate': end_date}, current_structure, session_count=session_count, schedule=delivery_days)}, group, cohort, catalogue_id, module_name, session_count, start_date, end_date, current_structure)"
+          ]
+        }
+      ]
+    },
+    "curriculum_api/catalogue/api/module_assembly_composition.py": {
+      "historical_ast_sha256": "f0029b204a34b523a3995bf0937ea977447df711eeedb6dea3402f944680437f",
+      "approved_ast_sha256": "eec3b6b1b9aef4ba408ea18e26c567aa603ecd79c2e015f1370d308498fcdb97",
+      "approved_git_blob": "2034d6f6fc6de87bb3c2bdb4afb4fbc0123dca43",
+      "changed_symbols": [
+        "attachment_week_structure",
+        "module_attachment_authoring_payload"
+      ],
+      "edits": [
+        {
+          "start": 24,
+          "approved": [
+            "from curriculum_api.catalogue.domain.authoring_errors import ModuleAuthoringValidationError",
+            "from curriculum_api.catalogue.infrastructure.cohort_calendar_composition import cohort_selected_holidays_by_cohort"
+          ],
+          "historical": []
+        },
+        {
+          "start": 50,
+          "approved": [
+            "    return implementation(item, group, cohort, catalogue_id, module_name, session_count, start_date, end_date, current_structure, source_type, source_id, attachment_week_count=attachment_week_count, attachment_week_structure=attachment_week_structure, first_weekly_session_day=first_weekly_session_day, merged_week_starts_on=merged_week_starts_on, merged_weekly_schedule=merged_weekly_schedule, normalise_ksb_profile_source_value=normalise_ksb_profile_source_value, ModuleAuthoringValidationError=ModuleAuthoringValidationError, cohort_selected_holidays_by_cohort=cohort_selected_holidays_by_cohort)"
+          ],
+          "historical": [
+            "    return implementation(item, group, cohort, catalogue_id, module_name, session_count, start_date, end_date, current_structure, source_type, source_id, attachment_week_count=attachment_week_count, attachment_week_structure=attachment_week_structure, first_weekly_session_day=first_weekly_session_day, merged_week_starts_on=merged_week_starts_on, merged_weekly_schedule=merged_weekly_schedule, normalise_ksb_profile_source_value=normalise_ksb_profile_source_value)"
+          ]
+        },
+        {
+          "start": 54,
+          "approved": [
+            "    return implementation(item, current_structure, week_count, session_count, schedule, attachment_week_count=attachment_week_count, first_weekly_session_day=first_weekly_session_day, module_delivery_session_plan=module_delivery_session_plan, module_week_starts_on=module_week_starts_on, module_weekly_schedule=module_weekly_schedule, ModuleAuthoringValidationError=ModuleAuthoringValidationError)"
+          ],
+          "historical": [
+            "    return implementation(item, current_structure, week_count, session_count, schedule, attachment_week_count=attachment_week_count, first_weekly_session_day=first_weekly_session_day, module_delivery_session_plan=module_delivery_session_plan, module_week_starts_on=module_week_starts_on, module_weekly_schedule=module_weekly_schedule)"
+          ]
+        }
+      ]
+    },
+    "curriculum_api/catalogue/api/module_command_composition.py": {
+      "historical_ast_sha256": "b9221c26730b644bafe91e9a33a18e28cf2e6fc5d7b13aa1ee02339a5dab00da",
+      "approved_ast_sha256": "d034d17b80c091970955f1524e57aee88139ea0d4cc79d00ea96795095738eda",
+      "approved_git_blob": "fc2f357f4be8cb6189c197accc559c70197cc8a6",
+      "changed_symbols": [
+        "curriculum_module_detail"
+      ],
+      "edits": [
+        {
+          "start": 128,
+          "approved": [
+            "from curriculum_api.catalogue.domain.values import parse_date"
+          ],
+          "historical": []
+        },
+        {
+          "start": 228,
+          "approved": [
+            "    return implementation(request, identifier, AUTHORING_MODULES_TABLE=AUTHORING_MODULES_TABLE, COURSE_PRICING_FIELDS=COURSE_PRICING_FIELDS, JsonResponse=JsonResponse, ModuleAuthoringValidationError=ModuleAuthoringValidationError, _update_module_cover=_update_module_cover, announce_saved=announce_saved, archived_programme_module_edit_error=archived_programme_module_edit_error, authoring_module_exists=authoring_module_exists, check_removal=check_removal, check_structure_save=check_structure_save, clean_str=clean_str, collaboration_enabled=collaboration_enabled, curriculum_module_from_authoring_payload=curriculum_module_from_authoring_payload, curriculum_name_only_patch=curriculum_name_only_patch, datetime=datetime, default_completion_payload=default_completion_payload, delete_module_authoring_structure=delete_module_authoring_structure, free_course_errors=free_course_errors, free_course_sale_values=free_course_sale_values, get_authoring_structure_payload=get_authoring_structure_payload, invalidate_curriculum_cache=invalidate_curriculum_cache, json_body=json_body, json_error=json_error, lock_module_structure_row=lock_module_structure_row, log_curriculum_decision=log_curriculum_decision, merged_week_starts_on=merged_week_starts_on, merged_weekly_schedule=merged_weekly_schedule, module_authoring_quality_check=module_authoring_quality_check, module_cohort_date_error=module_cohort_date_error, module_parent_cohort=module_parent_cohort, module_schedule_assignment_changed=module_schedule_assignment_changed, module_schedule_view=module_schedule_view, module_structure_revision=module_structure_revision, module_teams_calendar_block_response=module_teams_calendar_block_response, module_week_starts_on=module_week_starts_on, module_weekly_schedule=module_weekly_schedule, normalise_ksb_profile_source_value=normalise_ksb_profile_source_value, notify_staff_assignment_change=notify_staff_assignment_change, parse_int=parse_int, permanent_module_delete_response=permanent_module_delete_response, pricing_values=pricing_values, record_conflict_response=record_conflict_response, repair_curriculum_parent_links=repair_curriculum_parent_links, request_wants_permanent_delete=request_wants_permanent_delete, requested_expected_revision=requested_expected_revision, resize_authoring_week_structure_preserving_content=resize_authoring_week_structure_preserving_content, resolve_stored_module_catalogue_id=resolve_stored_module_catalogue_id, save_module_authoring_structure=save_module_authoring_structure, stale_teams_calendar_modules=stale_teams_calendar_modules, transaction=transaction, tutor_assignment_delivery_day_error=tutor_assignment_delivery_day_error, tutor_conflict_error=tutor_conflict_error, tutor_conflict_override_requested=tutor_conflict_override_requested, tutor_schedule_conflicts_created=tutor_schedule_conflicts_created, update_authoring_rows=update_authoring_rows, parse_date=parse_date)"
+          ],
+          "historical": [
+            "    return implementation(request, identifier, AUTHORING_MODULES_TABLE=AUTHORING_MODULES_TABLE, COURSE_PRICING_FIELDS=COURSE_PRICING_FIELDS, JsonResponse=JsonResponse, ModuleAuthoringValidationError=ModuleAuthoringValidationError, _update_module_cover=_update_module_cover, announce_saved=announce_saved, archived_programme_module_edit_error=archived_programme_module_edit_error, authoring_module_exists=authoring_module_exists, check_removal=check_removal, check_structure_save=check_structure_save, clean_str=clean_str, collaboration_enabled=collaboration_enabled, curriculum_module_from_authoring_payload=curriculum_module_from_authoring_payload, curriculum_name_only_patch=curriculum_name_only_patch, datetime=datetime, default_completion_payload=default_completion_payload, delete_module_authoring_structure=delete_module_authoring_structure, free_course_errors=free_course_errors, free_course_sale_values=free_course_sale_values, get_authoring_structure_payload=get_authoring_structure_payload, invalidate_curriculum_cache=invalidate_curriculum_cache, json_body=json_body, json_error=json_error, lock_module_structure_row=lock_module_structure_row, log_curriculum_decision=log_curriculum_decision, merged_week_starts_on=merged_week_starts_on, merged_weekly_schedule=merged_weekly_schedule, module_authoring_quality_check=module_authoring_quality_check, module_cohort_date_error=module_cohort_date_error, module_parent_cohort=module_parent_cohort, module_schedule_assignment_changed=module_schedule_assignment_changed, module_schedule_view=module_schedule_view, module_structure_revision=module_structure_revision, module_teams_calendar_block_response=module_teams_calendar_block_response, module_week_starts_on=module_week_starts_on, module_weekly_schedule=module_weekly_schedule, normalise_ksb_profile_source_value=normalise_ksb_profile_source_value, notify_staff_assignment_change=notify_staff_assignment_change, parse_int=parse_int, permanent_module_delete_response=permanent_module_delete_response, pricing_values=pricing_values, record_conflict_response=record_conflict_response, repair_curriculum_parent_links=repair_curriculum_parent_links, request_wants_permanent_delete=request_wants_permanent_delete, requested_expected_revision=requested_expected_revision, resize_authoring_week_structure_preserving_content=resize_authoring_week_structure_preserving_content, resolve_stored_module_catalogue_id=resolve_stored_module_catalogue_id, save_module_authoring_structure=save_module_authoring_structure, stale_teams_calendar_modules=stale_teams_calendar_modules, transaction=transaction, tutor_assignment_delivery_day_error=tutor_assignment_delivery_day_error, tutor_conflict_error=tutor_conflict_error, tutor_conflict_override_requested=tutor_conflict_override_requested, tutor_schedule_conflicts_created=tutor_schedule_conflicts_created, update_authoring_rows=update_authoring_rows)"
+          ]
+        }
+      ]
+    },
+    "curriculum_api/catalogue/api/module_commands.py": {
+      "historical_ast_sha256": "3c3383c55c5093616a55ba37f0b08ac78372c19c54bfb1ea09ff677968854508",
+      "approved_ast_sha256": "7b5b54bbc995803b3a5441771a4c5a04407c52640323d9fe7466bf6f924ab2aa",
+      "approved_git_blob": "01ce55805ea0a1b34a05f94568e0533f39a8a050",
+      "changed_symbols": [
+        "curriculum_module_detail",
+        "curriculum_module_collection"
+      ],
+      "edits": [
+        {
+          "start": 5,
+          "approved": [
+            "from curriculum_api.weekly_schedule import module_week_boundary_mode",
+            "from curriculum_api.weekly_schedule import merged_week_boundary_mode"
+          ],
+          "historical": []
+        },
+        {
+          "start": 24,
+          "approved": [
+            "        module_week_boundary_mode(payload)"
+          ],
+          "historical": []
+        },
+        {
+          "start": 48,
+          "approved": [
+            "        module_payload = {'catalogueId': module_catalogue_id, 'isFreeCourse': is_free_course, **{key: payload[key] for key in COURSE_PRICING_FIELDS if key in payload}, 'programmeId': payload.get('programmeId') or payload.get('programme') or payload.get('programmeName'), 'programmeName': payload.get('programmeName') or payload.get('programme') or 'Unassigned programme', 'programmeStatus': payload.get('programmeStatus') or payload.get('programme_status') or '', 'title': payload.get('title') or payload.get('name'), 'description': payload.get('description') or '', 'color': payload.get('color') or '', 'coverImage': payload.get('coverImage') or payload.get('cover_image_url') or '', 'status': payload.get('status') or 'draft', 'sessionsNumber': payload.get('sessionsNumber') or payload.get('sessions_number') or 0, 'weeksNumber': payload.get('weeks') or payload.get('weeksNumber') or 0, 'weeklySchedule': payload.get('weeklySchedule'), 'scheduleMode': payload.get('scheduleMode') or 'group', 'weekStartsOn': module_week_starts_on(payload), 'weekBoundaryMode': module_week_boundary_mode(payload), 'weekDays': payload.get('weekDays'), 'startTime': payload.get('startTime'), 'endTime': payload.get('endTime'), 'deliveryMetadata': payload.get('deliveryMetadata'), 'startDate': payload.get('startDate') or payload.get('start_date') or '', 'endDate': payload.get('endDate') or payload.get('end_date') or '', 'tutor': payload.get('tutor') or payload.get('tutorName') or payload.get('tutor_name') or '', 'coach': payload.get('coach') or payload.get('coachName') or payload.get('coach_name') or '', 'cohortId': payload.get('cohortId') or payload.get('cohort_id') or '', 'cohortName': payload.get('cohortName') or payload.get('cohort') or payload.get('cohort_name') or '', 'groupId': payload.get('groupId') or payload.get('group_id') or '', 'groupName': payload.get('groupName') or payload.get('group') or payload.get('group_name') or '', 'learnerRosterMode': payload.get('learnerRosterMode') or payload.get('learner_roster_mode') or 'inherited', 'teamsSharedSourceModuleId': payload.get('teamsSharedSourceModuleId') or payload.get('teams_shared_source_module_id') or '', 'ksbRemapReport': payload.get('ksbRemapReport') or payload.get('ksb_remap_report') or {}, 'duplicateDestination': truthy(payload.get('duplicateDestination') or payload.get('duplicate_destination')), 'declaredTotalOtjh': payload.get('totalOtjh') or 0, 'moduleKsbMappings': payload.get('moduleKsbMappings') or [], 'completionCriteria': payload.get('completionCriteria') or default_completion_payload(), 'advancedDetails': payload.get('advancedDetails') or {}, 'background': payload.get('background') or '', 'epaRequirements': payload.get('epaRequirements') or [], 'qualificationOutcomes': payload.get('qualificationOutcomes') or [], 'ksbProfileSourceId': normalise_ksb_profile_source_value(payload.get('ksbProfileSourceId') or payload.get('ksb_profile_source_id') or '')}"
+          ],
+          "historical": [
+            "        module_payload = {'catalogueId': module_catalogue_id, 'isFreeCourse': is_free_course, **{key: payload[key] for key in COURSE_PRICING_FIELDS if key in payload}, 'programmeId': payload.get('programmeId') or payload.get('programme') or payload.get('programmeName'), 'programmeName': payload.get('programmeName') or payload.get('programme') or 'Unassigned programme', 'programmeStatus': payload.get('programmeStatus') or payload.get('programme_status') or '', 'title': payload.get('title') or payload.get('name'), 'description': payload.get('description') or '', 'color': payload.get('color') or '', 'coverImage': payload.get('coverImage') or payload.get('cover_image_url') or '', 'status': payload.get('status') or 'draft', 'sessionsNumber': payload.get('sessionsNumber') or payload.get('sessions_number') or 0, 'weeksNumber': payload.get('weeks') or payload.get('weeksNumber') or 0, 'weeklySchedule': payload.get('weeklySchedule'), 'scheduleMode': payload.get('scheduleMode') or 'group', 'weekDays': payload.get('weekDays'), 'startTime': payload.get('startTime'), 'endTime': payload.get('endTime'), 'deliveryMetadata': payload.get('deliveryMetadata'), 'startDate': payload.get('startDate') or payload.get('start_date') or '', 'endDate': payload.get('endDate') or payload.get('end_date') or '', 'tutor': payload.get('tutor') or payload.get('tutorName') or payload.get('tutor_name') or '', 'coach': payload.get('coach') or payload.get('coachName') or payload.get('coach_name') or '', 'cohortId': payload.get('cohortId') or payload.get('cohort_id') or '', 'cohortName': payload.get('cohortName') or payload.get('cohort') or payload.get('cohort_name') or '', 'groupId': payload.get('groupId') or payload.get('group_id') or '', 'groupName': payload.get('groupName') or payload.get('group') or payload.get('group_name') or '', 'learnerRosterMode': payload.get('learnerRosterMode') or payload.get('learner_roster_mode') or 'inherited', 'teamsSharedSourceModuleId': payload.get('teamsSharedSourceModuleId') or payload.get('teams_shared_source_module_id') or '', 'ksbRemapReport': payload.get('ksbRemapReport') or payload.get('ksb_remap_report') or {}, 'duplicateDestination': truthy(payload.get('duplicateDestination') or payload.get('duplicate_destination')), 'declaredTotalOtjh': payload.get('totalOtjh') or 0, 'moduleKsbMappings': payload.get('moduleKsbMappings') or [], 'completionCriteria': payload.get('completionCriteria') or default_completion_payload(), 'advancedDetails': payload.get('advancedDetails') or {}, 'background': payload.get('background') or '', 'epaRequirements': payload.get('epaRequirements') or [], 'qualificationOutcomes': payload.get('qualificationOutcomes') or [], 'ksbProfileSourceId': normalise_ksb_profile_source_value(payload.get('ksbProfileSourceId') or payload.get('ksb_profile_source_id') or '')}"
+          ]
+        },
+        {
+          "start": 69,
+          "approved": [
+            "    result = save_module_authoring_structure(module_catalogue_id, {'catalogueId': module_catalogue_id, 'programmeId': payload.get('programmeId') or payload.get('programme_id') or payload.get('programme') or payload.get('programmeName'), 'programmeName': payload.get('programmeName') or payload.get('programme') or 'Unassigned programme', 'programmeStatus': payload.get('programmeStatus') or payload.get('programme_status') or '', 'cohortId': payload.get('cohortId') or payload.get('cohort_id') or '', 'cohortName': payload.get('cohortName') or payload.get('cohort') or payload.get('cohort_name') or '', 'groupId': payload.get('groupId') or payload.get('group_id') or '', 'groupName': payload.get('groupName') or payload.get('group') or payload.get('group_name') or '', 'learnerRosterMode': payload.get('learnerRosterMode') or payload.get('learner_roster_mode') or 'inherited', 'teamsSharedSourceModuleId': payload.get('teamsSharedSourceModuleId') or payload.get('teams_shared_source_module_id') or '', 'ksbRemapReport': payload.get('ksbRemapReport') or payload.get('ksb_remap_report') or {}, 'duplicateDestination': truthy(payload.get('duplicateDestination') or payload.get('duplicate_destination')), 'title': name, 'description': payload.get('notes') or payload.get('description') or '', 'color': payload.get('color') or '', 'status': payload.get('status') or 'draft', 'sessionsNumber': payload.get('sessionsNumber') or payload.get('weeks') or 1, 'weeksNumber': payload.get('weeks') or payload.get('weeksNumber') or 0, 'weeklySchedule': payload.get('weeklySchedule'), 'scheduleMode': payload.get('scheduleMode') or 'group', 'weekStartsOn': module_week_starts_on(payload), 'weekBoundaryMode': module_week_boundary_mode(payload), 'weekDays': payload.get('weekDays'), 'startTime': payload.get('startTime'), 'endTime': payload.get('endTime'), 'deliveryMetadata': payload.get('deliveryMetadata'), 'startDate': payload.get('startDate') or payload.get('start_date') or '', 'endDate': payload.get('endDate') or payload.get('end_date') or '', 'tutor': payload.get('tutor') or payload.get('tutorName') or payload.get('tutor_name') or '', 'coach': payload.get('coach') or payload.get('coachName') or payload.get('coach_name') or '', 'weekStructure': payload.get('weekStructure') or [], 'moduleKsbMappings': payload.get('ksbMappings') or payload.get('moduleKsbMappings') or [], 'completionCriteria': payload.get('completionCriteria') or default_completion_payload(), 'advancedDetails': payload.get('advancedDetails') or {}, 'sourceType': payload.get('sourceType') or 'authoring', 'ksbProfileSourceId': normalise_ksb_profile_source_value(payload.get('ksbProfileSourceId') or payload.get('ksb_profile_source_id') or '')})"
+          ],
+          "historical": [
+            "    result = save_module_authoring_structure(module_catalogue_id, {'catalogueId': module_catalogue_id, 'programmeId': payload.get('programmeId') or payload.get('programme_id') or payload.get('programme') or payload.get('programmeName'), 'programmeName': payload.get('programmeName') or payload.get('programme') or 'Unassigned programme', 'programmeStatus': payload.get('programmeStatus') or payload.get('programme_status') or '', 'cohortId': payload.get('cohortId') or payload.get('cohort_id') or '', 'cohortName': payload.get('cohortName') or payload.get('cohort') or payload.get('cohort_name') or '', 'groupId': payload.get('groupId') or payload.get('group_id') or '', 'groupName': payload.get('groupName') or payload.get('group') or payload.get('group_name') or '', 'learnerRosterMode': payload.get('learnerRosterMode') or payload.get('learner_roster_mode') or 'inherited', 'teamsSharedSourceModuleId': payload.get('teamsSharedSourceModuleId') or payload.get('teams_shared_source_module_id') or '', 'ksbRemapReport': payload.get('ksbRemapReport') or payload.get('ksb_remap_report') or {}, 'duplicateDestination': truthy(payload.get('duplicateDestination') or payload.get('duplicate_destination')), 'title': name, 'description': payload.get('notes') or payload.get('description') or '', 'color': payload.get('color') or '', 'status': payload.get('status') or 'draft', 'sessionsNumber': payload.get('sessionsNumber') or payload.get('weeks') or 1, 'weeksNumber': payload.get('weeks') or payload.get('weeksNumber') or 0, 'weeklySchedule': payload.get('weeklySchedule'), 'scheduleMode': payload.get('scheduleMode') or 'group', 'weekDays': payload.get('weekDays'), 'startTime': payload.get('startTime'), 'endTime': payload.get('endTime'), 'deliveryMetadata': payload.get('deliveryMetadata'), 'startDate': payload.get('startDate') or payload.get('start_date') or '', 'endDate': payload.get('endDate') or payload.get('end_date') or '', 'tutor': payload.get('tutor') or payload.get('tutorName') or payload.get('tutor_name') or '', 'coach': payload.get('coach') or payload.get('coachName') or payload.get('coach_name') or '', 'weekStructure': payload.get('weekStructure') or [], 'moduleKsbMappings': payload.get('ksbMappings') or payload.get('moduleKsbMappings') or [], 'completionCriteria': payload.get('completionCriteria') or default_completion_payload(), 'advancedDetails': payload.get('advancedDetails') or {}, 'sourceType': payload.get('sourceType') or 'authoring', 'ksbProfileSourceId': normalise_ksb_profile_source_value(payload.get('ksbProfileSourceId') or payload.get('ksb_profile_source_id') or '')})"
+          ]
+        },
+        {
+          "start": 72,
+          "approved": [
+            "def curriculum_module_detail(request, identifier, *, AUTHORING_MODULES_TABLE, COURSE_PRICING_FIELDS, JsonResponse, ModuleAuthoringValidationError, _update_module_cover, announce_saved, archived_programme_module_edit_error, authoring_module_exists, check_removal, check_structure_save, clean_str, collaboration_enabled, curriculum_module_from_authoring_payload, curriculum_name_only_patch, datetime, default_completion_payload, delete_module_authoring_structure, free_course_errors, free_course_sale_values, get_authoring_structure_payload, invalidate_curriculum_cache, json_body, json_error, lock_module_structure_row, log_curriculum_decision, merged_week_starts_on, merged_weekly_schedule, module_authoring_quality_check, module_cohort_date_error, module_parent_cohort, module_schedule_assignment_changed, module_schedule_view, module_structure_revision, module_teams_calendar_block_response, module_week_starts_on, module_weekly_schedule, normalise_ksb_profile_source_value, notify_staff_assignment_change, parse_int, permanent_module_delete_response, pricing_values, record_conflict_response, repair_curriculum_parent_links, request_wants_permanent_delete, requested_expected_revision, resize_authoring_week_structure_preserving_content, resolve_stored_module_catalogue_id, save_module_authoring_structure, stale_teams_calendar_modules, transaction, tutor_assignment_delivery_day_error, tutor_conflict_error, tutor_conflict_override_requested, tutor_schedule_conflicts_created, update_authoring_rows, parse_date):"
+          ],
+          "historical": [
+            "def curriculum_module_detail(request, identifier, *, AUTHORING_MODULES_TABLE, COURSE_PRICING_FIELDS, JsonResponse, ModuleAuthoringValidationError, _update_module_cover, announce_saved, archived_programme_module_edit_error, authoring_module_exists, check_removal, check_structure_save, clean_str, collaboration_enabled, curriculum_module_from_authoring_payload, curriculum_name_only_patch, datetime, default_completion_payload, delete_module_authoring_structure, free_course_errors, free_course_sale_values, get_authoring_structure_payload, invalidate_curriculum_cache, json_body, json_error, lock_module_structure_row, log_curriculum_decision, merged_week_starts_on, merged_weekly_schedule, module_authoring_quality_check, module_cohort_date_error, module_parent_cohort, module_schedule_assignment_changed, module_schedule_view, module_structure_revision, module_teams_calendar_block_response, module_week_starts_on, module_weekly_schedule, normalise_ksb_profile_source_value, notify_staff_assignment_change, parse_int, permanent_module_delete_response, pricing_values, record_conflict_response, repair_curriculum_parent_links, request_wants_permanent_delete, requested_expected_revision, resize_authoring_week_structure_preserving_content, resolve_stored_module_catalogue_id, save_module_authoring_structure, stale_teams_calendar_modules, transaction, tutor_assignment_delivery_day_error, tutor_conflict_error, tutor_conflict_override_requested, tutor_schedule_conflicts_created, update_authoring_rows):"
+          ]
+        },
+        {
+          "start": 109,
+          "approved": [
+            "            merged_week_boundary_mode(payload, existing_authoring)"
+          ],
+          "historical": []
+        },
+        {
+          "start": 140,
+          "approved": [
+            "        structure_payload = {**current, **{key: payload[key] for key in COURSE_PRICING_FIELDS if key in payload}, 'catalogueId': module_catalogue_id, 'programmeId': payload.get('programmeId') or current.get('programmeId'), 'programmeName': payload.get('programmeName') or payload.get('programme') or current.get('programmeName') or current.get('programme'), 'title': payload.get('title') or payload.get('name') or current.get('title') or current.get('name'), 'description': payload.get('description') if 'description' in payload else payload.get('notes') if 'notes' in payload else current.get('description'), 'color': payload.get('color') or current.get('color') or '', 'coverImage': payload.get('coverImage') if 'coverImage' in payload else current.get('coverImage') or '', 'status': payload.get('status') or current.get('status') or 'draft', 'sessionsNumber': payload.get('sessionsNumber') or current.get('sessionsNumber') or len(current_week_structure), 'weeksNumber': resolved_weeks_number, 'startDate': payload.get('startDate') or payload.get('start_date') or current.get('startDate') or '', 'endDate': payload.get('endDate') or payload.get('end_date') or current.get('endDate') or '', 'tutor': payload.get('tutor') or 'Unassigned' if 'tutor' in payload else current.get('tutor') or '', 'coach': payload.get('coach') if 'coach' in payload else current.get('coach') or '', 'cohortId': payload.get('cohortId') or current.get('cohortId') or '', 'cohortName': payload.get('cohortName') or payload.get('cohort') or current.get('cohortName') or current.get('cohort') or '', 'groupId': payload.get('groupId') or current.get('groupId') or '', 'groupName': payload.get('groupName') or payload.get('group') or current.get('groupName') or current.get('group') or '', 'weeklySchedule': merged_weekly_schedule(payload, current), 'scheduleMode': payload.get('scheduleMode', current.get('scheduleMode') or 'group'), 'weekStartsOn': merged_week_starts_on(payload, current), 'weekBoundaryMode': merged_week_boundary_mode(payload, current), **({'calendarPolicy': payload['calendarPolicy']} if 'calendarPolicy' in payload else {'calendarPolicy': current.get('calendarPolicy')}), 'weekDays': payload.get('weekDays') or current.get('weekDays') or current_delivery_metadata.get('weekDays') or '', 'startTime': payload.get('startTime') or current.get('startTime') or current_delivery_metadata.get('startTime') or '', 'endTime': payload.get('endTime') or current.get('endTime') or current_delivery_metadata.get('endTime') or '', 'sourceType': payload.get('sourceType') or payload.get('source_type') or current.get('sourceType') or '', 'sourceId': payload.get('sourceId') or payload.get('source_id') or current.get('sourceId') or '', 'moduleKsbMappings': payload.get('ksbMappings') if 'ksbMappings' in payload else payload.get('moduleKsbMappings') or current.get('moduleKsbMappings') or [], 'ksbProfileSourceId': normalise_ksb_profile_source_value(payload.get('ksbProfileSourceId') if 'ksbProfileSourceId' in payload else payload.get('ksb_profile_source_id') if 'ksb_profile_source_id' in payload else current.get('ksbProfileSourceId') or ''), 'completionCriteria': payload.get('completionCriteria') or current.get('completionCriteria') or default_completion_payload(), 'advancedDetails': payload.get('advancedDetails') or current.get('advancedDetails') or {}, 'weekStructure': resolved_week_structure}"
+          ],
+          "historical": [
+            "        structure_payload = {**current, **{key: payload[key] for key in COURSE_PRICING_FIELDS if key in payload}, 'catalogueId': module_catalogue_id, 'programmeId': payload.get('programmeId') or current.get('programmeId'), 'programmeName': payload.get('programmeName') or payload.get('programme') or current.get('programmeName') or current.get('programme'), 'title': payload.get('title') or payload.get('name') or current.get('title') or current.get('name'), 'description': payload.get('description') if 'description' in payload else payload.get('notes') if 'notes' in payload else current.get('description'), 'color': payload.get('color') or current.get('color') or '', 'coverImage': payload.get('coverImage') if 'coverImage' in payload else current.get('coverImage') or '', 'status': payload.get('status') or current.get('status') or 'draft', 'sessionsNumber': payload.get('sessionsNumber') or current.get('sessionsNumber') or len(current_week_structure), 'weeksNumber': resolved_weeks_number, 'startDate': payload.get('startDate') or payload.get('start_date') or current.get('startDate') or '', 'endDate': payload.get('endDate') or payload.get('end_date') or current.get('endDate') or '', 'tutor': payload.get('tutor') or 'Unassigned' if 'tutor' in payload else current.get('tutor') or '', 'coach': payload.get('coach') if 'coach' in payload else current.get('coach') or '', 'cohortId': payload.get('cohortId') or current.get('cohortId') or '', 'cohortName': payload.get('cohortName') or payload.get('cohort') or current.get('cohortName') or current.get('cohort') or '', 'groupId': payload.get('groupId') or current.get('groupId') or '', 'groupName': payload.get('groupName') or payload.get('group') or current.get('groupName') or current.get('group') or '', 'weeklySchedule': merged_weekly_schedule(payload, current), 'scheduleMode': payload.get('scheduleMode', current.get('scheduleMode') or 'group'), 'weekStartsOn': merged_week_starts_on(payload, current), **({'calendarPolicy': payload['calendarPolicy']} if 'calendarPolicy' in payload else {'calendarPolicy': current.get('calendarPolicy')}), 'weekDays': payload.get('weekDays') or current.get('weekDays') or current_delivery_metadata.get('weekDays') or '', 'startTime': payload.get('startTime') or current.get('startTime') or current_delivery_metadata.get('startTime') or '', 'endTime': payload.get('endTime') or current.get('endTime') or current_delivery_metadata.get('endTime') or '', 'sourceType': payload.get('sourceType') or payload.get('source_type') or current.get('sourceType') or '', 'sourceId': payload.get('sourceId') or payload.get('source_id') or current.get('sourceId') or '', 'moduleKsbMappings': payload.get('ksbMappings') if 'ksbMappings' in payload else payload.get('moduleKsbMappings') or current.get('moduleKsbMappings') or [], 'ksbProfileSourceId': normalise_ksb_profile_source_value(payload.get('ksbProfileSourceId') if 'ksbProfileSourceId' in payload else payload.get('ksb_profile_source_id') if 'ksb_profile_source_id' in payload else current.get('ksbProfileSourceId') or ''), 'completionCriteria': payload.get('completionCriteria') or current.get('completionCriteria') or default_completion_payload(), 'advancedDetails': payload.get('advancedDetails') or current.get('advancedDetails') or {}, 'weekStructure': resolved_week_structure}"
+          ]
+        },
+        {
+          "start": 151,
+          "approved": [
+            "        if not rename_only and module_week_boundary_mode(candidate) == 'calendar':",
+            "            study_start = parse_date(candidate.get('start_date'))",
+            "            if study_start and resolved_weeks_number:",
+            "                from curriculum_api.study_weeks import build_study_week_plan",
+            "                try:",
+            "                    build_study_week_plan(study_start, resolved_weeks_number, set(), {}, module_week_starts_on(candidate), parse_date(candidate.get('end_date')))",
+            "                except ValueError as exc:",
+            "                    field = 'weeksNumber' if resolved_weeks_number > 104 else 'endDate'",
+            "                    return json_error(str(exc), fields=[field], status=400, validationErrors=[{'path': field, 'message': str(exc)}])"
+          ],
+          "historical": []
+        },
+        {
+          "start": 183,
+          "approved": [
+            "                try:",
+            "                    result = save_module_authoring_structure(module_catalogue_id, structure_payload)",
+            "                except ModuleAuthoringValidationError as exc:",
+            "                    return json_error(str(exc), fields=list(dict.fromkeys((error['path'] for error in exc.errors))), validationErrors=exc.errors)"
+          ],
+          "historical": [
+            "                result = save_module_authoring_structure(module_catalogue_id, structure_payload)"
+          ]
+        }
+      ]
+    },
+    "curriculum_api/catalogue/api/module_reads.py": {
+      "historical_ast_sha256": "36643d813661d84a8712fa6a16bd620675afb331f6750ab0c52761c782722d1c",
+      "approved_ast_sha256": "f3386557cc97f117ec3e48dc7d1ac5c5aa6afddf60239c2f5dbe8d7bc73d8654",
+      "approved_git_blob": "e57852acf1dc2f26663f8ea63bad89b97ae8f5c8",
+      "changed_symbols": [
+        "curriculum_module_session_plan"
+      ],
+      "edits": [
+        {
+          "start": 1,
+          "approved": [
+            "from curriculum_api.catalogue.application.delivery_schedules import ModuleSessionPlanValidationError"
+          ],
+          "historical": []
+        },
+        {
+          "start": 102,
+          "approved": [
+            "    except ModuleSessionPlanValidationError as exc:",
+            "        return json_error(str(exc), fields=['weeks'])"
+          ],
+          "historical": []
+        },
+        {
+          "start": 107,
+          "approved": [
+            "    return JsonResponse({**plan, 'moduleCatalogueId': catalogue_id, 'weeks': plan.get('weeks', requested_weeks or module_stored_week_count(module_row)), 'startDate': format_date(module_row.get('start_date')), 'weekDays': clean_str(module_row.get('session_week_day'))})"
+          ],
+          "historical": [
+            "    return JsonResponse({**plan, 'moduleCatalogueId': catalogue_id, 'weeks': requested_weeks or module_stored_week_count(module_row), 'startDate': format_date(module_row.get('start_date')), 'weekDays': clean_str(module_row.get('session_week_day'))})"
+          ]
+        }
+      ]
+    },
+    "curriculum_api/catalogue/api/module_structure.py": {
+      "historical_ast_sha256": "4691dde66cecbdbb0f8187c3b69cca869d2a6f2087eebfa80bc621e2fe8e4a13",
+      "approved_ast_sha256": "ef0a81e66ea478195d53ad9911d7d74750763dc5c4936740195d9a9ebbc2d96d",
+      "approved_git_blob": "6af1bf2ff6a03755cc5ff4fa2cf90ec7f84a8846",
+      "changed_symbols": [
+        "curriculum_module_structure"
+      ],
+      "edits": [
+        {
+          "start": 5,
+          "approved": [
+            "from curriculum_api.weekly_schedule import module_week_boundary_mode"
+          ],
+          "historical": []
+        },
+        {
+          "start": 38,
+          "approved": [
+            "        module_week_boundary_mode(payload)"
+          ],
+          "historical": []
+        }
+      ]
+    },
+    "curriculum_api/catalogue/application/attachment_preparation.py": {
+      "historical_ast_sha256": "fef28dfaa5546fd8b25559802bf950aacf8220ac2f32eb5168083fc77367ad0e",
+      "approved_ast_sha256": "3f158082d9d3a6e4d8bf404c8a0b6cdd5d356646131e4499b0308e8771ea7f68",
+      "approved_git_blob": "eb1e583584979bcf606202c2adac161669f6e999",
+      "changed_symbols": [
+        "attachment_week_structure",
+        "module_attachment_authoring_payload"
+      ],
+      "edits": [
+        {
+          "start": 17,
+          "approved": [
+            "from curriculum_api.weekly_schedule import module_week_boundary_mode",
+            "from curriculum_api.weekly_schedule import merged_week_boundary_mode"
+          ],
+          "historical": []
+        },
+        {
+          "start": 84,
+          "approved": [
+            "def module_attachment_authoring_payload(item, group, cohort, catalogue_id, module_name, session_count, start_date, end_date, current_structure=None, source_type='module_authoring', source_id='', *, attachment_week_count, attachment_week_structure, clean_str=_default_clean_str, default_completion_payload=_default_default_completion_payload, first_weekly_session_day, is_blank_staff_assignment=_default_is_blank_staff_assignment, merged_week_starts_on, merged_weekly_schedule, normalise_ksb_profile_source_value, visible_notes=_default_visible_notes, ModuleAuthoringValidationError, cohort_selected_holidays_by_cohort):"
+          ],
+          "historical": [
+            "def module_attachment_authoring_payload(item, group, cohort, catalogue_id, module_name, session_count, start_date, end_date, current_structure=None, source_type='module_authoring', source_id='', *, attachment_week_count, attachment_week_structure, clean_str=_default_clean_str, default_completion_payload=_default_default_completion_payload, first_weekly_session_day, is_blank_staff_assignment=_default_is_blank_staff_assignment, merged_week_starts_on, merged_weekly_schedule, normalise_ksb_profile_source_value, visible_notes=_default_visible_notes):"
+          ]
+        },
+        {
+          "start": 87,
+          "approved": [
+            "    try:",
+            "        week_boundary_mode = merged_week_boundary_mode(item, current_structure)",
+            "    except ValueError as exc:",
+            "        raise ModuleAuthoringValidationError([{'path': 'weekBoundaryMode', 'message': str(exc)}]) from exc",
+            "    if week_boundary_mode and (not merged_week_starts_on(item, current_structure)):",
+            "        raise ModuleAuthoringValidationError([{'path': 'weekStartsOn', 'message': 'Choose the first day of the study week.'}])"
+          ],
+          "historical": []
+        },
+        {
+          "start": 94,
+          "approved": [
+            "    if not week_boundary_mode and item.get('scheduleMode', current_structure.get('scheduleMode')) == 'custom' and (len(weekly) > 1) and (week_starts_on or not current_structure):"
+          ],
+          "historical": [
+            "    if item.get('scheduleMode', current_structure.get('scheduleMode')) == 'custom' and len(weekly) > 1 and (week_starts_on or not current_structure):"
+          ]
+        },
+        {
+          "start": 96,
+          "approved": [
+            "    item = {**item, 'weekStartsOn': week_starts_on, 'weekBoundaryMode': week_boundary_mode, 'startDate': start_date, 'endDate': end_date}",
+            "    if week_boundary_mode:",
+            "        item = {**item, 'cohortId': cohort['id'], 'holidays': cohort_selected_holidays_by_cohort([cohort['id']]).get(cohort['id'], []), 'weekDays': item.get('weekDays') or group.get('weekDays') or group.get('schedule'), 'startTime': item.get('startTime') or group.get('startTime'), 'endTime': item.get('endTime') or group.get('endTime')}"
+          ],
+          "historical": [
+            "    item = {**item, 'weekStartsOn': week_starts_on, 'startDate': start_date, 'endDate': end_date}"
+          ]
+        },
+        {
+          "start": 108,
+          "approved": [
+            "    return {**current_structure, 'catalogueId': catalogue_id, 'programmeId': clean_str(item.get('programmeId') or item.get('programme_id') or cohort.get('programmeId') or group.get('programmeId') or ''), 'programmeName': cohort.get('programme') or group.get('programme') or 'Unassigned programme', 'cohortId': cohort['id'], 'cohortName': cohort.get('name') or '', 'groupId': group['id'], 'groupName': group.get('name') or '', 'tutor': tutor, 'title': module_name, 'description': visible_notes(item.get('notes') or current_structure.get('description') or ''), 'color': item.get('color') or current_structure.get('color') or '', 'coverImage': item.get('coverImage') if 'coverImage' in item else current_structure.get('coverImage') or '', 'status': item.get('status') or current_structure.get('status') or 'draft', 'sessionsNumber': session_count, 'weeksNumber': attachment_week_count(item, session_count, schedule), 'startDate': start_date, 'endDate': end_date, 'weeklySchedule': merged_weekly_schedule(item, current_structure), 'scheduleMode': item.get('scheduleMode', current_structure.get('scheduleMode') or 'group'), 'weekStartsOn': merged_week_starts_on(item, current_structure), 'weekBoundaryMode': merged_week_boundary_mode(item, current_structure), 'calendarPolicy': item['calendarPolicy'] if 'calendarPolicy' in item else current_structure.get('calendarPolicy'), 'weekDays': schedule, 'startTime': item.get('startTime') or group.get('startTime') or '', 'endTime': item.get('endTime') or group.get('endTime') or '', 'weekStructure': attachment_week_structure(item, current_structure, session_count=session_count, schedule=schedule), 'moduleKsbMappings': item.get('moduleKsbMappings') or item.get('ksbMappings') or current_structure.get('moduleKsbMappings') or [], 'completionCriteria': current_structure.get('completionCriteria') or default_completion_payload(), 'advancedDetails': current_structure.get('advancedDetails') or {}, 'background': current_structure.get('background') or '', 'epaRequirements': current_structure.get('epaRequirements') or [], 'qualificationOutcomes': current_structure.get('qualificationOutcomes') or [], 'sourceType': source_type, 'sourceId': clean_str(source_id or item.get('sourceId') or catalogue_id), 'ksbProfileSourceId': normalise_ksb_profile_source_value(item.get('ksbProfileSourceId') if 'ksbProfileSourceId' in item else item.get('ksb_profile_source_id') if 'ksb_profile_source_id' in item else current_structure.get('ksbProfileSourceId') or '')}"
+          ],
+          "historical": [
+            "    return {**current_structure, 'catalogueId': catalogue_id, 'programmeId': clean_str(item.get('programmeId') or item.get('programme_id') or cohort.get('programmeId') or group.get('programmeId') or ''), 'programmeName': cohort.get('programme') or group.get('programme') or 'Unassigned programme', 'cohortId': cohort['id'], 'cohortName': cohort.get('name') or '', 'groupId': group['id'], 'groupName': group.get('name') or '', 'tutor': tutor, 'title': module_name, 'description': visible_notes(item.get('notes') or current_structure.get('description') or ''), 'color': item.get('color') or current_structure.get('color') or '', 'coverImage': item.get('coverImage') if 'coverImage' in item else current_structure.get('coverImage') or '', 'status': item.get('status') or current_structure.get('status') or 'draft', 'sessionsNumber': session_count, 'weeksNumber': attachment_week_count(item, session_count, schedule), 'startDate': start_date, 'endDate': end_date, 'weeklySchedule': merged_weekly_schedule(item, current_structure), 'scheduleMode': item.get('scheduleMode', current_structure.get('scheduleMode') or 'group'), 'weekStartsOn': merged_week_starts_on(item, current_structure), 'calendarPolicy': item['calendarPolicy'] if 'calendarPolicy' in item else current_structure.get('calendarPolicy'), 'weekDays': schedule, 'startTime': item.get('startTime') or group.get('startTime') or '', 'endTime': item.get('endTime') or group.get('endTime') or '', 'weekStructure': attachment_week_structure(item, current_structure, session_count=session_count, schedule=schedule), 'moduleKsbMappings': item.get('moduleKsbMappings') or item.get('ksbMappings') or current_structure.get('moduleKsbMappings') or [], 'completionCriteria': current_structure.get('completionCriteria') or default_completion_payload(), 'advancedDetails': current_structure.get('advancedDetails') or {}, 'background': current_structure.get('background') or '', 'epaRequirements': current_structure.get('epaRequirements') or [], 'qualificationOutcomes': current_structure.get('qualificationOutcomes') or [], 'sourceType': source_type, 'sourceId': clean_str(source_id or item.get('sourceId') or catalogue_id), 'ksbProfileSourceId': normalise_ksb_profile_source_value(item.get('ksbProfileSourceId') if 'ksbProfileSourceId' in item else item.get('ksb_profile_source_id') if 'ksb_profile_source_id' in item else current_structure.get('ksbProfileSourceId') or '')}"
+          ]
+        },
+        {
+          "start": 110,
+          "approved": [
+            "def attachment_week_structure(item, current_structure=None, week_count=None, session_count=0, schedule='', *, attachment_week_count, empty_authoring_week=_default_empty_authoring_week, first_weekly_session_day, module_delivery_session_plan, module_week_starts_on, module_weekly_schedule, parse_date=_default_parse_date, parse_int=_default_parse_int, payload_week_list=_default_payload_week_list, ModuleAuthoringValidationError):"
+          ],
+          "historical": [
+            "def attachment_week_structure(item, current_structure=None, week_count=None, session_count=0, schedule='', *, attachment_week_count, empty_authoring_week=_default_empty_authoring_week, first_weekly_session_day, module_delivery_session_plan, module_week_starts_on, module_weekly_schedule, parse_date=_default_parse_date, parse_int=_default_parse_int, payload_week_list=_default_payload_week_list):"
+          ]
+        },
+        {
+          "start": 127,
+          "approved": [
+            "    calendar_weeks = module_week_boundary_mode(item) == 'calendar'",
+            "    if calendar_weeks or (item.get('scheduleMode') == 'custom' and len(weekly) > 1):",
+            "        row = {'schedule_mode': item.get('scheduleMode') or 'group', 'week_boundary_mode': module_week_boundary_mode(item), 'week_starts_on': module_week_starts_on(item) or (first_weekly_session_day(item.get('startDate'), weekly) if not current_structure else None), 'calendar_policy': item.get('calendarPolicy'), 'cohort_id': item.get('cohortId'), 'end_date': item.get('endDate'), 'weekly_schedule': weekly, 'session_week_day': ', '.join((slot['day'] for slot in weekly)) or schedule, 'session_start_time': weekly[0]['startTime'] if weekly else item.get('startTime'), 'session_end_time': weekly[0]['endTime'] if weekly else item.get('endTime')}",
+            "        try:",
+            "            plan = module_delivery_session_plan(row, 0, parse_date(item.get('startDate')), item.get('holidays') or [], week_count=target)",
+            "        except ValueError as exc:",
+            "            raise ModuleAuthoringValidationError([{'path': 'endDate', 'message': str(exc)}]) from exc"
+          ],
+          "historical": [
+            "    if item.get('scheduleMode') == 'custom' and len(weekly) > 1:",
+            "        row = {'schedule_mode': 'custom', 'week_starts_on': module_week_starts_on(item) or (first_weekly_session_day(item.get('startDate'), weekly) if not current_structure else None), 'end_date': item.get('endDate'), 'weekly_schedule': weekly, 'session_week_day': ', '.join((slot['day'] for slot in weekly)), 'session_start_time': weekly[0]['startTime'], 'session_end_time': weekly[0]['endTime']}",
+            "        plan = module_delivery_session_plan(row, 0, parse_date(item.get('startDate')), week_count=target)"
+          ]
+        }
+      ]
+    },
+    "curriculum_api/catalogue/application/authoring_summaries.py": {
+      "historical_ast_sha256": "ab243516322c67f875b0ce96d53fc2ea3c1810e37d261358cf1416d512f85764",
+      "approved_ast_sha256": "2400751aa6dee12b4104c4a97528b334cde75835ee45da56fed4a88b029cb4aa",
+      "approved_git_blob": "b9ed159857ac755476ab214d3a5fa92384c78ee6",
+      "changed_symbols": [
+        "authoring_summary_catalogue_item",
+        "authoring_catalogue_summaries"
+      ],
+      "edits": [
+        {
+          "start": 16,
+          "approved": [
+            "from curriculum_api.weekly_schedule import module_week_boundary_mode"
+          ],
+          "historical": []
+        },
+        {
+          "start": 62,
+          "approved": [
+            "        summaries[catalogue_id] = {'catalogueId': catalogue_id, 'title': row.get('title') or f'Module {catalogue_id}', 'programmeId': row.get('programme_id') or '', 'programmeName': row.get('programme_name') or 'Unassigned programme', 'cohortId': row.get('cohort_id') or '', 'cohort': row.get('cohort_name') or '', 'groupId': row.get('group_id') or '', 'group': row.get('group_name') or '', 'learnerRosterMode': clean_str(row.get('learner_roster_mode') or 'inherited').lower() or 'inherited', 'teamsSharedSourceModuleId': clean_str(row.get('teams_shared_source_module_id')), 'ksbRemapReport': parse_json_value(row.get('ksb_remap_report'), {}) or None, 'description': row.get('description') or '', 'coverImage': row.get('cover_image_url') or '', 'status': row.get('status') or 'draft', 'sourceType': row.get('source_type') or '', 'isFreeCourse': row.get('source_type') == 'free_course', **free_course_price_payload(row, free_course_prices), 'sourceId': row.get('source_id') or '', 'ksbProfileSourceId': normalise_ksb_profile_source_value(row.get('ksb_profile_source_id') or ''), 'tutor': row.get('tutor_name') or '', 'coach': group_coach_name, 'sessionsNumber': parse_int(row.get('sessions_number'), 0), 'weeklySchedule': module_weekly_schedule(row), 'scheduleMode': row.get('schedule_mode') or 'group', 'weekStartsOn': module_week_starts_on(row), 'weekBoundaryMode': module_week_boundary_mode(row), 'sessionHolidays': parse_json_value(row.get('session_holidays'), []), 'calendarPolicy': parse_json_value(row.get('calendar_policy'), None), 'weekDays': row.get('session_week_day') or '', 'startTime': row.get('session_start_time') or '', 'endTime': row.get('session_end_time') or '', 'startDate': format_date(row.get('start_date')), 'endDate': format_date(row.get('end_date')), 'qualityScore': parse_int(row.get('quality_score'), 0), 'isProgrammeDeleted': is_programme_deleted, 'lastUpdated': format_date(row.get('updated_at')), 'createdAt': format_created_at(row.get('created_at')), 'weeks': 0, 'weeksNumber': 0, 'weekStructure': [], 'ksbCount': 0, 'lessonCount': 0, 'quizCount': 0, 'totalOtjh': 0, 'totalOtjhMinutes': 0, 'sessionNames': [], 'ksbCodes': set()}"
+          ],
+          "historical": [
+            "        summaries[catalogue_id] = {'catalogueId': catalogue_id, 'title': row.get('title') or f'Module {catalogue_id}', 'programmeId': row.get('programme_id') or '', 'programmeName': row.get('programme_name') or 'Unassigned programme', 'cohortId': row.get('cohort_id') or '', 'cohort': row.get('cohort_name') or '', 'groupId': row.get('group_id') or '', 'group': row.get('group_name') or '', 'learnerRosterMode': clean_str(row.get('learner_roster_mode') or 'inherited').lower() or 'inherited', 'teamsSharedSourceModuleId': clean_str(row.get('teams_shared_source_module_id')), 'ksbRemapReport': parse_json_value(row.get('ksb_remap_report'), {}) or None, 'description': row.get('description') or '', 'coverImage': row.get('cover_image_url') or '', 'status': row.get('status') or 'draft', 'sourceType': row.get('source_type') or '', 'isFreeCourse': row.get('source_type') == 'free_course', **free_course_price_payload(row, free_course_prices), 'sourceId': row.get('source_id') or '', 'ksbProfileSourceId': normalise_ksb_profile_source_value(row.get('ksb_profile_source_id') or ''), 'tutor': row.get('tutor_name') or '', 'coach': group_coach_name, 'sessionsNumber': parse_int(row.get('sessions_number'), 0), 'weeklySchedule': module_weekly_schedule(row), 'scheduleMode': row.get('schedule_mode') or 'group', 'weekStartsOn': module_week_starts_on(row), 'sessionHolidays': parse_json_value(row.get('session_holidays'), []), 'calendarPolicy': parse_json_value(row.get('calendar_policy'), None), 'weekDays': row.get('session_week_day') or '', 'startTime': row.get('session_start_time') or '', 'endTime': row.get('session_end_time') or '', 'startDate': format_date(row.get('start_date')), 'endDate': format_date(row.get('end_date')), 'qualityScore': parse_int(row.get('quality_score'), 0), 'isProgrammeDeleted': is_programme_deleted, 'lastUpdated': format_date(row.get('updated_at')), 'createdAt': format_created_at(row.get('created_at')), 'weeks': 0, 'weeksNumber': 0, 'weekStructure': [], 'ksbCount': 0, 'lessonCount': 0, 'quizCount': 0, 'totalOtjh': 0, 'totalOtjhMinutes': 0, 'sessionNames': [], 'ksbCodes': set()}"
+          ]
+        },
+        {
+          "start": 126,
+          "approved": [
+            "    return {'id': f'authoring-module-{catalogue_id}', 'moduleId': catalogue_id, 'moduleCatalogueId': catalogue_id, 'structureId': catalogue_id, 'sourceId': catalogue_id, 'catalogueId': catalogue_id, 'name': summary['title'], 'programmeId': summary.get('programmeId') or '', 'programme': summary['programmeName'], 'cohortId': summary.get('cohortId') or '', 'cohort': summary.get('cohort') or '', 'groupId': summary.get('groupId') or '', 'group': summary.get('group') or '', 'weeks': summary['weeks'], 'totalOtjh': summary['totalOtjh'], 'declaredTotalOtjh': summary['totalOtjh'], 'ksbCount': summary['ksbCount'], 'lessons': summary['lessonCount'], 'quizzes': summary['quizCount'], 'assignments': 0, 'status': summary['status'], 'authoringStatus': summary['status'], 'sourceType': summary.get('sourceType') or 'authoring', 'isFreeCourse': summary.get('isFreeCourse', False), **{key: summary.get(key) for key in COURSE_PRICING_FIELDS}, 'ksbProfileSourceId': summary.get('ksbProfileSourceId') or '', 'deliveryStatus': summary.get('deliveryStatus') or 'unknown', 'author': '', 'lastUpdated': summary['lastUpdated'], 'createdAt': summary.get('createdAt') or '', 'color': '#6941c6', 'coverImage': summary.get('coverImage') or '', 'notes': summary['description'], 'startDate': summary['startDate'], 'endDate': summary['endDate'], 'sessionsNumber': summary['sessionsNumber'], 'weeklySchedule': summary.get('weeklySchedule') or [], 'scheduleMode': summary.get('scheduleMode') or 'group', 'weekStartsOn': summary.get('weekStartsOn'), 'weekBoundaryMode': summary.get('weekBoundaryMode'), 'calendarPolicy': summary.get('calendarPolicy'), 'sessionHolidays': summary.get('sessionHolidays') or [], 'deliveryWeeks': summary.get('deliveryWeeks'), 'weekDays': summary.get('weekDays') or '', 'startTime': summary.get('startTime') or '', 'endTime': summary.get('endTime') or '', 'weekStructure': summary.get('weekStructure') or [], 'sessionNames': summary['sessionNames'], 'ksbCodes': summary['ksbCodes'], 'qualityScore': summary['qualityScore'], 'isProgrammeDeleted': programme_deleted_row(summary), 'tutor': summary.get('tutor') or '', 'coach': summary.get('coach') or '', 'deliveryMetadata': {'cohortId': summary.get('cohortId') or '', 'cohort': summary.get('cohort') or '', 'groupId': summary.get('groupId') or '', 'group': summary.get('group') or '', 'tutor': summary.get('tutor') or '', 'coach': summary.get('coach') or '', **teams_delivery_metadata_from_weeks(summary.get('weekStructure') or [])}}"
+          ],
+          "historical": [
+            "    return {'id': f'authoring-module-{catalogue_id}', 'moduleId': catalogue_id, 'moduleCatalogueId': catalogue_id, 'structureId': catalogue_id, 'sourceId': catalogue_id, 'catalogueId': catalogue_id, 'name': summary['title'], 'programmeId': summary.get('programmeId') or '', 'programme': summary['programmeName'], 'cohortId': summary.get('cohortId') or '', 'cohort': summary.get('cohort') or '', 'groupId': summary.get('groupId') or '', 'group': summary.get('group') or '', 'weeks': summary['weeks'], 'totalOtjh': summary['totalOtjh'], 'declaredTotalOtjh': summary['totalOtjh'], 'ksbCount': summary['ksbCount'], 'lessons': summary['lessonCount'], 'quizzes': summary['quizCount'], 'assignments': 0, 'status': summary['status'], 'authoringStatus': summary['status'], 'sourceType': summary.get('sourceType') or 'authoring', 'isFreeCourse': summary.get('isFreeCourse', False), **{key: summary.get(key) for key in COURSE_PRICING_FIELDS}, 'ksbProfileSourceId': summary.get('ksbProfileSourceId') or '', 'deliveryStatus': summary.get('deliveryStatus') or 'unknown', 'author': '', 'lastUpdated': summary['lastUpdated'], 'createdAt': summary.get('createdAt') or '', 'color': '#6941c6', 'coverImage': summary.get('coverImage') or '', 'notes': summary['description'], 'startDate': summary['startDate'], 'endDate': summary['endDate'], 'sessionsNumber': summary['sessionsNumber'], 'weeklySchedule': summary.get('weeklySchedule') or [], 'scheduleMode': summary.get('scheduleMode') or 'group', 'weekStartsOn': summary.get('weekStartsOn'), 'calendarPolicy': summary.get('calendarPolicy'), 'sessionHolidays': summary.get('sessionHolidays') or [], 'deliveryWeeks': summary.get('deliveryWeeks'), 'weekDays': summary.get('weekDays') or '', 'startTime': summary.get('startTime') or '', 'endTime': summary.get('endTime') or '', 'weekStructure': summary.get('weekStructure') or [], 'sessionNames': summary['sessionNames'], 'ksbCodes': summary['ksbCodes'], 'qualityScore': summary['qualityScore'], 'isProgrammeDeleted': programme_deleted_row(summary), 'tutor': summary.get('tutor') or '', 'coach': summary.get('coach') or '', 'deliveryMetadata': {'cohortId': summary.get('cohortId') or '', 'cohort': summary.get('cohort') or '', 'groupId': summary.get('groupId') or '', 'group': summary.get('group') or '', 'tutor': summary.get('tutor') or '', 'coach': summary.get('coach') or '', **teams_delivery_metadata_from_weeks(summary.get('weekStructure') or [])}}"
+          ]
+        }
+      ]
+    },
+    "curriculum_api/catalogue/application/content_validation.py": {
+      "historical_ast_sha256": "248fc87c641fba14e2c7e6b3795ad2ffb57c0da8a0b053279246e24770ec6528",
+      "approved_ast_sha256": "c766c37a5ef45e5400b299a09a0423bb38d65d75776da91cd710ea1bf5aa6ea6",
+      "approved_git_blob": "eb98e02a89db62b6babb633d94776e191dfee80e",
+      "changed_symbols": [
+        "validate_module_authoring_payload"
+      ],
+      "edits": [
+        {
+          "start": 17,
+          "approved": [
+            "from curriculum_api.weekly_schedule import module_week_boundary_mode"
+          ],
+          "historical": []
+        },
+        {
+          "start": 110,
+          "approved": [
+            "        module_week_boundary_mode(payload)"
+          ],
+          "historical": []
+        }
+      ]
+    },
+    "curriculum_api/catalogue/application/delivery_schedules.py": {
+      "historical_ast_sha256": "ca4a8a6d980145bdf9ccddd685ae35c928d3acc9ecc1fb180ffae5e7a113b61a",
+      "approved_ast_sha256": "8c9449ea6773516b0af15720848eed917e5434b11db0375918e535135303e47d",
+      "approved_git_blob": "46713d83a4686e68d7738a019d1668958ba17dcb",
+      "changed_symbols": [
+        "load_module_session_plan",
+        "preview_module_session_plan",
+        "module_schedule_view"
+      ],
+      "edits": [
+        {
+          "start": 7,
+          "approved": [
+            "from curriculum_api.weekly_schedule import module_week_boundary_mode"
+          ],
+          "historical": []
+        },
+        {
+          "start": 48,
+          "approved": [
+            "    return {'module_catalogue_id': first('module_catalogue_id', 'moduleCatalogueId', 'catalogueId', 'catalogue_id'), 'title': first('title', 'name', 'moduleName'), 'programme_name': first('programme_name', 'programmeName', 'programme'), 'cohort_id': first('cohort_id', 'cohortId'), 'cohort_name': first('cohort_name', 'cohortName', 'cohort'), 'group_id': first('group_id', 'groupId'), 'group_name': first('group_name', 'groupName', 'group'), 'holidays': holidays if isinstance(holidays, list) else [], 'tutor_name': tutor if staff_assignment_key(tutor) else '', 'sessions_number': parse_int(sessions_number, 0), 'weeks_number': parse_int(first('weeks_number', 'weeksNumber'), 0), 'start_date': first('start_date', 'startDate'), 'end_date': first('end_date', 'endDate'), 'session_week_day': ', '.join((slot['day'] for slot in weekly)) or first('session_week_day', 'weekDays', 'week_days', 'delivery_days', 'deliveryDays'), 'weekly_schedule': weekly, 'schedule_mode': first('schedule_mode', 'scheduleMode') or 'group', 'week_starts_on': module_week_starts_on(module), 'week_boundary_mode': module_week_boundary_mode(module), 'session_holidays': parse_json_value(module.get('session_holidays') or module.get('sessionHolidays'), []), 'calendar_policy': module.get('calendarPolicy') if 'calendarPolicy' in module else module.get('calendar_policy'), 'session_overrides': session_overrides(module), 'session_start_time': first('session_start_time', 'startTime', 'start_time'), 'session_end_time': first('session_end_time', 'endTime', 'end_time')}"
+          ],
+          "historical": [
+            "    return {'module_catalogue_id': first('module_catalogue_id', 'moduleCatalogueId', 'catalogueId', 'catalogue_id'), 'title': first('title', 'name', 'moduleName'), 'programme_name': first('programme_name', 'programmeName', 'programme'), 'cohort_id': first('cohort_id', 'cohortId'), 'cohort_name': first('cohort_name', 'cohortName', 'cohort'), 'group_id': first('group_id', 'groupId'), 'group_name': first('group_name', 'groupName', 'group'), 'holidays': holidays if isinstance(holidays, list) else [], 'tutor_name': tutor if staff_assignment_key(tutor) else '', 'sessions_number': parse_int(sessions_number, 0), 'weeks_number': parse_int(first('weeks_number', 'weeksNumber'), 0), 'start_date': first('start_date', 'startDate'), 'end_date': first('end_date', 'endDate'), 'session_week_day': ', '.join((slot['day'] for slot in weekly)) or first('session_week_day', 'weekDays', 'week_days', 'delivery_days', 'deliveryDays'), 'weekly_schedule': weekly, 'schedule_mode': first('schedule_mode', 'scheduleMode') or 'group', 'week_starts_on': module_week_starts_on(module), 'session_holidays': parse_json_value(module.get('session_holidays') or module.get('sessionHolidays'), []), 'calendar_policy': module.get('calendarPolicy') if 'calendarPolicy' in module else module.get('calendar_policy'), 'session_overrides': session_overrides(module), 'session_start_time': first('session_start_time', 'startTime', 'start_time'), 'session_end_time': first('session_end_time', 'endTime', 'end_time')}"
+          ]
+        },
+        {
+          "start": 88,
+          "approved": [
+            "    if module_week_boundary_mode(payload) or (payload.get('endDate') and payload.get('weeksNumber')):",
+            "        slot = {**module_schedule_view(payload), 'schedule_mode': payload.get('scheduleMode') or 'custom'}"
+          ],
+          "historical": [
+            "    if payload.get('endDate') and payload.get('weeksNumber'):",
+            "        slot = {**module_schedule_view(payload), 'schedule_mode': 'custom'}"
+          ]
+        },
+        {
+          "start": 109,
+          "approved": [
+            "    if module_week_boundary_mode(module_row) and requested_weeks > 104:",
+            "        raise ModuleSessionPlanValidationError('Choose between 1 and 104 study weeks.')"
+          ],
+          "historical": []
+        },
+        {
+          "start": 116,
+          "approved": [
+            "",
+            "class ModuleSessionPlanValidationError(ValueError):",
+            "    \"\"\"The requested study-week count exceeds the stored module policy.\"\"\""
+          ],
+          "historical": []
+        }
+      ]
+    },
+    "curriculum_api/catalogue/application/hierarchy_commands.py": {
+      "historical_ast_sha256": "a1c80ea7b94be03c39160e07193f583e6d95a8b9a5d0cb0f4b8870ab6c5e1173",
+      "approved_ast_sha256": "5e9f7e3e0b4878687aea8e3de785d4265b4a5dc8795d8ea63e744696640b7161",
+      "approved_git_blob": "795502a3fc040592db71fe843ea6509a27bf52e7",
+      "changed_symbols": [
+        "resync_group_module_delivery_counts",
+        "save_tree_group_modules"
+      ],
+      "edits": [
+        {
+          "start": 104,
+          "approved": [
+            "        end_date = module.get('endDate') or module_calendar_end_date(start_date, attachment_weeks_count, module) or cohort.get('endDate')"
+          ],
+          "historical": [
+            "        end_date = module.get('endDate') or module_calendar_end_date(start_date, attachment_weeks_count) or cohort.get('endDate')"
+          ]
+        },
+        {
+          "start": 189,
+          "approved": [
+            "        end_date = module_calendar_end_date(module_row.get('start_date'), weeks, module_row) or format_date(module_row.get('end_date'))"
+          ],
+          "historical": [
+            "        end_date = module_calendar_end_date(module_row.get('start_date'), weeks) or format_date(module_row.get('end_date'))"
+          ]
+        }
+      ]
+    },
+    "curriculum_api/catalogue/application/module_assembly.py": {
+      "historical_ast_sha256": "0876596285464eb6c391d4ab960ae96ade169a18e4c6e67b29305c02ba59cbe0",
+      "approved_ast_sha256": "76b74ba47d3d4514b55e63595198e09758cf6b5f17f6df2811e8b1fc23abf490",
+      "approved_git_blob": "bfecac98e04ff02a296727b0873d879fb3021f6d",
+      "changed_symbols": [
+        "enrich_curriculum_modules_with_authoring_details"
+      ],
+      "edits": [
+        {
+          "start": 98,
+          "approved": [
+            "        enriched.append({**module, 'moduleCatalogueId': authoring.get('catalogueId') or module.get('moduleCatalogueId') or module_id, 'catalogueId': authoring.get('catalogueId') or module.get('catalogueId') or module_id, 'structureId': authoring.get('catalogueId') or module.get('structureId') or module_id, 'name': authored('title', module.get('name')), 'notes': authoring.get('description') if authoring.get('description') is not None else module.get('notes'), 'coverImage': authored('coverImage', module.get('coverImage') or ''), 'startDate': authored('startDate', module.get('startDate')), 'endDate': authored('endDate', module.get('endDate')), 'sessionsNumber': authored('sessionsNumber', module.get('sessionsNumber')), 'weeklySchedule': authoring.get('weeklySchedule') or [], 'scheduleMode': authoring.get('scheduleMode') or 'group', 'sessionHolidays': authoring.get('sessionHolidays') or [], 'calendarPolicy': authoring.get('calendarPolicy'), 'weekStartsOn': authoring.get('weekStartsOn'), 'weekBoundaryMode': authoring.get('weekBoundaryMode'), 'deliveryWeeks': authoring.get('deliveryWeeks'), 'weekDays': authored('weekDays', module.get('weekDays') or ''), 'startTime': authored('startTime', module.get('startTime') or ''), 'endTime': authored('endTime', module.get('endTime') or ''), 'weeks': authored('weeks', module.get('weeks')), 'weekStructure': authored('weekStructure', module.get('weekStructure') or []), 'sessionNames': session_names, 'moduleKsbMappings': authored('moduleKsbMappings', module.get('moduleKsbMappings') or []), 'ksbCodes': ksb_codes, 'deliveryMetadata': delivery_metadata})"
+          ],
+          "historical": [
+            "        enriched.append({**module, 'moduleCatalogueId': authoring.get('catalogueId') or module.get('moduleCatalogueId') or module_id, 'catalogueId': authoring.get('catalogueId') or module.get('catalogueId') or module_id, 'structureId': authoring.get('catalogueId') or module.get('structureId') or module_id, 'name': authored('title', module.get('name')), 'notes': authoring.get('description') if authoring.get('description') is not None else module.get('notes'), 'coverImage': authored('coverImage', module.get('coverImage') or ''), 'startDate': authored('startDate', module.get('startDate')), 'endDate': authored('endDate', module.get('endDate')), 'sessionsNumber': authored('sessionsNumber', module.get('sessionsNumber')), 'weeklySchedule': authoring.get('weeklySchedule') or [], 'scheduleMode': authoring.get('scheduleMode') or 'group', 'sessionHolidays': authoring.get('sessionHolidays') or [], 'calendarPolicy': authoring.get('calendarPolicy'), 'weekStartsOn': authoring.get('weekStartsOn'), 'deliveryWeeks': authoring.get('deliveryWeeks'), 'weekDays': authored('weekDays', module.get('weekDays') or ''), 'startTime': authored('startTime', module.get('startTime') or ''), 'endTime': authored('endTime', module.get('endTime') or ''), 'weeks': authored('weeks', module.get('weeks')), 'weekStructure': authored('weekStructure', module.get('weekStructure') or []), 'sessionNames': session_names, 'moduleKsbMappings': authored('moduleKsbMappings', module.get('moduleKsbMappings') or []), 'ksbCodes': ksb_codes, 'deliveryMetadata': delivery_metadata})"
+          ]
+        }
+      ]
+    },
+    "curriculum_api/catalogue/application/module_authoring.py": {
+      "historical_ast_sha256": "d586fa7c8668a74c3d728ff6a405e6dbf9b90c86f6e12efaf5ef2e062eda258a",
+      "approved_ast_sha256": "d6ed2571c68baf0277c917c1e9f5cf734477e4163ba89a949edc1229dbb706da",
+      "approved_git_blob": "1fae5bb6d0e31cd7b277535ba03b40465ac033f7",
+      "changed_symbols": [
+        "save_module_authoring_structure"
+      ],
+      "edits": [
+        {
+          "start": 5,
+          "approved": [
+            "from curriculum_api.weekly_schedule import merged_week_boundary_mode"
+          ],
+          "historical": []
+        },
+        {
+          "start": 153,
+          "approved": [
+            "    try:",
+            "        week_boundary_mode = merged_week_boundary_mode(payload, existing_module_row)",
+            "    except ValueError as exc:",
+            "        raise ModuleAuthoringValidationError([{'path': 'weekBoundaryMode', 'message': str(exc)}]) from exc",
+            "    week_starts_on = merged_week_starts_on(payload, existing_module_row) if schedule_mode == 'custom' or week_boundary_mode else None",
+            "    if week_boundary_mode and (not week_starts_on):",
+            "        raise ModuleAuthoringValidationError([{'path': 'weekStartsOn', 'message': 'Choose the first day of the study week.'}])",
+            "    if week_boundary_mode and authored_week_count > 104:",
+            "        raise ModuleAuthoringValidationError([{'path': 'weeksNumber', 'message': 'Choose between 1 and 104 study weeks.'}])",
+            "    if week_boundary_mode and authored_week_count:",
+            "        from curriculum_api.study_weeks import build_study_week_plan",
+            "        study_start = parse_date(payload.get('startDate', payload.get('start_date', existing_module_row.get('start_date'))))",
+            "        study_end = parse_date(payload.get('endDate', payload.get('end_date', existing_module_row.get('end_date'))))",
+            "        if study_start:",
+            "            try:",
+            "                build_study_week_plan(study_start, authored_week_count, set(), {}, week_starts_on, study_end)",
+            "            except ValueError as exc:",
+            "                raise ModuleAuthoringValidationError([{'path': 'endDate', 'message': str(exc)}]) from exc",
+            "    if week_boundary_mode and (not has_column(AUTHORING_MODULES_TABLE, 'week_boundary_mode')):",
+            "        raise ModuleAuthoringValidationError([{'path': 'weekBoundaryMode', 'message': 'Apply curriculum migration 0091 before saving study weeks.'}])",
+            "    if not week_boundary_mode and schedule_mode == 'custom' and (len(weekly_schedule) > 1) and (week_starts_on or not existing_module_row):"
+          ],
+          "historical": [
+            "    week_starts_on = merged_week_starts_on(payload, existing_module_row) if schedule_mode == 'custom' else None",
+            "    if schedule_mode == 'custom' and len(weekly_schedule) > 1 and (week_starts_on or not existing_module_row):"
+          ]
+        },
+        {
+          "start": 202,
+          "approved": [
+            "        saved_module_row = authoring_upsert(AUTHORING_MODULES_TABLE, ['module_catalogue_id'], {'module_catalogue_id': module_catalogue_id, 'programme_id': programme_id, 'status': archive_state.INACTIVE if is_programme_deleted else archive_state.ACTIVE, 'cohort_id': cohort_id, 'group_id': group_id, 'learner_roster_mode': learner_roster_mode, 'teams_shared_source_module_id': teams_shared_source_module_id or None, 'ksb_remap_report': json.dumps(ksb_remap_report or {}), 'title': payload.get('title') or payload.get('name') or existing_module_row.get('title') or f'Module {module_catalogue_id}', 'description': payload.get('description') if 'description' in payload else existing_module_row.get('description') or '', 'color': payload.get('color') if 'color' in payload else delivery_metadata.get('color') or existing_module_row.get('color') or '', 'cover_image_url': stored_module_cover_image(module_catalogue_id, clean_str(payload.get('coverImage') if 'coverImage' in payload else payload.get('cover_image_url') if 'cover_image_url' in payload else existing_module_row.get('cover_image_url'))), 'sessions_number': stored_sessions_number, 'start_date': parse_date(payload.get('startDate') if 'startDate' in payload else payload.get('start_date') if 'start_date' in payload else existing_module_row.get('start_date')), 'end_date': parse_date(payload.get('endDate') if 'endDate' in payload else payload.get('end_date') if 'end_date' in payload else existing_module_row.get('end_date')), 'quality_score': quality_score, 'source_type': payload.get('sourceType') or payload.get('source_type') or existing_module_row.get('source_type') or None, 'source_id': payload.get('sourceId') or payload.get('source_id') or existing_module_row.get('source_id') or None, 'ksb_profile_source_id': normalise_ksb_profile_source_value(payload.get('ksbProfileSourceId') if 'ksbProfileSourceId' in payload else payload.get('ksb_profile_source_id') if 'ksb_profile_source_id' in payload else existing_module_row.get('ksb_profile_source_id')), 'session_week_day': session_week_day or None, 'session_start_time': session_start_time or None, 'session_end_time': session_end_time or None, 'weekly_schedule': json_db_value(weekly_schedule), 'schedule_mode': schedule_mode, 'week_starts_on': week_starts_on, 'week_boundary_mode': week_boundary_mode, **calendar_update, 'tutor_name': tutor_name or None, 'tutor_email': tutor_email or None}, allow_null_columns={'price', 'week_starts_on', 'week_boundary_mode', 'calendar_policy'})"
+          ],
+          "historical": [
+            "        saved_module_row = authoring_upsert(AUTHORING_MODULES_TABLE, ['module_catalogue_id'], {'module_catalogue_id': module_catalogue_id, 'programme_id': programme_id, 'status': archive_state.INACTIVE if is_programme_deleted else archive_state.ACTIVE, 'cohort_id': cohort_id, 'group_id': group_id, 'learner_roster_mode': learner_roster_mode, 'teams_shared_source_module_id': teams_shared_source_module_id or None, 'ksb_remap_report': json.dumps(ksb_remap_report or {}), 'title': payload.get('title') or payload.get('name') or existing_module_row.get('title') or f'Module {module_catalogue_id}', 'description': payload.get('description') if 'description' in payload else existing_module_row.get('description') or '', 'color': payload.get('color') if 'color' in payload else delivery_metadata.get('color') or existing_module_row.get('color') or '', 'cover_image_url': stored_module_cover_image(module_catalogue_id, clean_str(payload.get('coverImage') if 'coverImage' in payload else payload.get('cover_image_url') if 'cover_image_url' in payload else existing_module_row.get('cover_image_url'))), 'sessions_number': stored_sessions_number, 'start_date': parse_date(payload.get('startDate') if 'startDate' in payload else payload.get('start_date') if 'start_date' in payload else existing_module_row.get('start_date')), 'end_date': parse_date(payload.get('endDate') if 'endDate' in payload else payload.get('end_date') if 'end_date' in payload else existing_module_row.get('end_date')), 'quality_score': quality_score, 'source_type': payload.get('sourceType') or payload.get('source_type') or existing_module_row.get('source_type') or None, 'source_id': payload.get('sourceId') or payload.get('source_id') or existing_module_row.get('source_id') or None, 'ksb_profile_source_id': normalise_ksb_profile_source_value(payload.get('ksbProfileSourceId') if 'ksbProfileSourceId' in payload else payload.get('ksb_profile_source_id') if 'ksb_profile_source_id' in payload else existing_module_row.get('ksb_profile_source_id')), 'session_week_day': session_week_day or None, 'session_start_time': session_start_time or None, 'session_end_time': session_end_time or None, 'weekly_schedule': json_db_value(weekly_schedule), 'schedule_mode': schedule_mode, 'week_starts_on': week_starts_on, **calendar_update, 'tutor_name': tutor_name or None, 'tutor_email': tutor_email or None}, allow_null_columns={'price', 'week_starts_on', 'calendar_policy'})"
+          ]
+        }
+      ]
+    },
+    "curriculum_api/catalogue/application/session_plan_updates.py": {
+      "historical_ast_sha256": "88b761dbef6920f52fb30aeb5132872e1d55798ea61344b59f1e8e5a18b0a75c",
+      "approved_ast_sha256": "477ac273b80cc259c3e45c9ce2f810b867757aae6add2d219270c4b58ea3831e",
+      "approved_git_blob": "0df1ddc13b8a3e8fbb49cf50ec4d1ef67e7f9ef2",
+      "changed_symbols": [
+        "apply_module_session_plan_to_weeks"
+      ],
+      "edits": [
+        {
+          "start": 5,
+          "approved": [
+            "from curriculum_api.weekly_schedule import module_week_boundary_mode"
+          ],
+          "historical": []
+        },
+        {
+          "start": 7,
+          "approved": [
+            "def apply_module_session_plan_to_weeks(module, group_row, weeks, *, holidays=None, calendar_clock_to_utc_iso, clean_str, format_date, is_calendar_unavailable, module_live_session_clock, module_session_clock, module_week_delivery_slots, parse_int, module_delivery_row, module_session_plan_for_weeks):"
+          ],
+          "historical": [
+            "def apply_module_session_plan_to_weeks(module, group_row, weeks, *, holidays=None, calendar_clock_to_utc_iso, clean_str, format_date, is_calendar_unavailable, module_live_session_clock, module_session_clock, module_week_delivery_slots, parse_int):"
+          ]
+        },
+        {
+          "start": 32,
+          "approved": [
+            "        study_windows = []",
+            "        if module_week_boundary_mode(module) == 'calendar':",
+            "            study_plan = module_session_plan_for_weeks(module_delivery_row(module, group_row), len(weeks), holidays=holidays)",
+            "            study_windows = study_plan.get('weeks') or []",
+            "            session_plan = study_plan.get('sessions') or []",
+            "            slots_by_week = [[slot for slot in session_plan if slot.get('weekNumber') == index + 1] for index in range(len(weeks))]",
+            "        else:",
+            "            slots_by_week, session_plan = module_week_delivery_slots(module, group_row, len(weeks), holidays=holidays)"
+          ],
+          "historical": [
+            "        slots_by_week, session_plan = module_week_delivery_slots(module, group_row, len(weeks), holidays=holidays)"
+          ]
+        },
+        {
+          "start": 47,
+          "approved": [
+            "    return stamp_week_session_dates(module, group_row, weeks, slots_by_week, session_plan, calendar_clock_to_utc_iso=calendar_clock_to_utc_iso, clean_str=clean_str, format_date=format_date, module_live_session_clock=module_live_session_clock, module_session_clock=module_session_clock, parse_int=parse_int, study_windows=study_windows)"
+          ],
+          "historical": [
+            "    return stamp_week_session_dates(module, group_row, weeks, slots_by_week, session_plan, calendar_clock_to_utc_iso=calendar_clock_to_utc_iso, clean_str=clean_str, format_date=format_date, module_live_session_clock=module_live_session_clock, module_session_clock=module_session_clock, parse_int=parse_int)"
+          ]
+        }
+      ]
+    },
+    "curriculum_api/catalogue/application/session_plans.py": {
+      "historical_ast_sha256": "bd16184b5346749895f8f87f6d0fe1f8bb59eb00575d237ce66e93a1e56fc1da",
+      "approved_ast_sha256": "e172799a7b1770b54d445fa3c94e34c9a6718a3de2553ef3c76ddf4dd2172349",
+      "approved_git_blob": "37682475a0b2b21b433fedcac430f083777baded",
+      "changed_symbols": [
+        "module_session_dates",
+        "module_delivery_session_plan"
+      ],
+      "edits": [
+        {
+          "start": 13,
+          "approved": [
+            "from curriculum_api.weekly_schedule import module_week_boundary_mode"
+          ],
+          "historical": []
+        },
+        {
+          "start": 31,
+          "approved": [
+            "def module_delivery_session_plan(module, session_count, start, holidays=None, week_count=0, *, clean_str=_default_clean_str, parse_int=_default_parse_int, module_weekly_schedule, parse_json_value=_default_parse_json_value, build_module_session_plan, first_weekly_session_day, module_week_starts_on, parse_date=_default_parse_date, module_session_clock, apply_session_overrides, read_module_holidays, raise_calendar_unavailable, holiday_details_by_date, parse_delivery_days):"
+          ],
+          "historical": [
+            "def module_delivery_session_plan(module, session_count, start, holidays=None, week_count=0, *, clean_str=_default_clean_str, parse_int=_default_parse_int, module_weekly_schedule, parse_json_value=_default_parse_json_value, build_module_session_plan, first_weekly_session_day, module_week_starts_on, parse_date=_default_parse_date, module_session_clock, apply_session_overrides, read_module_holidays, raise_calendar_unavailable):"
+          ]
+        },
+        {
+          "start": 43,
+          "approved": [
+            "    calendar_weeks = module_week_boundary_mode(module) == 'calendar'",
+            "    if not week_count and (calendar_weeks or clean_str(module.get('schedule_mode') or module.get('scheduleMode')) == 'custom'):"
+          ],
+          "historical": [
+            "    if not week_count and clean_str(module.get('schedule_mode') or module.get('scheduleMode')) == 'custom':"
+          ]
+        },
+        {
+          "start": 52,
+          "approved": [
+            "    if calendar_weeks:",
+            "        from curriculum_api.study_weeks import build_study_week_plan",
+            "        if not start or week_count <= 0:",
+            "            return {'sessions': [], 'slots': [], 'weeks': [], 'skippedHolidays': [], 'finalEndDate': '', 'warnings': ['Set the module start date and study weeks.']}",
+            "        plan = build_study_week_plan(start, week_count, parse_delivery_days(delivery_days), holiday_details_by_date(applied_holidays), module_week_starts_on(module), parse_date(module.get('end_date') or module.get('endDate')))",
+            "        for session in plan['sessions']:",
+            "            clock, end, duration = module_session_clock({**module, 'session_overrides': {}}, session_date=session['date'])",
+            "            session.update(startTime=clock, endTime=end, durationMinutes=duration)",
+            "        return apply_session_overrides(plan, module)"
+          ],
+          "historical": []
+        },
+        {
+          "start": 94,
+          "approved": [
+            "    signature = (session_count, start, clean_str(module.get('schedule_mode')), module_week_starts_on(module), module_week_boundary_mode(module), parse_int(module.get('weeks_number'), 0), clean_str(module.get('end_date')), clean_str(module.get('session_week_day')), clean_str(module.get('cohort_id')), json.dumps(module.get('holidays') or [], sort_keys=True, default=str), json.dumps(module.get('calendar_policy') or module.get('calendarPolicy'), sort_keys=True, default=str), json.dumps(session_overrides(module), sort_keys=True))"
+          ],
+          "historical": [
+            "    signature = (session_count, start, clean_str(module.get('schedule_mode')), module_week_starts_on(module), parse_int(module.get('weeks_number'), 0), clean_str(module.get('end_date')), clean_str(module.get('session_week_day')), clean_str(module.get('cohort_id')), json.dumps(module.get('holidays') or [], sort_keys=True, default=str), json.dumps(module.get('calendar_policy') or module.get('calendarPolicy'), sort_keys=True, default=str), json.dumps(session_overrides(module), sort_keys=True))"
+          ]
+        }
+      ]
+    },
+    "curriculum_api/catalogue/application/structure_payloads.py": {
+      "historical_ast_sha256": "7bb2ef9b16918607f1ec8400bcccd5a70e77a3eccc45c1a2d95fc561cc53125a",
+      "approved_ast_sha256": "640b9de739fbbfb9af767caf6ebdc2f2ebd68ced396780fb6bc764e1da908a86",
+      "approved_git_blob": "cc1ac5a499e63b5fe1c13cb28bcd61c76b72cbdc",
+      "changed_symbols": [
+        "get_authoring_structure_payload",
+        "get_authoring_structure_payloads"
+      ],
+      "edits": [
+        {
+          "start": 21,
+          "approved": [
+            "from curriculum_api.weekly_schedule import module_week_boundary_mode"
+          ],
+          "historical": []
+        },
+        {
+          "start": 103,
+          "approved": [
+            "    payload = {'id': f'module-{module_catalogue_id}', 'moduleId': module_catalogue_id, 'moduleCatalogueId': module_catalogue_id, 'structureId': module_catalogue_id, 'catalogueId': module_catalogue_id, 'programmeId': module.get('programme_id') or module.get('programme_name') or '', 'programmeName': module.get('programme_name') or 'Unassigned programme', 'cohortId': module.get('cohort_id') or '', 'cohort': module.get('cohort_name') or '', 'groupId': module.get('group_id') or '', 'group': module.get('group_name') or '', 'learnerRosterMode': clean_str(module.get('learner_roster_mode') or 'inherited').lower() or 'inherited', 'teamsSharedSourceModuleId': clean_str(module.get('teams_shared_source_module_id')), 'ksbRemapReport': parse_json_value(module.get('ksb_remap_report'), {}) or None, 'title': module.get('title') or '', 'description': module.get('description') or '', 'color': module.get('color') or '#6941c6', 'coverImage': module.get('cover_image_url') or '', 'status': module.get('status') or 'draft', 'sourceType': module.get('source_type') or '', 'isFreeCourse': module.get('source_type') == 'free_course', **free_course_price_payload(module, lookup_free_course_prices([module])), 'sourceId': module.get('source_id') or '', 'isProgrammeDeleted': is_programme_deleted, 'ksbProfileSourceId': normalise_ksb_profile_source_value(module.get('ksb_profile_source_id') or ''), 'tutor': module.get('tutor_name') or '', 'coach': group_coach_name, 'sessionsNumber': parse_int(module.get('sessions_number'), len(weeks)), 'startDate': format_date(module.get('start_date')), 'endDate': format_date(module.get('end_date')), 'weeklySchedule': module_weekly_schedule(delivery_module), 'scheduleMode': module.get('schedule_mode') or 'group', 'weekStartsOn': module_week_starts_on(module), 'weekBoundaryMode': module_week_boundary_mode(module), 'sessionHolidays': parse_json_value(module.get('session_holidays'), []), 'calendarPolicy': parse_json_value(module.get('calendar_policy'), None), 'calendarError': module.get('_calendar_error') or '', 'deliveryWeeks': module_delivery_week_count(module, weeks), 'weekDays': delivery_module.get('session_week_day') or '', 'startTime': delivery_module.get('session_start_time') or '', 'endTime': delivery_module.get('session_end_time') or '', 'weeks': module_stored_week_count(module, len(weeks)), 'weeksNumber': module_stored_week_count(module, len(weeks)), 'totalOtjh': otjh_hours_from_minutes(sum((otjh_rounded_minutes(row.get('expected_otjh')) for row in component_rows))), 'declaredTotalOtjh': otjh_hours_from_minutes(sum((otjh_rounded_minutes(row.get('expected_otjh')) for row in component_rows))), 'ksbCount': len({mapping['code'] for mapping in module_mappings + [m for week in weeks for m in week['ksbMappings']] + [m for week in weeks for component in week['components'] for m in component['ksbMappings']]}), 'lessonCount': len(component_rows), 'quizCount': len([row for row in component_rows if normalise_component_type(row.get('type')) == 'quiz']), 'qualityScore': parse_int(module.get('quality_score'), 0), 'moduleKsbMappings': module_mappings, 'completionCriteria': completion_response(completion_rows[0] if completion_rows else None), 'weekStructure': weeks, **advanced}"
+          ],
+          "historical": [
+            "    payload = {'id': f'module-{module_catalogue_id}', 'moduleId': module_catalogue_id, 'moduleCatalogueId': module_catalogue_id, 'structureId': module_catalogue_id, 'catalogueId': module_catalogue_id, 'programmeId': module.get('programme_id') or module.get('programme_name') or '', 'programmeName': module.get('programme_name') or 'Unassigned programme', 'cohortId': module.get('cohort_id') or '', 'cohort': module.get('cohort_name') or '', 'groupId': module.get('group_id') or '', 'group': module.get('group_name') or '', 'learnerRosterMode': clean_str(module.get('learner_roster_mode') or 'inherited').lower() or 'inherited', 'teamsSharedSourceModuleId': clean_str(module.get('teams_shared_source_module_id')), 'ksbRemapReport': parse_json_value(module.get('ksb_remap_report'), {}) or None, 'title': module.get('title') or '', 'description': module.get('description') or '', 'color': module.get('color') or '#6941c6', 'coverImage': module.get('cover_image_url') or '', 'status': module.get('status') or 'draft', 'sourceType': module.get('source_type') or '', 'isFreeCourse': module.get('source_type') == 'free_course', **free_course_price_payload(module, lookup_free_course_prices([module])), 'sourceId': module.get('source_id') or '', 'isProgrammeDeleted': is_programme_deleted, 'ksbProfileSourceId': normalise_ksb_profile_source_value(module.get('ksb_profile_source_id') or ''), 'tutor': module.get('tutor_name') or '', 'coach': group_coach_name, 'sessionsNumber': parse_int(module.get('sessions_number'), len(weeks)), 'startDate': format_date(module.get('start_date')), 'endDate': format_date(module.get('end_date')), 'weeklySchedule': module_weekly_schedule(delivery_module), 'scheduleMode': module.get('schedule_mode') or 'group', 'weekStartsOn': module_week_starts_on(module), 'sessionHolidays': parse_json_value(module.get('session_holidays'), []), 'calendarPolicy': parse_json_value(module.get('calendar_policy'), None), 'calendarError': module.get('_calendar_error') or '', 'deliveryWeeks': module_delivery_week_count(module, weeks), 'weekDays': delivery_module.get('session_week_day') or '', 'startTime': delivery_module.get('session_start_time') or '', 'endTime': delivery_module.get('session_end_time') or '', 'weeks': module_stored_week_count(module, len(weeks)), 'weeksNumber': module_stored_week_count(module, len(weeks)), 'totalOtjh': otjh_hours_from_minutes(sum((otjh_rounded_minutes(row.get('expected_otjh')) for row in component_rows))), 'declaredTotalOtjh': otjh_hours_from_minutes(sum((otjh_rounded_minutes(row.get('expected_otjh')) for row in component_rows))), 'ksbCount': len({mapping['code'] for mapping in module_mappings + [m for week in weeks for m in week['ksbMappings']] + [m for week in weeks for component in week['components'] for m in component['ksbMappings']]}), 'lessonCount': len(component_rows), 'quizCount': len([row for row in component_rows if normalise_component_type(row.get('type')) == 'quiz']), 'qualityScore': parse_int(module.get('quality_score'), 0), 'moduleKsbMappings': module_mappings, 'completionCriteria': completion_response(completion_rows[0] if completion_rows else None), 'weekStructure': weeks, **advanced}"
+          ]
+        },
+        {
+          "start": 219,
+          "approved": [
+            "        payload = {'id': f'module-{catalogue_id}', 'moduleId': catalogue_id, 'moduleCatalogueId': catalogue_id, 'structureId': catalogue_id, 'catalogueId': catalogue_id, 'programmeId': module.get('programme_id') or module.get('programme_name') or '', 'programmeName': module.get('programme_name') or 'Unassigned programme', 'cohortId': module.get('cohort_id') or '', 'cohort': module.get('cohort_name') or '', 'groupId': module.get('group_id') or '', 'group': module.get('group_name') or '', 'learnerRosterMode': clean_str(module.get('learner_roster_mode') or 'inherited').lower() or 'inherited', 'teamsSharedSourceModuleId': clean_str(module.get('teams_shared_source_module_id')), 'ksbRemapReport': parse_json_value(module.get('ksb_remap_report'), {}) or None, 'title': module.get('title') or '', 'description': module.get('description') or '', 'color': module.get('color') or '#6941c6', 'coverImage': module.get('cover_image_url') or '', 'status': module.get('status') or 'draft', 'sourceType': module.get('source_type') or '', 'isFreeCourse': module.get('source_type') == 'free_course', **free_course_price_payload(module, free_course_prices), 'sourceId': module.get('source_id') or '', 'isProgrammeDeleted': is_programme_deleted, 'ksbProfileSourceId': normalise_ksb_profile_source_value(module.get('ksb_profile_source_id') or ''), 'tutor': module.get('tutor_name') or '', 'coach': group_coach_name, 'sessionsNumber': parse_int(module.get('sessions_number'), len(weeks)), 'startDate': format_date(module.get('start_date')), 'endDate': format_date(module.get('end_date')), 'weeklySchedule': module_weekly_schedule(delivery_module), 'scheduleMode': module.get('schedule_mode') or 'group', 'weekStartsOn': module_week_starts_on(module), 'weekBoundaryMode': module_week_boundary_mode(module), 'sessionHolidays': parse_json_value(module.get('session_holidays'), []), 'calendarPolicy': parse_json_value(module.get('calendar_policy'), None), 'calendarError': module.get('_calendar_error') or '', 'deliveryWeeks': module_delivery_week_count(module, weeks), 'weekDays': delivery_module.get('session_week_day') or '', 'startTime': delivery_module.get('session_start_time') or '', 'endTime': delivery_module.get('session_end_time') or '', 'weeks': module_stored_week_count(module, len(weeks)), 'weeksNumber': module_stored_week_count(module, len(weeks)), 'totalOtjh': module_total_otjh, 'declaredTotalOtjh': module_total_otjh, 'ksbCount': len({mapping['code'] for mapping in module_mappings + [m for week in weeks for m in week['ksbMappings']] + [m for week in weeks for component in week['components'] for m in component['ksbMappings']]}), 'lessonCount': len(module_components), 'quizCount': len([row for row in module_components if normalise_component_type(row.get('type')) == 'quiz']), 'qualityScore': parse_int(module.get('quality_score'), 0), 'moduleKsbMappings': module_mappings, 'weekStructure': weeks}"
+          ],
+          "historical": [
+            "        payload = {'id': f'module-{catalogue_id}', 'moduleId': catalogue_id, 'moduleCatalogueId': catalogue_id, 'structureId': catalogue_id, 'catalogueId': catalogue_id, 'programmeId': module.get('programme_id') or module.get('programme_name') or '', 'programmeName': module.get('programme_name') or 'Unassigned programme', 'cohortId': module.get('cohort_id') or '', 'cohort': module.get('cohort_name') or '', 'groupId': module.get('group_id') or '', 'group': module.get('group_name') or '', 'learnerRosterMode': clean_str(module.get('learner_roster_mode') or 'inherited').lower() or 'inherited', 'teamsSharedSourceModuleId': clean_str(module.get('teams_shared_source_module_id')), 'ksbRemapReport': parse_json_value(module.get('ksb_remap_report'), {}) or None, 'title': module.get('title') or '', 'description': module.get('description') or '', 'color': module.get('color') or '#6941c6', 'coverImage': module.get('cover_image_url') or '', 'status': module.get('status') or 'draft', 'sourceType': module.get('source_type') or '', 'isFreeCourse': module.get('source_type') == 'free_course', **free_course_price_payload(module, free_course_prices), 'sourceId': module.get('source_id') or '', 'isProgrammeDeleted': is_programme_deleted, 'ksbProfileSourceId': normalise_ksb_profile_source_value(module.get('ksb_profile_source_id') or ''), 'tutor': module.get('tutor_name') or '', 'coach': group_coach_name, 'sessionsNumber': parse_int(module.get('sessions_number'), len(weeks)), 'startDate': format_date(module.get('start_date')), 'endDate': format_date(module.get('end_date')), 'weeklySchedule': module_weekly_schedule(delivery_module), 'scheduleMode': module.get('schedule_mode') or 'group', 'weekStartsOn': module_week_starts_on(module), 'sessionHolidays': parse_json_value(module.get('session_holidays'), []), 'calendarPolicy': parse_json_value(module.get('calendar_policy'), None), 'calendarError': module.get('_calendar_error') or '', 'deliveryWeeks': module_delivery_week_count(module, weeks), 'weekDays': delivery_module.get('session_week_day') or '', 'startTime': delivery_module.get('session_start_time') or '', 'endTime': delivery_module.get('session_end_time') or '', 'weeks': module_stored_week_count(module, len(weeks)), 'weeksNumber': module_stored_week_count(module, len(weeks)), 'totalOtjh': module_total_otjh, 'declaredTotalOtjh': module_total_otjh, 'ksbCount': len({mapping['code'] for mapping in module_mappings + [m for week in weeks for m in week['ksbMappings']] + [m for week in weeks for component in week['components'] for m in component['ksbMappings']]}), 'lessonCount': len(module_components), 'quizCount': len([row for row in module_components if normalise_component_type(row.get('type')) == 'quiz']), 'qualityScore': parse_int(module.get('quality_score'), 0), 'moduleKsbMappings': module_mappings, 'weekStructure': weeks}"
+          ]
+        }
+      ]
+    },
+    "curriculum_api/catalogue/domain/delivery_pattern.py": {
+      "historical_ast_sha256": "31412b61318ebf5f3c4ae97e67ab0d9e9992a29f2474936cb48fa45b8132faf8",
+      "approved_ast_sha256": "2bce918808bf9427f6d020eaab3c954f35857efc56bfbc4652676722d008ea17",
+      "approved_git_blob": "00dcb8b9e3c761705cb92d92bbdebe378fdf9d2d",
+      "changed_symbols": [
+        "module_live_session_clock"
+      ],
+      "edits": [
+        {
+          "start": 5,
+          "approved": [
+            "from curriculum_api.weekly_schedule import module_week_boundary_mode"
+          ],
+          "historical": []
+        },
+        {
+          "start": 132,
+          "approved": [
+            "    Explicit study weeks stamp their automatic slots before calling readers;",
+            "    a manually dated component without such a slot keeps its authored clock."
+          ],
+          "historical": []
+        },
+        {
+          "start": 139,
+          "approved": [
+            "    manual_study_clock = module_week_boundary_mode(module_row) == 'calendar' and bool(clean_str(start_time))",
+            "    if has_schedule and (not booked) and (not manual_study_clock):"
+          ],
+          "historical": [
+            "    if has_schedule and (not booked):"
+          ]
+        }
+      ]
+    },
+    "curriculum_api/catalogue/domain/hierarchy_dates.py": {
+      "historical_ast_sha256": "c64f913ff219881b41c0494b222134a3a9200c76654033f608004d16a8250645",
+      "approved_ast_sha256": "5934563d9fe883dfe7118cd8177a4095336a0fb971b7704bd201c4b83d97d0b7",
+      "approved_git_blob": "a16d2ede76e1ebe05adba6a9ad52d8ce24b652f5",
+      "changed_symbols": [
+        "module_calendar_end_date"
+      ],
+      "edits": [
+        {
+          "start": 11,
+          "approved": [
+            "from curriculum_api.weekly_schedule import module_week_boundary_mode",
+            "from curriculum_api.weekly_schedule import module_week_starts_on"
+          ],
+          "historical": []
+        },
+        {
+          "start": 191,
+          "approved": [
+            "def module_calendar_end_date(start_value, week_count, module=None, *, parse_date=_default_parse_date, parse_int=_default_parse_int, timedelta=_default_timedelta):"
+          ],
+          "historical": [
+            "def module_calendar_end_date(start_value, week_count, *, parse_date=_default_parse_date, parse_int=_default_parse_int, timedelta=_default_timedelta):"
+          ]
+        },
+        {
+          "start": 203,
+          "approved": [
+            "    if module_week_boundary_mode(module):",
+            "        from curriculum_api.study_weeks import study_week_end_date",
+            "        return study_week_end_date(start_value, week_count, module_week_starts_on(module))"
+          ],
+          "historical": []
+        }
+      ]
+    },
+    "curriculum_api/catalogue/domain/read_contracts.py": {
+      "historical_ast_sha256": "2b7c516b848fc401ee5ef83f12959d28f8bb9c1d96dc5c8089e56868c8f7d076",
+      "approved_ast_sha256": "bf814abc6e87df8e9b3be05c9225b403eb8e31da652dcec33d65af4e4a09b430",
+      "approved_git_blob": "0387e905fec1a5d60d050c68f83fe0d35b122161",
+      "changed_symbols": [
+        "PROGRAMME_WORKSPACE_MODULE_FIELDS",
+        "COMPACT_MODULE_LIST_FIELDS"
+      ],
+      "edits": [
+        {
+          "start": 42,
+          "approved": [
+            "COMPACT_MODULE_LIST_FIELDS = frozenset({'id', 'moduleId', 'moduleCatalogueId', 'deliveryModuleId', 'structureId', 'sourceId', 'catalogueId', 'relatedCatalogueIds', 'name', 'programmeId', 'programme', 'cohortId', 'cohort', 'groupId', 'group', 'learnerRosterMode', 'teamsSharedSourceModuleId', 'ksbRemapReport', 'isProgrammeDeleted', 'isFreeCourse', 'isForSale', 'price', 'currency', 'weeks', 'sessionsNumber', 'ksbCount', 'lessons', 'quizzes', 'totalOtjh', 'declaredTotalOtjh', 'assignments', 'status', 'authoringStatus', 'deliveryStatus', 'startDate', 'endDate', 'weeklySchedule', 'scheduleMode', 'sessionHolidays', 'deliveryWeeks', 'weekStartsOn', 'weekBoundaryMode', 'calendarPolicy', 'weekDays', 'startTime', 'endTime', 'notes', 'color', 'coverImage', 'tutor', 'coach', 'ksbCodes', 'ksbProfileSourceId', 'lastUpdated', 'createdAt'})"
+          ],
+          "historical": [
+            "COMPACT_MODULE_LIST_FIELDS = frozenset({'id', 'moduleId', 'moduleCatalogueId', 'deliveryModuleId', 'structureId', 'sourceId', 'catalogueId', 'relatedCatalogueIds', 'name', 'programmeId', 'programme', 'cohortId', 'cohort', 'groupId', 'group', 'learnerRosterMode', 'teamsSharedSourceModuleId', 'ksbRemapReport', 'isProgrammeDeleted', 'isFreeCourse', 'isForSale', 'price', 'currency', 'weeks', 'sessionsNumber', 'ksbCount', 'lessons', 'quizzes', 'totalOtjh', 'declaredTotalOtjh', 'assignments', 'status', 'authoringStatus', 'deliveryStatus', 'startDate', 'endDate', 'weeklySchedule', 'scheduleMode', 'sessionHolidays', 'deliveryWeeks', 'weekStartsOn', 'calendarPolicy', 'weekDays', 'startTime', 'endTime', 'notes', 'color', 'coverImage', 'tutor', 'coach', 'ksbCodes', 'ksbProfileSourceId', 'lastUpdated', 'createdAt'})"
+          ]
+        },
+        {
+          "start": 58,
+          "approved": [
+            "PROGRAMME_WORKSPACE_MODULE_FIELDS = frozenset({'id', 'moduleId', 'moduleCatalogueId', 'deliveryModuleId', 'structureId', 'sourceId', 'sourceType', 'catalogueId', 'relatedCatalogueIds', 'name', 'programmeId', 'programme', 'cohortId', 'cohort', 'groupId', 'group', 'weeks', 'sessionsNumber', 'ksbCount', 'lessons', 'quizzes', 'assignments', 'status', 'authoringStatus', 'deliveryStatus', 'isProgrammeDeleted', 'startDate', 'endDate', 'weeklySchedule', 'scheduleMode', 'sessionHolidays', 'deliveryWeeks', 'weekStartsOn', 'weekBoundaryMode', 'calendarPolicy', 'weekDays', 'startTime', 'endTime', 'notes', 'color', 'coverImage', 'tutor', 'coach', 'ksbCodes', 'lastUpdated', 'weekStructureOutline'})"
+          ],
+          "historical": [
+            "PROGRAMME_WORKSPACE_MODULE_FIELDS = frozenset({'id', 'moduleId', 'moduleCatalogueId', 'deliveryModuleId', 'structureId', 'sourceId', 'sourceType', 'catalogueId', 'relatedCatalogueIds', 'name', 'programmeId', 'programme', 'cohortId', 'cohort', 'groupId', 'group', 'weeks', 'sessionsNumber', 'ksbCount', 'lessons', 'quizzes', 'assignments', 'status', 'authoringStatus', 'deliveryStatus', 'isProgrammeDeleted', 'startDate', 'endDate', 'weeklySchedule', 'scheduleMode', 'sessionHolidays', 'deliveryWeeks', 'weekStartsOn', 'calendarPolicy', 'weekDays', 'startTime', 'endTime', 'notes', 'color', 'coverImage', 'tutor', 'coach', 'ksbCodes', 'lastUpdated', 'weekStructureOutline'})"
+          ]
+        }
+      ]
+    },
+    "curriculum_api/catalogue/domain/tutor_conflicts.py": {
+      "historical_ast_sha256": "2a6c441bcdefebf04988bb7e3c882c03e578dabc258f47a6bebac049ffec36cc",
+      "approved_ast_sha256": "b3a0a9076742169b350317e0ea2d6d814982d582312773178229a3d84380a4a1",
+      "approved_git_blob": "9d7e40d6affc66fb7c6fab91d171444616a37587",
+      "changed_symbols": [
+        "module_schedule_assignment_changed"
+      ],
+      "edits": [
+        {
+          "start": 30,
+          "approved": [
+            "    if before.get('week_boundary_mode') or after.get('week_boundary_mode'):",
+            "        keys += ('weeks_number', 'end_date', 'week_starts_on', 'week_boundary_mode')"
+          ],
+          "historical": []
+        }
+      ]
+    },
+    "curriculum_api/catalogue/domain/week_session_dates.py": {
+      "historical_ast_sha256": "d98550b795b7081e5ce6f6953b433464ba940729d0592f5ff0b09f57aa7a9571",
+      "approved_ast_sha256": "c77309e0a1f11234bc7cf60269ed20b70cd46de47e0484052d150fc6af91271f",
+      "approved_git_blob": "79c8d6488a421b9cb0d0c11ea09a84ce27347f1c",
+      "changed_symbols": [
+        "stamp_week_session_dates"
+      ],
+      "edits": [
+        {
+          "start": 1,
+          "approved": [
+            "from curriculum_api.weekly_schedule import module_week_boundary_mode"
+          ],
+          "historical": []
+        },
+        {
+          "start": 3,
+          "approved": [
+            "def stamp_week_session_dates(module, group_row, weeks, slots_by_week, session_plan, *, calendar_clock_to_utc_iso, clean_str, format_date, module_live_session_clock, module_session_clock, parse_int, study_windows=()):"
+          ],
+          "historical": [
+            "def stamp_week_session_dates(module, group_row, weeks, slots_by_week, session_plan, *, calendar_clock_to_utc_iso, clean_str, format_date, module_live_session_clock, module_session_clock, parse_int):"
+          ]
+        },
+        {
+          "start": 6,
+          "approved": [
+            "        if week_index < len(study_windows):",
+            "            window = study_windows[week_index]",
+            "            week.update(studyWeekStartDate=window['startDate'], studyWeekEndDate=window['endDate'], studyWeekHolidays=window['holidays'])"
+          ],
+          "historical": []
+        },
+        {
+          "start": 29,
+          "approved": [
+            "                slot_time, _slot_end, slot_duration = module_live_session_clock(module, '' if module_week_boundary_mode(module) else settings.get('sessionTime'), 0 if module_week_boundary_mode(module) else settings.get('durationMinutes'), booked=booked_at_microsoft, group_row=group_row, session_date=session_date)"
+          ],
+          "historical": [
+            "                slot_time, _slot_end, slot_duration = module_live_session_clock(module, settings.get('sessionTime'), settings.get('durationMinutes'), booked=booked_at_microsoft, group_row=group_row, session_date=session_date)"
+          ]
+        }
+      ]
+    },
+    "curriculum_api/catalogue/infrastructure/authoring_schema.py": {
+      "historical_ast_sha256": "0b613de35e982ac2b427a9de6dfdc982590b76da4acfc3ece3f1be162e4baea5",
+      "approved_ast_sha256": "de7b5a1ccb09fe75e44e20d51bdfc125e82f62d96a0e571f7dee2a94bc70ef92",
+      "approved_git_blob": "ee4d32eae6a089094c5ccaae798c644421e3c0fe",
+      "changed_symbols": [
+        "provision_module_authoring_tables"
+      ],
+      "edits": [
+        {
+          "start": 28,
+          "approved": [
+            "        cursor.execute(f\"\\n            create table if not exists {authoring_table_name(AUTHORING_MODULES_TABLE)} (\\n                module_catalogue_id varchar(128) primary key,\\n                programme_id varchar(255),\\n                title text not null,\\n                description text,\\n                quality_score integer not null default 0,\\n                created_at timestamp not null default current_timestamp,\\n                updated_at timestamp not null default current_timestamp,\\n                sessions_number integer not null default 0,\\n                start_date date,\\n                end_date date,\\n                cohort_id varchar(255),\\n                group_id varchar(255),\\n                color varchar(32),\\n                session_week_day varchar(255),\\n                session_start_time varchar(32),\\n                session_end_time varchar(32),\\n                ksb_profile_source_id varchar(128),\\n                schedule_mode varchar(16) not null default 'group',\\n                week_starts_on varchar(9),\\n                week_boundary_mode varchar(16),\\n                calendar_policy {json_type},\\n                source_type varchar(64),\\n                source_id varchar(255),\\n                cover_image_url text,\\n                weekly_schedule {json_type},\\n                session_holidays {json_type},\\n                session_overrides {json_type} not null default '{{}}',\\n                learner_roster_mode varchar(32) not null default 'inherited',\\n                teams_shared_source_module_id varchar(128),\\n                ksb_remap_report text,\\n                status varchar(32) not null default 'active',\\n                tutor_id varchar(128)\\n            )\\n        \")"
+          ],
+          "historical": [
+            "        cursor.execute(f\"\\n            create table if not exists {authoring_table_name(AUTHORING_MODULES_TABLE)} (\\n                module_catalogue_id varchar(128) primary key,\\n                programme_id varchar(255),\\n                title text not null,\\n                description text,\\n                quality_score integer not null default 0,\\n                created_at timestamp not null default current_timestamp,\\n                updated_at timestamp not null default current_timestamp,\\n                sessions_number integer not null default 0,\\n                start_date date,\\n                end_date date,\\n                cohort_id varchar(255),\\n                group_id varchar(255),\\n                color varchar(32),\\n                session_week_day varchar(255),\\n                session_start_time varchar(32),\\n                session_end_time varchar(32),\\n                ksb_profile_source_id varchar(128),\\n                schedule_mode varchar(16) not null default 'group',\\n                week_starts_on varchar(9),\\n                calendar_policy {json_type},\\n                source_type varchar(64),\\n                source_id varchar(255),\\n                cover_image_url text,\\n                weekly_schedule {json_type},\\n                session_holidays {json_type},\\n                session_overrides {json_type} not null default '{{}}',\\n                learner_roster_mode varchar(32) not null default 'inherited',\\n                teams_shared_source_module_id varchar(128),\\n                ksb_remap_report text,\\n                status varchar(32) not null default 'active',\\n                tutor_id varchar(128)\\n            )\\n        \")"
+          ]
+        },
+        {
+          "start": 48,
+          "approved": [
+            "            cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists week_boundary_mode varchar(16)')"
+          ],
+          "historical": []
+        },
+        {
+          "start": 92,
+          "approved": [
+            "            if 'week_boundary_mode' not in columns:",
+            "                cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column week_boundary_mode varchar(16)')"
+          ],
+          "historical": []
+        }
+      ]
+    },
+    "curriculum_api/catalogue/infrastructure/session_plan_composition.py": {
+      "historical_ast_sha256": "cc541c063a218688a2c71992caf4ac025f90fcb129e323b3a4a6769e4cacbc0a",
+      "approved_ast_sha256": "f35326aaf599e4d9ea3fdf8f3f0cd3243b7d6cc665d72e4f711284d227c35a49",
+      "approved_git_blob": "1fa20b4b50c5c2f0c7343584bf4c56cf9b5d6b5f",
+      "changed_symbols": [
+        "module_delivery_session_plan"
+      ],
+      "edits": [
+        {
+          "start": 17,
+          "approved": [
+            "from curriculum_api.catalogue.application.session_plans import holiday_details_by_date",
+            "from curriculum_api.catalogue.domain.session_plan import parse_delivery_days"
+          ],
+          "historical": []
+        },
+        {
+          "start": 30,
+          "approved": [
+            "    return query(module, session_count, start, holidays, week_count, module_weekly_schedule=module_weekly_schedule, build_module_session_plan=build_module_session_plan, first_weekly_session_day=first_weekly_session_day, module_week_starts_on=module_week_starts_on, module_session_clock=module_session_clock, apply_session_overrides=apply_session_overrides, read_module_holidays=read_module_holidays, raise_calendar_unavailable=raise_calendar_unavailable, holiday_details_by_date=holiday_details_by_date, parse_delivery_days=parse_delivery_days)"
+          ],
+          "historical": [
+            "    return query(module, session_count, start, holidays, week_count, module_weekly_schedule=module_weekly_schedule, build_module_session_plan=build_module_session_plan, first_weekly_session_day=first_weekly_session_day, module_week_starts_on=module_week_starts_on, module_session_clock=module_session_clock, apply_session_overrides=apply_session_overrides, read_module_holidays=read_module_holidays, raise_calendar_unavailable=raise_calendar_unavailable)"
+          ]
+        }
+      ]
+    },
+    "curriculum_api/catalogue/infrastructure/session_plan_persistence.py": {
+      "historical_ast_sha256": "cf9a7864aeb877699e4d0c9cd32cc715fc6188529aef6b2a043d5046ec2dc365",
+      "approved_ast_sha256": "9fdeed85c7cc619316b0146303a2f7ccbc064fed0a084e904d7e3fc58bfc57bf",
+      "approved_git_blob": "04b96fe9594853b02cddce3dc80cc8a60cd7db0f",
+      "changed_symbols": [
+        "apply_module_session_plan_to_weeks"
+      ],
+      "edits": [
+        {
+          "start": 24,
+          "approved": [
+            "from curriculum_api.catalogue.infrastructure.calendar_runtime import module_delivery_row",
+            "from curriculum_api.catalogue.infrastructure.session_plan_composition import module_session_plan_for_weeks"
+          ],
+          "historical": []
+        },
+        {
+          "start": 33,
+          "approved": [
+            "    return implementation(module, group_row, weeks, holidays=holidays, calendar_clock_to_utc_iso=calendar_clock_to_utc_iso, clean_str=clean_str, format_date=format_date, is_calendar_unavailable=is_calendar_unavailable, module_live_session_clock=module_live_session_clock, module_session_clock=module_session_clock, module_week_delivery_slots=module_week_delivery_slots, parse_int=parse_int, module_delivery_row=module_delivery_row, module_session_plan_for_weeks=module_session_plan_for_weeks)"
+          ],
+          "historical": [
+            "    return implementation(module, group_row, weeks, holidays=holidays, calendar_clock_to_utc_iso=calendar_clock_to_utc_iso, clean_str=clean_str, format_date=format_date, is_calendar_unavailable=is_calendar_unavailable, module_live_session_clock=module_live_session_clock, module_session_clock=module_session_clock, module_week_delivery_slots=module_week_delivery_slots, parse_int=parse_int)"
+          ]
+        }
+      ]
+    },
+    "curriculum_api/catalogue/infrastructure/structure_runtime.py": {
+      "historical_ast_sha256": "0f7d4eb93930a5e6a84c40c05275f9c83659e27234b43a9b9e9408e8134aca3f",
+      "approved_ast_sha256": "12df257bfe701f42f5121c6d090ae8588ce488019e55314114c7fbb0bbda06f1",
+      "approved_git_blob": "0dd37ecf5dc4559992a631624f839a85a46b154b",
+      "changed_symbols": [
+        "note_previous_content_modules"
+      ],
+      "edits": [
+        {
+          "start": 59,
+          "approved": [
+            "from curriculum_api.catalogue.infrastructure.storage_context import native_only"
+          ],
+          "historical": []
+        },
+        {
+          "start": 91,
+          "approved": [
+            "    return implementation(table, where_sql=where_sql, where_params=where_params, key_columns=key_columns, payloads=payloads, AUTHORING_MODULES_TABLE=AUTHORING_MODULES_TABLE, connection=connection, fetch_all=fetch_all, load_content_cache=load_content_cache, logger=logger, table_name=table_name, native_only=native_only)"
+          ],
+          "historical": [
+            "    return implementation(table, where_sql=where_sql, where_params=where_params, key_columns=key_columns, payloads=payloads, AUTHORING_MODULES_TABLE=AUTHORING_MODULES_TABLE, connection=connection, fetch_all=fetch_all, load_content_cache=load_content_cache, logger=logger, table_name=table_name)"
+          ]
+        }
+      ]
+    },
+    "curriculum_api/catalogue/infrastructure/write_notifications.py": {
+      "historical_ast_sha256": "4064e6b7475d7e805497e59848aab81578fe8d138125fb0dc9dc238b0fd2b4ef",
+      "approved_ast_sha256": "ab644094f64efacf7b3b66b999367fe43f3dcdaffd068c661b4a2321fc59af95",
+      "approved_git_blob": "56a79ec9cf8a5fa50121cae92fb1538dd3b27760",
+      "changed_symbols": [
+        "note_previous_content_modules"
+      ],
+      "edits": [
+        {
+          "start": 19,
+          "approved": [
+            "def note_previous_content_modules(table, *, where_sql=None, where_params=None, key_columns=None, payloads=(), AUTHORING_MODULES_TABLE, connection, fetch_all, load_content_cache, logger, table_name, native_only):"
+          ],
+          "historical": [
+            "def note_previous_content_modules(table, *, where_sql=None, where_params=None, key_columns=None, payloads=(), AUTHORING_MODULES_TABLE, connection, fetch_all, load_content_cache, logger, table_name):"
+          ]
+        },
+        {
+          "start": 36,
+          "approved": [
+            "    read_source = table_name(table)",
+            "    if native_only():",
+            "        from curriculum_api.catalogue.infrastructure.course_storage_reads import native_read_table",
+            "        read_source = native_read_table(bare)"
+          ],
+          "historical": []
+        },
+        {
+          "start": 42,
+          "approved": [
+            "            rows = fetch_all(f'select distinct module_catalogue_id from {read_source} where {where_sql}', list(where_params or []))"
+          ],
+          "historical": [
+            "            rows = fetch_all(f'select distinct module_catalogue_id from {table_name(table)} where {where_sql}', list(where_params or []))"
+          ]
+        },
+        {
+          "start": 47,
+          "approved": [
+            "            rows = fetch_all(f'select distinct module_catalogue_id from {read_source} where id = any(%s)', [ids])"
+          ],
+          "historical": [
+            "            rows = fetch_all(f'select distinct module_catalogue_id from {table_name(table)} where id = any(%s)', [ids])"
+          ]
+        }
+      ]
+    },
+    "curriculum_api/meetings/api/artifact_composition.py": {
+      "historical_ast_sha256": "62f2540f511d0422be4a19a4f29d5870d8fd368f6edb9bd66ca123d4ba6c9236",
+      "approved_ast_sha256": "2989110907ab941a4248d1890b25ba58c82a8f0130352d9ff5e15a6af00bbce8",
+      "approved_git_blob": "93c60b1b0f4f410e4314497704a4ba0b45060a98",
+      "changed_symbols": [
+        "curriculum_teams_meeting_artifacts"
+      ],
+      "edits": [
+        {
+          "start": 57,
+          "approved": [
+            "from curriculum_api.meetings.infrastructure.invitation_runtime import teams_module_session_limit"
+          ],
+          "historical": []
+        },
+        {
+          "start": 69,
+          "approved": [
+            "    return implementation(request, live_session_id, JsonResponse=JsonResponse, LIVE_SESSIONS_TABLE=LIVE_SESSIONS_TABLE, LIVE_SESSION_ARTIFACTS_TABLE=LIVE_SESSION_ARTIFACTS_TABLE, LIVE_SESSION_ATTENDANCE_TABLE=LIVE_SESSION_ATTENDANCE_TABLE, LIVE_SESSION_JOIN_LAUNCHES_TABLE=LIVE_SESSION_JOIN_LAUNCHES_TABLE, LIVE_SESSION_OCCURRENCES_TABLE=LIVE_SESSION_OCCURRENCES_TABLE, apply_teams_meeting_options=apply_teams_meeting_options, attendance_display_name=attendance_display_name, attendance_identity=attendance_identity, attendance_interval_seconds=attendance_interval_seconds, attendance_report_rosters=attendance_report_rosters, authoring_delete=authoring_delete, authoring_fetch_all=authoring_fetch_all, authoring_upsert=authoring_upsert, clean_str=clean_str, collection=collection, completion_to_reopen=completion_to_reopen, datetime=datetime, defaultdict=defaultdict, get_graph_settings=get_graph_settings, graph_item_with_occurrence_link=graph_item_with_occurrence_link, graph_timezone_iana=graph_timezone_iana, has_graph_credentials=has_graph_credentials, json_db_value=json_db_value, json_error=json_error, keep_directory_lookup=keep_directory_lookup, launch_linked_live_occurrence=launch_linked_live_occurrence, live_session_join_launches=live_session_join_launches, live_session_meeting_groups=live_session_meeting_groups, logger=logger, merge_attendance_intervals=merge_attendance_intervals, microsoft_graph_request=microsoft_graph_request, note_completion=note_completion, note_premature_run=note_premature_run, note_reopened_by_sync=note_reopened_by_sync, off_schedule_runs=off_schedule_runs, parse_graph_datetime=parse_graph_datetime, parse_int=parse_int, parse_json_value=parse_json_value, queue_sync=queue_sync, read_events=read_events, recording_matches_occurrence=recording_matches_occurrence, remember_teams_dial_in=remember_teams_dial_in, remove_artifact_from_wrong_occurrences=remove_artifact_from_wrong_occurrences, resolve_directory_accounts=resolve_directory_accounts, run_not_delivery=run_not_delivery, run_replaces_stored=run_replaces_stored, schema_gate=schema_gate, stamp_live_session_instants=stamp_live_session_instants, stored_leftover_slots=stored_leftover_slots, stored_run_is_delivery=stored_run_is_delivery, sync_verified_teams_attendance_reporting=sync_verified_teams_attendance_reporting, teams_online_meeting_from_join_url=teams_online_meeting_from_join_url, teams_schedule_settings=teams_schedule_settings, teams_series_email_list=teams_series_email_list, transaction=transaction, update_authoring_rows=update_authoring_rows, upsert_live_session_artifact=upsert_live_session_artifact, urllib_parse=urllib_parse, uuid=uuid, teams_module_session_limit=teams_module_session_limit)"
+          ],
+          "historical": [
+            "    return implementation(request, live_session_id, JsonResponse=JsonResponse, LIVE_SESSIONS_TABLE=LIVE_SESSIONS_TABLE, LIVE_SESSION_ARTIFACTS_TABLE=LIVE_SESSION_ARTIFACTS_TABLE, LIVE_SESSION_ATTENDANCE_TABLE=LIVE_SESSION_ATTENDANCE_TABLE, LIVE_SESSION_JOIN_LAUNCHES_TABLE=LIVE_SESSION_JOIN_LAUNCHES_TABLE, LIVE_SESSION_OCCURRENCES_TABLE=LIVE_SESSION_OCCURRENCES_TABLE, apply_teams_meeting_options=apply_teams_meeting_options, attendance_display_name=attendance_display_name, attendance_identity=attendance_identity, attendance_interval_seconds=attendance_interval_seconds, attendance_report_rosters=attendance_report_rosters, authoring_delete=authoring_delete, authoring_fetch_all=authoring_fetch_all, authoring_upsert=authoring_upsert, clean_str=clean_str, collection=collection, completion_to_reopen=completion_to_reopen, datetime=datetime, defaultdict=defaultdict, get_graph_settings=get_graph_settings, graph_item_with_occurrence_link=graph_item_with_occurrence_link, graph_timezone_iana=graph_timezone_iana, has_graph_credentials=has_graph_credentials, json_db_value=json_db_value, json_error=json_error, keep_directory_lookup=keep_directory_lookup, launch_linked_live_occurrence=launch_linked_live_occurrence, live_session_join_launches=live_session_join_launches, live_session_meeting_groups=live_session_meeting_groups, logger=logger, merge_attendance_intervals=merge_attendance_intervals, microsoft_graph_request=microsoft_graph_request, note_completion=note_completion, note_premature_run=note_premature_run, note_reopened_by_sync=note_reopened_by_sync, off_schedule_runs=off_schedule_runs, parse_graph_datetime=parse_graph_datetime, parse_int=parse_int, parse_json_value=parse_json_value, queue_sync=queue_sync, read_events=read_events, recording_matches_occurrence=recording_matches_occurrence, remember_teams_dial_in=remember_teams_dial_in, remove_artifact_from_wrong_occurrences=remove_artifact_from_wrong_occurrences, resolve_directory_accounts=resolve_directory_accounts, run_not_delivery=run_not_delivery, run_replaces_stored=run_replaces_stored, schema_gate=schema_gate, stamp_live_session_instants=stamp_live_session_instants, stored_leftover_slots=stored_leftover_slots, stored_run_is_delivery=stored_run_is_delivery, sync_verified_teams_attendance_reporting=sync_verified_teams_attendance_reporting, teams_online_meeting_from_join_url=teams_online_meeting_from_join_url, teams_schedule_settings=teams_schedule_settings, teams_series_email_list=teams_series_email_list, transaction=transaction, update_authoring_rows=update_authoring_rows, upsert_live_session_artifact=upsert_live_session_artifact, urllib_parse=urllib_parse, uuid=uuid)"
+          ]
+        }
+      ]
+    },
+    "curriculum_api/meetings/api/meeting_command_composition.py": {
+      "historical_ast_sha256": "c9d6e6989adc3e323f2bd80896d511fbb95feb485e56f0594ba1a124fc48d384",
+      "approved_ast_sha256": "5a3fcf501a88621d6b861388cfec328542afab9550a67c0267b77c13128df9f9",
+      "approved_git_blob": "112332bcf0aea58f7736a7cb2b6358ef6af9eefb",
+      "changed_symbols": [
+        "curriculum_teams_meeting",
+        "curriculum_teams_meeting_schedule"
+      ],
+      "edits": [
+        {
+          "start": 82,
+          "approved": [
+            "from curriculum_api.study_week_teams import prune_study_week_fillers",
+            "from curriculum_api.meetings.infrastructure.invitation_runtime import teams_module_session_limit"
+          ],
+          "historical": []
+        },
+        {
+          "start": 94,
+          "approved": [
+            "    return implementation(request, EVENT_SAVE=EVENT_SAVE, JsonResponse=JsonResponse, LIVE_SESSIONS_TABLE=LIVE_SESSIONS_TABLE, LIVE_SESSION_OCCURRENCES_TABLE=LIVE_SESSION_OCCURRENCES_TABLE, TEAMS_LOBBY_VALUES=TEAMS_LOBBY_VALUES, apply_teams_meeting_options=apply_teams_meeting_options, apply_teams_occurrence_shifts=apply_teams_occurrence_shifts, attach_teams_meeting_to_module_weeks=attach_teams_meeting_to_module_weeks, authoring_fetch_all=authoring_fetch_all, authoring_module_exists=authoring_module_exists, calendar_groups=calendar_groups, calendar_targets=calendar_targets, clean_str=clean_str, datetime=datetime, ensure_live_sessions_table=ensure_live_sessions_table, external_teams_calendar_refusal=external_teams_calendar_refusal, flag_teams_occurrence_leftovers=flag_teams_occurrence_leftovers, get_graph_settings=get_graph_settings, graph_timezone_iana=graph_timezone_iana, has_column=has_column, has_graph_credentials=has_graph_credentials, json_body=json_body, json_db_value=json_db_value, json_error=json_error, live_session_row_to_component_settings=live_session_row_to_component_settings, logger=logger, microsoft_graph_request=microsoft_graph_request, module_has_external_teams_calendar=module_has_external_teams_calendar, persist_live_session_series=persist_live_session_series, persist_recreated_occurrence_details=persist_recreated_occurrence_details, publish_teams_calendar_attendees=publish_teams_calendar_attendees, record_graph_failure=record_graph_failure, record_reconcile=record_reconcile, remember_teams_dial_in=remember_teams_dial_in, replace_live_session_occurrences=replace_live_session_occurrences, resolve_stored_module_catalogue_id=resolve_stored_module_catalogue_id, save_weekday_calendar=save_weekday_calendar, saved_live_session_occurrences=saved_live_session_occurrences, teams_calendar_subject=teams_calendar_subject, teams_event_payload=teams_event_payload, teams_meeting_default_organizer=teams_meeting_default_organizer, teams_module_owner_id=globals().get('teams_module_owner_id'), teams_new_meeting_organizer=teams_new_meeting_organizer, teams_non_delivery_reason=teams_non_delivery_reason, teams_schedule_settings=teams_schedule_settings, teams_shifted_occurrence_targets=teams_shifted_occurrence_targets, update_authoring_rows=update_authoring_rows, urllib_parse=urllib_parse, verify_teams_calendar_with_standalones=verify_teams_calendar_with_standalones, without_missing=without_missing, prune_study_week_fillers=prune_study_week_fillers, teams_module_session_limit=teams_module_session_limit)"
+          ],
+          "historical": [
+            "    return implementation(request, EVENT_SAVE=EVENT_SAVE, JsonResponse=JsonResponse, LIVE_SESSIONS_TABLE=LIVE_SESSIONS_TABLE, LIVE_SESSION_OCCURRENCES_TABLE=LIVE_SESSION_OCCURRENCES_TABLE, TEAMS_LOBBY_VALUES=TEAMS_LOBBY_VALUES, apply_teams_meeting_options=apply_teams_meeting_options, apply_teams_occurrence_shifts=apply_teams_occurrence_shifts, attach_teams_meeting_to_module_weeks=attach_teams_meeting_to_module_weeks, authoring_fetch_all=authoring_fetch_all, authoring_module_exists=authoring_module_exists, calendar_groups=calendar_groups, calendar_targets=calendar_targets, clean_str=clean_str, datetime=datetime, ensure_live_sessions_table=ensure_live_sessions_table, external_teams_calendar_refusal=external_teams_calendar_refusal, flag_teams_occurrence_leftovers=flag_teams_occurrence_leftovers, get_graph_settings=get_graph_settings, graph_timezone_iana=graph_timezone_iana, has_column=has_column, has_graph_credentials=has_graph_credentials, json_body=json_body, json_db_value=json_db_value, json_error=json_error, live_session_row_to_component_settings=live_session_row_to_component_settings, logger=logger, microsoft_graph_request=microsoft_graph_request, module_has_external_teams_calendar=module_has_external_teams_calendar, persist_live_session_series=persist_live_session_series, persist_recreated_occurrence_details=persist_recreated_occurrence_details, publish_teams_calendar_attendees=publish_teams_calendar_attendees, record_graph_failure=record_graph_failure, record_reconcile=record_reconcile, remember_teams_dial_in=remember_teams_dial_in, replace_live_session_occurrences=replace_live_session_occurrences, resolve_stored_module_catalogue_id=resolve_stored_module_catalogue_id, save_weekday_calendar=save_weekday_calendar, saved_live_session_occurrences=saved_live_session_occurrences, teams_calendar_subject=teams_calendar_subject, teams_event_payload=teams_event_payload, teams_meeting_default_organizer=teams_meeting_default_organizer, teams_module_owner_id=globals().get('teams_module_owner_id'), teams_new_meeting_organizer=teams_new_meeting_organizer, teams_non_delivery_reason=teams_non_delivery_reason, teams_schedule_settings=teams_schedule_settings, teams_shifted_occurrence_targets=teams_shifted_occurrence_targets, update_authoring_rows=update_authoring_rows, urllib_parse=urllib_parse, verify_teams_calendar_with_standalones=verify_teams_calendar_with_standalones, without_missing=without_missing)"
+          ]
+        },
+        {
+          "start": 131,
+          "approved": [
+            "    return implementation(request, live_session_id, ALL_OPTION_GROUPS=ALL_OPTION_GROUPS, AUTHORING_COMPONENTS_TABLE=AUTHORING_COMPONENTS_TABLE, CalendarMismatch=CalendarMismatch, EVENT_SAVE=EVENT_SAVE, GRAPH_SILENT_INVITE_HEADERS=GRAPH_SILENT_INVITE_HEADERS, JsonResponse=JsonResponse, LIVE_SESSIONS_TABLE=LIVE_SESSIONS_TABLE, LIVE_SESSION_OCCURRENCES_TABLE=LIVE_SESSION_OCCURRENCES_TABLE, TEAMS_LOBBY_VALUES=TEAMS_LOBBY_VALUES, TEAMS_REPEAT_VALUES=TEAMS_REPEAT_VALUES, active_component_rows=active_component_rows, apply_teams_meeting_options=apply_teams_meeting_options, apply_teams_occurrence_shifts=apply_teams_occurrence_shifts, attach_teams_meeting_to_module_weeks=attach_teams_meeting_to_module_weeks, authoring_fetch_all=authoring_fetch_all, calendar_authorized=calendar_authorized, calendar_groups=calendar_groups, calendar_occurrence_details=calendar_occurrence_details, calendar_targets=calendar_targets, claim_announcement=claim_announcement, clean_str=clean_str, component_builder_settings=component_builder_settings, datetime=datetime, dropped_sessions_sentence=dropped_sessions_sentence, ensure_live_session_tracking_tables=ensure_live_session_tracking_tables, finish_announcement=finish_announcement, flag_teams_occurrence_leftovers=flag_teams_occurrence_leftovers, forward_teams_invitation=forward_teams_invitation, frontend_component_type=frontend_component_type, get_graph_settings=get_graph_settings, graph_calendar_time=graph_calendar_time, graph_failure_outcome=graph_failure_outcome, graph_timezone_iana=graph_timezone_iana, has_column=has_column, has_graph_credentials=has_graph_credentials, held_schedule_snapshot=held_schedule_snapshot, json_body=json_body, json_db_value=json_db_value, json_error=json_error, json_list=json_list, known_missing_numbers=known_missing_numbers, live_session_row_to_component_settings=live_session_row_to_component_settings, local_calendar_recurrence=local_calendar_recurrence, logger=logger, logical_change_id=logical_change_id, microsoft_graph_request=microsoft_graph_request, module_has_external_teams_calendar=module_has_external_teams_calendar, option_groups_to_apply=option_groups_to_apply, original_calendar_request=original_calendar_request, pending_option_groups=pending_option_groups, pending_warning=pending_warning, persist_recreated_occurrence_details=persist_recreated_occurrence_details, presenter_co_organizers=presenter_co_organizers, publish_teams_calendar_attendees=publish_teams_calendar_attendees, record_graph_failure=record_graph_failure, record_reconcile=record_reconcile, refresh_standalone_occurrence_options=refresh_standalone_occurrence_options, remaining_pending=remaining_pending, replace_live_session_occurrences=replace_live_session_occurrences, reported_failure=reported_failure, roles_changed=roles_changed, same_schedule=same_schedule, save_weekday_calendar=save_weekday_calendar, saved_live_session_occurrences=saved_live_session_occurrences, saved_meeting_options=saved_meeting_options, schedule_request=curriculum_teams_meeting_schedule, sessions_a_rewrite_would_drop=sessions_a_rewrite_would_drop, stored_calendar_series=stored_calendar_series, targets_snapshot=targets_snapshot, teams_attendee_emails=teams_attendee_emails, teams_calendar_subject=teams_calendar_subject, teams_meeting_default_organizer=teams_meeting_default_organizer, teams_newly_invited=teams_newly_invited, teams_non_delivery_reason=teams_non_delivery_reason, teams_schedule_settings=teams_schedule_settings, teams_series_email_list=teams_series_email_list, teams_shifted_occurrence_targets=teams_shifted_occurrence_targets, teams_warning_sentence=teams_warning_sentence, unresolved_saved_bindings=unresolved_saved_bindings, update_authoring_rows=update_authoring_rows, urllib_parse=urllib_parse, verify_teams_calendar_with_standalones=verify_teams_calendar_with_standalones, with_schedule_change_notice=with_schedule_change_notice, without_missing=without_missing, prune_study_week_fillers=prune_study_week_fillers, teams_module_session_limit=teams_module_session_limit)"
+          ],
+          "historical": [
+            "    return implementation(request, live_session_id, ALL_OPTION_GROUPS=ALL_OPTION_GROUPS, AUTHORING_COMPONENTS_TABLE=AUTHORING_COMPONENTS_TABLE, CalendarMismatch=CalendarMismatch, EVENT_SAVE=EVENT_SAVE, GRAPH_SILENT_INVITE_HEADERS=GRAPH_SILENT_INVITE_HEADERS, JsonResponse=JsonResponse, LIVE_SESSIONS_TABLE=LIVE_SESSIONS_TABLE, LIVE_SESSION_OCCURRENCES_TABLE=LIVE_SESSION_OCCURRENCES_TABLE, TEAMS_LOBBY_VALUES=TEAMS_LOBBY_VALUES, TEAMS_REPEAT_VALUES=TEAMS_REPEAT_VALUES, active_component_rows=active_component_rows, apply_teams_meeting_options=apply_teams_meeting_options, apply_teams_occurrence_shifts=apply_teams_occurrence_shifts, attach_teams_meeting_to_module_weeks=attach_teams_meeting_to_module_weeks, authoring_fetch_all=authoring_fetch_all, calendar_authorized=calendar_authorized, calendar_groups=calendar_groups, calendar_occurrence_details=calendar_occurrence_details, calendar_targets=calendar_targets, claim_announcement=claim_announcement, clean_str=clean_str, component_builder_settings=component_builder_settings, datetime=datetime, dropped_sessions_sentence=dropped_sessions_sentence, ensure_live_session_tracking_tables=ensure_live_session_tracking_tables, finish_announcement=finish_announcement, flag_teams_occurrence_leftovers=flag_teams_occurrence_leftovers, forward_teams_invitation=forward_teams_invitation, frontend_component_type=frontend_component_type, get_graph_settings=get_graph_settings, graph_calendar_time=graph_calendar_time, graph_failure_outcome=graph_failure_outcome, graph_timezone_iana=graph_timezone_iana, has_column=has_column, has_graph_credentials=has_graph_credentials, held_schedule_snapshot=held_schedule_snapshot, json_body=json_body, json_db_value=json_db_value, json_error=json_error, json_list=json_list, known_missing_numbers=known_missing_numbers, live_session_row_to_component_settings=live_session_row_to_component_settings, local_calendar_recurrence=local_calendar_recurrence, logger=logger, logical_change_id=logical_change_id, microsoft_graph_request=microsoft_graph_request, module_has_external_teams_calendar=module_has_external_teams_calendar, option_groups_to_apply=option_groups_to_apply, original_calendar_request=original_calendar_request, pending_option_groups=pending_option_groups, pending_warning=pending_warning, persist_recreated_occurrence_details=persist_recreated_occurrence_details, presenter_co_organizers=presenter_co_organizers, publish_teams_calendar_attendees=publish_teams_calendar_attendees, record_graph_failure=record_graph_failure, record_reconcile=record_reconcile, refresh_standalone_occurrence_options=refresh_standalone_occurrence_options, remaining_pending=remaining_pending, replace_live_session_occurrences=replace_live_session_occurrences, reported_failure=reported_failure, roles_changed=roles_changed, same_schedule=same_schedule, save_weekday_calendar=save_weekday_calendar, saved_live_session_occurrences=saved_live_session_occurrences, saved_meeting_options=saved_meeting_options, schedule_request=curriculum_teams_meeting_schedule, sessions_a_rewrite_would_drop=sessions_a_rewrite_would_drop, stored_calendar_series=stored_calendar_series, targets_snapshot=targets_snapshot, teams_attendee_emails=teams_attendee_emails, teams_calendar_subject=teams_calendar_subject, teams_meeting_default_organizer=teams_meeting_default_organizer, teams_newly_invited=teams_newly_invited, teams_non_delivery_reason=teams_non_delivery_reason, teams_schedule_settings=teams_schedule_settings, teams_series_email_list=teams_series_email_list, teams_shifted_occurrence_targets=teams_shifted_occurrence_targets, teams_warning_sentence=teams_warning_sentence, unresolved_saved_bindings=unresolved_saved_bindings, update_authoring_rows=update_authoring_rows, urllib_parse=urllib_parse, verify_teams_calendar_with_standalones=verify_teams_calendar_with_standalones, with_schedule_change_notice=with_schedule_change_notice, without_missing=without_missing)"
+          ]
+        }
+      ]
+    },
+    "curriculum_api/meetings/api/meeting_option_composition.py": {
+      "historical_ast_sha256": "7c082c9348b0c98b35f98b73b65db6451fe601791e4558f8a125b736421afa9e",
+      "approved_ast_sha256": "d4c83b875b95f65889d4a41097f7ad8f6213447406c483810380f4f43ef1b4b7",
+      "approved_git_blob": "92cd47ea13afd6e851962d1414351bf9e1739a2b",
+      "changed_symbols": [
+        "teams_expanded_instances",
+        "apply_teams_occurrence_shifts"
+      ],
+      "edits": [
+        {
+          "start": 24,
+          "approved": [
+            "from curriculum_api.teams_calendar_checks import read_calendar_instances"
+          ],
+          "historical": []
+        },
+        {
+          "start": 44,
+          "approved": [
+            "    return implementation(owner_key, event_key, instance_query, expected, deadline_seconds, clean_str=clean_str, graph_event_utc=graph_event_utc, load_microsoft_graph_request=load_microsoft_graph_request, time=time, read_calendar_instances=read_calendar_instances)"
+          ],
+          "historical": [
+            "    return implementation(owner_key, event_key, instance_query, expected, deadline_seconds, clean_str=clean_str, graph_event_utc=graph_event_utc, load_microsoft_graph_request=load_microsoft_graph_request, time=time)"
+          ]
+        },
+        {
+          "start": 50,
+          "approved": [
+            "    return implementation(owner_key, event_key, title, target_occurrences, invited_people, meeting_options, existing_occurrences, missing, GRAPH_SILENT_INVITE_HEADERS=GRAPH_SILENT_INVITE_HEADERS, clean_str=clean_str, datetime=datetime, graph_event_utc=graph_event_utc, logger=logger, microsoft_graph_request=microsoft_graph_request, parse_graph_datetime=parse_graph_datetime, teams_calendar_minute_key=teams_calendar_minute_key, teams_expanded_instances=teams_expanded_instances, teams_standalone_occurrence_meeting=teams_standalone_occurrence_meeting, timedelta=timedelta, tracked_occurrence_keys=tracked_occurrence_keys, urllib_parse=urllib_parse, vacated_occurrence_keys=vacated_occurrence_keys, read_calendar_instances=read_calendar_instances)"
+          ],
+          "historical": [
+            "    return implementation(owner_key, event_key, title, target_occurrences, invited_people, meeting_options, existing_occurrences, missing, GRAPH_SILENT_INVITE_HEADERS=GRAPH_SILENT_INVITE_HEADERS, clean_str=clean_str, datetime=datetime, graph_event_utc=graph_event_utc, logger=logger, microsoft_graph_request=microsoft_graph_request, parse_graph_datetime=parse_graph_datetime, teams_calendar_minute_key=teams_calendar_minute_key, teams_expanded_instances=teams_expanded_instances, teams_standalone_occurrence_meeting=teams_standalone_occurrence_meeting, timedelta=timedelta, tracked_occurrence_keys=tracked_occurrence_keys, urllib_parse=urllib_parse, vacated_occurrence_keys=vacated_occurrence_keys)"
+          ]
+        }
+      ]
+    },
+    "curriculum_api/views.py": {
+      "historical_ast_sha256": "f245b2864482bab863555f4e2334e6e3eafa3b03a7e04a39c5fcb66d7b31f861",
+      "approved_ast_sha256": "fc44dae68ab7600395dc88b2368d66f90c07f3271b5f771c980042db76d6ad52",
+      "approved_git_blob": "61fbbc6c9690065205aff2b3079655a0fe17bebb",
+      "changed_symbols": [],
+      "edits": [
+        {
+          "start": 262,
+          "approved": [
+            "from curriculum_api.weekly_schedule import module_week_boundary_mode, merged_week_boundary_mode",
+            "from curriculum_api.teams_calendar_checks import read_calendar_instances",
+            "from curriculum_api.study_week_teams import prune_study_week_fillers",
+            "from curriculum_api.meetings.infrastructure.invitation_runtime import teams_module_session_limit"
+          ],
+          "historical": []
+        }
+      ]
+    },
+    "curriculum_api/module_progress_metrics.py": {
+      "historical_ast_sha256": "18788590ac8fa5337fb8dcbcf65d6528865eb49511aa53dabac2982e930264b4",
+      "approved_ast_sha256": "8cf011e842ef76d5cb051933f8127479662ef9dfd488b966a136b4cbee1cff54",
+      "approved_git_blob": "34ba31e478ca2b7dadef850ae371715e6b6f5f11",
+      "changed_symbols": [
+        "completion_records"
+      ],
+      "edits": [
+        {
+          "start": 22,
+          "approved": [
+            "    identities = {(int(owner['id']), str(owner.get('learner_type') or '')) for row in native_assignments if (owner := owners.get(str(row['learner_id']), {})).get('id') is not None}"
+          ],
+          "historical": [
+            "    identities = {(str(owner['enrolment_id']), str(owner.get('learner_type') or '')) for row in native_assignments if (owner := owners.get(str(row['learner_id']), {})).get('enrolment_id') is not None}"
+          ]
+        },
+        {
+          "start": 31,
+          "approved": [
+            "            markings[int(row['learner_id']), str(row.get('learner_kind') or ''), str(row.get('component_ref') or '')] = row"
+          ],
+          "historical": [
+            "            markings[str(row['learner_id']), str(row.get('learner_kind') or ''), str(row.get('component_ref') or '')] = row"
+          ]
+        },
+        {
+          "start": 40,
+          "approved": [
+            "        if owner.get('id') is None:",
+            "            result.append(row)",
+            "            continue",
+            "        identity = (int(owner['id']), str(owner.get('learner_type') or ''))"
+          ],
+          "historical": [
+            "        identity = (str(owner.get('enrolment_id')), str(owner.get('learner_type') or ''))"
+          ]
+        }
+      ]
+    },
+    "learner_api/free_courses_view.py": {
+      "historical_ast_sha256": "3d010222273d0660a67c94e6df2b2b268ecd15d004a6913fa291ea78e30f1494",
+      "approved_ast_sha256": "b0529d3c7573be723540f7974fc5a5ad9e9c23e1be40ebca7376ffe8aa1dae80",
+      "approved_git_blob": "e5b92acc41aa7dcb0d426068ceb497f68dd30beb",
+      "changed_symbols": [
+        "submit_free_course_quiz",
+        "_activity",
+        "complete_free_course_activity",
+        "free_courses",
+        "_course_detail",
+        "_record_completion",
+        "free_course_quiz",
+        "_completed_refs",
+        "free_course_detail"
+      ],
+      "edits": [
+        {
+          "start": 0,
+          "approved": [
+            "\"\"\"Owned canonical Free Course catalogue, activity state and quiz completion."
+          ],
+          "historical": [
+            "\"\"\"Learner-scoped read of legacy and Module Builder free-course assignments."
+          ]
+        },
+        {
+          "start": 2,
+          "approved": [
+            "Assignments and progress belong to Learner.learners, independently of normal",
+            "programme progress, hours and KSBs. The learner/session URL is resolved to that",
+            "canonical identity server-side; legacy memberships and enrolment JSON never",
+            "provide Free Course entitlement. Staff preview remains read-only."
+          ],
+          "historical": [
+            "Free courses are authored in the canonical curriculum tables and assigned to a",
+            "canonical ``Learner.learners`` identity through ``Learner.learner_free_courses``.",
+            "The legacy ``enrolment.Created_users.Free_courses`` JSON is not an entitlement",
+            "source.",
+            "",
+            "Module Builder courses are assigned through the normal training plan. Their",
+            "cards link to the normal module workspace so hours and progress retain the",
+            "same rules as other modules. Only legacy assignments use the week/activity tree",
+            "below. Completion is stored separately from Programme progress, hours and KSBs.",
+            "",
+            "Identity is resolved SERVER-SIDE and never trusted from the client (same gate as",
+            "``learner_detail``/``training_plan``): the caller supplies only the",
+            "ownership-gated learner record id. The curriculum catalogue is staff-gated, so a",
+            "learner session cannot fetch it directly — the enrichment therefore happens",
+            "here, in-process, and only the learner's *assigned* courses are ever returned."
+          ]
+        },
+        {
+          "start": 15,
+          "approved": [
+            "from login import permissions"
+          ],
+          "historical": []
+        },
+        {
+          "start": 27,
+          "approved": [
+            "from .free_course_progress import ACTIVITY_STATES, save_activity_state, save_completion",
+            "from .free_course_hours import accepted_activity_seconds",
+            "from . import free_course_attempts"
+          ],
+          "historical": []
+        },
+        {
+          "start": 60,
+          "approved": [
+            "    Only explicitly completed, active, non-deleted rows count; archives remain history."
+          ],
+          "historical": [
+            "    Only active rows are completions; an inactive (withdrawn) row is history."
+          ]
+        },
+        {
+          "start": 64,
+          "approved": [
+            "    return set(LearnerFreeCourseProgress.objects.filter(learner_id=learner_id, free_course_ref__in=course_ids, status=FREE_PROGRESS_ACTIVE, deleted_at__isnull=True, is_completed=True).values_list('free_course_ref', 'component_ref'))"
+          ],
+          "historical": [
+            "    return set(LearnerFreeCourseProgress.objects.filter(learner_id=learner_id, free_course_ref__in=course_ids, status=FREE_PROGRESS_ACTIVE).values_list('free_course_ref', 'component_ref'))"
+          ]
+        },
+        {
+          "start": 68,
+          "approved": [
+            "    \"\"\"Use the same monotonic, archive-safe writer for quizzes and materials.\"\"\"",
+            "    return save_completion(learner_id, component_id, free_course_ref, timezone.now())"
+          ],
+          "historical": [
+            "    \"\"\"Record one completion; False when a withdrawn (inactive) row already exists."
+          ]
+        },
+        {
+          "start": 71,
+          "approved": [
+            "def _activity_states(learner_id, course_ids):",
+            "    return {(course, component): state for course, component, state in LearnerFreeCourseProgress.objects.filter(learner_id=learner_id, free_course_ref__in=course_ids, status=FREE_PROGRESS_ACTIVE, deleted_at__isnull=True).values_list('free_course_ref', 'component_ref', 'activity_state')}"
+          ],
+          "historical": [
+            "    Keyed on (learner, component_ref), so a repeat never adds a second row. An",
+            "    existing row is returned untouched: an active one stays as it is, and an",
+            "    inactive one is never reactivated.",
+            "    \"\"\"",
+            "    row, created = LearnerFreeCourseProgress.objects.get_or_create(learner_id=learner_id, component_ref=component_id, defaults={'free_course_ref': free_course_ref, 'completed_at': timezone.now(), 'status': FREE_PROGRESS_ACTIVE})",
+            "    return created or row.status == FREE_PROGRESS_ACTIVE"
+          ]
+        },
+        {
+          "start": 81,
+          "approved": [
+            "    with curriculum allocation for Required guidance, but no awarded OTJ/KSBs."
+          ],
+          "historical": [
+            "    with no hours/KSB/progress fields attached."
+          ]
+        },
+        {
+          "start": 90,
+          "approved": [
+            "    return {'componentId': _s(component.get('id')), 'title': _s(component.get('title')), 'type': ctype, 'expectedOtjh': component.get('expectedOtjh'), 'description': _s(component.get('description')) or None, 'videoUrl': _video_url_from_settings(settings), 'audioUrl': component_audio_url(settings, ctype), 'resourceUrl': resource_url, 'contentHtml': _s(settings.get('readingContent')) or None, 'fileName': file_name, 'files': _component_files(settings, resource_url, file_name), 'downloadAllowed': bool(settings.get('downloadAllowed')), 'quizId': _s(settings.get('linkedQuizId')) or None if is_quiz else None, 'manualUnlock': bool(settings.get('manualUnlock')) if is_quiz else False}"
+          ],
+          "historical": [
+            "    return {'componentId': _s(component.get('id')), 'title': _s(component.get('title')), 'type': ctype, 'description': _s(component.get('description')) or None, 'videoUrl': _video_url_from_settings(settings), 'audioUrl': component_audio_url(settings, ctype), 'resourceUrl': resource_url, 'contentHtml': _s(settings.get('readingContent')) or None, 'fileName': file_name, 'files': _component_files(settings, resource_url, file_name), 'downloadAllowed': bool(settings.get('downloadAllowed')), 'quizId': _s(settings.get('linkedQuizId')) or None if is_quiz else None, 'manualUnlock': bool(settings.get('manualUnlock')) if is_quiz else False}"
+          ]
+        },
+        {
+          "start": 102,
+          "approved": [
+            "",
+            "def _is_withdrawn(source):",
+            "    return any((str(getattr(source, field, '') or '').strip().casefold() == 'withdrawn' for field in ('lifecycle_status', 'programme_status')))",
+            "",
+            "def _withdrawn_access(request, source):",
+            "    if not _is_withdrawn(source):",
+            "        return None",
+            "    account = permissions.authenticate_request(request)",
+            "    if request.method == 'GET' and getattr(account, 'role', None) in {'staff', 'admin'}:",
+            "        return None",
+            "    return _error('Free Course access is unavailable while your learner status is withdrawn.', 403)"
+          ],
+          "historical": []
+        },
+        {
+          "start": 137,
+          "approved": [
+            "def _course_detail(course_id, course_row, week_rows, component_rows, completed_refs, activity_states=None, accepted_seconds=None, activity_times=None):"
+          ],
+          "historical": [
+            "def _course_detail(course_id, course_row, week_rows, component_rows, completed_refs):"
+          ]
+        },
+        {
+          "start": 142,
+          "approved": [
+            "        key = (course_id, activity['componentId'])",
+            "        activity['completed'] = key in completed_refs",
+            "        activity['is_completed'] = activity['completed']",
+            "        activity['activity_state'] = 'completed' if activity['completed'] else (activity_states or {}).get(key, 'not_started')",
+            "        if key in (activity_times or {}):",
+            "            activity['lastActivityAt'] = activity_times[key]",
+            "        if key in (accepted_seconds or {}):",
+            "            activity['acceptedActualSeconds'] = accepted_seconds[key]"
+          ],
+          "historical": [
+            "        activity['completed'] = (course_id, activity['componentId']) in completed_refs"
+          ]
+        },
+        {
+          "start": 158,
+          "approved": [
+            "    return {'freeCourseId': course_id, 'courseName': clean_str(course_row.get('course_name')), 'description': clean_str(course_row.get('description')), 'coverImageUrl': clean_str(course_row.get('cover_image_url')), 'weeks': weeks, **({'acceptedActualSeconds': sum((activity.get('acceptedActualSeconds', 0) for week in weeks for activity in week['activities']))} if accepted_seconds else {})}"
+          ],
+          "historical": [
+            "    return {'freeCourseId': course_id, 'courseName': clean_str(course_row.get('course_name')), 'description': clean_str(course_row.get('description')), 'coverImageUrl': clean_str(course_row.get('cover_image_url')), 'weeks': weeks}"
+          ]
+        },
+        {
+          "start": 172,
+          "approved": [
+            "    access_error = _withdrawn_access(request, source)",
+            "    if access_error is not None:",
+            "        return access_error"
+          ],
+          "historical": []
+        },
+        {
+          "start": 189,
+          "approved": [
+            "        accepted_seconds = accepted_activity_seconds(source.pk, assigned_ids)",
+            "        saved_times = free_course_attempts.activity_times(source.pk, assigned_ids)"
+          ],
+          "historical": []
+        },
+        {
+          "start": 194,
+          "approved": [
+            "    course_times = {}",
+            "    for (course_id, _component), at in saved_times.items():",
+            "        course_times[course_id] = max(at, course_times.get(course_id, at))"
+          ],
+          "historical": []
+        },
+        {
+          "start": 199,
+          "approved": [
+            "    accepted_totals = {}"
+          ],
+          "historical": []
+        },
+        {
+          "start": 208,
+          "approved": [
+            "        if (course_id, component_id) in accepted_seconds:",
+            "            accepted_totals[course_id] = accepted_totals.get(course_id, 0) + accepted_seconds[course_id, component_id]"
+          ],
+          "historical": []
+        },
+        {
+          "start": 222,
+          "approved": [
+            "        result.append({'freeCourseId': course_id, 'courseName': clean_str(course.get('course_name')), 'description': clean_str(course.get('description')), 'coverImageUrl': clean_str(course.get('cover_image_url')), 'weekCount': week_totals.get(course_id, 0), 'activityCount': activity_count, 'completedActivities': completed_count, 'progressPercentage': round(completed_count / activity_count * 100) if activity_count else 0, **({'lastActivityAt': course_times[course_id]} if course_id in course_times else {}), **({'acceptedActualSeconds': accepted_totals[course_id]} if course_id in accepted_totals else {})})"
+          ],
+          "historical": [
+            "        result.append({'freeCourseId': course_id, 'courseName': clean_str(course.get('course_name')), 'description': clean_str(course.get('description')), 'coverImageUrl': clean_str(course.get('cover_image_url')), 'weekCount': week_totals.get(course_id, 0), 'activityCount': activity_count, 'completedActivities': completed_count, 'progressPercentage': round(completed_count / activity_count * 100) if activity_count else 0})"
+          ]
+        },
+        {
+          "start": 234,
+          "approved": [
+            "    access_error = _withdrawn_access(request, source)",
+            "    if access_error is not None:",
+            "        return access_error"
+          ],
+          "historical": []
+        },
+        {
+          "start": 253,
+          "approved": [
+            "        activity_states = _activity_states(source.pk, [course_id])",
+            "        accepted_seconds = accepted_activity_seconds(source.pk, [course_id])",
+            "        saved_times = free_course_attempts.activity_times(source.pk, [course_id])"
+          ],
+          "historical": []
+        },
+        {
+          "start": 258,
+          "approved": [
+            "    response = JsonResponse({'freeCourse': _course_detail(course_id, course, week_rows, component_rows, completed_refs, activity_states, accepted_seconds, saved_times)})"
+          ],
+          "historical": [
+            "    response = JsonResponse({'freeCourse': _course_detail(course_id, course, week_rows, component_rows, completed_refs)})"
+          ]
+        },
+        {
+          "start": 275,
+          "approved": [
+            "    access_error = _withdrawn_access(request, source)",
+            "    if access_error is not None:",
+            "        return access_error"
+          ],
+          "historical": []
+        },
+        {
+          "start": 285,
+          "approved": [
+            "    activity_state = payload.get('activityState', 'completed')",
+            "    if not isinstance(activity_state, str) or activity_state not in ACTIVITY_STATES:",
+            "        return _error('Invalid activityState.', 400)"
+          ],
+          "historical": []
+        },
+        {
+          "start": 305,
+          "approved": [
+            "            if activity_state == 'reading_viewed' and clean_str(row.get('type')).lower() != 'reading':",
+            "                return _error('Only reading activities can be marked viewed.', 400)"
+          ],
+          "historical": []
+        },
+        {
+          "start": 313,
+          "approved": [
+            "        with free_course_attempts.active_learner_write(source.pk):",
+            "            recorded = _record_completion(source.pk, component_id, free_course_ref) if activity_state == 'completed' else save_activity_state(source.pk, component_id, free_course_ref, activity_state)",
+            "            completed = recorded and (activity_state == 'completed' or (free_course_ref, component_id) in _completed_refs(source.pk, [free_course_ref]))",
+            "    except LookupError:",
+            "        return _error('Free Course access is unavailable while your learner status is withdrawn.', 403)"
+          ],
+          "historical": [
+            "        recorded = _record_completion(source.pk, component_id, free_course_ref)"
+          ]
+        },
+        {
+          "start": 322,
+          "approved": [
+            "    response = JsonResponse({'componentId': component_id, 'completed': completed})"
+          ],
+          "historical": [
+            "    response = JsonResponse({'componentId': component_id, 'completed': True})"
+          ]
+        },
+        {
+          "start": 377,
+          "approved": [
+            "    access_error = _withdrawn_access(request, source)",
+            "    if access_error is not None:",
+            "        return access_error",
+            "    if _is_withdrawn(source):",
+            "        try:",
+            "            assigned = assigned_course_ids(source)",
+            "            _, _, components = _scoped_rows(assigned)",
+            "            component = next((row for row in components if clean_str(row.get('id')) == component_id and 'quiz' in clean_str(row.get('type')).lower()), None)",
+            "            if component is None:",
+            "                return _error('Activity not found.', 404)",
+            "            attempts = free_course_attempts.history(source.pk, component_id)",
+            "        except DatabaseError:",
+            "            return _error('Could not read historical quiz results.', 503)",
+            "        response = JsonResponse({'id': 0, 'title': clean_str(component.get('title')), 'questions': [], 'passingGrade': 0, 'attempts': attempts, 'historyOnly': True})",
+            "        response['Cache-Control'] = 'private, no-store'",
+            "        return response"
+          ],
+          "historical": []
+        },
+        {
+          "start": 405,
+          "approved": [
+            "    try:",
+            "        attempts = free_course_attempts.history(source.pk, component_id)",
+            "    except DatabaseError:",
+            "        return _error('Could not read your quiz history. Please try again.', 503)",
+            "    response = JsonResponse({**_scrub_answer_key(quiz), 'attempts': attempts})"
+          ],
+          "historical": [
+            "    response = JsonResponse(_scrub_answer_key(quiz))"
+          ]
+        },
+        {
+          "start": 419,
+          "approved": [
+            "    Reuses the ordinary quiz reader/grader. Saves the canonical attempt and",
+            "    passing completion atomically; neither write awards hours or programme progress."
+          ],
+          "historical": [
+            "    Reuses the ordinary quiz reader/grader (``_fetch_quiz`` + ``_grade_question``)",
+            "    but writes NOTHING to the training-plan/KSB/OTJH stores — a pass records only",
+            "    an isolated LearnerFreeCourseProgress row, exactly like any other free-course",
+            "    completion."
+          ]
+        },
+        {
+          "start": 425,
+          "approved": [
+            "    access_error = _withdrawn_access(request, source)",
+            "    if access_error is not None:",
+            "        return access_error"
+          ],
+          "historical": []
+        },
+        {
+          "start": 460,
+          "approved": [
+            "    result = {'componentId': component_id, 'grade': grade_pct, 'passed': passed, 'passingGrade': quiz['passingGrade'] or 0, 'breakdown': breakdown}",
+            "    try:",
+            "        attempt_id = free_course_attempts.submission_id(payload.get('submissionId'), source.pk, component_id, quiz_id, submitted)",
+            "        result = free_course_attempts.save(source.pk, free_course_ref, component_id, attempt_id, quiz, submitted, result)",
+            "    except (ValueError, TypeError):",
+            "        return _error('Invalid or conflicting submission identity. Start a new attempt.', 409)",
+            "    except LookupError:",
+            "        return _error(WITHDRAWN_COMPLETION, 409)",
+            "    except DatabaseError:",
+            "        return _error('Your quiz could not be saved. Please retry the same submission.', 503)",
+            "    response = JsonResponse(result)"
+          ],
+          "historical": [
+            "    if passed:",
+            "        try:",
+            "            recorded = _record_completion(source.pk, component_id, free_course_ref)",
+            "        except DatabaseError:",
+            "            return _error('Your quiz was graded but could not be saved. Please try again.', 503)",
+            "        if not recorded:",
+            "            return _error(WITHDRAWN_COMPLETION, 409)",
+            "    response = JsonResponse({'componentId': component_id, 'grade': grade_pct, 'passed': passed, 'passingGrade': quiz['passingGrade'] or 0, 'breakdown': breakdown})"
+          ]
+        }
+      ]
+    },
+    "curriculum_api/meetings/infrastructure/session_persistence.py": {
+      "historical_ast_sha256": "a6fee8bd29ef3e73498052c23f66ba319237ccfbfcc9a7cd98def0846eabee13",
+      "approved_ast_sha256": "63d79089e6c77639d8bba94b51aafef1954205bd689338583a95fccbca65d4df",
+      "approved_git_blob": "ae3dd5d4886f3c868cee02cb2532c45ec796e485",
+      "changed_symbols": [
+        "persist_live_session_series"
+      ],
+      "edits": [
+        {
+          "start": 41,
+          "approved": [
+            "def persist_live_session_series(payload, event, warnings, graph_settings, organizer, attendees, presenters, online_meeting_id='', co_organizers=(), *, persist_occurrences=True, max_sessions=52):"
+          ],
+          "historical": [
+            "def persist_live_session_series(payload, event, warnings, graph_settings, organizer, attendees, presenters, online_meeting_id='', co_organizers=(), *, persist_occurrences=True):"
+          ]
+        },
+        {
+          "start": 44,
+          "approved": [
+            "    return implementation(payload, event, warnings, graph_settings, organizer, attendees, presenters, online_meeting_id, co_organizers, persist_occurrences=persist_occurrences, LIVE_SESSIONS_TABLE=LIVE_SESSIONS_TABLE, authoring_module_exists=authoring_module_exists, authoring_upsert=authoring_upsert, clean_str=clean_str, datetime=datetime, ensure_live_session_tracking_tables=ensure_live_session_tracking_tables, ensure_module_authoring_tables=ensure_module_authoring_tables, json_db_value=json_db_value, parse_graph_datetime=parse_graph_datetime, persist_live_session_occurrences=persist_live_session_occurrences, teams_calendar_subject=teams_calendar_subject, update_authoring_rows=update_authoring_rows, uuid=uuid, max_sessions=max_sessions)"
+          ],
+          "historical": [
+            "    return implementation(payload, event, warnings, graph_settings, organizer, attendees, presenters, online_meeting_id, co_organizers, persist_occurrences=persist_occurrences, LIVE_SESSIONS_TABLE=LIVE_SESSIONS_TABLE, authoring_module_exists=authoring_module_exists, authoring_upsert=authoring_upsert, clean_str=clean_str, datetime=datetime, ensure_live_session_tracking_tables=ensure_live_session_tracking_tables, ensure_module_authoring_tables=ensure_module_authoring_tables, json_db_value=json_db_value, parse_graph_datetime=parse_graph_datetime, persist_live_session_occurrences=persist_live_session_occurrences, teams_calendar_subject=teams_calendar_subject, update_authoring_rows=update_authoring_rows, uuid=uuid)"
+          ]
+        }
+      ]
+    },
+    "curriculum_api/meetings/infrastructure/invitation_runtime.py": {
+      "historical_ast_sha256": "7fe13e500467c408db38a130c78214c606f2c03f61b3854d2465db44c2fcd66f",
+      "approved_ast_sha256": "5551998fe19c81976cea3f441decda8157b9946466749ce8edde78762eda5504",
+      "approved_git_blob": "a664a13e3aa338e8c01a4be57846e265edc21b88",
+      "changed_symbols": [
+        "teams_event_payload",
+        "_authored_week_count",
+        "teams_module_session_limit"
+      ],
+      "edits": [
+        {
+          "start": 7,
+          "approved": [
+            "from curriculum_api.catalogue.domain.archive_policy import active_week_rows"
+          ],
+          "historical": []
+        },
+        {
+          "start": 11,
+          "approved": [
+            "from curriculum_api.catalogue.infrastructure.database_reads import AUTHORING_WEEKS_TABLE"
+          ],
+          "historical": []
+        },
+        {
+          "start": 23,
+          "approved": [
+            "from curriculum_api.catalogue.infrastructure.catalogue_resolution import authoring_module_exists",
+            "from curriculum_api.catalogue.domain.delivery_values import module_stored_week_count",
+            "from curriculum_api.weekly_schedule import module_week_boundary_mode"
+          ],
+          "historical": []
+        },
+        {
+          "start": 32,
+          "approved": [
+            "def teams_event_payload(payload, graph_settings, *, promote_presenters=True, max_sessions=52):"
+          ],
+          "historical": [
+            "def teams_event_payload(payload, graph_settings, *, promote_presenters=True):"
+          ]
+        },
+        {
+          "start": 39,
+          "approved": [
+            "    return implementation(payload, graph_settings, promote_presenters=promote_presenters, TEAMS_REPEAT_VALUES=TEAMS_REPEAT_VALUES, calendar_targets=calendar_targets, calendar_zone=calendar_zone, clean_str=clean_str, datetime=datetime, graph_calendar_time=graph_calendar_time, graph_timezone_iana=graph_timezone_iana, load_presenter_co_organizers=load_presenter_co_organizers, local_calendar_recurrence=local_calendar_recurrence, teams_attendee_emails=teams_attendee_emails, teams_calendar_subject=teams_calendar_subject, teams_event_body_html=teams_event_body_html, teams_meeting_default_organizer=teams_meeting_default_organizer, timezone=timezone, max_sessions=max_sessions)",
+            "",
+            "def _authored_week_count(module_catalogue_id):",
+            "    \"\"\"Count the same live week rows the catalogue owns, without provisioning.\"\"\"",
+            "    rows = authoring_fetch_all(AUTHORING_WEEKS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], columns=('id', 'status'), ensure_tables=False)",
+            "    return len(active_week_rows(rows))",
+            "",
+            "def teams_module_session_limit(module_catalogue_id):",
+            "    \"\"\"Bind the stored-module reader to the bounded series-limit query.\"\"\"",
+            "    from curriculum_api.meetings.application.invitation_preparation import teams_module_session_limit as implementation",
+            "    return implementation(module_catalogue_id, authoring_module_exists=authoring_module_exists, module_week_boundary_mode=module_week_boundary_mode, module_stored_week_count=module_stored_week_count, authored_week_count=_authored_week_count)"
+          ],
+          "historical": [
+            "    return implementation(payload, graph_settings, promote_presenters=promote_presenters, TEAMS_REPEAT_VALUES=TEAMS_REPEAT_VALUES, calendar_targets=calendar_targets, calendar_zone=calendar_zone, clean_str=clean_str, datetime=datetime, graph_calendar_time=graph_calendar_time, graph_timezone_iana=graph_timezone_iana, load_presenter_co_organizers=load_presenter_co_organizers, local_calendar_recurrence=local_calendar_recurrence, teams_attendee_emails=teams_attendee_emails, teams_calendar_subject=teams_calendar_subject, teams_event_body_html=teams_event_body_html, teams_meeting_default_organizer=teams_meeting_default_organizer, timezone=timezone)"
+          ]
+        }
+      ]
+    }
+  }
+}

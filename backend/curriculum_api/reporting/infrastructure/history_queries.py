@@ -1,6 +1,26 @@
 """SQL construction and SELECTs for canonical quality history; no HTTP or writes."""
 
 
+def revision_start_times(workspace, entity_filter, *, entity_types_for_workspace,
+                         fetch_all, revisions_table, iso):
+    """Earliest authoritative event, independent of the requested page/window."""
+    history_types = sorted(entity_types_for_workspace(workspace))
+    if entity_filter in history_types:
+        history_types = [entity_filter]
+    started = dict.fromkeys(history_types)
+    if history_types:
+        moments = fetch_all(
+            f'SELECT entity_type, MIN(created_at) AS first_event_at FROM {revisions_table} '
+            f'WHERE entity_type IN ({", ".join(["%s"] * len(history_types))}) GROUP BY entity_type',
+            history_types,
+        )
+        for moment in moments:
+            started[moment['entity_type']] = (
+                iso(moment['first_event_at']) if moment['first_event_at'] is not None else None
+            )
+    return started
+
+
 def trail_query(
     *, ACTIONS, _scope_clause, action_filter, actor_filter, actor_type_filter, datetime, days,
     entity_filter, limit, page, scope, scope_id, search, source_filter,

@@ -48,7 +48,7 @@ with patch.object(BaseDatabaseWrapper, 'ensure_connection', memory_only), \
             'learner_api.test_free_course_quiz_access_no_db',
             'learner_api.tests_free_course_assignments_no_db',
             'learner_api.tests_certificate_eligibility',
-            'curriculum_api.tests_free_course_alignment',
+            'curriculum_api.catalogue.tests.tests_free_course_alignment',
         ])
         result = unittest.TextTestRunner(verbosity=1).run(suite)
         raise SystemExit(not result.wasSuccessful())

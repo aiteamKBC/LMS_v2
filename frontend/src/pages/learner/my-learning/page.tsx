@@ -90,7 +90,7 @@ export default function MyLearningPage({ view = 'catalogue' }: { view?: 'catalog
   const requestedMode = new URLSearchParams(location.search).get('mode');
   const mode = view === 'map' ? 'courses' : requestedMode === 'free' ? 'free' : 'courses';
   const courseParams = new URLSearchParams(location.search);
-  const { isRealMode, real, loading, loadError, refresh } = useLearnerDetailParam(kind, id, false, isInitialized && mode === 'courses' && tab !== 'modules');
+  const { isRealMode, real, loading, loadError, refresh } = useLearnerDetailParam(kind, id, false, isInitialized && mode === 'courses' && tab !== 'modules', true);
   const planOnly = view === 'map' || location.pathname.startsWith('/learner/training-plan');
   const catalogue = useMyLearningCatalogue(kind as LearnerKind | undefined, id, isInitialized && tab === 'modules' && mode === 'courses', planOnly);
   const subjectOpen = view === 'catalogue' && mode === 'courses' && tab === 'modules'

@@ -26,7 +26,7 @@ ENTITY_TYPES = {config['entity_type'] for config in VERSIONED_TABLES.values()}
 SNAPSHOT_COLUMNS = {
     'programme': (
         'programme_id', 'name', 'standard', 'level', 'owner', 'color', 'description',
-        'structure_type', 'ksb_profile_source_id', 'required_otjh', 'status', 'is_active',
+        'structure_type', 'ksb_profile_source_id', 'standard_ref', 'standard_version', 'required_otjh', 'status', 'is_active',
         'is_archived', 'deleted_at', 'deleted_by',
     ),
     'cohort': (
@@ -75,7 +75,7 @@ SNAPSHOT_COLUMNS = {
         'deleted_at', 'deleted_by',
     ),
     'ksb_mapping': (
-        'id', 'module_catalogue_id', 'week_id', 'component_id', 'ksb_id', 'ksb_code',
+        'id', 'module_catalogue_id', 'week_id', 'component_id', 'template_component_id', 'ksb_id', 'ksb_code',
         'ksb_description', 'classification', 'weight', 'weight_class', 'source_type', 'source_id',
         'standard_ksb_id', 'status', 'deleted_at', 'deleted_by',
     ),

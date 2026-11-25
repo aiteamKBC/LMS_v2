@@ -67,13 +67,31 @@ def normalise(table, payload, columns):
         if column in payload and _blank(payload[column]):
             payload.pop(column)
 
-    if table == 'ksb_mappings' and 'standard_ksb_id' in columns and not payload.get('standard_ksb_id'):
-        if payload.get('ksb_id') or payload.get('ksb_code'):
+    if table == 'programmes' and 'ksb_profile_source_id' in payload:
+        source = payload.pop('ksb_profile_source_id')
+        reference, version = ksb_mapping_placement.standard_reference(source)
+        if source and not (reference and version):
+            raise ValueError('Programme requires an official standard and exact version.')
+        if reference:
+            from django.db import connection
+            with connection.cursor() as cursor:
+                cursor.execute('SELECT 1 FROM curriculum.ksb_standard_versions WHERE standard_ref=%s AND standard_version=%s', [reference, version])
+                if not cursor.fetchone():
+                    raise ValueError('Official standard version not found.')
+        payload.update(standard_ref=reference or None, standard_version=version or None)
+        nullable.update(('standard_ref', 'standard_version'))
+
+    if table == 'ksb_mappings' and 'standard_ksb_id' in columns:
+        if payload.get('standard_ksb_id') or payload.get('ksb_id') or payload.get('ksb_code'):
             resolved = ksb_mapping_placement.standard_ksb_id_for(
                 payload.get('ksb_id') or '', payload.get('ksb_code') or '',
                 module_catalogue_id=payload.get('module_catalogue_id') or '',
                 source_type=payload.get('source_type') or '', source_id=payload.get('source_id') or '',
+                standard_ksb_id=payload.get('standard_ksb_id'),
+                component_id=payload.get('component_id') or '',
             )
             if resolved is not None:
                 payload['standard_ksb_id'] = resolved
+            else:
+                raise ValueError('KSB mapping requires an unambiguous exact Standard version and code.')
     return payload, nullable

@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 
 from django.test import SimpleTestCase
 
-from curriculum_api.review_instances import review_instance_progress_snapshot
+from curriculum_api.review_management.domain.instance_definitions import review_instance_progress_snapshot
 
 from . import learner_detail, review_progress_inputs, review_progress_snapshot
 from .training_plan_targets import (
@@ -199,9 +199,9 @@ class ReviewTargetInputTests(SimpleTestCase):
             start_date=date(2025, 9, 1),
             end_date=date(2027, 8, 31),
         )
-        with patch("curriculum_api.review_otjh.planned_hours", side_effect=[12, 4]) as planned, \
+        with patch('curriculum_api.review_management.application.otjh_queries.planned_hours', side_effect=[12, 4]) as planned, \
              patch(
-                 "curriculum_api.review_otjh.completed_hours",
+                 'curriculum_api.review_management.application.otjh_queries.completed_hours',
                  side_effect=AssertionError("Review target projection must not read completed hours"),
              ) as completed:
             result = review_progress_inputs.review_planned_target_hours(
@@ -216,7 +216,7 @@ class ReviewTargetInputTests(SimpleTestCase):
 
     def test_missing_projection_window_contributes_no_review_hours(self):
         profile = SimpleNamespace(id=42, programme_id="P1", programme_status="Active")
-        with patch("curriculum_api.review_otjh.planned_hours") as planned:
+        with patch('curriculum_api.review_management.application.otjh_queries.planned_hours') as planned:
             self.assertEqual(
                 review_progress_inputs.review_planned_target_hours(
                     profile, as_of=datetime(2026, 4, 15, tzinfo=timezone.utc),

@@ -1,4 +1,6 @@
 """D02: real route guards, synthetic records and zero external side effects."""
+import curriculum_api.review_management.infrastructure.instance_rows as review_infrastructure_instance_rows
+
 import inspect
 import json
 from contextlib import ExitStack
@@ -73,7 +75,7 @@ class MeetingReadSecurityTests(SimpleTestCase):
         self.record.review_template_id = 'REV-template'
         row = dict(id='REVI-synthetic', coach_email=self.record.owner_email, learner_id=42,
                    calendar_event_id=7, review_template_id='REV-template', status='completed')
-        with patch.object(views.curriculum_review_instances, 'get_review_instance', return_value=row), \
+        with patch.object(review_infrastructure_instance_rows, 'get_review_instance', return_value=row), \
              patch('coach_api.reconciliation_links.for_native', return_value=None):
             self.assertEqual(self.call(views.coach_timetable_event_artifacts, 'post').status_code, 409)
             row.update(status='scheduled', calendar_event_id=999)

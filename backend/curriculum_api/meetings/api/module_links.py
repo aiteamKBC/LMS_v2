@@ -89,9 +89,11 @@ def curriculum_module_teams_meeting_restore(
     # path must never author anything: only a person pressing "re-attach" may.
     body = json_body(request) if request.method == 'POST' else None
     create_missing = truthy(body.get('createMissingComponents')) if isinstance(body, dict) else False
+    align_to_week_plan = truthy(body.get('alignToWeekPlan')) if isinstance(body, dict) else False
 
     updated_components = 0
     created_components = 0
+    unresolved_components = []
     # Opt-in on GET, because GET is also the Module Builder's silent restore and
     # that path must stay as cheap as it is. ``?probe=1`` asks the same walk what
     # re-attaching would create, so the UI can hide the button when the answer
@@ -107,6 +109,8 @@ def curriculum_module_teams_meeting_restore(
             settings_update,
             occurrence_rows,
             create_missing=create_missing,
+            align_to_week_plan=align_to_week_plan,
+            unresolved_components=unresolved_components,
         )
     elif truthy(request.GET.get('probe')):
         _would_update, pending_components = attach_teams_meeting_to_module_weeks(
@@ -142,6 +146,7 @@ def curriculum_module_teams_meeting_restore(
         'verificationPending': verification_pending,
         'updatedComponents': updated_components,
         'createdComponents': created_components,
+        'unresolvedComponentIds': unresolved_components,
         'meeting': settings_update,
         'calendar': {
             'title': clean_str(sessions[0].get('module_title')),

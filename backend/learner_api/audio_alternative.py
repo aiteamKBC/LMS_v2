@@ -40,4 +40,6 @@ AUDIO_ALTERNATIVE_SETTINGS_SQL = """jsonb_build_object('alternativeYouTubeUrl',c
     nullif(settings_json->'alternativeYouTubeUrl','null'::jsonb),settings_json->'legacySettings'->'alternativeYouTubeUrl'),
     '_audioAlternativeLegacy',CASE WHEN nullif(settings_json->'alternativeYouTubeUrl','null'::jsonb) IS NULL
     AND jsonb_typeof(settings_json->'legacySettings')='string'
+    AND (strpos(settings_json->>'legacySettings','alternativeYouTubeUrl')>0
+         OR strpos(settings_json->>'legacySettings',chr(92))>0)
     THEN settings_json->'legacySettings' ELSE NULL END)"""

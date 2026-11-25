@@ -88,6 +88,7 @@ def sync_component_ksb_projection(
     normalise_component_ksb_mappings,
     sync_progress_ksbs,
     update_authoring_rows,
+    read_component_items,
 ):
     component_id = clean_str(component_id)
     if not component_id:
@@ -114,5 +115,6 @@ def sync_component_ksb_projection(
         update_authoring_rows(AUTHORING_COMPONENTS_TABLE, 'id = %s', [component_id], {'ksb_mappings': json_db_value(json_items)})
     authoring_soft_delete(AUTHORING_KSB_MAPPINGS_TABLE, 'component_id = %s', [component_id], deleted_by=deleted_by)
     authoring_bulk_upsert(AUTHORING_KSB_MAPPINGS_TABLE, ['id'], projection_payloads)
-    sync_progress_ksbs({component_id: json_items}, actor=deleted_by)
+    persisted = read_component_items([component_id])
+    sync_progress_ksbs({component_id: persisted.get(component_id, [])}, actor=deleted_by)
     return json_items

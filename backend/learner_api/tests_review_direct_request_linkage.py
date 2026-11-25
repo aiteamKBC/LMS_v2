@@ -12,7 +12,8 @@ from unittest.mock import patch
 
 from coach_api import views as coach_views
 from coach_api.models import CoachCalendarEvent
-from curriculum_api import reviews, review_types
+import curriculum_api.review_management.api.commands as review_api_commands
+import curriculum_api.review_management.domain.classification as review_domain_classification
 
 from . import calendar as learner_calendar
 from .tests_review_scheduling_sync import (
@@ -79,7 +80,7 @@ class DirectRequestHelpersMixin(ReviewSchedulingSyncTestCase):
 
 class GenericRequestResolvesSingleOccurrenceTests(DirectRequestHelpersMixin):
     def test_generic_mcm_request_links_to_the_one_due_occurrence(self):
-        template = self.template(name='Monthly Learner Catch-up', type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        template = self.template(name='Monthly Learner Catch-up', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         occurrence = self.coach_occurrence('mcr')
         day = bookable_day(20)
 
@@ -96,7 +97,7 @@ class GenericRequestResolvesSingleOccurrenceTests(DirectRequestHelpersMixin):
     def test_generic_pr_request_links_to_the_one_due_occurrence(self):
         template = self.template(
             name='Quarterly Progress Conversation',
-            type_code=review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW, interval=8,
+            type_code=review_domain_classification.REVIEW_TYPE_CODE_PROGRESS_REVIEW, interval=8,
         )
         occurrence = self.coach_occurrence('progress-review')
         day = bookable_day(25)
@@ -133,8 +134,8 @@ class GenericRequestAmbiguousOccurrenceTests(DirectRequestHelpersMixin):
         """Two enabled MCM Reviews on the same programme each have their own
         occurrence due at once -- the system must not guess which one the
         learner meant."""
-        self.template(name='Monthly Learner Catch-up', type_code=review_types.REVIEW_TYPE_CODE_MCM)
-        self.template(name='Monthly Coaching (second stream)', type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        self.template(name='Monthly Learner Catch-up', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
+        self.template(name='Monthly Coaching (second stream)', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         day = bookable_day(20)
 
         response = self.learner_requests_generic('mcr', day, expect_status=409)
@@ -144,7 +145,7 @@ class GenericRequestAmbiguousOccurrenceTests(DirectRequestHelpersMixin):
     def test_generic_request_does_not_confuse_many_future_dates_of_one_template_for_ambiguity(self):
         """A single Review recurs many times across the enrolment window --
         that must resolve unambiguously to the soonest one, not be rejected."""
-        self.template(name='Monthly Learner Catch-up', type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        self.template(name='Monthly Learner Catch-up', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         day = bookable_day(20)
         self.learner_requests_generic('mcr', day, expect_status=(200, 201))
         self.assertEqual(CoachCalendarEvent.objects.count(), 1)
@@ -167,9 +168,9 @@ class CoachSchedulingGuardTests(DirectRequestHelpersMixin):
     """
 
     def test_coach_cannot_schedule_mcm_once_its_template_is_archived_before_first_linkage(self):
-        template = self.template(name='Monthly Learner Catch-up', type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        template = self.template(name='Monthly Learner Catch-up', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         occurrence = self.coach_occurrence('mcr')
-        reviews.archive_review(template['id'], actor='test')
+        review_api_commands.archive_review(template['id'], actor='test')
 
         request = self.factory.post(
             '/coach_api/coach/timetable/events/schedule',
@@ -188,10 +189,10 @@ class CoachSchedulingGuardTests(DirectRequestHelpersMixin):
     def test_coach_cannot_schedule_progress_review_once_its_template_is_archived_before_first_linkage(self):
         template = self.template(
             name='Quarterly Progress Conversation',
-            type_code=review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW, interval=8,
+            type_code=review_domain_classification.REVIEW_TYPE_CODE_PROGRESS_REVIEW, interval=8,
         )
         occurrence = self.coach_occurrence('progress-review')
-        reviews.archive_review(template['id'], actor='test')
+        review_api_commands.archive_review(template['id'], actor='test')
 
         request = self.factory.post(
             '/coach_api/coach/timetable/events/schedule',
@@ -213,7 +214,7 @@ class CoachSchedulingGuardTests(DirectRequestHelpersMixin):
         (review_instance_id still blank) -- e.g. scheduled the instant before
         its template was archived -- must raise rather than silently return,
         so a caller can never mistake a no-op for a successful link."""
-        template = self.template(name='Monthly Learner Catch-up', type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        template = self.template(name='Monthly Learner Catch-up', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         occurrence = self.coach_occurrence('mcr')
         record = CoachCalendarEvent.objects.create(
             event_key=occurrence['eventKey'], event_type='mcr',
@@ -223,7 +224,7 @@ class CoachSchedulingGuardTests(DirectRequestHelpersMixin):
             scheduled_date=bookable_day(20), scheduled_time=time(10, 0), duration_minutes=60,
             review_template_id=template['id'], occurrence_number=occurrence['occurrenceNumber'],
         )
-        reviews.archive_review(template['id'], actor='test')
+        review_api_commands.archive_review(template['id'], actor='test')
 
         with self.assertRaises(coach_views.ReviewTemplateUnavailableError):
             coach_views.ensure_review_instance_for_calendar_record(record, occurrence)
@@ -234,9 +235,9 @@ class CoachSchedulingGuardTests(DirectRequestHelpersMixin):
             coach_views.require_review_template_for_first_linkage(template['id'])
 
     def test_learner_generated_slot_booking_also_blocked_when_template_missing(self):
-        template = self.template(name='Monthly Learner Catch-up', type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        template = self.template(name='Monthly Learner Catch-up', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         occurrence = self.coach_occurrence('mcr')
-        reviews.archive_review(template['id'], actor='test')
+        review_api_commands.archive_review(template['id'], actor='test')
 
         request = self.factory.post(
             f'/learner_api/calendar/commercial/{self.learner.pk}/book/',
@@ -257,13 +258,13 @@ class CoachSchedulingGuardTests(DirectRequestHelpersMixin):
 
 class AlreadyLinkedTemplateArchivedTests(DirectRequestHelpersMixin):
     def test_already_linked_review_survives_its_template_being_archived_later(self):
-        template = self.template(name='Monthly Learner Catch-up', type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        template = self.template(name='Monthly Learner Catch-up', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         occurrence = self.coach_occurrence('mcr')
         self.coach_schedules(occurrence['eventKey'], bookable_day(20))
         instance_id = CoachCalendarEvent.objects.get(event_key=occurrence['eventKey']).review_instance_id
         self.assertTrue(instance_id)
 
-        reviews.archive_review(template['id'], actor='test')
+        review_api_commands.archive_review(template['id'], actor='test')
 
         # Rescheduling an already-linked row must not re-check the template.
         # (fetch_standalone_event_records is left un-mocked here so the
@@ -322,7 +323,7 @@ class LegacyUnlinkedRowsUntouchedTests(DirectRequestHelpersMixin):
             target_date=bookable_day(1), status=CoachCalendarEvent.STATUS_NOT_SCHEDULED,
             idempotency_key='learner-book:legacy-direct-request',
         )
-        self.template(name='Monthly Learner Catch-up', type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        self.template(name='Monthly Learner Catch-up', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
 
         legacy.refresh_from_db()
         self.assertFalse(legacy.review_template_id)

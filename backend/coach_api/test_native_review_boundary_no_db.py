@@ -6,6 +6,8 @@ from datetime import date, datetime, timezone as dt_timezone
 from inspect import unwrap
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+from django.db import transaction
+from curriculum_api.review_management.tests.instance_test_support import instance_fixture
 
 from django.db import DatabaseError
 from django.test import RequestFactory, SimpleTestCase, override_settings
@@ -13,7 +15,9 @@ from django.utils import timezone
 
 from coach_api import review_sources, views
 from coach_api.test_review_source_separation import profile, source, booking, base_event, imported_row
-from curriculum_api import review_instances as engine
+import curriculum_api.review_management.application.instance_creation as review_application_instance_creation
+import curriculum_api.review_management.application.learner_occurrences as review_application_learner_occurrences
+import curriculum_api.review_management.infrastructure.instance_rows as review_infrastructure_instance_rows
 from learner_api import calendar
 
 
@@ -73,7 +77,7 @@ class NativeReviewBoundaryTests(SimpleTestCase):
         self.assertEqual(error.exception.code, "REVIEW_SOURCE_UNAVAILABLE")
 
     def test_templates_metadata_blocks_aptem_without_consulting_curriculum(self):
-        with patch.object(engine, "list_enabled_review_templates") as templates:
+        with patch.object(review_application_learner_occurrences, "list_enabled_review_templates") as templates:
             response = unwrap(views.coach_review_learner_addition_templates)(self.factory.get("/", {"learnerId": 21}))
         body = json.loads(response.content)
         self.assertEqual(response.status_code, 200)
@@ -81,7 +85,7 @@ class NativeReviewBoundaryTests(SimpleTestCase):
         templates.assert_not_called()
 
     def test_add_review_rejects_aptem_and_conflicts_before_any_write(self):
-        with patch.object(engine, "create_learner_review_addition") as addition, patch.object(engine, "ensure_review_instance") as instance:
+        with patch.object(review_application_instance_creation, "create_learner_review_addition") as addition, patch.object(review_application_instance_creation, "ensure_review_instance") as instance:
             for conflict in (False, True):
                 self.person.aptem_id = 6302 if conflict else 6301
                 response = self.post(views.coach_review_learner_additions_create, {
@@ -102,10 +106,10 @@ class NativeReviewBoundaryTests(SimpleTestCase):
     def test_native_add_review_still_creates_manual_occurrence(self):
         self.make_native()
         with patch.object(views, "resolve_curriculum_programme_id", return_value="P1"), \
-             patch.object(engine, "list_enabled_review_templates", return_value=[{"id": "T-PR", "review_type_id": "PR", "name": "Progress Review"}]), \
-             patch("curriculum_api.review_types.review_type_index", return_value={"PR": {"code": "progress_review"}}), \
-             patch.object(engine, "create_learner_review_addition", return_value={"id": "ADD-1"}) as addition, \
-             patch.object(engine, "ensure_review_instance", return_value={"id": "INSTANCE-1", "status": "not-scheduled"}) as instance:
+             patch.object(review_application_learner_occurrences, "list_enabled_review_templates", return_value=[{"id": "T-PR", "review_type_id": "PR", "name": "Progress Review"}]), \
+             patch('curriculum_api.review_management.infrastructure.type_rows.review_type_index', return_value={"PR": {"code": "progress_review"}}), \
+             patch.object(review_application_instance_creation, "create_learner_review_addition", return_value={"id": "ADD-1"}) as addition, \
+             patch.object(review_application_instance_creation, "ensure_review_instance", return_value={"id": "INSTANCE-1", "status": "not-scheduled"}) as instance:
             response = self.post(views.coach_review_learner_additions_create, {
                 "learnerId": 21, "reviewTemplateId": "T-PR", "targetDate": "2099-11-19",
             })
@@ -118,7 +122,7 @@ class NativeReviewBoundaryTests(SimpleTestCase):
         event = {"learnerId": "21", "reviewTemplateId": "T-MCM", "source": "mcr"}
         with patch.object(views.CoachCalendarEvent.objects, "filter") as records, \
              patch.object(views, "find_generated_timetable_event", return_value=(event, "Coach")), \
-             patch.object(engine, "ensure_review_instance") as create:
+             patch.object(review_application_instance_creation, "ensure_review_instance") as create:
             records.return_value.first.return_value = None
             response = self.post(views.coach_review_instance_for_event, {"eventKey": "review:21:T-MCM:1"})
         self.assertEqual(response.status_code, 409)
@@ -130,7 +134,7 @@ class NativeReviewBoundaryTests(SimpleTestCase):
         before = {field.attname: deepcopy(getattr(record, field.attname)) for field in record._meta.concrete_fields}
         with patch.object(views.CoachCalendarEvent.objects, "filter") as records, \
              patch.object(views, "find_generated_timetable_event") as generated, \
-             patch.object(engine, "ensure_review_instance") as create:
+             patch.object(review_application_instance_creation, "ensure_review_instance") as create:
             records.return_value.first.return_value = record
             response = self.post(views.coach_review_instance_for_event, {"eventKey": record.event_key})
             self.assertEqual(records.call_args.kwargs["owner_email__iexact"], "coach@example.invalid")
@@ -175,7 +179,7 @@ class NativeReviewBoundaryTests(SimpleTestCase):
              patch.object(views, "persist_calendar_sync_reservation", side_effect=lambda row, **_: row), \
              patch.object(record, "save"), \
              patch.object(views, "overlay_calendar_record", return_value={"eventKey": record.event_key}), \
-             patch.object(engine, "ensure_review_instance") as create:
+             patch.object(review_application_instance_creation, "ensure_review_instance") as create:
             records.return_value.first.return_value = record
             records.return_value.exclude.return_value.exclude.return_value.first.return_value = record
             self.graph.side_effect = None
@@ -343,31 +347,31 @@ class NativeReviewBoundaryTests(SimpleTestCase):
         generate.assert_not_called()
 
     def test_core_blocks_new_instances_and_additions_but_keeps_existing(self):
-        with patch.object(engine, "ensure_review_instance_tables"), \
-             patch.object(engine, "ensure_learner_review_additions_table"), \
-             patch.object(engine, "find_review_instance", return_value=None) as existing, \
-             patch.object(engine, "find_active_learner_review_addition", return_value=None), \
-             patch.object(engine.curriculum_views, "insert_row") as insert:
+        with instance_fixture( "ensure_review_instance_tables"), \
+             instance_fixture( "ensure_learner_review_additions_table"), \
+             instance_fixture( "find_review_instance", return_value=None) as existing, \
+             instance_fixture( "find_active_learner_review_addition", return_value=None), \
+             instance_fixture( "insert_row") as insert:
             args = dict(learner_id=21, learner_kind="", programme_id="P1", occurrence_number=1, target_date=date(2099, 11, 19))
             with self.assertRaises(review_sources.ReviewCreationBlocked):
-                engine.ensure_review_instance({"id": "T-MCM"}, **args)
+                review_application_instance_creation.ensure_review_instance({"id": "T-MCM"}, **args)
             with self.assertRaises(review_sources.ReviewCreationBlocked):
-                engine.create_learner_review_addition(review_template_id="T-MCM", programme_id="P1", learner_id=21, target_date=args["target_date"])
+                review_application_instance_creation.create_learner_review_addition(review_template_id="T-MCM", programme_id="P1", learner_id=21, target_date=args["target_date"])
             existing.return_value = {"id": "EXISTING", "status": "scheduled", "definition_snapshot": {"frozen": True}}
             before = deepcopy(existing.return_value)
-            self.assertEqual(engine.ensure_review_instance({"id": "T-MCM"}, **args), before)
+            self.assertEqual(review_application_instance_creation.ensure_review_instance({"id": "T-MCM"}, **args), before)
             insert.assert_not_called()
 
     def test_native_core_preserves_pr_and_radar_distinct_instances(self):
         self.make_native()
-        with patch.object(engine, "ensure_review_instance_tables"), \
-             patch.object(engine, "find_review_instance", return_value=None), \
-             patch.object(engine.curriculum_views, "unique_prefixed_id", side_effect=["INSTANCE-PR", "INSTANCE-RADAR"]), \
-             patch.object(engine, "build_definition_snapshot", side_effect=lambda row: row), \
-             patch.object(engine.curriculum_views, "json_db_value", side_effect=lambda value: value), \
-             patch.object(engine.transaction, "atomic", side_effect=nullcontext), \
-             patch.object(engine.curriculum_views, "insert_row", side_effect=lambda table, row: row):
-            instances = [engine.ensure_review_instance({"id": template, "name": title}, learner_id=21,
+        with instance_fixture( "ensure_review_instance_tables"), \
+             instance_fixture( "find_review_instance", return_value=None), \
+             instance_fixture( "unique_prefixed_id", side_effect=["INSTANCE-PR", "INSTANCE-RADAR"]), \
+             instance_fixture( "build_definition_snapshot", side_effect=lambda row: row), \
+             instance_fixture( "json_db_value", side_effect=lambda value: value), \
+             patch.object(transaction, "atomic", side_effect=nullcontext), \
+             instance_fixture( "insert_row", side_effect=lambda table, row: row):
+            instances = [review_application_instance_creation.ensure_review_instance({"id": template, "name": title}, learner_id=21,
                 learner_kind="", programme_id="P1", occurrence_number=2, target_date=date(2099, 11, 19))
                 for template, title in (("T-PR", "Progress Review"), ("T-RADAR", "Progress Review (+ Skills Radar)"))]
         self.assertNotEqual(instances[0]["id"], instances[1]["id"])
@@ -386,7 +390,7 @@ class NativeReviewBoundaryTests(SimpleTestCase):
         with patch.dict(calendar.SOURCE_MODELS, {"commercial": model}), \
              patch.object(calendar, "_calendar_profile", return_value=self.person), \
              patch.object(calendar.CoachCalendarEvent.objects, "filter") as records, \
-              patch.object(engine, "get_review_instance", return_value=linked), \
+              patch.object(review_infrastructure_instance_rows, "get_review_instance", return_value=linked), \
              patch.object(calendar, "coaching_events_for_learner", return_value=[]) as imported:
             records.return_value.first.return_value = record
             self.assertIs(calendar._learner_calendar_record("commercial", 121, record.event_key), record)

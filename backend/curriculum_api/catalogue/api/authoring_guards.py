@@ -50,6 +50,7 @@ def permanent_delete_reference_refusal(
     if not blockers:
         return None
     labels = {
+        'tutorNotifications': 'tutor notification records',
         'learners': 'learner records', 'enrolmentAccounts': 'enrolment accounts',
         'progressEntries': 'learner progress entries', 'attendance': 'live-session attendance records',
         'attendanceAliases': 'attendance name links', 'attendanceIdentityRules': 'attendance identity rules',

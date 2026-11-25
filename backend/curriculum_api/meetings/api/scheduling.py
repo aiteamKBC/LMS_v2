@@ -415,7 +415,8 @@ def curriculum_teams_meeting_schedule(
     if repeat != 'none':
         pruned, holiday_warnings = prune_study_week_fillers(
             microsoft_graph_request, owner_key, event_id, clean_str(series.get('module_catalogue_id')),
-            targets, graph_settings, current_occurrences, allow_delete=not people_only,
+            targets, graph_settings, current_occurrences, allow_delete=not people_only and notify_attendees,
+            allow_uninvited_delete=not people_only,
         )
         stale_deletions = [item for item in stale_deletions if item.get('instance_id') not in pruned]
         warnings.extend(holiday_warnings)

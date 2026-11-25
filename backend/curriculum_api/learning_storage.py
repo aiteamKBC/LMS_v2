@@ -9,7 +9,7 @@ from .catalogue.infrastructure.storage_context import _native_only, native_only,
 from django.db import connection
 
 from .catalogue.infrastructure.learning_relations import TABLES, REFERENCE_VIEWS
-from .free_course_contract import NATIVE_VIEWS
+from curriculum_api.catalogue.infrastructure.free_course_contract import NATIVE_VIEWS
 
 from .catalogue.infrastructure.learning_read_routes import (
     READ_VIEWS, _ready, _not_ready_until, NATIVE_REQUIRED_COLUMNS,

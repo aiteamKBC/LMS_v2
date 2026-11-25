@@ -1,5 +1,5 @@
 import { StrictMode } from 'react';
-import { act, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import MyLearningPage from './page';
@@ -38,6 +38,11 @@ const canonicalFreeCourse = {
       contentHtml: '<p>Canonical free content</p>', is_completed: true, activity_state: 'completed', completed_at: null }] }],
 };
 const urls = () => vi.mocked(fetch).mock.calls.map(([url]) => String(url));
+const requestDiagnostics = () => JSON.stringify(vi.mocked(fetch).mock.calls.map(([url, options], index, calls) => ({
+  url: String(url),
+  sameTransportAs: calls.findIndex(([, earlier]) => earlier?.signal === options?.signal),
+  index,
+})));
 const reply = (data: unknown) => new Response(JSON.stringify(data));
 function ActivityDestination() {
   const location = useLocation();
@@ -81,10 +86,22 @@ beforeEach(() => {
     throw new Error(`Unexpected API request: ${url}`);
   }));
 });
-afterEach(() => { clearAllCachedResources(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(async () => {
+  // Unmount and flush pending effects while this case's fetch mock is still
+  // installed. Restoring globals first lets a certificate read fail between
+  // cases and retry against the next learner's mock 600 ms later.
+  cleanup();
+  await act(async () => {});
+  clearAllCachedResources();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 describe('compact My Learning route', () => {
   it('opens Free Courses from a saved quiz-tab URL without loading programme details', async () => {
+    // Load the real lazy renderer before mounting: cold Vitest transformation
+    // must not consume the UI assertion's timeout. Keep all request assertions.
+    await import('./FreeCourseMaterial');
     vi.mocked(fetch).mockImplementation(async input => {
       const url = String(input);
       if (url.includes('/certificates/')) return reply({ template: null, csrfToken: '' });
@@ -110,7 +127,22 @@ describe('compact My Learning route', () => {
     expect(await current.findByRole('button', { name: 'View certificate' })).toBeVisible();
     const other = within(screen.getByRole('heading', { name: 'Old' }).closest('article')!);
     expect(other.queryByRole('button', { name: /certificate/i })).not.toBeInTheDocument();
-    expect(urls().filter(url => url.includes('/certificates/'))).toHaveLength(1);
+    expect(urls().filter(url => url.includes('/certificates/')), requestDiagnostics()).toHaveLength(1);
+  });
+
+  it.each(['quizzes', 'assignments'])('loads the %s list without requesting dashboard hour totals', async tab => {
+    vi.mocked(fetch).mockImplementation(async input => {
+      const url = String(input);
+      if (url.includes('/learner-detail/') && url.includes('content=quiz')) return reply({
+        id: '7', name: 'Synthetic learner', programme: 'Programme', components: [],
+        quizAttempts: [], componentProgress: [], retiredQuizComponents: [] });
+      if (url.includes('/reflection/submissions/')) return reply({ assignments: [], statuses: [] });
+      throw new Error(`Unexpected assessment request: ${url}`);
+    });
+    route(`/learner/my-learning/commercial/7?tab=${tab}`);
+    expect(await screen.findByText(tab === 'quizzes' ? 'No quizzes linked yet' : 'No assignments linked yet')).toBeVisible();
+    expect(urls().some(url => url.includes('content=quiz'))).toBe(true);
+    expect(urls().some(url => url.includes('content=summary'))).toBe(false);
   });
 
   it.each(['commercial', 'apprenticeship'] as const)('shows certificates for an old course and inside an assigned builder free course (%s)', async kind => {
@@ -284,7 +316,7 @@ describe('compact My Learning route', () => {
     route(`/learner/my-learning/${kind}/7`);
     await screen.findByRole('heading', { name: 'One' });
     expect(urls().filter(url => url.includes('/my-learning/'))).toEqual([`/learner_api/my-learning/${kind}/7/`]);
-    expect(urls().filter(url => url.includes('/certificates/'))).toHaveLength(1);
+    expect(urls().filter(url => url.includes('/certificates/')), requestDiagnostics()).toHaveLength(1);
     expect(urls().some(url => /learner-detail|student-activity|subject-covers|metrics|training-plan-dashboard/.test(url))).toBe(false);
     expect(screen.getByText('1 of 2 activities completed')).toBeVisible();
     expect(screen.getByText(/1 of 3 previous activities completed/)).toBeVisible();
@@ -298,7 +330,7 @@ describe('compact My Learning route', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Grid' }));
     fireEvent.change(screen.getByRole('combobox', { name: 'Sort by' }), { target: { value: 'progress' } });
     fireEvent.change(screen.getByRole('combobox', { name: 'Status' }), { target: { value: 'started' } });
-    expect(urls(), `Unexpected request set: ${JSON.stringify(urls())}`).toHaveLength(requests + 1);
+    expect(urls(), `Unexpected request set: ${requestDiagnostics()}`).toHaveLength(requests + 1);
     expect(urls().filter(url => url.includes('/search/'))).toHaveLength(1);
   });
 
@@ -458,7 +490,7 @@ describe('compact activity search', () => {
     await act(async () => pending[0].finish(reply({matches:[{id:'current:FOREIGN'}],nextOffset:null})));
     expect(hook.result.current.ids).toEqual([]);
     await act(async () => pending[1].finish(reply({matches:[{id:'current:OWN'}],nextOffset:null})));
-    expect(hook.result.current.ids).toEqual(['current:OWN']);
+    await waitFor(() => expect(hook.result.current.ids).toEqual(['current:OWN']));
     hook.rerender({id:'8',query:''});
     expect(hook.result.current.ids).toEqual([]);
   });
@@ -468,7 +500,10 @@ describe('compact activity search', () => {
       ? { matches:[{id:'current:M1'}],nextOffset:50 } : { matches:[{id:'legacy:50'}],nextOffset:null }));
     const hook=renderHook(({ query }) => useMyLearningSearch('apprenticeship','7',query,true),{ initialProps:{query:'lesson'} });
     await waitFor(() => expect(hook.result.current.ids).toEqual(['current:M1','legacy:50']));
-    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(urls()).toEqual([
+      '/learner_api/my-learning/apprenticeship/7/search/?q=lesson&offset=0',
+      '/learner_api/my-learning/apprenticeship/7/search/?q=lesson&offset=50',
+    ]);
     vi.mocked(fetch).mockResolvedValue(new Response('{}',{status:503}));
     hook.rerender({query:'different'});
     await waitFor(() => expect(hook.result.current.error).toMatch(/Could not search/));

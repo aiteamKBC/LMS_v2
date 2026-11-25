@@ -477,7 +477,7 @@ class LearningPlanCanonicalFreeCourseReadTests(SimpleTestCase):
         )
         with patch.object(learning_plan_module, "canonical_learner", return_value=source()), \
              patch.object(learning_plan_module, "assigned_course_ids", return_value=["FREE-2", "FREE-1"]), \
-             patch("curriculum_api.free_course_catalogue.courses", return_value=[
+             patch("curriculum_api.catalogue.infrastructure.free_course_rows.courses", return_value=[
                  {"id": "FREE-1", "course_name": "Canonical one"},
                  {"id": "FREE-2", "course_name": "Canonical two"},
              ]):
@@ -492,7 +492,7 @@ class LearningPlanCanonicalFreeCourseReadTests(SimpleTestCase):
         enrolment = SimpleNamespace(pk=19, learner_type="commercial")
         with patch.object(learning_plan_module, "canonical_learner", return_value=source()), \
              patch.object(learning_plan_module, "assigned_course_ids", return_value=["MISSING"]), \
-             patch("curriculum_api.free_course_catalogue.courses", return_value=[]):
+             patch("curriculum_api.catalogue.infrastructure.free_course_rows.courses", return_value=[]):
             result = learning_plan_module._canonical_free_course_assignments(enrolment)
         self.assertEqual(result, [{
             "freeCourseId": "MISSING",

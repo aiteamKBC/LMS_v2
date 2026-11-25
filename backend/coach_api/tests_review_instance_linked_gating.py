@@ -12,6 +12,8 @@ domain functions the canonical ``/coach/reviews/<id>/...`` endpoints call),
 and never touch the legacy fields; an unlinked (historical) row keeps
 behaving exactly as before.
 """
+import curriculum_api.review_management.infrastructure.template_rows as review_infrastructure_template_rows
+
 import json
 from datetime import date, time
 from inspect import unwrap
@@ -19,7 +21,11 @@ from unittest.mock import patch
 
 from django.test import RequestFactory, TestCase
 
-from curriculum_api import review_instances as curriculum_review_instances
+import curriculum_api.review_management.application.instance_creation as review_application_instance_creation
+import curriculum_api.review_management.application.instance_lifecycle as review_application_instance_lifecycle
+import curriculum_api.review_management.application.instance_signatures as review_application_instance_signatures
+import curriculum_api.review_management.domain.instance_rules as review_domain_instance_rules
+import curriculum_api.review_management.infrastructure.instance_rows as review_infrastructure_instance_rows
 
 from . import views
 from .models import CoachCalendarEvent
@@ -75,12 +81,12 @@ class LinkedReviewGatingTestCase(TestCase):
             review_instance_id="REVI-LINKED-1", status=CoachCalendarEvent.STATUS_IN_PROGRESS,
         )
         instance_row = {
-            "id": "REVI-LINKED-1", "status": curriculum_review_instances.STATUS_COMPLETED,
+            "id": "REVI-LINKED-1", "status": review_domain_instance_rules.STATUS_COMPLETED,
             "calendar_event_id": record.pk, "completed_at": None,
         }
 
-        with patch.object(curriculum_review_instances, "get_review_instance", return_value=instance_row), \
-             patch.object(curriculum_review_instances, "complete_review_instance", return_value=(True, None)) as complete_instance:
+        with patch.object(review_infrastructure_instance_rows, "get_review_instance", return_value=instance_row), \
+             patch.object(review_application_instance_lifecycle, "complete_review_instance", return_value=(True, None)) as complete_instance:
             response = self._call(MCM_EVENT, "complete", {"reviewResponses": {"should": "be-ignored"}})
 
         self.assertEqual(response.status_code, 200, response.content)
@@ -103,10 +109,10 @@ class LinkedReviewGatingTestCase(TestCase):
             event_key=MCM_EVENT["eventKey"], event_type="mcr",
             review_instance_id="REVI-LINKED-2", status=CoachCalendarEvent.STATUS_IN_PROGRESS,
         )
-        instance_row = {"id": "REVI-LINKED-2", "status": curriculum_review_instances.STATUS_IN_PROGRESS, "calendar_event_id": record.pk}
+        instance_row = {"id": "REVI-LINKED-2", "status": review_domain_instance_rules.STATUS_IN_PROGRESS, "calendar_event_id": record.pk}
 
-        with patch.object(curriculum_review_instances, "get_review_instance", return_value=instance_row), \
-             patch.object(curriculum_review_instances, "complete_review_instance", return_value=(False, {"fields": ["REVF-1"]})) as complete_instance:
+        with patch.object(review_infrastructure_instance_rows, "get_review_instance", return_value=instance_row), \
+             patch.object(review_application_instance_lifecycle, "complete_review_instance", return_value=(False, {"fields": ["REVF-1"]})) as complete_instance:
             response = self._call(MCM_EVENT, "complete")
 
         self.assertEqual(response.status_code, 400)
@@ -126,12 +132,18 @@ class LinkedReviewGatingTestCase(TestCase):
             review_instance_id="REVI-LINKED-3", status=CoachCalendarEvent.STATUS_AWAITING_SIGNATURE,
         )
         instance_row = {
-            "id": "REVI-LINKED-3", "status": curriculum_review_instances.STATUS_COMPLETED,
+            "id": "REVI-LINKED-3", "status": review_domain_instance_rules.STATUS_COMPLETED,
             "calendar_event_id": record.pk, "completed_at": None,
         }
 
-        with patch.object(curriculum_review_instances, "get_review_instance", return_value=instance_row), \
-             patch.object(curriculum_review_instances, "record_review_instance_signature") as record_signature:
+        # The canonical signature writer owns the Calendar projection. Simulate
+        # that side effect here; real persistence/rollback is covered by the
+        # Review engine and reopen suites. Keep the endpoint assertions below.
+        def sign_and_mirror(*args, **kwargs):
+            CoachCalendarEvent.objects.filter(pk=record.pk).update(status=instance_row["status"])
+
+        with patch.object(review_infrastructure_instance_rows, "get_review_instance", return_value=instance_row), \
+             patch.object(review_application_instance_signatures, "record_review_instance_signature", side_effect=sign_and_mirror) as record_signature:
             response = self._call(PR_EVENT, "sign", {"managerName": "Sam Manager"})
 
         self.assertEqual(response.status_code, 200, response.content)
@@ -167,7 +179,7 @@ class LinkedReviewGatingTestCase(TestCase):
             content_type="application/json",
         )
         request.coach_email = "coach@example.com"
-        with patch.object(views, "find_generated_timetable_event", return_value=(base_event, "Coach One")),              patch.object(views.curriculum_reviews, "get_review_template_row", return_value={"id": "REV-LEGACY"}),              patch.object(curriculum_review_instances, "ensure_review_instance") as ensure:
+        with patch.object(views, "find_generated_timetable_event", return_value=(base_event, "Coach One")),              patch.object(review_infrastructure_template_rows, "get_review_template_row", return_value={"id": "REV-LEGACY"}),              patch.object(review_application_instance_creation, "ensure_review_instance") as ensure:
             response = unwrap(views.coach_review_instance_for_event)(request)
 
         self.assertEqual(response.status_code, 409)
@@ -179,7 +191,7 @@ class LinkedReviewGatingTestCase(TestCase):
         self.assertEqual(record.review_responses["historical"], "kept")
 
     # -- 3. Linked review normal new-engine completion continues to work -----
-    # (already covered by curriculum_api.tests_review_instances /
+    # (already covered by curriculum_api.review_management.tests.tests_review_instances /
     # coach_api.tests_review_architecture; not duplicated here.)
 
     # -- 4. Historical unlinked review: legacy flow is unchanged -------------
@@ -198,7 +210,7 @@ class LinkedReviewGatingTestCase(TestCase):
         responses["mcm_previous_meeting"] = "No previous meeting"
         responses["mcm_next_meeting_date"] = "2026-11-01"
 
-        with patch.object(curriculum_review_instances, "get_review_instance") as get_instance:
+        with patch.object(review_infrastructure_instance_rows, "get_review_instance") as get_instance:
             response = self._call(MCM_EVENT, "complete", {"reviewResponses": responses})
 
         self.assertEqual(response.status_code, 200, response.content)
@@ -215,7 +227,7 @@ class LinkedReviewGatingTestCase(TestCase):
             review_instance_id=None, status=CoachCalendarEvent.STATUS_AWAITING_SIGNATURE,
         )
 
-        with patch.object(curriculum_review_instances, "get_review_instance") as get_instance:
+        with patch.object(review_infrastructure_instance_rows, "get_review_instance") as get_instance:
             response = self._call(PR_EVENT, "sign", {"managerName": "Sam Manager"})
 
         self.assertEqual(response.status_code, 200, response.content)

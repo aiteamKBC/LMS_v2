@@ -21,17 +21,27 @@ from datetime import datetime
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
-from ... import review_instances, review_types, reviews
+import curriculum_api.review_management.api.commands as review_api_commands
+import curriculum_api.review_management.application.template_queries as review_application_template_queries
+import curriculum_api.review_management.domain.classification as review_domain_classification
+import curriculum_api.review_management.domain.instance_rules as review_domain_instance_rules
+import curriculum_api.review_management.domain.template_rules as review_domain_template_rules
+import curriculum_api.review_management.infrastructure.instance_relations as review_infrastructure_instance_relations
+import curriculum_api.review_management.infrastructure.instance_rows as review_infrastructure_instance_rows
+import curriculum_api.review_management.infrastructure.instance_schema as review_infrastructure_instance_schema
+import curriculum_api.review_management.infrastructure.template_rows as review_infrastructure_template_rows
+import curriculum_api.review_management.infrastructure.template_schema as review_infrastructure_template_schema
+import curriculum_api.review_management.infrastructure.type_rows as review_infrastructure_type_rows
 from ... import views as curriculum_views
 
 
 PROTECTED_STATUSES = frozenset({
-    review_instances.STATUS_AWAITING_SIGNATURE,
-    review_instances.STATUS_COMPLETED,
+    review_domain_instance_rules.STATUS_AWAITING_SIGNATURE,
+    review_domain_instance_rules.STATUS_COMPLETED,
 })
 PROTECTED_STATUS_PARAMS = (
-    review_instances.STATUS_AWAITING_SIGNATURE,
-    review_instances.STATUS_COMPLETED,
+    review_domain_instance_rules.STATUS_AWAITING_SIGNATURE,
+    review_domain_instance_rules.STATUS_COMPLETED,
 )
 
 
@@ -75,7 +85,7 @@ def _semantic_fields(sections):
         field
         for _, field in _walk_fields(sections)
         if (field.get("configuration") or {}).get("semanticKey")
-        == reviews.MEETING_SUMMARY_SEMANTIC_KEY
+        == review_domain_template_rules.MEETING_SUMMARY_SEMANTIC_KEY
     ]
 
 
@@ -94,7 +104,7 @@ def _new_summary_section():
             "required": False,
             "configuration": {
                 "placeholder": "Summarise progress, key discussion points, risks, support and next steps...",
-                "semanticKey": reviews.MEETING_SUMMARY_SEMANTIC_KEY,
+                "semanticKey": review_domain_template_rules.MEETING_SUMMARY_SEMANTIC_KEY,
             },
         }],
     }
@@ -145,7 +155,7 @@ def apply_definition_backfill(definition):
             if field.get("id") == plan["fieldId"]:
                 field["configuration"] = {
                     **(field.get("configuration") or {}),
-                    "semanticKey": reviews.MEETING_SUMMARY_SEMANTIC_KEY,
+                    "semanticKey": review_domain_template_rules.MEETING_SUMMARY_SEMANTIC_KEY,
                 }
                 break
         return updated, plan
@@ -220,26 +230,26 @@ class Command(BaseCommand):
         parser.add_argument("--instance-id", help="Limit the operation to one Review Instance.")
 
     def handle(self, *args, **options):
-        reviews.ensure_review_tables()
-        review_instances.ensure_review_instance_tables()
+        review_infrastructure_template_schema.ensure_review_tables()
+        review_infrastructure_instance_schema.ensure_review_instance_tables()
         template_id = curriculum_views.clean_str(options.get("template_id"))
         instance_id = curriculum_views.clean_str(options.get("instance_id"))
         if template_id and instance_id:
             raise CommandError("Use --template-id or --instance-id, not both.")
 
-        type_index = review_types.review_type_index()
-        templates = reviews.get_review_template_rows(
+        type_index = review_infrastructure_type_rows.review_type_index()
+        templates = review_infrastructure_template_rows.get_review_template_rows(
             "id = %s" if template_id else "1 = 1",
             [template_id] if template_id else [],
         )
         mcm_templates = [
             row for row in templates
             if (type_index.get(row.get("review_type_id")) or {}).get("code")
-            == review_types.REVIEW_TYPE_CODE_MCM
+            == review_domain_classification.REVIEW_TYPE_CODE_MCM
         ]
 
         if instance_id:
-            instance = review_instances.get_review_instance(instance_id)
+            instance = review_infrastructure_instance_rows.get_review_instance(instance_id)
             if not instance:
                 raise CommandError("Review Instance not found.")
             instance_rows = [instance]
@@ -259,7 +269,7 @@ class Command(BaseCommand):
             else:
                 where = "1 = 0"
             instance_rows = curriculum_views.fetch_all(
-                f"select * from {curriculum_views.table_name(review_instances.REVIEW_INSTANCES_TABLE)} where {where} order by id",
+                f"select * from {curriculum_views.table_name(review_infrastructure_instance_relations.REVIEW_INSTANCES_TABLE)} where {where} order by id",
                 params,
             )
 
@@ -270,7 +280,7 @@ class Command(BaseCommand):
         }
 
         for row in mcm_templates:
-            definition = reviews.review_template_detail_payload(row, type_index=type_index)
+            definition = review_application_template_queries.review_template_detail_payload(row, type_index=type_index)
             plan = plan_definition(definition)
             report["templates"].append({
                 "reviewTemplateId": row.get("id"),
@@ -279,7 +289,7 @@ class Command(BaseCommand):
             })
             if options["apply"] and plan["action"] in {"mark_existing_field", "add_new_field"}:
                 updated, _ = apply_definition_backfill(definition)
-                _, errors = reviews.update_review(
+                _, errors = review_api_commands.update_review(
                     row.get("id"), updated, actor="mcm-meeting-summary-backfill",
                 )
                 if errors:
@@ -303,7 +313,7 @@ class Command(BaseCommand):
             if plan["action"] not in {"mark_existing_field", "add_new_field"}:
                 continue
             with transaction.atomic():
-                locked = review_instances.get_review_instance(row.get("id"), for_update=True)
+                locked = review_infrastructure_instance_rows.get_review_instance(row.get("id"), for_update=True)
                 if not locked or locked.get("status") in PROTECTED_STATUSES:
                     continue
                 current = curriculum_views.as_json_value(locked.get("definition_snapshot"), {})
@@ -312,7 +322,7 @@ class Command(BaseCommand):
                     continue
                 updated = materialise_snapshot_ids(updated)
                 rows_updated = curriculum_views.update_rows(
-                    review_instances.REVIEW_INSTANCES_TABLE,
+                    review_infrastructure_instance_relations.REVIEW_INSTANCES_TABLE,
                     "id = %s and status not in (%s, %s)",
                     [row.get("id"), *PROTECTED_STATUS_PARAMS],
                     {

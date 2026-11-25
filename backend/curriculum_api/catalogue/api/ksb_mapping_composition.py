@@ -66,7 +66,9 @@ def sync_component_ksb_projection(component_id, component_row=None, module_row=N
         normalise_component_ksb_mappings=normalise_component_ksb_mappings,
         sync_progress_ksbs=sync_progress_ksbs,
         update_authoring_rows=update_authoring_rows,
+        read_component_items=read_component_items,
     )
+
 
 
 @csrf_exempt
@@ -112,3 +114,5 @@ def _curriculum_ksb_mapping_detail(request, mapping_id):
         transaction=transaction,
         validate_ksb_mapping_payload=validate_ksb_mapping_payload,
     )
+
+from curriculum_api.catalogue.infrastructure.ksb_read_store import component_items as read_component_items

@@ -174,7 +174,10 @@ class DashboardAttendanceTests(SimpleTestCase):
         self.profiles.filter.side_effect = lambda *, enrolment_id: SimpleNamespace(
             values_list=lambda *args, **kwargs: [profile_by_enrolment[enrolment_id]])
         for target, kwargs in (
+            ("learner_api.attendance_lectures.effective_assigned_module_ids", {"return_value": ["assigned-module"]}),
+            ("learner_api.recorded_attendance.saved_delivery_mode", {"return_value": "live"}),
             ("learner_api.attendance_lectures.read_native_occurrences", {"return_value": []}),
+            ("learner_api.attendance_lectures.read_cancelled_native_occurrences", {"return_value": []}),
             ("learner_api.attendance_confirmation.read_confirmations", {"return_value": {}}),
             ("learner_api.attendance_lectures._completed_catchup_occurrences", {"return_value": set()}),
             ("learner_api.attendance_lectures._apply_coach_source_adjustments", {"side_effect": lambda rows, learner_id: rows}),
@@ -1429,10 +1432,9 @@ class CoachCaseloadLegacyRelationTests(SimpleTestCase):
         with patch("coach_api.views.LearnerProfile") as profile:
             profile.objects = Queryset()
             with patch("coach_api.views.get_learner_db_alias", return_value="enrolment"):
-                with patch("coach_api.views.learner_ksbs_relation_exists", return_value=ksbs_exists):
-                    with patch("coach_api.views.learner_activity_events_relation_exists", return_value=events_exist):
-                        with patch("coach_api.views.fetch_source_schedule_rows", return_value=({}, {})):
-                            fetch_caseload_learner_profiles("coach@example.com")
+                with patch("coach_api.views.learner_activity_events_relation_exists", return_value=events_exist):
+                    with patch("coach_api.views.fetch_source_schedule_rows", return_value=({}, {})):
+                        fetch_caseload_learner_profiles("coach@example.com")
         return captured.get('names', [])
 
     def test_dropped_legacy_ksb_relation_is_not_prefetched(self):
@@ -1441,13 +1443,14 @@ class CoachCaseloadLegacyRelationTests(SimpleTestCase):
         self.assertNotIn("assigned_ksbs", names)
         self.assertNotIn("activity_events", names)
         # The current, authoritative KSB graph is still loaded.
-        self.assertIn("ksb_assignment__profile_version__definitions", names)
+        self.assertNotIn("ksb_assignment__profile_version__definitions", names)
+        self.assertIn("ksb_standard__definitions", names)
         self.assertIn("progress_entries__ksb_links", names)
 
     def test_legacy_relations_are_prefetched_where_they_still_exist(self):
         names = self._prefetches(ksbs_exists=True, events_exist=True)
 
-        self.assertIn("assigned_ksbs", names)
+        self.assertNotIn("assigned_ksbs", names)
         self.assertIn("activity_events", names)
 
 

@@ -16,7 +16,8 @@ from unittest.mock import patch
 
 from coach_api import views as coach_views
 from coach_api.models import CoachCalendarEvent
-from curriculum_api import review_instances, review_types
+import curriculum_api.review_management.domain.classification as review_domain_classification
+import curriculum_api.review_management.infrastructure.instance_rows as review_infrastructure_instance_rows
 
 from . import calendar as learner_calendar
 from .monthly_assignment import coaching_booking_bounds
@@ -68,7 +69,7 @@ class AssignmentMonthMcmTestCase(ReviewSchedulingSyncTestCase):
 
 class CanonicalLinkageTests(AssignmentMonthMcmTestCase):
     def test_1_2_3_4_5_uses_curriculum_template_and_populates_linkage(self):
-        template = self.template(name='Monthly Learner Catch-up', type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        template = self.template(name='Monthly Learner Catch-up', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
 
         response = self.learner_books_assignment_month()
         body = json.loads(response.content.decode())
@@ -78,14 +79,14 @@ class CanonicalLinkageTests(AssignmentMonthMcmTestCase):
         self.assertEqual(record.review_template_id, template['id'])
         self.assertTrue(record.review_instance_id)
         self.assertTrue(record.occurrence_number)
-        instance = review_instances.get_review_instance(record.review_instance_id)
+        instance = review_infrastructure_instance_rows.get_review_instance(record.review_instance_id)
         self.assertEqual(str(instance['calendar_event_id']), str(record.id))
         # The imported "Learner".reviews sync still runs, unchanged.
         self.last_mark_review_call.assert_called_once()
         self.assertEqual(self.last_mark_review_call.call_args.args[0], '9')
 
     def test_6_7_target_date_is_canonical_scheduled_date_is_the_actual_booking(self):
-        self.template(name='Monthly Learner Catch-up', type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        self.template(name='Monthly Learner Catch-up', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         day = _booking_day()
 
         response = self.learner_books_assignment_month(day=day, clock='14:00')
@@ -97,7 +98,7 @@ class CanonicalLinkageTests(AssignmentMonthMcmTestCase):
         self.assertEqual(record.scheduled_time, time(14, 0))
 
     def test_9_new_bookings_use_the_canonical_identity_event_key(self):
-        self.template(name='Monthly Learner Catch-up', type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        self.template(name='Monthly Learner Catch-up', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         response = self.learner_books_assignment_month()
         body = json.loads(response.content.decode())
         event_key = body['event']['eventKey']
@@ -105,7 +106,7 @@ class CanonicalLinkageTests(AssignmentMonthMcmTestCase):
         self.assertNotRegex(event_key, r'^mcr:\d+:\d+:\d{4}-\d{2}-\d{2}$')
 
     def test_10_no_standalone_mcr_event_is_created(self):
-        self.template(name='Monthly Learner Catch-up', type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        self.template(name='Monthly Learner Catch-up', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         self.learner_books_assignment_month()
         self.assertEqual(CoachCalendarEvent.objects.filter(event_type='mcr').count(), 1)
         record = CoachCalendarEvent.objects.get(event_type='mcr')
@@ -115,7 +116,7 @@ class CanonicalLinkageTests(AssignmentMonthMcmTestCase):
 
 class IdempotencyTests(AssignmentMonthMcmTestCase):
     def test_11_12_13_repeated_request_with_the_resolved_key_does_not_duplicate(self):
-        self.template(name='Monthly Learner Catch-up', type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        self.template(name='Monthly Learner Catch-up', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         first = self.learner_books_assignment_month(day=_booking_day(), clock='09:00')
         event_key = json.loads(first.content.decode())['event']['eventKey']
 
@@ -130,7 +131,7 @@ class IdempotencyTests(AssignmentMonthMcmTestCase):
         self.assertEqual(record.scheduled_time, time(10, 0))
         first_body, second_body = json.loads(first.content.decode()), json.loads(second.content.decode())
         self.assertEqual(first_body['event']['reviewInstanceId'], second_body['event']['reviewInstanceId'])
-        instance_count = len(review_instances.list_review_instances_for_learner(MIRROR_ID))
+        instance_count = len(review_infrastructure_instance_rows.list_review_instances_for_learner(MIRROR_ID))
         self.assertEqual(instance_count, 1)
 
     def test_second_no_eventkey_request_links_the_next_occurrence_not_a_duplicate(self):
@@ -138,7 +139,7 @@ class IdempotencyTests(AssignmentMonthMcmTestCase):
         due -- a second no-eventKey request resolves to the NEXT genuinely
         outstanding occurrence (a real, distinct MCM), never a second booking
         of the same one."""
-        self.template(name='Monthly Learner Catch-up', type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        self.template(name='Monthly Learner Catch-up', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         first = self.learner_books_assignment_month(day=_booking_day())
         first_key = json.loads(first.content.decode())['event']['eventKey']
 
@@ -159,14 +160,14 @@ class RejectionTests(AssignmentMonthMcmTestCase):
         self.assertEqual(CoachCalendarEvent.objects.count(), 0)
 
     def test_15_multiple_enabled_mcm_templates_is_rejected_clearly(self):
-        self.template(name='Monthly Coaching (stream A)', type_code=review_types.REVIEW_TYPE_CODE_MCM)
-        self.template(name='Monthly Coaching (stream B)', type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        self.template(name='Monthly Coaching (stream A)', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
+        self.template(name='Monthly Coaching (stream B)', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         response = self.learner_books_assignment_month(expect_status=409)
         self.assertIn('More than one Monthly Coaching Meeting', json.loads(response.content.decode())['error'])
         self.assertEqual(CoachCalendarEvent.objects.count(), 0)
 
     def test_16_17_missing_learner_start_date_is_rejected_clearly(self):
-        self.template(name='Monthly Learner Catch-up', type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        self.template(name='Monthly Learner Catch-up', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         self.learner.learner_start_date = ''
         response = self.learner_books_assignment_month(expect_status=422)
         self.assertIn('learner start date is missing', json.loads(response.content.decode())['error'])
@@ -184,8 +185,8 @@ class NonReviewBehaviourUnaffectedTests(AssignmentMonthMcmTestCase):
         'progress-review' template configured on the SAME programme cannot
         change which template/occurrence an 'mcr' assignment_month request
         resolves to."""
-        mcm_template = self.template(name='Monthly Learner Catch-up', type_code=review_types.REVIEW_TYPE_CODE_MCM)
-        self.template(name='Progress Review', type_code=review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW)
+        mcm_template = self.template(name='Monthly Learner Catch-up', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
+        self.template(name='Progress Review', type_code=review_domain_classification.REVIEW_TYPE_CODE_PROGRESS_REVIEW)
 
         response = self.learner_books_assignment_month()
         body = json.loads(response.content.decode())
@@ -198,7 +199,7 @@ class NonReviewBehaviourUnaffectedTests(AssignmentMonthMcmTestCase):
         """Scope guard: nothing about this fix touches live session
         collection -- confirmed by the shared harness's coach timetable call
         succeeding with include_live_sessions=False untouched elsewhere."""
-        self.template(name='Monthly Learner Catch-up', type_code=review_types.REVIEW_TYPE_CODE_MCM)
+        self.template(name='Monthly Learner Catch-up', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
         self.learner_books_assignment_month()
         payload = self.run_patched(lambda: coach_views.collect_generated_timetable(
             COACH_EMAIL, include_live_sessions=False, include_scheduler_queues=False,

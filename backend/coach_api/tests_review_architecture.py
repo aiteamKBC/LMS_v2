@@ -14,7 +14,18 @@ from types import SimpleNamespace
 from django.db import connection
 from django.test import TestCase
 
-from curriculum_api import review_instances, review_schedule, review_types, reviews
+import curriculum_api.review_management.api.commands as review_api_commands
+import curriculum_api.review_management.application.instance_creation as review_application_instance_creation
+import curriculum_api.review_management.application.instance_definitions as review_application_instance_definitions
+import curriculum_api.review_management.infrastructure.instance_relations as review_infrastructure_instance_relations
+import curriculum_api.review_management.infrastructure.instance_rows as review_infrastructure_instance_rows
+import curriculum_api.review_management.infrastructure.instance_schema as review_infrastructure_instance_schema
+import curriculum_api.review_management.infrastructure.relations as review_infrastructure_relations
+import curriculum_api.review_management.infrastructure.schedule_schema as review_infrastructure_schedule_schema
+import curriculum_api.review_management.infrastructure.template_rows as review_infrastructure_template_rows
+import curriculum_api.review_management.infrastructure.template_schema as review_infrastructure_template_schema
+import curriculum_api.review_management.infrastructure.type_rows as review_infrastructure_type_rows
+import curriculum_api.review_management.infrastructure.type_schema as review_infrastructure_type_schema
 from curriculum_api import views as curriculum_views
 
 from .views import (
@@ -40,10 +51,10 @@ class CoachReviewArchitectureTestCase(TestCase):
         curriculum_views.reset_schema_ready_flags()
         curriculum_views.invalidate_curriculum_cache()
         self._ensure_programmes_table()
-        reviews.provision_review_template_tables()
-        review_types.provision_review_types_table()
-        review_schedule.provision_review_schedule_tables()
-        review_instances.provision_review_instance_tables()
+        review_infrastructure_template_schema.provision_review_template_tables()
+        review_infrastructure_type_schema.provision_review_types_table()
+        review_infrastructure_schedule_schema.provision_review_schedule_tables()
+        review_infrastructure_instance_schema.provision_review_instance_tables()
         self._clear()
         self._programme()
 
@@ -70,15 +81,15 @@ class CoachReviewArchitectureTestCase(TestCase):
 
     def _clear(self):
         for table in (
-            review_instances.REVIEW_INSTANCE_SIGNATURES_TABLE,
-            review_instances.REVIEW_INSTANCE_ANSWERS_TABLE,
-            review_instances.REVIEW_INSTANCES_TABLE,
-            reviews.REVIEW_FIELDS_TABLE, reviews.REVIEW_SECTIONS_TABLE,
-            reviews.REVIEW_TEMPLATES_TABLE, review_types.REVIEW_TYPES_TABLE, 'programmes',
+            review_infrastructure_instance_relations.REVIEW_INSTANCE_SIGNATURES_TABLE,
+            review_infrastructure_instance_relations.REVIEW_INSTANCE_ANSWERS_TABLE,
+            review_infrastructure_instance_relations.REVIEW_INSTANCES_TABLE,
+            review_infrastructure_relations.REVIEW_FIELDS_TABLE, review_infrastructure_relations.REVIEW_SECTIONS_TABLE,
+            review_infrastructure_relations.REVIEW_TEMPLATES_TABLE, review_infrastructure_relations.REVIEW_TYPES_TABLE, 'programmes',
         ):
             with connection.cursor() as cursor:
                 cursor.execute(f'delete from {curriculum_views.authoring_table_name(table)}')
-        review_types.seed_system_review_types()
+        review_infrastructure_type_schema.seed_system_review_types()
 
     def _programme(self):
         curriculum_views.insert_row('programmes', {
@@ -90,7 +101,7 @@ class CoachReviewArchitectureTestCase(TestCase):
         curriculum_views.invalidate_curriculum_cache()
 
     def _template(self, *, name, type_id, interval, unit='weeks'):
-        review_id, errors = reviews.create_review(PROGRAMME_ID, {
+        review_id, errors = review_api_commands.create_review(PROGRAMME_ID, {
             'name': name, 'enabled': True, 'reviewTypeId': type_id,
             'recurrence': {'interval': interval, 'unit': unit},
             'scheduleAnchorDate': '2026-01-01', 'applicableStatuses': [],
@@ -105,10 +116,10 @@ class CoachReviewArchitectureTestCase(TestCase):
         return review_id
 
     def _system(self, code):
-        return review_types.get_review_type_by_code(code)['id']
+        return review_infrastructure_type_rows.get_review_type_by_code(code)['id']
 
     def _custom(self, name):
-        row, errors = review_types.create_review_type(name)
+        row, errors = review_api_commands.create_review_type(name)
         self.assertIsNone(errors, errors)
         return row['id']
 
@@ -207,7 +218,7 @@ class CoachClassificationTests(CoachReviewArchitectureTestCase):
         review_id = self._template(name='Monthly Coaching Meeting', type_id=self._system('mcm'), interval=6)
         before = self._rows('mcr')[0]
 
-        reviews.update_review(review_id, {'name': 'Monthly Learner Development Session'}, actor='test')
+        review_api_commands.update_review(review_id, {'name': 'Monthly Learner Development Session'}, actor='test')
         after = self._rows('mcr')[0]
 
         self.assertEqual(after['title'], 'Monthly Learner Development Session')
@@ -221,7 +232,7 @@ class CoachClassificationTests(CoachReviewArchitectureTestCase):
         review_id = self._template(name='Progress Review', type_id=self._system('progress_review'), interval=8)
         before = self._rows('progress-review')[0]
 
-        reviews.update_review(review_id, {'name': 'Quarterly Employer Catch-up'}, actor='test')
+        review_api_commands.update_review(review_id, {'name': 'Quarterly Employer Catch-up'}, actor='test')
         after = self._rows('progress-review')[0]
 
         self.assertEqual(after['title'], 'Quarterly Employer Catch-up')
@@ -234,7 +245,7 @@ class CoachClassificationTests(CoachReviewArchitectureTestCase):
         self.assertTrue(self._rows('mcr'))
 
         career = self._custom('Career Review')
-        reviews.update_review(review_id, {'reviewTypeId': career}, actor='test')
+        review_api_commands.update_review(review_id, {'reviewTypeId': career}, actor='test')
 
         # Gone from the MCM bucket...
         self.assertEqual(self._rows('mcr'), [])
@@ -267,7 +278,7 @@ class CoachClassificationTests(CoachReviewArchitectureTestCase):
 
     def test_8b_a_disabled_template_generates_nothing_either(self):
         review_id = self._template(name='Monthly Coaching Meeting', type_id=self._system('mcm'), interval=6)
-        reviews.update_review(review_id, {'enabled': False}, actor='test')
+        review_api_commands.update_review(review_id, {'enabled': False}, actor='test')
         self.assertEqual(self._coach_events(), [])
 
 
@@ -277,9 +288,9 @@ class CoachSchedulingTests(CoachReviewArchitectureTestCase):
     def test_9_the_review_instance_keeps_the_occurrence_date_and_number(self):
         review_id = self._template(name='Career Planning Session', type_id=self._custom('Career Review'), interval=6)
         occurrence_event = self._rows('review')[1]
-        template_row = reviews.get_review_template_row(review_id)
+        template_row = review_infrastructure_template_rows.get_review_template_row(review_id)
 
-        instance = review_instances.ensure_review_instance(
+        instance = review_application_instance_creation.ensure_review_instance(
             template_row,
             learner_id=248, learner_kind='', programme_id=PROGRAMME_ID,
             occurrence_number=occurrence_event['occurrenceNumber'],
@@ -297,10 +308,10 @@ class CoachSchedulingTests(CoachReviewArchitectureTestCase):
     def test_10_scheduling_twice_reuses_the_instance_and_never_recomputes_a_date(self):
         review_id = self._template(name='Monthly Coaching Meeting', type_id=self._system('mcm'), interval=6)
         occurrence_event = self._rows('mcr')[0]
-        template_row = reviews.get_review_template_row(review_id)
+        template_row = review_infrastructure_template_rows.get_review_template_row(review_id)
 
         def schedule():
-            return review_instances.ensure_review_instance(
+            return review_application_instance_creation.ensure_review_instance(
                 template_row,
                 learner_id=248, learner_kind='', programme_id=PROGRAMME_ID,
                 occurrence_number=occurrence_event['occurrenceNumber'],
@@ -320,16 +331,16 @@ class CoachSchedulingTests(CoachReviewArchitectureTestCase):
     def test_the_instance_form_is_the_templates_own_questions(self):
         review_id = self._template(name='Career Planning Session', type_id=self._custom('Career Review'), interval=6)
         occurrence_event = self._rows('review')[0]
-        instance = review_instances.ensure_review_instance(
-            reviews.get_review_template_row(review_id),
+        instance = review_application_instance_creation.ensure_review_instance(
+            review_infrastructure_template_rows.get_review_template_row(review_id),
             learner_id=248, learner_kind='', programme_id=PROGRAMME_ID,
             occurrence_number=occurrence_event['occurrenceNumber'],
             target_date=date.fromisoformat(occurrence_event['targetDate']),
             coach_email='coach@example.com', actor='coach@example.com',
         )
 
-        definition = review_instances.review_instance_form_definition(
-            review_instances.get_review_instance(instance['id'])
+        definition = review_application_instance_definitions.review_instance_form_definition(
+            review_infrastructure_instance_rows.get_review_instance(instance['id'])
         )
         titles = [
             field['title']

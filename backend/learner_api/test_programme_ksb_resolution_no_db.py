@@ -53,23 +53,25 @@ class ProgrammeKsbResolutionTests(unittest.TestCase):
         self.db.executescript("""
             ATTACH DATABASE ':memory:' AS curriculum;
             CREATE TABLE curriculum.programmes (
-                programme_id TEXT, name TEXT, ksb_profile_source_id TEXT, updated_at TEXT
+                programme_id TEXT, name TEXT, standard_ref TEXT, standard_version TEXT, updated_at TEXT
             );
             CREATE TABLE curriculum.modules (
                 module_catalogue_id TEXT, programme_id TEXT, programme_name TEXT,
-                ksb_profile_source_id TEXT, updated_at TEXT
+                updated_at TEXT
             );
+            CREATE TABLE curriculum.ksb_standard_versions (standard_ref TEXT,standard_version TEXT);
+            INSERT INTO curriculum.ksb_standard_versions VALUES ('ST0596','1.0'),('ST0845','1.1');
             INSERT INTO curriculum.programmes VALUES
-                ('PROG-MARKETING', 'Marketing', 'standard:marketing', '2026-10-21'),
-                ('PROG-PROJECT', 'Project Controls', 'standard:project', '2026-10-20');
+                ('PROG-MARKETING', 'Marketing', 'ST0596', '1.0', '2026-10-21'),
+                ('PROG-PROJECT', 'Project Controls', 'ST0845', '1.1', '2026-10-20');
             INSERT INTO curriculum.modules VALUES
-                ('SHARED', 'PROG-MARKETING', 'Marketing', 'standard:marketing', '2026-10-21'),
-                ('PROJECT', 'PROG-PROJECT', 'Project Controls', 'standard:project', '2026-10-20');
+                ('SHARED', 'PROG-MARKETING', 'Marketing', '2026-10-21'),
+                ('PROJECT', 'PROG-PROJECT', 'Project Controls', '2026-10-20');
         """)
         self.plan = [{'moduleId': 'SHARED'}, {'moduleId': 'PROJECT'}]
         self.project_ksbs = [{'code': 'K1', 'description': 'Project controls knowledge'}]
         self.marketing_ksbs = [{'code': 'K1', 'description': 'Marketing knowledge'}]
-        self.sources = {'standard:project': self.project_ksbs, 'standard:marketing': self.marketing_ksbs}
+        self.sources = {'standard:st0845-v1-1': self.project_ksbs, 'standard:st0596-v1-0': self.marketing_ksbs}
         self.scope = {
             'read_sql': read_sql,
             'connections': {'enrolment': LookupConnection(self.db)},
@@ -82,7 +84,7 @@ class ProgrammeKsbResolutionTests(unittest.TestCase):
             '_fetch_ksb_items_from_plan_mappings': lambda **_: [],
         }
         names = {'_s', '_plan_module_ids', '_clean_ksb_profile_source_id', '_resolve_programme_id',
-                 '_resolve_ksb_profile_source_id', '_fetch_ksb_items', 'current_curriculum_ksb_items_for_learner'}
+                 '_resolve_ksb_profile_source_id', '_fetch_ksb_items_for_programme', '_fetch_ksb_items', 'current_curriculum_ksb_items_for_learner'}
         path = Path(__file__).with_name('active_users.py')
         nodes = [node for node in ast.parse(path.read_text(encoding='utf-8')).body
                  if isinstance(node, ast.FunctionDef) and node.name in names]
@@ -113,8 +115,8 @@ class ProgrammeKsbResolutionTests(unittest.TestCase):
         self.assertEqual(result, self.project_ksbs)
 
     def test_exact_programme_match_wins_over_a_newer_prefix_match(self):
-        self.db.execute('INSERT INTO curriculum.programmes VALUES (?, ?, ?, ?)',
-                        ('PROG-PREFIX', 'Project', 'standard:marketing', '2026-10-22'))
+        self.db.execute('INSERT INTO curriculum.programmes VALUES (?, ?, ?, ?, ?)',
+                        ('PROG-PREFIX', 'Project', 'ST0596', '1.0', '2026-10-22'))
         self.assertEqual(self.scope['_resolve_programme_id']('Project Controls'), 'PROG-PROJECT')
 
     def test_programme_lookup_accepts_case_whitespace_and_id(self):
@@ -123,20 +125,20 @@ class ProgrammeKsbResolutionTests(unittest.TestCase):
                 self.assertEqual(self.scope['_resolve_programme_id'](programme, self.plan), 'PROG-PROJECT')
 
     def test_plan_keeps_the_existing_programme_when_names_are_duplicated(self):
-        self.db.execute('INSERT INTO curriculum.programmes VALUES (?, ?, ?, ?)',
-                        ('PROG-REPLACEMENT', 'Project Controls', 'standard:replacement', '2026-10-22'))
+        self.db.execute('INSERT INTO curriculum.programmes VALUES (?, ?, ?, ?, ?)',
+                        ('PROG-REPLACEMENT', 'Project Controls', 'ST0596', '1.0', '2026-10-22'))
         result = self.scope['_fetch_ksb_items']('Project Controls', self.plan)
         self.assertEqual(result, self.project_ksbs)
 
     def test_confirmed_id_wins_over_a_newer_name_match_for_the_ksb_source(self):
         result = self.scope['_resolve_ksb_profile_source_id']('PROG-PROJECT', 'Marketing', self.plan)
-        self.assertEqual(result, 'standard:project')
+        self.assertEqual(result, 'standard:st0845-v1-1')
 
     def test_exact_source_name_wins_over_a_newer_prefix_without_an_id(self):
-        self.db.execute('INSERT INTO curriculum.programmes VALUES (?, ?, ?, ?)',
-                        ('PROG-PREFIX', 'Project', 'standard:marketing', '2026-10-22'))
+        self.db.execute('INSERT INTO curriculum.programmes VALUES (?, ?, ?, ?, ?)',
+                        ('PROG-PREFIX', 'Project', 'ST0596', '1.0', '2026-10-22'))
         result = self.scope['_resolve_ksb_profile_source_id']('', 'Project Controls')
-        self.assertEqual(result, 'standard:project')
+        self.assertEqual(result, 'standard:st0845-v1-1')
 
     def test_single_programme_module_fallback_is_preserved(self):
         for programme in ('', 'Legacy programme name'):
@@ -148,15 +150,15 @@ class ProgrammeKsbResolutionTests(unittest.TestCase):
         self.assertEqual(self.scope['_resolve_programme_id']('', self.plan), '')
         self.assertEqual(self.scope['_fetch_ksb_items']('', self.plan), [])
 
-    def test_module_source_fallback_stays_within_the_resolved_programme(self):
-        self.db.execute("UPDATE curriculum.programmes SET ksb_profile_source_id='' WHERE programme_id='PROG-PROJECT'")
+    def test_missing_registered_pair_does_not_fall_back_to_module_source(self):
+        self.db.execute("UPDATE curriculum.programmes SET standard_ref=NULL,standard_version=NULL WHERE programme_id='PROG-PROJECT'")
         result = self.scope['_fetch_ksb_items']('Project Controls', self.plan)
-        self.assertEqual(result, self.project_ksbs)
+        self.assertEqual(result, [])
 
-    def test_applied_manual_source_is_preserved(self):
-        self.db.execute("UPDATE curriculum.programmes SET ksb_profile_source_id='profile:KSBP-PROJECT' WHERE programme_id='PROG-PROJECT'")
+    def test_unregistered_manual_identity_does_not_become_official(self):
+        self.db.execute("UPDATE curriculum.programmes SET standard_ref='KSBP-PROJECT',standard_version='1.0' WHERE programme_id='PROG-PROJECT'")
         self.sources['KSBP-PROJECT'] = self.project_ksbs
-        self.assertEqual(self.scope['_fetch_ksb_items']('Project Controls', self.plan), self.project_ksbs)
+        self.assertEqual(self.scope['_fetch_ksb_items']('Project Controls', self.plan), [])
 
     def test_no_programme_and_no_plan_returns_no_items(self):
         self.assertEqual(self.scope['_fetch_ksb_items'](''), [])

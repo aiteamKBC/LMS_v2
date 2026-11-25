@@ -156,7 +156,7 @@ def permanently_delete_programme_structure(
         wipe(AUTHORING_WEEKS_TABLE, [
             curriculum_in_clause('id', child.get('weekIds')),
         ])
-    wipe('tutor_module_notifications', [module_clause])
+    # Notification history is retained; its RESTRICT FK may refuse this delete.
     wipe('module_completion_criteria', [module_clause])
     wipe('module_details', [module_clause])
     wipe(LIVE_SESSIONS_TABLE, [module_clause])

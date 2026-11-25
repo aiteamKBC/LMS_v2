@@ -72,6 +72,12 @@ def point_codes(value):
         return None
     codes = set()
     for entry in entries:
+        if isinstance(entry, dict):
+            resolution = entry.get('resolutionStatus', entry.get('mapping_status'))
+            if resolution is not None and resolution != 'verified':
+                continue
+            if entry.get('is_excluded') is True or entry.get('isExcluded') is True:
+                continue
         code = (entry.get('code') or entry.get('ksbCode') or entry.get('ksb_code')) if isinstance(entry, dict) else entry
         if not isinstance(code, str) or not code.strip():
             return None

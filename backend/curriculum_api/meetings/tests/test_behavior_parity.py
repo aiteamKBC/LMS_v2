@@ -1,4 +1,8 @@
-"""Replay reviewed fixtures through frozen old bodies and actual current owners."""
+"""Replay fixtures through pinned references and actual current owners.
+
+Unchanged functions retain their pre-extraction reference. The seven approved
+study-week functions use actual upstream 99f81 bodies, not current-code copies.
+"""
 import copy
 from contextlib import ExitStack
 import datetime as clock_module
@@ -9,8 +13,8 @@ import unittest
 import uuid
 from unittest.mock import patch
 from curriculum_api.meetings.tests import source_loader
-from curriculum_api import test_calendar_checks_no_db as calendars
-from curriculum_api import test_teams_attachment_no_db as attachments
+from curriculum_api.meetings.tests import test_calendar_checks_no_db as calendars
+from curriculum_api.meetings.tests import test_teams_attachment_no_db as attachments
 
 
 class FixedClock(datetime):

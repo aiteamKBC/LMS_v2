@@ -63,9 +63,9 @@ class KsbPointDisplayTests(unittest.TestCase):
                 self.assertEqual(params, [[700, 701]])
                 return [dict(owner_id=700+i, id=1+i, accepted=bool(i), actual_seconds=0)
                         for i in range(2)]
-            if 'learner_progress_ksbs' in sql:
+            if 'ksb_learner_progress' in sql:
                 self.assertEqual(params, [[1, 2]])
-                self.assertIn("d.id::text=to_jsonb(k)->>'ksb_definition_id'", sql)
+                self.assertIn("d.id=k.standard_ksb_id", sql)
                 return [dict(progress_id=1+i, ksb_code='B1', ksb_definition_id=101+i,
                              definition_code=f'B1.{i+1}') for i in range(2)]
             return []

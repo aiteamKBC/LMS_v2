@@ -25,15 +25,19 @@ CREATE SCHEMA curriculum;
 CREATE TABLE curriculum.modules (module_catalogue_id text PRIMARY KEY, title text,
     deleted_at timestamptz, deleted_via_parent text);
 CREATE TABLE curriculum.weeks (id text PRIMARY KEY, module_catalogue_id text, title text,
-    week_number int, display_order int, deleted_at timestamptz, deleted_via_parent text);
+    week_number int, display_order int, deleted_at timestamptz, deleted_via_parent text,
+    status text DEFAULT 'active');
 CREATE TABLE curriculum.components (id text PRIMARY KEY, week_id text, module_catalogue_id text,
     type text, title text, description text, settings_json jsonb, live_sessions_link text,
-    display_order int, ksb_mappings jsonb, reflection_required boolean DEFAULT false,
+    display_order int, reflection_required boolean DEFAULT false,
     "Reflection_Question" text, tutor_validation_required boolean DEFAULT false,
-    expected_otjh numeric, deleted_at timestamptz, deleted_via_parent text);
-CREATE TABLE curriculum.ksb_mappings (id serial PRIMARY KEY, component_id text, module_catalogue_id text,
-    ksb_code text, ksb_description text, classification text, weight numeric, weight_class text,
-    deleted_at timestamptz, deleted_via_parent text);
+    expected_otjh numeric, deleted_at timestamptz, deleted_via_parent text,
+    status text DEFAULT 'active');
+CREATE TABLE curriculum.ksb_standard_definitions(id serial PRIMARY KEY,standard_ref text,standard_version text,
+    ksb_code text UNIQUE,ksb_description text,ksb_type text);
+CREATE TABLE curriculum.ksb_component_mappings (id serial PRIMARY KEY, component_id text,
+    standard_ksb_id integer REFERENCES curriculum.ksb_standard_definitions(id),
+    classification text, weight numeric, weight_class text,source_type text,source_id text,status text);
 CREATE TABLE curriculum.quizzes (id bigint PRIMARY KEY, title text, questions int, duration int, time_unit text);
 CREATE TABLE curriculum.quiz_component_links (quiz_id bigint, component_id text);
 '''
@@ -103,18 +107,21 @@ def seed():
                         [mid, title, deleted, 'PROG-OLD' if deleted else None])
         for row in WEEKS:
             arch = row[0] == 'w-arch'
-            cur.execute('INSERT INTO curriculum.weeks VALUES (%s,%s,%s,%s,%s,%s,%s)',
+            cur.execute('INSERT INTO curriculum.weeks (id,module_catalogue_id,title,week_number,display_order,deleted_at,deleted_via_parent) VALUES (%s,%s,%s,%s,%s,%s,%s)',
                         [*row, '2026-02-01T00:00:02Z' if arch else None, 'MOD-ARCH' if arch else None])
         for row in COMPONENTS:
             cur.execute('INSERT INTO curriculum.components (id,week_id,module_catalogue_id,type,title,description,'
-                        'settings_json,live_sessions_link,display_order,ksb_mappings,expected_otjh,deleted_at,'
+                        'settings_json,live_sessions_link,display_order,expected_otjh,deleted_at,'
                         'deleted_via_parent) VALUES (%(id)s,%(week_id)s,%(module_catalogue_id)s,%(type)s,%(title)s,'
-                        '%(description)s,%(settings_json)s,%(live_sessions_link)s,%(display_order)s,%(ksb_mappings)s,'
+                        '%(description)s,%(settings_json)s,%(live_sessions_link)s,%(display_order)s,'
                         '%(expected_otjh)s,%(deleted_at)s,%(deleted_via_parent)s)', row)
         for row in MAPPINGS:
-            cur.execute('INSERT INTO curriculum.ksb_mappings (component_id,module_catalogue_id,ksb_code,'
-                        'ksb_description,classification,weight,weight_class,deleted_at) '
-                        'VALUES (%s,%s,%s,%s,%s,%s,%s,%s)', [*row[:7], row[7] if len(row) > 7 else None])
+            if row[2] is None:
+                continue  # No official identity: never manufacture a mapping.
+            cur.execute("INSERT INTO curriculum.ksb_standard_definitions(standard_ref,standard_version,ksb_code,ksb_description,ksb_type) VALUES('ST0612','1.0',%s,%s,%s) RETURNING id", [row[2],row[3],row[2][0]])
+            standard_id=cur.fetchone()[0]
+            cur.execute("INSERT INTO curriculum.ksb_component_mappings(component_id,standard_ksb_id,classification,weight,weight_class,source_type,source_id,status) VALUES(%s,%s,%s,%s,%s,'standard','st0612-v1-0',%s)",
+                [row[0],standard_id,row[4],row[5],row[6] or 'soft','inactive' if len(row)>7 else 'active'])
         cur.execute("INSERT INTO curriculum.quizzes VALUES (7,'Quiz seven',10,15,'minutes'),(8,'Quiz eight',5,5,'minutes')")
         cur.execute("INSERT INTO curriculum.quiz_component_links VALUES (8,'c-b5'),(8,'c-b4')")
 
@@ -161,9 +168,12 @@ class ContentCachePostgresCases(unittest.TestCase):
         return value, calls
 
     def test_database_collation_is_code_point(self):
-        self.assertEqual(self.collation, 'C.UTF-8')
+        # initdb on Windows uses C; both names provide code-point ordering.
+        self.assertIn(self.collation, ('C', 'C.UTF-8'))
         with connections['enrolment'].cursor() as cur:
             self.assertTrue(content_cache.collation_ok(cur))
+            cur.execute('SELECT module_catalogue_id FROM curriculum.modules ORDER BY module_catalogue_id')
+            self.assertEqual([row[0] for row in cur.fetchall()], sorted(mid for mid, _ in MODULES))
 
     def test_every_variant_matches_the_database_byte_for_byte(self):
         for name, flags in VARIANTS.items():
@@ -196,7 +206,7 @@ class ContentCachePostgresCases(unittest.TestCase):
             self.assertEqual(learner_detail._otjh_by_component_id([{'componentId': 'c-b1'}]), {'c-b1': 1.5})
             with connections['enrolment'].cursor() as cur:
                 cur.execute("UPDATE curriculum.components SET title='Renamed' WHERE id='c-b1'")
-                cur.execute("UPDATE curriculum.ksb_mappings SET ksb_description='Changed' WHERE ksb_code='K1'")
+                cur.execute("UPDATE curriculum.ksb_standard_definitions SET ksb_description='Changed' WHERE ksb_code='K1'")
                 cur.execute("UPDATE curriculum.components SET expected_otjh=9 WHERE id='c-b1'")
             # Proves the read is cached: without the write path's invalidation
             # the old rows are still served.
@@ -216,7 +226,7 @@ class ContentCachePostgresCases(unittest.TestCase):
             self.assertEqual(resolve(('MOD-b',)), after)
         with connections['enrolment'].cursor() as cur:
             cur.execute("UPDATE curriculum.components SET title='Read me', expected_otjh=1.5 WHERE id='c-b1'")
-            cur.execute("UPDATE curriculum.ksb_mappings SET ksb_description='Knowledge' WHERE ksb_code='K1'")
+            cur.execute("UPDATE curriculum.ksb_standard_definitions SET ksb_description='Knowledge' WHERE ksb_code='K1'")
         content_cache.note_modules(['MOD-b'])
 
     def counted_reads(self, modules):

@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 
 from django.db import connections
 from curriculum_api.week_visibility import visible_child_sql
+from curriculum_api.canonical_read_sql import component_ksb_mappings_sql
 from learner_api import canonical_learning
 from learner_api.dashboard_monthly import read_monthly
 from learner_api.dashboard_metrics import point_codes
@@ -36,12 +37,9 @@ def read_month_activities(context, month):
                  if str(value.get('date') or '')[:7] == month and not value.get('date_needs_review')}
         if not dates:
             return [], assigned
-        cursor.execute('''SELECT c.id,c.module_catalogue_id AS module_id,c.title,c.type,
+        cursor.execute(f'''SELECT c.id,c.module_catalogue_id AS module_id,c.title,c.type,
             c.expected_otjh AS expected_hours,
-            coalesce(nullif(c.ksb_mappings,'[]'::jsonb),
-              (SELECT jsonb_agg(jsonb_build_object('code',k.ksb_code)) FROM curriculum.ksb_mappings k
-               WHERE k.component_id=c.id AND ''' + visible_child_sql('k') + '''),
-              '[]'::jsonb) AS ksb_mappings,
+            {component_ksb_mappings_sql('c')} AS ksb_mappings,
             coalesce((SELECT q.quiz_id::text FROM curriculum.quiz_component_links q
                       WHERE q.component_id=c.id ORDER BY q.id LIMIT 1),c.settings_json->>'linkedQuizId') AS quiz_id
             FROM curriculum.components c WHERE c.id=ANY(%s) AND c.module_catalogue_id=ANY(%s)

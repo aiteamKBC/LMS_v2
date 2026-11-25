@@ -80,6 +80,19 @@ def module_delivery_session_plan(
     if module.get('calendar_policy') or module.get('calendarPolicy'):
         holidays = read_module_holidays(module, holidays)
     applied_holidays = [*(holidays or []), *(own_holidays if isinstance(own_holidays, list) else [])]
+    from curriculum_api.live_holiday_policy import with_closed_weeks
+
+    def finish_plan(plan):
+        # Keep candidate slots and their numbers stable. Live creation and Teams
+        # booking consume the same explicit closure windows, without catch-up.
+        first_day = (first_weekly_session_day(start, weekly)
+                     if clean_str(module.get('schedule_mode') or module.get('scheduleMode')) == 'custom'
+                     and len(weekly) > 1 and module_week_starts_on(module) else None)
+        weekday = WEEKDAY_INDEX[str(first_day).lower()] if first_day else (0 if delivery_days else start.weekday() if start else 0)
+        result = with_closed_weeks(plan, holiday_details_by_date(applied_holidays), start,
+                                   module.get('end_date') or module.get('endDate'), weekday)
+        return apply_session_overrides(result, module)
+
     if calendar_weeks:
         from curriculum_api.study_weeks import build_study_week_plan
         if not start or week_count <= 0:
@@ -90,7 +103,7 @@ def module_delivery_session_plan(
         for session in plan['sessions']:
             clock, end, duration = module_session_clock({**module, 'session_overrides': {}}, session_date=session['date'])
             session.update(startTime=clock, endTime=end, durationMinutes=duration)
-        return apply_session_overrides(plan, module)
+        return finish_plan(plan)
     plan = build_module_session_plan(
         start, session_count, delivery_days, applied_holidays, week_count=week_count,
         week_starts_on=first_weekly_session_day(start, weekly)
@@ -108,7 +121,7 @@ def module_delivery_session_plan(
         for session in plan['sessions']:
             clock, end, duration = module_session_clock({**module, 'session_overrides': {}}, session_date=session.get('date'))
             session.update(startTime=clock, endTime=end, durationMinutes=duration)
-        return apply_session_overrides(plan, module)
+        return finish_plan(plan)
     warnings = plan.get('warnings') or []
     if not start:
         return {'sessions': [], 'slots': [], 'skippedHolidays': [], 'finalEndDate': '', 'originalEndDate': '', 'warnings': warnings}
@@ -132,7 +145,7 @@ def module_delivery_session_plan(
         }
         for index in range(fallback_count)
     ]
-    return apply_session_overrides({
+    return finish_plan({
         'sessions': sessions,
         # No weekday to skip onto means no slot can ever be closed, so the
         # curriculum spine is the session list: one open slot each, no reading
@@ -154,7 +167,7 @@ def module_delivery_session_plan(
         'finalEndDate': sessions[-1]['date'] if sessions else '',
         'originalEndDate': sessions[-1]['date'] if sessions else '',
         'warnings': warnings,
-    }, module)
+    })
 
 
 def module_delivery_plan(module, session_count, start, holidays=None, *,
@@ -261,3 +274,5 @@ def module_session_plan_for_weeks(
         module_cohort_selected_holidays(module_row) if holidays is None else (holidays or [])
     )
     return module_delivery_session_plan(module_row, 0, start, applied_holidays, week_count=weeks)
+
+from curriculum_api.catalogue.domain.read_contracts import WEEKDAY_INDEX

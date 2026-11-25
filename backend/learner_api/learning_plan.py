@@ -147,7 +147,7 @@ def _canonical_free_course_assignments(learner, course_ids=None):
         course_ids = _canonical_free_course_assignment_ids(learner)
     if not course_ids:
         return []
-    from curriculum_api import free_course_catalogue
+    from curriculum_api.catalogue.infrastructure import free_course_rows as free_course_catalogue
 
     rows = free_course_catalogue.courses(
         course_ids=course_ids,
@@ -466,7 +466,7 @@ def _meetings(learner):
 
     Never fatal: a plan that cannot reach Curriculum still shows its modules.
     """
-    from curriculum_api import review_otjh
+    import curriculum_api.review_management.application.otjh_queries as review_application_otjh_queries
 
     from coach_api.review_sources import source_for_learner, review_profile_for_source
     if source_for_learner(learner, None).kind == "aptem":
@@ -506,7 +506,7 @@ def _meetings(learner):
         return [], "no-dates"
 
     try:
-        rows = review_otjh.planned_meetings(
+        rows = review_application_otjh_queries.planned_meetings(
             programme_id,
             learner.pk,
             _s(learner.programme_status),
@@ -526,7 +526,7 @@ def _meetings(learner):
     # costs a second pass over the same templates and tells the reader which
     # thing to go and fix.
     try:
-        has_otjh_template = bool(review_otjh.otjh_template_rows(programme_id))
+        has_otjh_template = bool(review_application_otjh_queries.otjh_template_rows(programme_id))
     except Exception:
         logger.exception(
             "learning_plan: could not inspect review templates for learner %s", learner.pk,

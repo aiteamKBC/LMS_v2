@@ -8,7 +8,7 @@ from django.db import migrations
 
 
 def install(apps, schema_editor):
-    from curriculum_api.free_course_native_schema import detach
+    from curriculum_api.catalogue.infrastructure.free_course_native_schema import detach
     database = schema_editor.connection
     if database.vendor != 'postgresql':
         return

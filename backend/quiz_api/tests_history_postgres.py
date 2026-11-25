@@ -84,7 +84,7 @@ def prepare_database():
     apply_migration()
     from importlib import import_module
     with connections['default'].schema_editor() as editor:
-        import_module('quiz_api.migrations.0006_quiz_policies').install(None, editor)
+        import_module('quiz_api.migrations.0007_remove_quiz_defaults').remove_defaults(None, editor)
 
 
 @unittest.skipUnless(getattr(settings, 'QUIZ_HISTORY_POSTGRES_TESTS', False), 'Use the isolated PostgreSQL runner')
@@ -514,7 +514,7 @@ class QuizHistoryPostgresTests(unittest.TestCase):
                               .values_list('verified_seconds',flat=True)), [300,300])
 
     def test_free_course_shared_editor_handles_real_fk_conflict(self):
-        from curriculum_api import free_course_quiz_views as free
+        from curriculum_api.catalogue.api import free_course_quiz_views as free
         self.save()
         before = self.snapshot()
         self.quiz.free_course_week_id = 'FREEWEEK-TEST'

@@ -32,7 +32,7 @@ class ComponentKsbMappingReadTests(SimpleTestCase):
                          inline if cid == 'C1' else None, False, None, False, 1.5)
                         for cid, title, order in [('C1', 'First activity', 1), ('C2', 'Second activity', 2)]
                     ]
-                elif 'FROM curriculum.ksb_mappings mapping' in sql:
+                elif 'FROM curriculum.ksb_component_mappings mapping' in sql:
                     self.rows = mapping_rows or []
                     if 'NULL AS ksb_description' in sql:
                         self.rows = [(cid, code, None, *rest) for cid, code, _description, *rest in self.rows]

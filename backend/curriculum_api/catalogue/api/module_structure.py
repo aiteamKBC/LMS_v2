@@ -75,7 +75,7 @@ def curriculum_module_structure(
             # inside it (mappings_with_inferred_sources) asks whether a code
             # exists in a standard or a profile once per mapping row that has no
             # stored source, and each of those questions is a whole-table read of
-            # standard_ksbs or ksb_profiles. Memoised for the scope, a module
+            # ksb_standard_definitions or ksb_profiles. Memoised for the scope, a module
             # with thirty unsourced mappings costs two reads instead of ninety.
             with curriculum_read_scope(targeted_child_reads=True):
                 payload = (

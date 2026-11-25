@@ -11,9 +11,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from run_import_smoke import BACKEND, TARGETS, bundle
 
 TARGETS += ['curriculum_api.' + name for name in (
-    'test_schema_compat_no_db', 'test_ksb_mapping_placement_no_db',
-    'test_ksb_description_deferred_no_db', 'test_ksb_mapping_writes_no_db',
-    'test_schema_read_boundary_no_db',
+    'test_schema_compat_no_db', 'catalogue.tests.test_ksb_mapping_placement_no_db',
+    'catalogue.tests.test_ksb_description_deferred_no_db', 'catalogue.tests.test_ksb_mapping_writes_no_db',
+    'catalogue.tests.test_schema_read_boundary_no_db',
 )]
 
 

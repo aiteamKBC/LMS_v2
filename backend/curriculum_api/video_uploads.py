@@ -73,7 +73,7 @@ def save_mp4(kind, target_id, component, scope, uploaded, *, title='', expected_
         # serializes a native course conversion against attaching the file.
         owner = course(target_id, lock=True) if kind == 'module' else None
         if kind == 'free_course':
-            from .free_course_videos import check_revision
+            from curriculum_api.catalogue.api.free_course_videos import check_revision
             check_revision(target_id, expected_revision)
             table_sql = views.authoring_table_name('free_programme_components')
             weeks_sql = views.authoring_table_name('free_course_weeks')
@@ -111,7 +111,7 @@ def save_mp4(kind, target_id, component, scope, uploaded, *, title='', expected_
                 asset.save(update_fields=['status', 'error', 'updated_at'])
         transaction.on_commit(views.invalidate_curriculum_cache)
         if on_saved is not None:
-            from .free_course_authoring import course_document
+            from curriculum_api.catalogue.api.free_course_authoring import course_document
             on_saved(course_document(target_id, read_snapshot=False))
     uploaded.seek(0)
     return asset, updates

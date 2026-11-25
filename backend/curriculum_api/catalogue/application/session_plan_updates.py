@@ -54,7 +54,7 @@ def apply_module_session_plan_to_weeks(
             slots_by_week = [[slot for slot in session_plan if slot.get('weekNumber') == index + 1] for index in range(len(weeks))]
         else:
             slots_by_week, session_plan = module_week_delivery_slots(
-                module, group_row, len(weeks), holidays=holidays,
+                module, group_row, len(weeks), holidays=holidays, weeks=weeks,
             )
     except ValueError as exc:
         if not is_calendar_unavailable(exc):

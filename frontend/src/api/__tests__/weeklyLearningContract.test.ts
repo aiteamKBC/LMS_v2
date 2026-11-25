@@ -78,4 +78,65 @@ describe('single canonical Weekly resource', () => {
     await expect(fetchWeeklyLearningWeek('commercial', '265', 'M1', 'slot:M1:1')).rejects.toThrow('incomplete');
     await expect(fetchWeeklyLearningWeek('commercial', '265', 'M2', 'slot:M2:2')).rejects.toThrow('incomplete');
   });
+  it('keeps automatic, manual and full navigation reads in separate cache entries', async () => {
+    const current: WeeklyLearningResponse = { ...resource, modules: [{ id: 'M2', title: 'Current' }],
+      weeks: [{ ...resource.weeks[0], id: 'M2:2', moduleId: 'M2' }], selectedWeek: { ...week, weekId: 'M2:2' } };
+    vi.stubGlobal('fetch', vi.fn(async input => new Response(JSON.stringify(
+      String(input).includes('preferCurrent=1') ? current : resource))));
+    await fetchWeeklyLearning('commercial', '265', { moduleId: 'M1', moduleNavigation: true });
+    await fetchWeeklyLearning('commercial', '265', { moduleId: 'M1', moduleNavigation: true, preferCurrent: false });
+    await fetchWeeklyLearning('commercial', '265', { moduleId: 'M1' });
+    await fetchWeeklyLearning('commercial', '265', { moduleId: 'M1', moduleNavigation: true });
+    expect(vi.mocked(fetch).mock.calls.map(call => call[0])).toEqual([
+      '/learner_api/dashboard/commercial/265/weekly/plan/?moduleId=M1&navigation=module&preferCurrent=1',
+      '/learner_api/dashboard/commercial/265/weekly/plan/?moduleId=M1&navigation=module&preferCurrent=0',
+      '/learner_api/dashboard/commercial/265/weekly/plan/?moduleId=M1',
+    ]);
+  });
+  it('refreshing one module keeps a cached week in another module', async () => {
+    const other: WeeklyLearningResponse = { ...resource, modules: [{ id: 'M2', title: 'Other' }],
+      weeks: [{ ...resource.weeks[0], id: 'M2:2', moduleId: 'M2' }],
+      selectedWeek: { ...week, weekId: 'M2:2' } };
+    const saved = weeklyResourceFixture(other, '265');
+    primeWeeklyLearningWeek('commercial', '265', saved);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(resource))));
+    await fetchWeeklyLearning('commercial', '265', { moduleId: 'M1', moduleNavigation: true, revalidate: true });
+    expect(peekWeeklyLearningWeek('commercial', '265', 'M2', 'slot:M2:2')?.selectedWeek).toEqual(saved.selectedWeek);
+  });
+  it('reuses the displayed module on a manual return, including after an account cache reset', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(resource))));
+    for (let account = 0; account < 2; account += 1) {
+      clearAllCachedResources();
+      const automatic = await fetchWeeklyLearning('commercial', '265', { moduleNavigation: true });
+      const manual = await fetchWeeklyLearning('commercial', '265', { moduleNavigation: true, moduleId: 'M1', preferCurrent: false });
+      expect(manual).toBe(automatic);
+    }
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+  it('an automatic response never replaces a manual module read already in flight', async () => {
+    let finish!: () => void;
+    vi.stubGlobal('fetch', vi.fn(async input => {
+      const manual = String(input).includes('preferCurrent=0');
+      if (manual) await new Promise<void>(resolve => { finish = resolve; });
+      return new Response(JSON.stringify({ ...resource, selectedWeek: { ...week,
+        activities: [{ ...week.activities[0], title: manual ? 'Manual response' : 'Automatic response' }] } }));
+    }));
+    const pending = fetchWeeklyLearning('commercial', '265', { moduleNavigation: true, moduleId: 'M1', preferCurrent: false });
+    await fetchWeeklyLearning('commercial', '265', { moduleNavigation: true });
+    finish();
+    const manual = await pending;
+    expect(manual.selectedWeek?.activities[0].title).toBe('Manual response');
+    expect(await fetchWeeklyLearning('commercial', '265', { moduleNavigation: true, moduleId: 'M1', preferCurrent: false })).toBe(manual);
+  });
+  it('refreshing the automatic rail updates its primed manual snapshot', async () => {
+    let version = 0;
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ ...resource,
+      selectedWeek: { ...week, activities: [{ ...week.activities[0], title: `Version ${++version}` }] } }))));
+    const automatic = await fetchWeeklyLearning('commercial', '265', { moduleNavigation: true });
+    expect(await fetchWeeklyLearning('commercial', '265', { moduleNavigation: true, moduleId: 'M1', preferCurrent: false })).toBe(automatic);
+    const refreshed = await fetchWeeklyLearning('commercial', '265', { moduleNavigation: true, revalidate: true });
+    expect(refreshed.selectedWeek?.activities[0].title).toBe('Version 2');
+    expect(await fetchWeeklyLearning('commercial', '265', { moduleNavigation: true, moduleId: 'M1', preferCurrent: false })).toBe(refreshed);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
 });

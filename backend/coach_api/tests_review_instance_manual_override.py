@@ -25,7 +25,18 @@ from inspect import unwrap
 from django.db import connection
 from django.test import RequestFactory, TestCase
 
-from curriculum_api import review_instances, review_types, reviews
+import curriculum_api.review_management.api.commands as review_api_commands
+import curriculum_api.review_management.application.instance_creation as review_application_instance_creation
+import curriculum_api.review_management.application.instance_lifecycle as review_application_instance_lifecycle
+import curriculum_api.review_management.domain.instance_rules as review_domain_instance_rules
+import curriculum_api.review_management.infrastructure.instance_relations as review_infrastructure_instance_relations
+import curriculum_api.review_management.infrastructure.instance_rows as review_infrastructure_instance_rows
+import curriculum_api.review_management.infrastructure.instance_schema as review_infrastructure_instance_schema
+import curriculum_api.review_management.infrastructure.relations as review_infrastructure_relations
+import curriculum_api.review_management.infrastructure.template_rows as review_infrastructure_template_rows
+import curriculum_api.review_management.infrastructure.template_schema as review_infrastructure_template_schema
+import curriculum_api.review_management.infrastructure.type_rows as review_infrastructure_type_rows
+import curriculum_api.review_management.infrastructure.type_schema as review_infrastructure_type_schema
 from curriculum_api import views as curriculum_views
 
 from . import views as coach_views
@@ -43,9 +54,9 @@ class ManualOverrideTestCase(TestCase):
         curriculum_views.reset_schema_ready_flags()
         curriculum_views.invalidate_curriculum_cache()
         self._ensure_programmes_table()
-        reviews.provision_review_template_tables()
-        review_types.provision_review_types_table()
-        review_instances.provision_review_instance_tables()
+        review_infrastructure_template_schema.provision_review_template_tables()
+        review_infrastructure_type_schema.provision_review_types_table()
+        review_infrastructure_instance_schema.provision_review_instance_tables()
         self._clear()
         self._programme()
 
@@ -68,15 +79,15 @@ class ManualOverrideTestCase(TestCase):
 
     def _clear(self):
         for table in (
-            review_instances.REVIEW_INSTANCE_SIGNATURES_TABLE,
-            review_instances.REVIEW_INSTANCE_ANSWERS_TABLE,
-            review_instances.REVIEW_INSTANCES_TABLE,
-            reviews.REVIEW_FIELDS_TABLE, reviews.REVIEW_SECTIONS_TABLE,
-            reviews.REVIEW_TEMPLATES_TABLE, review_types.REVIEW_TYPES_TABLE, 'programmes',
+            review_infrastructure_instance_relations.REVIEW_INSTANCE_SIGNATURES_TABLE,
+            review_infrastructure_instance_relations.REVIEW_INSTANCE_ANSWERS_TABLE,
+            review_infrastructure_instance_relations.REVIEW_INSTANCES_TABLE,
+            review_infrastructure_relations.REVIEW_FIELDS_TABLE, review_infrastructure_relations.REVIEW_SECTIONS_TABLE,
+            review_infrastructure_relations.REVIEW_TEMPLATES_TABLE, review_infrastructure_relations.REVIEW_TYPES_TABLE, 'programmes',
         ):
             with connection.cursor() as cursor:
                 cursor.execute(f'delete from {curriculum_views.authoring_table_name(table)}')
-        review_types.seed_system_review_types()
+        review_infrastructure_type_schema.seed_system_review_types()
 
     def _programme(self):
         curriculum_views.insert_row('programmes', {
@@ -87,8 +98,8 @@ class ManualOverrideTestCase(TestCase):
         curriculum_views.invalidate_curriculum_cache()
 
     def _template(self, *, type_code='mcm'):
-        type_id = review_types.get_review_type_by_code(type_code)['id']
-        review_id, errors = reviews.create_review('PROG-MANUAL', {
+        type_id = review_infrastructure_type_rows.get_review_type_by_code(type_code)['id']
+        review_id, errors = review_api_commands.create_review('PROG-MANUAL', {
             'name': 'Monthly Coaching Meeting' if type_code == 'mcm' else 'Progress Review',
             'enabled': True, 'reviewTypeId': type_id,
             'recurrence': {'interval': 4, 'unit': 'weeks'}, 'scheduleAnchorDate': '2026-01-01',
@@ -121,7 +132,7 @@ class ManualOverrideTestCase(TestCase):
         return record
 
     def _instance(self, record):
-        return review_instances.get_review_instance(record.review_instance_id)
+        return review_infrastructure_instance_rows.get_review_instance(record.review_instance_id)
 
     def _call(self, instance_id, *, body=None, coach_email=COACH_EMAIL, view_as=False, admin=None):
         request = RequestFactory().post(
@@ -139,13 +150,13 @@ class ManualOverrideTestCase(TestCase):
         record = self._scheduled_linked_row(event_type='mcr', type_code='mcm')
         response = self._call(record.review_instance_id, body={'reasonCode': 'coach-confirmed-live-start'})
         self.assertEqual(response.status_code, 200, response.content)
-        self.assertEqual(self._instance(record)['status'], review_instances.STATUS_IN_PROGRESS)
+        self.assertEqual(self._instance(record)['status'], review_domain_instance_rules.STATUS_IN_PROGRESS)
 
     def test_assigned_coach_manually_marks_scheduled_pr_in_progress(self):
         record = self._scheduled_linked_row(learner_id=902, event_type='progress-review', type_code='progress_review')
         response = self._call(record.review_instance_id, body={'reasonCode': 'graph-unavailable'})
         self.assertEqual(response.status_code, 200, response.content)
-        self.assertEqual(self._instance(record)['status'], review_instances.STATUS_IN_PROGRESS)
+        self.assertEqual(self._instance(record)['status'], review_domain_instance_rules.STATUS_IN_PROGRESS)
 
     # -- 3: unrelated coach rejected --------------------------------------------
 
@@ -153,50 +164,50 @@ class ManualOverrideTestCase(TestCase):
         record = self._scheduled_linked_row(owner_email=COACH_EMAIL)
         response = self._call(record.review_instance_id, body={'reasonCode': 'attendance-not-detected'}, coach_email=OTHER_COACH_EMAIL)
         self.assertEqual(response.status_code, 404)
-        self.assertEqual(self._instance(record)['status'], review_instances.STATUS_SCHEDULED)
+        self.assertEqual(self._instance(record)['status'], review_domain_instance_rules.STATUS_SCHEDULED)
 
     # -- 6/7/8: invalid source status --------------------------------------------
 
     def test_not_scheduled_is_rejected(self):
         review_id = self._template()
-        template = reviews.get_review_template_row(review_id)
-        instance = review_instances.ensure_review_instance(
+        template = review_infrastructure_template_rows.get_review_template_row(review_id)
+        instance = review_application_instance_creation.ensure_review_instance(
             template, learner_id=1, learner_kind='', programme_id='PROG-MANUAL',
             occurrence_number=1, target_date=date(2026, 10, 1), coach_email=COACH_EMAIL,
         )
         response = self._call(instance['id'], body={'reasonCode': 'attendance-not-detected'})
         self.assertEqual(response.status_code, 400)
         self.assertIn('status', json.loads(response.content)['errors'])
-        self.assertEqual(review_instances.get_review_instance(instance['id'])['status'], review_instances.STATUS_NOT_SCHEDULED)
+        self.assertEqual(review_infrastructure_instance_rows.get_review_instance(instance['id'])['status'], review_domain_instance_rules.STATUS_NOT_SCHEDULED)
 
     def test_awaiting_signature_is_rejected(self):
         record = self._scheduled_linked_row()
         instance = self._instance(record)
-        review_instances.force_review_instance_status_for_tests(instance['id'], review_instances.STATUS_AWAITING_SIGNATURE, actor='test')
+        review_infrastructure_instance_rows.force_review_instance_status_for_tests(instance['id'], review_domain_instance_rules.STATUS_AWAITING_SIGNATURE, actor='test')
         response = self._call(record.review_instance_id, body={'reasonCode': 'attendance-not-detected'})
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(self._instance(record)['status'], review_instances.STATUS_AWAITING_SIGNATURE)
+        self.assertEqual(self._instance(record)['status'], review_domain_instance_rules.STATUS_AWAITING_SIGNATURE)
 
     def test_completed_is_rejected(self):
         record = self._scheduled_linked_row()
         instance = self._instance(record)
-        review_instances.force_review_instance_status_for_tests(
-            instance['id'], review_instances.STATUS_COMPLETED, actor='test',
+        review_infrastructure_instance_rows.force_review_instance_status_for_tests(
+            instance['id'], review_domain_instance_rules.STATUS_COMPLETED, actor='test',
             extra={'completed_at': curriculum_views.datetime.utcnow()},
         )
         response = self._call(record.review_instance_id, body={'reasonCode': 'attendance-not-detected'})
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(self._instance(record)['status'], review_instances.STATUS_COMPLETED)
+        self.assertEqual(self._instance(record)['status'], review_domain_instance_rules.STATUS_COMPLETED)
 
     def test_already_in_progress_manual_rewrite_is_rejected(self):
         record = self._scheduled_linked_row()
         self._call(record.review_instance_id, body={'reasonCode': 'attendance-not-detected'})
-        self.assertEqual(self._instance(record)['status'], review_instances.STATUS_IN_PROGRESS)
+        self.assertEqual(self._instance(record)['status'], review_domain_instance_rules.STATUS_IN_PROGRESS)
         started_at_first = self._instance(record)['started_at']
 
         response = self._call(record.review_instance_id, body={'reasonCode': 'attendance-not-detected'})
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(self._instance(record)['status'], review_instances.STATUS_IN_PROGRESS)
+        self.assertEqual(self._instance(record)['status'], review_domain_instance_rules.STATUS_IN_PROGRESS)
         self.assertEqual(self._instance(record)['started_at'], started_at_first)
 
     # -- 9/10/11: reason validation ----------------------------------------------
@@ -206,20 +217,20 @@ class ManualOverrideTestCase(TestCase):
         response = self._call(record.review_instance_id, body={'reasonCode': ''})
         self.assertEqual(response.status_code, 400)
         self.assertIn('reason', json.loads(response.content)['errors'])
-        self.assertEqual(self._instance(record)['status'], review_instances.STATUS_SCHEDULED)
+        self.assertEqual(self._instance(record)['status'], review_domain_instance_rules.STATUS_SCHEDULED)
 
     def test_other_without_note_is_rejected(self):
         record = self._scheduled_linked_row()
         response = self._call(record.review_instance_id, body={'reasonCode': 'other'})
         self.assertEqual(response.status_code, 400)
         self.assertIn('note', json.loads(response.content)['errors'])
-        self.assertEqual(self._instance(record)['status'], review_instances.STATUS_SCHEDULED)
+        self.assertEqual(self._instance(record)['status'], review_domain_instance_rules.STATUS_SCHEDULED)
 
     def test_valid_reason_is_accepted(self):
         record = self._scheduled_linked_row()
         response = self._call(record.review_instance_id, body={'reasonCode': 'other', 'note': 'Meeting happened over Zoom instead.'})
         self.assertEqual(response.status_code, 200, response.content)
-        self.assertEqual(self._instance(record)['status'], review_instances.STATUS_IN_PROGRESS)
+        self.assertEqual(self._instance(record)['status'], review_domain_instance_rules.STATUS_IN_PROGRESS)
 
     # -- 12/13: started_at rule ---------------------------------------------------
 
@@ -246,11 +257,11 @@ class ManualOverrideTestCase(TestCase):
         record = self._scheduled_linked_row()
         instance = self._instance(record)
         curriculum_views.update_rows(
-            review_instances.REVIEW_INSTANCES_TABLE, 'id = %s', [instance['id']],
+            review_infrastructure_instance_relations.REVIEW_INSTANCES_TABLE, 'id = %s', [instance['id']],
             {'started_at': curriculum_views.datetime(2026, 1, 1, 9, 0, 0)},
         )
-        instance = review_instances.get_review_instance(instance['id'])
-        ok, row = review_instances.mark_review_instance_in_progress_manually(
+        instance = review_infrastructure_instance_rows.get_review_instance(instance['id'])
+        ok, row = review_application_instance_lifecycle.mark_review_instance_in_progress_manually(
             instance, reason_code='attendance-not-detected', actor=COACH_EMAIL,
         )
         self.assertTrue(ok, row)
@@ -282,7 +293,7 @@ class ManualOverrideTestCase(TestCase):
         record = self._scheduled_linked_row()
         self._call(record.review_instance_id, body={'reasonCode': 'attendance-not-detected'})
         manual_instance = self._instance(record)
-        self.assertEqual(manual_instance['status'], review_instances.STATUS_IN_PROGRESS)
+        self.assertEqual(manual_instance['status'], review_domain_instance_rules.STATUS_IN_PROGRESS)
         manual_started_at = manual_instance['started_at']
 
         late_attendance = [{
@@ -292,7 +303,7 @@ class ManualOverrideTestCase(TestCase):
         changed = coach_views.apply_teams_attendance_status_transition(record, late_attendance)
         self.assertFalse(changed)  # already in-progress -- no second transition
         instance_after = self._instance(record)
-        self.assertEqual(instance_after['status'], review_instances.STATUS_IN_PROGRESS)
+        self.assertEqual(instance_after['status'], review_domain_instance_rules.STATUS_IN_PROGRESS)
         self.assertEqual(instance_after['started_at'], manual_started_at)  # not silently replaced
 
     # -- 21: unlinked historical row unaffected -----------------------------------
@@ -308,7 +319,7 @@ class ManualOverrideTestCase(TestCase):
             meeting_link='https://teams.microsoft.com/meet/old',
         )
         rows = curriculum_views.fetch_all(
-            f"select id from {curriculum_views.table_name(review_instances.REVIEW_INSTANCES_TABLE)} where learner_id = %s",
+            f"select id from {curriculum_views.table_name(review_infrastructure_instance_relations.REVIEW_INSTANCES_TABLE)} where learner_id = %s",
             [903],
         )
         self.assertEqual(rows, [])
@@ -323,8 +334,8 @@ class ManualOverrideTestCase(TestCase):
         log_record = captured.records[0]
         self.assertEqual(log_record.review_instance_id, record.review_instance_id)
         self.assertEqual(log_record.calendar_event_id, record.pk)
-        self.assertEqual(log_record.previous_status, review_instances.STATUS_SCHEDULED)
-        self.assertEqual(log_record.new_status, review_instances.STATUS_IN_PROGRESS)
+        self.assertEqual(log_record.previous_status, review_domain_instance_rules.STATUS_SCHEDULED)
+        self.assertEqual(log_record.new_status, review_domain_instance_rules.STATUS_IN_PROGRESS)
         self.assertEqual(log_record.source, 'manual')
         self.assertEqual(log_record.reason_code, 'scheduler-delay')
         self.assertEqual(log_record.note, 'cron did not run')
@@ -340,7 +351,7 @@ class ManualOverrideTestCase(TestCase):
             coach_email=COACH_EMAIL, view_as=True, admin=admin,
         )
         self.assertEqual(response.status_code, 200, response.content)
-        self.assertEqual(self._instance(record)['status'], review_instances.STATUS_IN_PROGRESS)
+        self.assertEqual(self._instance(record)['status'], review_domain_instance_rules.STATUS_IN_PROGRESS)
         # Attributed to the real actor (the admin), not silently as the coach.
         self.assertIn('Demo Admin', self._instance(record)['updated_by'])
         self.assertIn(COACH_EMAIL, self._instance(record)['updated_by'])
@@ -357,4 +368,4 @@ class ManualOverrideTestCase(TestCase):
             coach_email=COACH_EMAIL, view_as=True, admin=admin,
         )
         self.assertEqual(response.status_code, 404)
-        self.assertEqual(self._instance(record)['status'], review_instances.STATUS_SCHEDULED)
+        self.assertEqual(self._instance(record)['status'], review_domain_instance_rules.STATUS_SCHEDULED)

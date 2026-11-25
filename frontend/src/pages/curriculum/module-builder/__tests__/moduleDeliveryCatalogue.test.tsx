@@ -230,6 +230,20 @@ vi.mock('@/lib/curriculumApi', async importOriginal => ({
   fetchCurriculumScopeLearnerKsbImpact: (...args: unknown[]) => fetchCurriculumScopeLearnerKsbImpact(...args),
 }));
 
+// The independent Free Course workspace reads its canonical documents, not
+// module-authoring payloads. Keep real catalogue/editor behavior in these tests.
+function freeDocuments() {
+  return modules.filter(module => module.isFreeCourse).map(module => ({
+    schemaVersion: '1', scope: 'course', revision: 'free-revision-1',
+    course: { courseId: module.moduleCatalogueId, courseName: module.name, description: '', coverImageUrl: '',
+      displayOrder: 0, courseType: 'free', isForSale: Boolean(module.isForSale), price: module.price ?? null, currency: 'GBP' },
+    weeks: Array.from({ length: module.weeks || 0 }, (_, index) => ({ freeCourseWeekId: `W-${module.id}-${index}`,
+      weekNumber: index + 1, title: `Week ${index + 1}`, summary: '', learningOutcomes: [], status: 'active',
+      holidayNoteEnabled: false, holidayNote: '', displayOrder: index, components: [] })),
+    integrity: { status: 'ok', issues: [], legacyQuizReferenceCount: 0 },
+  }));
+}
+
 async function renderCatalogue(search = '', expectedTitle = 'Data Foundations') {
   window.history.replaceState({}, '', `/curriculum/module-builder${search}`);
   const { default: ModuleBuilder } = await import('../page');
@@ -501,13 +515,13 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
     const user = userEvent.setup();
     modules.push({ id: 'MOD-FREE', moduleCatalogueId: 'MOD-FREE', name: 'Independent study',
       isFreeCourse: true, programme: '', programmeId: '', weeks: 2, lessons: 1, assignments: 0 } as CurriculumModule);
-    await renderCatalogue('?programme=Data+Analyst&cohort=COHORT-1&group=GROUP-1&tutor=Tutor+One');
+    await renderCatalogue('?programme=PROG-DATA&cohort=COHORT-1&group=GROUP-1&tutor=Tutor+One');
     await waitFor(() => expect(screen.getByLabelText('Group')).toHaveTextContent('Group A'));
     expect(screen.queryByText('Independent study')).not.toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole('button', { name: 'Free courses' })).toHaveTextContent('1'));
 
     await user.click(screen.getByRole('button', { name: 'Free courses' }));
-    await screen.findByRole('heading', { name: 'Independent study' });
+    await screen.findByRole('heading', { name: 'Independent study', level: 3 });
     expect(screen.getAllByRole('article')).toHaveLength(1);
     expect(cardFor('Independent study').getByRole('button', { name: 'Edit' })).toBeInTheDocument();
     expect(screen.queryByLabelText('Programme')).not.toBeInTheDocument();
@@ -558,7 +572,7 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
     await screen.findByText('Data Foundations');
     await user.click(screen.getByRole('button', { name: 'Free courses' }));
     await waitFor(() => expect(screen.getByTestId('history-location')).toHaveTextContent('catalogue=free'));
-    await screen.findByRole('heading', { name: 'Independent study' });
+    await screen.findByRole('heading', { name: 'Independent study', level: 3 });
     await user.click(cardFor('Independent study').getByRole('button', { name: 'Edit' }));
     await screen.findByText('Course structure');
     await waitFor(() => expect(screen.getByTestId('history-location')).toHaveTextContent('freeCourse=FREE-MOD-FREE'));
@@ -566,7 +580,7 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
     await act(async () => { await router.navigate(-1); });
     await waitFor(() => expect(router.state.location.search).not.toContain('freeCourse='));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Free courses' })).toHaveAttribute('aria-pressed', 'true'));
-    await screen.findByRole('heading', { name: 'Independent study' });
+    await screen.findByRole('heading', { name: 'Independent study', level: 3 });
     expect(screen.getAllByRole('article')).toHaveLength(1);
     expect(cardFor('Independent study').getByRole('button', { name: 'Edit' })).toBeInTheDocument();
   });

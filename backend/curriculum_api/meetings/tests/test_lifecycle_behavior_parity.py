@@ -257,7 +257,7 @@ class NotificationParity(unittest.TestCase):
 
 def notification_case(method):
     def test(self):
-        from curriculum_api import test_schedule_email_no_db as emails
+        from curriculum_api.meetings.tests import test_schedule_email_no_db as emails
         def run(original):
             traces = []
             definitions = emails.definitions

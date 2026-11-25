@@ -314,7 +314,7 @@ class MigratedProgressReadTests(SimpleTestCase):
         self.view_as.return_value = False
         saved = saved_progress_overlay(self.definition_json)
         self.overlays.return_value.first.return_value = saved
-        self._patch("coach_api.views.curriculum_review_instances.progress_review_rag_history", return_value=[])
+        self._patch('curriculum_api.review_management.application.instance_progress.progress_review_rag_history', return_value=[])
         with patch.object(views, "build_progress_snapshot", side_effect=AssertionError("GET calculated")), \
              patch.object(service, "build_progress_snapshot", side_effect=AssertionError("GET calculated")), \
              patch.object(views, "_imported_review_progress_snapshot", side_effect=AssertionError("Initialized fallback")):

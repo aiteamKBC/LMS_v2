@@ -7,7 +7,7 @@ def curriculum_standards(request, *, CURRICULUM_SCHEMA, build_skills_england_sta
     standards = cached_curriculum_value('skills-england-standards', build_skills_england_standards)
     return reference_json_response(request, {
         'schema': CURRICULUM_SCHEMA,
-        'sourceTable': 'standard_ksbs',
+        'sourceTable': 'ksb_standard_definitions',
         'count': len(standards),
         'results': standards,
     })
@@ -19,7 +19,7 @@ def curriculum_standard_detail(request, identifier, *, CURRICULUM_SCHEMA, find_s
         return json_error('Skills England standard not found.', status=404)
     return reference_json_response(request, {
         'schema': CURRICULUM_SCHEMA,
-        'sourceTable': 'standard_ksbs',
+        'sourceTable': 'ksb_standard_definitions',
         **standard,
     })
 

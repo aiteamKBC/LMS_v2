@@ -293,8 +293,8 @@ export function fetchLearnerSummary(kind: LearnerKind, id: string, force = false
 }
 
 /** Render a revisit immediately, without a loading-frame flash. */
-export function peekLearnerDetail(kind: LearnerKind, id: string, whileRefreshing = false): LearnerDetail | undefined {
-  return detailResource.peek(`${kind}:${id}`, whileRefreshing ? 5 * 60_000 : 0);
+export function peekLearnerDetail(kind: LearnerKind, id: string, whileRefreshing = false, quizView = false): LearnerDetail | undefined {
+  return (quizView ? quizDetailResource : detailResource).peek(`${kind}:${id}`, whileRefreshing ? 5 * 60_000 : 0);
 }
 
 /** A completed non-quiz, non-video component (podcast/reading/slides/reflection/…). */

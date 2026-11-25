@@ -34,11 +34,11 @@ def metadata():
 def catalogue_sql_rows(definitions, course_id=3):
     # Match the narrow SQL projection, while retaining full definitions for
     # the independent historical viewer assertions below.
-    payload_fields = ('quiz_id', 'activity_id', 'parent_activity_id', 'section_order',
-                      'component_order', 'created_at', 'created_at_utc')
-    return [{**row, 'source_course_id': course_id,
-             'payload_section_title': row.get('source_payload', {}).get('section_title'),
-             **{key: row.get('source_payload', {}).get(key) for key in payload_fields}}
+    from .catalogue_fact_encoding import COURSE_FIELDS
+    fields = [name for name, _ in COURSE_FIELDS]
+    return [{**row, 'source_course_id': row.get('source_course_id', course_id),
+             'source_payload': [row.get('source_payload', {}).get(key,
+                 row.get('payload_section_title' if key == 'section_title' else key)) for key in fields]}
             for row in definitions]
 
 
@@ -330,7 +330,7 @@ class MyLearningAggregateTests(SimpleTestCase):
         record = {'id': 1, 'accepted': False, 'actual_seconds': 0, 'activity_status': 'in_progress',
             'reporting_month': '2026-03', 'sources': [{'source_system': 'old_lms',
                 'source_course_ref': '50', 'source_activity_id': 'material:7'}]}
-        with patch.object(canonical, 'query', return_value=db_rows):
+        with patch.object(canonical, 'query', return_value=catalogue_sql_rows(db_rows)):
             rows, done, started, hours, _ = learning.course_facts({'id': 9}, [record], [course])
         self.assertNotIn('_learner_schedule', definitions[0])
         projected = catalogue_display_context(rows, [])
@@ -518,7 +518,7 @@ class MyLearningAggregateTests(SimpleTestCase):
         record={'id':1,'accepted':True,'actual_seconds':3600,'sources':[
             {'source_system':'old_lms','source_course_ref':'50','source_activity_id':'material:7'},
             {'source_system':'old_lms','source_course_ref':'50','source_activity_id':'quiz:7'}]}
-        with patch.object(canonical,'query',return_value=definitions) as query:
+        with patch.object(canonical,'query',return_value=catalogue_sql_rows(definitions)) as query:
             rows,done,started,hours,ids=learning.course_facts({'id':9},[record],[course])
         self.assertEqual(len(rows),2)
         self.assertEqual(done,{('50','material:7'),('50','quiz:7')})
@@ -829,14 +829,17 @@ class MyLearningEndpointTests(SimpleTestCase):
     def test_both_learner_kinds_use_guarded_narrow_source_and_private_response(self):
         for kind in ('commercial','apprenticeship'):
             model=Mock();model.DoesNotExist=type('Missing',(Exception,),{})
-            model.all_learners.only.return_value.get.return_value=SimpleNamespace(pk=7)
+            source=SimpleNamespace(pk=7, _catalogue_training_plan=[], _catalogue_learning_plan=None)
+            model.all_learners.only.return_value.get.return_value=source
             with patch.dict(learning.SOURCE_MODELS,{kind:model}), patch.object(canonical,'require_profile',return_value={'id':9}) as identity, patch.object(learning,'read_catalogue',return_value={'modules':[]}) as read:
                 response=learning.my_learning.__wrapped__.__wrapped__.__wrapped__(RequestFactory().get('/'),kind,7)
             self.assertEqual(response.status_code,200)
             self.assertEqual(response['Cache-Control'],'private, no-store')
-            model.all_learners.only.assert_called_once_with(*learning.SOURCE_FIELDS)
+            model.all_learners.only.assert_called_once_with(*(field for field in learning.SOURCE_FIELDS
+                if field not in {'training_plan', 'learning_plan', 'modules', 'weeks', 'components'}))
+            model.all_learners.only.return_value.get.assert_called_once_with(pk=7)
             identity.assert_called_once_with(7)
-            read.assert_called_once()
+            read.assert_called_once_with(source, kind, {'id':9})
 
     def test_foreign_learner_is_denied_before_any_projection(self):
         with patch('login.permissions._auth_gate_enabled',return_value=True), patch('login.permissions.authenticate_request',return_value=SimpleNamespace(role='learner',subject_id=8)), patch.object(learning,'read_catalogue') as read:
@@ -986,7 +989,7 @@ class MyLearningSearchTests(SimpleTestCase):
         meta=metadata();meta['modules']={}
         context=([],[],[],native([component(component='Quiet lesson'),component('C2',component='Another activity')]),courses,[],set(),set(),__import__('collections').defaultdict(float),meta,[])
         definitions=[{'source_course_ref':'50'}]
-        with patch.object(learning,'load_context',return_value=context) as load, patch.object(canonical,'query',return_value=definitions) as query:
+        with patch.object(learning,'load_context',return_value=context) as load, patch.object(canonical,'query',return_value=catalogue_sql_rows(definitions)) as query:
             result=learning.read_search(SimpleNamespace(pk=7),{'id':9},'quiet',0)
         self.assertEqual({m['id'] for m in result['matches']},{'current:M1','legacy:50'})
         self.assertIsNone(result['nextOffset'])

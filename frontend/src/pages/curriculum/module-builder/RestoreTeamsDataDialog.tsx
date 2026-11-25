@@ -47,7 +47,8 @@ export function RestoreTeamsDataDialog({
   const [saved, setSaved] = useState<SavedModuleTeamsMeeting | null>(null);
   const [pendingComponents, setPendingComponents] = useState<number | null>(null);
   const [message, setMessage] = useState('');
-  const [result, setResult] = useState<{ updated: number; created: number } | null>(null);
+  const [alignToWeekPlan, setAlignToWeekPlan] = useState(false);
+  const [result, setResult] = useState<{ updated: number; created: number; unresolved: number } | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -56,6 +57,7 @@ export function RestoreTeamsDataDialog({
     setPendingComponents(null);
     setMessage('');
     setResult(null);
+    setAlignToWeekPlan(false);
     Promise.all([
       readModuleTeamsMeeting(module.catalogueId),
       probeModuleTeamsAttachment(module.catalogueId),
@@ -79,27 +81,28 @@ export function RestoreTeamsDataDialog({
   );
   const canRestore = state === 'ready' && !unsavedChanges && !saved?.verificationPending;
   const alreadyAttached = pendingComponents === 0;
-  const actionLabel = alreadyAttached ? 'Re-sync saved Teams data' : 'Restore Teams data here';
+  const actionLabel = alignToWeekPlan ? 'Align week dates and links' : alreadyAttached ? 'Re-sync saved Teams data' : 'Restore Teams data here';
   const close = () => {
     if (state !== 'restoring') onClose();
   };
   const statusCopy = useMemo(() => {
     if (unsavedChanges) return 'Save the module first. Restoring writes the saved calendar back into its live-session components.';
     if (saved?.verificationPending) return 'Teams is still verifying this calendar. The saved data will be available once verification finishes.';
+    if (alignToWeekPlan) return 'Match existing main-calendar meetings to each week’s planned delivery date. No meetings or components are created, and no invitations are sent. Additional meetings keep their own links.';
     if (alreadyAttached) return 'Every planned week already has a live-session component. Re-syncing is safe and keeps the saved meeting identity.';
     if (typeof pendingComponents === 'number') {
       return `${pendingComponents} week${pendingComponents === 1 ? '' : 's'} will receive a live-session component with its saved Teams link.`;
     }
     return 'The saved calendar will be attached to this module without leaving the builder.';
-  }, [alreadyAttached, pendingComponents, saved?.verificationPending, unsavedChanges]);
+  }, [alignToWeekPlan, alreadyAttached, pendingComponents, saved?.verificationPending, unsavedChanges]);
 
   const restore = async () => {
     if (!canRestore) return;
     setState('restoring');
     setMessage('');
     try {
-      const restored = await restoreModuleTeamsMeeting(module.catalogueId, { createMissingComponents: true });
-      setResult({ updated: restored.updatedComponents || 0, created: restored.createdComponents || 0 });
+      const restored = await restoreModuleTeamsMeeting(module.catalogueId, alignToWeekPlan ? { alignToWeekPlan: true } : { createMissingComponents: true });
+      setResult({ updated: restored.updatedComponents || 0, created: restored.createdComponents || 0, unresolved: restored.unresolvedComponentIds?.length || 0 });
       onRestored(restored.module);
       setState('success');
     } catch (error) {
@@ -152,7 +155,13 @@ export function RestoreTeamsDataDialog({
         </div>
       )}
 
-      {state === 'success' && result && (
+      {state === 'success' && result && result.unresolved > 0 && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-4 text-[12px] font-semibold text-amber-900" role="alert">
+          {result.unresolved} live session{result.unresolved === 1 ? ' has' : 's have'} no unique matching meeting. Matched links were saved; review the remaining sessions. No calendar events were created or moved.
+        </div>
+      )}
+
+      {state === 'success' && result && result.unresolved === 0 && (
         <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-emerald-900" role="status">
           <div className="flex items-start gap-2"><AppIcon className="ri-checkbox-circle-line mt-0.5 text-lg text-emerald-600" /><div><p className="text-[13px] font-bold">Teams data is back in this module</p><p className="mt-1 text-[11px] font-medium leading-5">{result.created ? `${result.created} live-session component${result.created === 1 ? '' : 's'} created` : 'No new components were needed'}{result.updated ? ` · ${result.updated} component${result.updated === 1 ? '' : 's'} updated` : ''}. The builder now shows the saved links and session identity.</p></div></div>
         </div>
@@ -181,6 +190,10 @@ export function RestoreTeamsDataDialog({
 
           <div className="rounded-xl border border-background-200 bg-background-50 p-4">
             <div className="flex items-start gap-2"><AppIcon className="ri-route-line mt-0.5 text-base text-primary-600" /><div><p className="text-[12px] font-bold text-foreground-900">What will happen</p><p className="mt-1 text-[11px] font-medium leading-5 text-foreground-600">{statusCopy}</p></div></div>
+            <label className="mt-3 flex items-center gap-2 text-[11px] font-semibold text-foreground-700">
+              <input type="checkbox" checked={alignToWeekPlan} disabled={!canRestore} onChange={event => setAlignToWeekPlan(event.target.checked)} />
+              Match existing meetings to week delivery dates
+            </label>
             {occurrences.length > 0 && (
               <div className="mt-3 grid grid-cols-1 gap-1.5" role="group" aria-label="Saved Teams sessions">
                 {occurrences.map(occurrence => {

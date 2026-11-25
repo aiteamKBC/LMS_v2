@@ -12,8 +12,14 @@ from django.core.management import call_command, CommandError
 from django.db import connection, IntegrityError, transaction
 from django.test import TransactionTestCase, RequestFactory
 
-from curriculum_api import review_instances as engine, views as curriculum
-from curriculum_api.tests_review_instances import ReviewInstancesTestCase
+from curriculum_api import views as curriculum
+import curriculum_api.review_management.application.instance_answers as review_application_instance_answers
+import curriculum_api.review_management.application.instance_creation as review_application_instance_creation
+import curriculum_api.review_management.application.instance_lifecycle as review_application_instance_lifecycle
+import curriculum_api.review_management.application.instance_signatures as review_application_instance_signatures
+import curriculum_api.review_management.infrastructure.instance_rows as review_infrastructure_instance_rows
+import curriculum_api.review_management.infrastructure.instance_schema as review_infrastructure_instance_schema
+from curriculum_api.review_management.tests.tests_review_instances import ReviewInstancesTestCase
 from coach_api import review_reconciliation as service, reconciliation_links as links, views, review_sources
 from coach_api.models import CoachCalendarEvent, ImportedReviewInstance, MigratedReviewTemplate, ReviewSourceReconciliation
 from coach_api.migrated_reviews import candidate_definition
@@ -35,8 +41,8 @@ class ReviewReconciliationTests(TransactionTestCase):
         ReviewInstancesTestCase.setUp(self)
         self.addCleanup(self.cleanup_persisted_graph)
         self.persist_identity_parents()
-        engine._provision_review_instance_manual_overrides_table()
-        engine._provision_review_instance_reopens_table()
+        review_infrastructure_instance_schema._provision_review_instance_manual_overrides_table()
+        review_infrastructure_instance_schema._provision_review_instance_reopens_table()
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
         self.actor = SimpleNamespace(pk=990, role="admin", is_active=True)
@@ -97,7 +103,7 @@ class ReviewReconciliationTests(TransactionTestCase):
         EnrolmentUser.all_learners.using("default").filter(pk=121).delete()
 
     def make_booking(self, number):
-        instance = engine.ensure_review_instance(self._template_row(self.template_id), learner_id=21, learner_kind="apprenticeship",
+        instance = review_application_instance_creation.ensure_review_instance(self._template_row(self.template_id), learner_id=21, learner_kind="apprenticeship",
                                                 programme_id="PROG-A", occurrence_number=number, target_date=date(2099, 11, 18),
                                                 coach_email="coach@example.invalid")
         record = CoachCalendarEvent.objects.create(event_key=f"review:21:{self.template_id}:{number}",
@@ -106,9 +112,9 @@ class ReviewReconciliationTests(TransactionTestCase):
                     review_instance_id=instance["id"], review_template_id=self.template_id, occurrence_number=number,
                     graph_event_id=f"graph-synthetic-{number}", meeting_link=f"https://example.invalid/meeting/{number}",
                     graph_organizer_email="organizer@example.invalid", idempotency_key=f"synthetic-operation-{number}")
-        engine.link_calendar_event(instance["id"], record.pk)
-        engine.mark_review_instance_scheduled(instance["id"])
-        return record, engine.get_review_instance(instance["id"])
+        review_application_instance_lifecycle.link_calendar_event(instance["id"], record.pk)
+        review_application_instance_lifecycle.mark_review_instance_scheduled(instance["id"])
+        return record, review_infrastructure_instance_rows.get_review_instance(instance["id"])
 
     def apply(self, **params):
         return service.apply(**{**dict(calendar_event_id=self.record.pk, source_review_id=501, actor_id=990, reason="Operator verified exact source occurrence"), **params})
@@ -117,7 +123,7 @@ class ReviewReconciliationTests(TransactionTestCase):
         with connection.cursor() as cursor:
             cursor.execute('SELECT * FROM recon_test_dependencies ORDER BY id')
             dependencies = cursor.fetchall()
-        return {"calendar": list(CoachCalendarEvent.objects.values()), "native": engine.get_review_instance(self.instance["id"]), "dependencies": dependencies}
+        return {"calendar": list(CoachCalendarEvent.objects.values()), "native": review_infrastructure_instance_rows.get_review_instance(self.instance["id"]), "dependencies": dependencies}
 
     def test_apply_preserves_calendar_graph_native_and_all_dependency_rows(self):
         before = self.snapshot()
@@ -157,10 +163,10 @@ class ReviewReconciliationTests(TransactionTestCase):
 
     def test_any_native_answers_signatures_completion_or_progress_reject(self):
         for extra in ({"status": "completed"}, {"progress_snapshot": {"hours": 1}}, {"started_at": "2099-11-18"}):
-            with self.subTest(extra=extra), patch.object(engine, "get_review_instance", return_value={**self.instance, **extra}):
+            with self.subTest(extra=extra), patch.object(review_infrastructure_instance_rows, "get_review_instance", return_value={**self.instance, **extra}):
                 with self.assertRaises(service.ReconciliationConflict): self.apply()
         for getter in ("get_review_instance_answers", "get_review_instance_signatures"):
-            with patch.object(engine, getter, return_value=[{"id": "existing-work"}]):
+            with patch.object(review_infrastructure_instance_rows, getter, return_value=[{"id": "existing-work"}]):
                 with self.assertRaises(service.ReconciliationConflict): self.apply()
         self.record.review_responses = {"summary": "Work"}; self.record.save()
         with self.assertRaises(service.ReconciliationConflict): self.apply()
@@ -238,9 +244,10 @@ class ReviewReconciliationTests(TransactionTestCase):
         for name, args in (("save_review_instance_answers", ({},)), ("save_review_instance_progress_snapshot", ({},)),
                            ("complete_review_instance", ())):
             with self.subTest(name=name), self.assertRaisesRegex(ValueError, "reconciled"):
-                getattr(engine, name)(self.instance, *args)
+                from curriculum_api.review_management.tests.export_contracts import declared_callable
+                declared_callable('review_instances', name)(self.instance, *args)
         with self.assertRaisesRegex(ValueError, "reconciled"):
-            engine.record_review_instance_signature(self.instance, "advisor", signed_by="coach", signed_name="Synthetic", signature="x")
+            review_application_instance_signatures.record_review_instance_signature(self.instance, "advisor", signed_by="coach", signed_name="Synthetic", signature="x")
 
     def test_reschedule_reservation_keeps_origin_source_and_meeting(self):
         self.apply()
@@ -254,7 +261,7 @@ class ReviewReconciliationTests(TransactionTestCase):
         self.assertEqual((saved.pk, saved.event_key, saved.graph_event_id, saved.meeting_link, saved.graph_organizer_email,
                           saved.operation_id, saved.idempotency_key, saved.review_instance_id, saved.review_template_id), origin)
         self.assertEqual(links.for_calendar(saved).source_review_id, 501)
-        self.assertEqual(engine.get_review_instance(self.instance["id"]), self.instance)
+        self.assertEqual(review_infrastructure_instance_rows.get_review_instance(self.instance["id"]), self.instance)
         with patch.object(views, "has_graph_credentials", return_value=True), \
              patch.object(views, "build_graph_event_payload", return_value={"subject": "MCM", "start": {}, "end": {}, "attendees": [{"emailAddress": {"address": "retained@example.invalid"}}]}), \
              patch.object(views, "apply_teams_meeting_options", return_value=(True, {}, [])), \
@@ -334,7 +341,7 @@ class ReviewReconciliationTests(TransactionTestCase):
         with self.assertRaises(views.LearnerCalendarConflict):
             views.sync_scheduled_review_instance(self.record)
         with self.assertRaisesRegex(ValueError, "reconciled"):
-            engine.ensure_review_instance(self._template_row(self.template_id), learner_id=21, learner_kind="apprenticeship",
+            review_application_instance_creation.ensure_review_instance(self._template_row(self.template_id), learner_id=21, learner_kind="apprenticeship",
                                          programme_id="PROG-A", occurrence_number=1, target_date=self.record.target_date)
 
     def test_reconciled_form_starts_and_saves_to_imported_overlay_only(self):
@@ -355,8 +362,8 @@ class ReviewReconciliationTests(TransactionTestCase):
         self.assertEqual(response.status_code, 200, response.content)
         overlay.refresh_from_db()
         self.assertEqual(overlay.answers, answers)
-        self.assertEqual(engine.get_review_instance(self.instance["id"]), self.instance)
-        self.assertEqual(engine.get_review_instance_answers(self.instance["id"]), {})
+        self.assertEqual(review_infrastructure_instance_rows.get_review_instance(self.instance["id"]), self.instance)
+        self.assertEqual(review_infrastructure_instance_rows.get_review_instance_answers(self.instance["id"]), {})
         self.assertEqual(self.source["status"], "Not Scheduled")
 
     def test_preview_reports_conflict_without_writes(self):
@@ -438,9 +445,9 @@ class ReviewReconciliationTests(TransactionTestCase):
         with self.without_reconciliation_table():
             # The decorator must not block an otherwise valid Native write just
             # because the optional ledger has not been deployed yet.
-            result = engine.save_review_instance_answers(self.instance, {})
+            result = review_application_instance_answers.save_review_instance_answers(self.instance, {})
             self.assertIsNotNone(result)
-            self.assertEqual(engine.get_review_instance(self.instance["id"])["id"], self.instance["id"])
+            self.assertEqual(review_infrastructure_instance_rows.get_review_instance(self.instance["id"])["id"], self.instance["id"])
 
     def test_admin_cannot_reconcile_a_booking_outside_current_coach_caseload(self):
         before = self.snapshot()

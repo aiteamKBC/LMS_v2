@@ -151,7 +151,7 @@ def programme_learner_ksb_progress(
     can never disagree:
 
       * weighted progress continues to come from the Component Progress
-        snapshot (``learner_progress_ksbs``); the separate learner/KSB count
+        snapshot (``ksb_learner_progress``); the separate learner/KSB count
         also accepts an explicit KSB declaration in a submitted reflection.
       * per KSB, achieved weight is capped at the mapped weight, so one
         over-weighted activity cannot push the programme past 100%.

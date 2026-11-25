@@ -22,7 +22,14 @@ MANIFEST = oracle.SNAPSHOT['manifest']
 
 def tree(relative):
     from curriculum_api.catalogue.tests.parity.calendar_composition_oracle import restore_tree
-    return restore_tree(ast.parse((ROOT / relative).read_text(encoding='utf-8-sig')), relative)
+    current = 'catalogue/infrastructure/free_course_pricing.py' if relative == 'free_course_pricing.py' else relative
+    parsed = ast.parse((ROOT / current).read_text(encoding='utf-8-sig'))
+    if relative == 'free_course_pricing.py':
+        # Undo the import relocation only; retain the actual pricing decisions.
+        for node in ast.walk(parsed):
+            if isinstance(node, ast.ImportFrom) and node.module == 'curriculum_api.course_pricing':
+                node.module, node.level = 'course_pricing', 1
+    return restore_tree(parsed, relative)
 
 
 def original(relative):
@@ -40,6 +47,8 @@ class OwnerImports(ast.NodeTransformer):
                 node.module = 'curriculum_api.catalogue.infrastructure.course_storage_reads'
             elif names <= {'upsert', 'update', 'refresh_totals'}:
                 node.module = 'curriculum_api.catalogue.infrastructure.course_storage_writes'
+        if node.module == 'curriculum_api.free_course_contract':
+            node.module = 'curriculum_api.catalogue.infrastructure.free_course_contract'
         return node
 
 
@@ -101,7 +110,7 @@ class RegistryCompositionContracts(unittest.TestCase):
 
     def test_pricing_preserves_filters_sql_and_failure_behavior(self):
         old = {n.name: n for n in original('free_course_pricing.py').body if isinstance(n, ast.FunctionDef)}
-        for actual in tree('free_course_pricing.py').body:
+        for actual in tree('catalogue/infrastructure/free_course_pricing.py').body:
             if isinstance(actual, ast.FunctionDef):
                 self.assertEqual(ast.dump(DirectPricing().visit(copy.deepcopy(old[actual.name]))), ast.dump(actual))
 

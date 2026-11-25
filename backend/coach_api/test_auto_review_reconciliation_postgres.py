@@ -94,9 +94,9 @@ class AutoReconciliationPostgresTests(TransactionTestCase):
         self.apply_auto()
         self.assertEqual(ReviewSourceReconciliation.objects.count(), 1)
         self.assertEqual(ImportedReviewInstance.objects.count(), 1)
-        from curriculum_api import review_instances as engine
+        import curriculum_api.review_management.application.instance_answers as review_application_instance_answers
         with self.assertRaisesRegex(ValueError, "reconciled"):
-            engine.save_review_instance_answers(self.instance, {})
+            review_application_instance_answers.save_review_instance_answers(self.instance, {})
         event = canonical._source_event(self.profile, self.source)
         from . import review_sources
         bookings, overlays = review_sources.load_imported_links([event])

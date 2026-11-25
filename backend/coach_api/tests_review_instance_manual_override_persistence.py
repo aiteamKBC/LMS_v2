@@ -19,7 +19,19 @@ from inspect import unwrap
 from django.db import connection
 from django.test import RequestFactory, TestCase
 
-from curriculum_api import review_instances, review_types, reviews
+import curriculum_api.review_management.api.commands as review_api_commands
+import curriculum_api.review_management.application.instance_answers as review_application_instance_answers
+import curriculum_api.review_management.application.instance_definitions as review_application_instance_definitions
+import curriculum_api.review_management.application.instance_lifecycle as review_application_instance_lifecycle
+import curriculum_api.review_management.application.instance_signatures as review_application_instance_signatures
+import curriculum_api.review_management.domain.instance_rules as review_domain_instance_rules
+import curriculum_api.review_management.infrastructure.instance_relations as review_infrastructure_instance_relations
+import curriculum_api.review_management.infrastructure.instance_rows as review_infrastructure_instance_rows
+import curriculum_api.review_management.infrastructure.instance_schema as review_infrastructure_instance_schema
+import curriculum_api.review_management.infrastructure.relations as review_infrastructure_relations
+import curriculum_api.review_management.infrastructure.template_schema as review_infrastructure_template_schema
+import curriculum_api.review_management.infrastructure.type_rows as review_infrastructure_type_rows
+import curriculum_api.review_management.infrastructure.type_schema as review_infrastructure_type_schema
 from curriculum_api import views as curriculum_views
 
 from . import views as coach_views
@@ -36,9 +48,9 @@ class ManualOverridePersistenceTestCase(TestCase):
         curriculum_views.reset_schema_ready_flags()
         curriculum_views.invalidate_curriculum_cache()
         self._ensure_programmes_table()
-        reviews.provision_review_template_tables()
-        review_types.provision_review_types_table()
-        review_instances.provision_review_instance_tables()
+        review_infrastructure_template_schema.provision_review_template_tables()
+        review_infrastructure_type_schema.provision_review_types_table()
+        review_infrastructure_instance_schema.provision_review_instance_tables()
         self._clear()
         self._programme()
 
@@ -61,17 +73,17 @@ class ManualOverridePersistenceTestCase(TestCase):
 
     def _clear(self):
         for table in (
-            review_instances.REVIEW_INSTANCE_MANUAL_OVERRIDES_TABLE,
-            review_instances.REVIEW_INSTANCE_SIGNATURES_TABLE,
-            review_instances.REVIEW_INSTANCE_ANSWERS_TABLE,
-            review_instances.REVIEW_INSTANCES_TABLE,
-            reviews.REVIEW_FIELDS_TABLE, reviews.REVIEW_SECTIONS_TABLE,
-            reviews.REVIEW_TEMPLATES_TABLE, review_types.REVIEW_TYPES_TABLE, 'programmes',
+            review_infrastructure_instance_relations.REVIEW_INSTANCE_MANUAL_OVERRIDES_TABLE,
+            review_infrastructure_instance_relations.REVIEW_INSTANCE_SIGNATURES_TABLE,
+            review_infrastructure_instance_relations.REVIEW_INSTANCE_ANSWERS_TABLE,
+            review_infrastructure_instance_relations.REVIEW_INSTANCES_TABLE,
+            review_infrastructure_relations.REVIEW_FIELDS_TABLE, review_infrastructure_relations.REVIEW_SECTIONS_TABLE,
+            review_infrastructure_relations.REVIEW_TEMPLATES_TABLE, review_infrastructure_relations.REVIEW_TYPES_TABLE, 'programmes',
         ):
             with connection.cursor() as cursor:
                 if curriculum_views.table_exists(table):
                     cursor.execute(f'delete from {curriculum_views.authoring_table_name(table)}')
-        review_types.seed_system_review_types()
+        review_infrastructure_type_schema.seed_system_review_types()
 
     def _programme(self):
         curriculum_views.insert_row('programmes', {
@@ -82,8 +94,8 @@ class ManualOverridePersistenceTestCase(TestCase):
         curriculum_views.invalidate_curriculum_cache()
 
     def _template(self, *, type_code='mcm'):
-        type_id = review_types.get_review_type_by_code(type_code)['id']
-        review_id, errors = reviews.create_review('PROG-PERSIST', {
+        type_id = review_infrastructure_type_rows.get_review_type_by_code(type_code)['id']
+        review_id, errors = review_api_commands.create_review('PROG-PERSIST', {
             'name': 'Monthly Coaching Meeting' if type_code == 'mcm' else 'Progress Review',
             'enabled': True, 'reviewTypeId': type_id,
             'recurrence': {'interval': 4, 'unit': 'weeks'}, 'scheduleAnchorDate': '2026-01-01',
@@ -116,10 +128,10 @@ class ManualOverridePersistenceTestCase(TestCase):
         return record
 
     def _instance(self, record):
-        return review_instances.get_review_instance(record.review_instance_id)
+        return review_infrastructure_instance_rows.get_review_instance(record.review_instance_id)
 
     def _override_rows(self, instance_id):
-        return review_instances.list_review_instance_manual_overrides(instance_id)
+        return review_infrastructure_instance_rows.list_review_instance_manual_overrides(instance_id)
 
     def _call(self, instance_id, *, body=None, coach_email=COACH_EMAIL):
         request = RequestFactory().post(
@@ -160,8 +172,8 @@ class ManualOverridePersistenceTestCase(TestCase):
         row = rows[0]
         self.assertEqual(row['review_instance_id'], record.review_instance_id)
         self.assertEqual(row['calendar_event_id'], record.pk)
-        self.assertEqual(row['previous_status'], review_instances.STATUS_SCHEDULED)
-        self.assertEqual(row['new_status'], review_instances.STATUS_IN_PROGRESS)
+        self.assertEqual(row['previous_status'], review_domain_instance_rules.STATUS_SCHEDULED)
+        self.assertEqual(row['new_status'], review_domain_instance_rules.STATUS_IN_PROGRESS)
         self.assertEqual(row['reason_code'], 'other')
         self.assertEqual(row['note'], 'Meeting happened over Zoom.')
         self.assertEqual(row['changed_by'], COACH_EMAIL)
@@ -223,7 +235,7 @@ class ManualOverridePersistenceTestCase(TestCase):
     def test_awaiting_signature_creates_no_row(self):
         record = self._scheduled_linked_row()
         instance = self._instance(record)
-        review_instances.force_review_instance_status_for_tests(instance['id'], review_instances.STATUS_AWAITING_SIGNATURE, actor='test')
+        review_infrastructure_instance_rows.force_review_instance_status_for_tests(instance['id'], review_domain_instance_rules.STATUS_AWAITING_SIGNATURE, actor='test')
         response = self._call(record.review_instance_id, body={'reasonCode': 'attendance-not-detected'})
         self.assertEqual(response.status_code, 400)
         self.assertEqual(self._override_rows(record.review_instance_id), [])
@@ -231,8 +243,8 @@ class ManualOverridePersistenceTestCase(TestCase):
     def test_completed_creates_no_row(self):
         record = self._scheduled_linked_row()
         instance = self._instance(record)
-        review_instances.force_review_instance_status_for_tests(
-            instance['id'], review_instances.STATUS_COMPLETED, actor='test',
+        review_infrastructure_instance_rows.force_review_instance_status_for_tests(
+            instance['id'], review_domain_instance_rules.STATUS_COMPLETED, actor='test',
             extra={'completed_at': curriculum_views.datetime.utcnow()},
         )
         response = self._call(record.review_instance_id, body={'reasonCode': 'attendance-not-detected'})
@@ -246,8 +258,8 @@ class ManualOverridePersistenceTestCase(TestCase):
         instance = self._instance(record)
         # A stale in-memory instance_row (still says 'scheduled') racing
         # against a status that has already moved on underneath it.
-        review_instances.force_review_instance_status_for_tests(instance['id'], review_instances.STATUS_AWAITING_SIGNATURE, actor='test')
-        ok, result = review_instances.mark_review_instance_in_progress_manually(
+        review_infrastructure_instance_rows.force_review_instance_status_for_tests(instance['id'], review_domain_instance_rules.STATUS_AWAITING_SIGNATURE, actor='test')
+        ok, result = review_application_instance_lifecycle.mark_review_instance_in_progress_manually(
             instance, reason_code='attendance-not-detected', actor=COACH_EMAIL,
         )
         self.assertFalse(ok)
@@ -279,7 +291,7 @@ class ManualOverridePersistenceTestCase(TestCase):
         }]
         changed = coach_views.apply_teams_attendance_status_transition(record, records)
         self.assertTrue(changed)
-        self.assertEqual(self._instance(record)['status'], review_instances.STATUS_IN_PROGRESS)
+        self.assertEqual(self._instance(record)['status'], review_domain_instance_rules.STATUS_IN_PROGRESS)
         self.assertEqual(self._override_rows(record.review_instance_id), [])
 
     # -- 22: normal completion/signature create no manual override rows -----------
@@ -292,21 +304,21 @@ class ManualOverridePersistenceTestCase(TestCase):
         }]
         coach_views.apply_teams_attendance_status_transition(record, records)
         instance = self._instance(record)
-        definition = review_instances.review_instance_form_definition(instance)
+        definition = review_application_instance_definitions.review_instance_form_definition(instance)
         field_id = definition['sections'][0]['fields'][0]['id']
-        review_instances.save_review_instance_answers(instance, {field_id: 'All good.'}, actor=COACH_EMAIL)
+        review_application_instance_answers.save_review_instance_answers(instance, {field_id: 'All good.'}, actor=COACH_EMAIL)
         instance = self._instance(record)
 
-        ok, errors = review_instances.complete_review_instance(instance, actor=COACH_EMAIL)
+        ok, errors = review_application_instance_lifecycle.complete_review_instance(instance, actor=COACH_EMAIL)
         self.assertTrue(ok, errors)
         instance = self._instance(record)
-        self.assertEqual(instance['status'], review_instances.STATUS_AWAITING_SIGNATURE)
+        self.assertEqual(instance['status'], review_domain_instance_rules.STATUS_AWAITING_SIGNATURE)
 
-        review_instances.record_review_instance_signature(
+        review_application_instance_signatures.record_review_instance_signature(
             instance, 'advisor', signed_by=COACH_EMAIL, signed_name='Coach',
             signature='data:image/png;base64,abc', actor=COACH_EMAIL,
         )
-        self.assertEqual(self._instance(record)['status'], review_instances.STATUS_COMPLETED)
+        self.assertEqual(self._instance(record)['status'], review_domain_instance_rules.STATUS_COMPLETED)
         self.assertEqual(self._override_rows(record.review_instance_id), [])
 
     # -- 23: historical unlinked review creates no row through this new flow -----
@@ -321,9 +333,9 @@ class ManualOverridePersistenceTestCase(TestCase):
             status=CoachCalendarEvent.STATUS_SCHEDULED,
             meeting_link='https://teams.microsoft.com/meet/old',
         )
-        review_instances.ensure_review_instance_manual_overrides_table()
+        review_infrastructure_instance_schema.ensure_review_instance_manual_overrides_table()
         rows = curriculum_views.fetch_all(
-            f'select * from {curriculum_views.table_name(review_instances.REVIEW_INSTANCE_MANUAL_OVERRIDES_TABLE)}',
+            f'select * from {curriculum_views.table_name(review_infrastructure_instance_relations.REVIEW_INSTANCE_MANUAL_OVERRIDES_TABLE)}',
             [],
         )
         self.assertEqual(rows, [])

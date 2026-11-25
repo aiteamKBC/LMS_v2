@@ -165,6 +165,21 @@ afterEach(() => {
 });
 
 describe('a duplicated module is its own module', () => {
+  it('replaces both official identity spellings when remapping to another standard', () => {
+    const source = bookedModule();
+    source.moduleKsbMappings = [{ id: 'old', ksbId: 'old', standardKsbId: 11,
+      standard_ksb_id: 11, code: 'K1', description: 'Source', type: 'main',
+      weight: 2.5, weightClass: 'hard' }];
+    const remap = (identity?: number) => remapModuleKsbMappings(source, {
+      sourceType: 'standard', sourceId: 'st0612-v2-0',
+      entries: [{ id: 'destination', standardKsbId: identity, code: 'K1', description: 'Destination' }],
+    }, { targetType: 'standard', targetId: 'st0612-v2-0' }).module.moduleKsbMappings[0];
+    expect(remap(22)).toMatchObject({ standardKsbId: 22, standard_ksb_id: 22, weight: 2.5, weightClass: 'hard' });
+    expect(remap().standardKsbId).toBeUndefined();
+    expect(remap().standard_ksb_id).toBeUndefined();
+    expect(source.moduleKsbMappings[0].standardKsbId).toBe(11);
+  });
+
   it('remaps module, week and component KSBs and records unmatched codes', () => {
     const source = recalculateModule({
       ...bookedModule(),

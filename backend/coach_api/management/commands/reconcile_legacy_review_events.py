@@ -201,7 +201,7 @@ class Command(BaseCommand):
 
     def _evaluate(self, record):
         """Read-only: resolve the decision for one row. Never writes."""
-        from curriculum_api import review_instances as curriculum_review_instances
+        import curriculum_api.review_management.infrastructure.instance_rows as review_infrastructure_instance_rows
 
         already_template = not _blank(record.review_template_id)
         already_instance = not _blank(record.review_instance_id)
@@ -270,7 +270,7 @@ class Command(BaseCommand):
         template_id = matched["reviewTemplateId"]
         occurrence_number = matched["occurrenceNumber"]
 
-        existing_instance = curriculum_review_instances.find_review_instance(
+        existing_instance = review_infrastructure_instance_rows.find_review_instance(
             template_id, mirror.id, occurrence_number,
         )
         if existing_instance:

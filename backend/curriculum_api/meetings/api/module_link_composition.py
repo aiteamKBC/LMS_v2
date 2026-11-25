@@ -80,7 +80,7 @@ from zoneinfo import ZoneInfo
 import uuid
 
 
-def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series_settings, occurrence_rows, *, create_missing=False, dry_run=False, unresolved_components=None):
+def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series_settings, occurrence_rows, *, create_missing=False, dry_run=False, unresolved_components=None, align_to_week_plan=False):
     """Compose the existing runtime capabilities for the meeting boundary."""
     from curriculum_api.meetings.application.attachment import attach_teams_meeting_to_module_weeks as implementation
     from curriculum_api.teams_external_calendar import external_calendar_settings
@@ -131,7 +131,12 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
         timezone=timezone,
         update_authoring_rows=update_authoring_rows,
         uuid=uuid,
+        align_to_week_plan=align_to_week_plan,
+        TEAMS_OFF_CALENDAR_OCCURRENCE_STATUSES=TEAMS_OFF_CALENDAR_OCCURRENCE_STATUSES,
+        occurrence_local_start=occurrence_local_start,
+        live_session_booked_on_module_calendar=live_session_booked_on_module_calendar,
     )
+
 
 
 @csrf_exempt
@@ -230,3 +235,7 @@ def curriculum_module_meeting_invitees(request, module_catalogue_id):
 
     return implementation(request, module_catalogue_id, clean_str=clean_str, json_error=json_error,
                           JsonResponse=JsonResponse, read_invitees=read_invitees)
+
+from curriculum_api.meetings.domain.read_contracts import TEAMS_OFF_CALENDAR_OCCURRENCE_STATUSES
+from curriculum_api.meetings.api.adapters import occurrence_local_start
+from curriculum_api.meetings.infrastructure.calendar_runtime import live_session_booked_on_module_calendar

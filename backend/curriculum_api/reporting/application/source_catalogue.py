@@ -394,7 +394,7 @@ def applied_standard_required_codes(
     manual profile matched by its name: the name match kept Marketing Executive
     and Marketing Manager on their profiles' counts after both moved to
     standards, and gave 0 to programmes no profile names. None means the
-    programme applies no standard (or it is not in standard_ksbs), so the
+    programme applies no standard (or it is not in ksb_standard_definitions), so the
     caller keeps the profile match. ``cache`` is per build, keyed by standard.
     """
     source = clean_str((config or {}).get('ksb_profile_source_id'))
@@ -421,38 +421,5 @@ def programme_applied_ksb_profile(
     normalise,
     programme_config_ksb_source,
 ):
-    """The manual KSB profile a programme applies, or None.
-
-    The stored source decides (programme_config_ksb_source):
-
-    - a standard: no manual profile speaks for the programme. Applying a standard
-      never unlinks the programme from a profile's ``programme_ids``, so a
-      profile still listing it -- archived or not -- is a leftover link. Reading
-      it made a programme on ST0845 call itself "Empty KSB profile";
-    - a profile: that profile, whatever its state, because the row chose it;
-    - nothing: the legacy match by programme name, against active profiles only,
-      so an archived profile cannot name a programme by accident.
-    """
-    source_type, source_id = programme_config_ksb_source(config)
-    if source_type == 'standard':
-        return None
-    ksb_profiles = [profile for profile in ksb_profiles or [] if ksb_profile_source_id(profile)]
-    if source_id:
-        wanted = normalise(source_id)
-        for profile in ksb_profiles or []:
-            profile_id = clean_str(profile.get('id'))
-            identities = {
-                profile_id,
-                clean_str(profile.get('ksb_profile_id')),
-                ksb_profile_source_id(profile),
-                f'ksb-{profile_id}' if profile_id else '',
-            }
-            if wanted in {normalise(value) for value in identities if value}:
-                return profile
-        return None
-    active = active_ksb_profiles(ksb_profiles)
-    for name in programme_names:
-        profile = get_ksb_profile_for_program(name, active)
-        if profile:
-            return profile
+    """Manual profiles are retired; programme names cannot assign standards."""
     return None

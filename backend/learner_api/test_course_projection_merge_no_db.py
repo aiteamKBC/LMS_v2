@@ -8,7 +8,7 @@ from learner_api.test_canonical_learning_no_db import adapter
 class CourseProjectionMergeTests(unittest.TestCase):
     def setUp(self):
         self.scope = adapter(Mock())
-        self.owner = {'id': 7, 'name': 'Synthetic learner', 'aptem_id': 70}
+        self.owner = {'id': 7, 'enrolment_id': 17, 'name': 'Synthetic learner', 'aptem_id': 70}
         self.courses = [{'id': 1, 'source_course_ref': '50', 'source_course_title': 'Course A'}]
         self.record = {'id': 1, 'accepted': True, 'actual_seconds': 3600, 'ksbs': [],
                        'sources': [{'source_system': 'old_lms', 'source_course_ref': '50',

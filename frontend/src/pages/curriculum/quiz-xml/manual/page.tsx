@@ -9,8 +9,7 @@ import { roleNavMap } from '@/mocks/navigation';
 import { useToast } from "@/hooks/useToast";
 import { fetchWeeks, type WeekItem } from '@/api/curriculum';
 import { defaultQuizGeneralSettings, type QuizGeneralSettings } from '@/lib/quizGeneralSettings';
-import { type QuizGradeSettings } from '@/lib/quizGradeSettings';
-import { useQuizDefaults } from '@/lib/quizDefaults';
+import { defaultQuizGradeSettings, type QuizGradeSettings } from '@/lib/quizGradeSettings';
 import { GradeSettingsModal } from '../GradeSettingsModal';
 import { createQuizWithQuestions } from '../createQuizWithQuestions';
 import { convertAnswerTextForQuestionType, isPairAnswerComplete, parseQuizPairAnswer, serializeQuizPairAnswer } from '@/lib/quizPairAnswers';
@@ -214,12 +213,11 @@ export default function ManualQuizPage() {
   const firstQuestion = useMemo(() => createQuestion(1), []);
   const [activeTab, setActiveTab] = useState<ManualTab>('questions');
   const [form, setForm] = useState<ManualQuizForm>(emptyForm);
-  const [settings, setSettings] = useState<ManualSettings>(() => createDefaultSettings());
-  const defaults = useQuizDefaults();
+  const [settings, setSettings] = useState<ManualSettings>(() => ({
+    ...createDefaultSettings(),
+    gradeSettings: { ...structuredClone(defaultQuizGradeSettings), resultDisplay: 'grade_percentage', coursePageDisplay: 'inside_quiz' },
+  }));
   const [showGrades, setShowGrades] = useState(false);
-  useEffect(() => {
-    if (defaults.data) setSettings({ ...createDefaultSettings(defaults.data.general), gradeSettings: defaults.data.grades });
-  }, [defaults.data]);
   const [questions, setQuestions] = useState<ManualQuestion[]>([firstQuestion]);
   const [activeQuestionId, setActiveQuestionId] = useState(firstQuestion.id);
   const [trainingPlanOptions, setTrainingPlanOptions] = useState<TrainingPlanOptions>({ programmes: [], modulesByProgramme: {} });
@@ -382,7 +380,7 @@ export default function ManualQuizPage() {
 
   const saveManualQuiz = async (event?: FormEvent) => {
     event?.preventDefault();
-    if (saving || readingQuestionImage || !defaults.data || defaults.loading || defaults.error) return;
+    if (saving || readingQuestionImage) return;
     const validationMessage = validateQuiz();
     if (validationMessage) {
       setPageError(validationMessage);
@@ -426,17 +424,13 @@ export default function ManualQuizPage() {
             <button type="button" onClick={addQuestion} className="h-10 px-4 rounded-lg bg-white border border-primary-200 text-primary-700 text-sm font-semibold hover:bg-primary-50">
               <AppIcon className="ri-add-line mr-1"></AppIcon>Add question
             </button>
-            <button type="submit" disabled={saving || readingQuestionImage || defaults.loading || !defaults.data || Boolean(defaults.error)} className="h-10 px-5 rounded-lg bg-[#5b2dbb] text-white text-sm font-semibold hover:bg-[#4c1d95] disabled:opacity-60 disabled:cursor-wait">
+            <button type="submit" disabled={saving || readingQuestionImage} className="h-10 px-5 rounded-lg bg-[#5b2dbb] text-white text-sm font-semibold hover:bg-[#4c1d95] disabled:opacity-60 disabled:cursor-wait">
               {saving ? 'Saving...' : 'Save Manual Quiz'}
             </button>
           </div>
         </div>
 
-        {(defaults.loading || defaults.error) && <div role="alert" className="rounded-lg border bg-white p-4 text-sm">
-          {defaults.loading ? 'Loading shared quiz defaults...' : defaults.error}
-          {defaults.error && <button type="button" onClick={defaults.reload} className="ml-4 text-primary-700">Retry defaults</button>}
-        </div>}
-        <fieldset disabled={defaults.loading || Boolean(defaults.error)} className="contents">
+        <fieldset className="contents">
         {pageError && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{pageError}</div>}
 
         <section className="rounded-2xl border border-[#ded8e8] bg-white p-5 shadow-sm space-y-4">
@@ -517,7 +511,7 @@ export default function ManualQuizPage() {
 
                   <QuizQuestionImageField key={activeQuestion.id} imageUrl={activeQuestion.imageUrl}
                     onChange={imageUrl => updateQuestion(activeQuestion.id, { imageUrl })}
-                    disabled={saving || readingQuestionImage || defaults.loading || !defaults.data || Boolean(defaults.error)} onBusyChange={setReadingQuestionImage} />
+                    disabled={saving || readingQuestionImage} onBusyChange={setReadingQuestionImage} />
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
@@ -663,7 +657,7 @@ export default function ManualQuizPage() {
             <button type="button" onClick={addQuestion} className="px-4 py-2 rounded-lg bg-white border border-primary-200 text-primary-700 text-sm font-semibold hover:bg-primary-50">
               <AppIcon className="ri-add-line mr-1"></AppIcon>Add question
             </button>
-            <button type="submit" disabled={saving || readingQuestionImage || defaults.loading || !defaults.data || Boolean(defaults.error)} className="px-5 py-2 rounded-lg bg-[#5b2dbb] text-white text-sm font-semibold hover:bg-[#4c1d95] disabled:opacity-60 disabled:cursor-wait">
+            <button type="submit" disabled={saving || readingQuestionImage} className="px-5 py-2 rounded-lg bg-[#5b2dbb] text-white text-sm font-semibold hover:bg-[#4c1d95] disabled:opacity-60 disabled:cursor-wait">
               {saving ? 'Saving...' : 'Save Manual Quiz'}
             </button>
           </div>

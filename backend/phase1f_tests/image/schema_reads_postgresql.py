@@ -9,7 +9,7 @@ from unittest.mock import patch
 from django.conf import settings
 from django.db import connection, transaction
 from curriculum_api import schema_compat as schema, ksb_mapping_placement as placement, views
-from curriculum_api.test_schema_read_boundary_no_db import frozen, set_original, SNAPSHOT
+from curriculum_api.catalogue.tests.test_schema_read_boundary_no_db import frozen, set_original, SNAPSHOT
 
 
 def table(name):

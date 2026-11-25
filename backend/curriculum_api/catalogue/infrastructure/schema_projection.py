@@ -52,7 +52,7 @@ def standard_ksb_texts(
     standard_ids, *, STANDARD_TEXTS_TTL_SECONDS, _STANDARD_TEXTS, _STANDARD_TEXTS_LOCK, _chunks, _internal,
     connection, time,
 ):
-    """``{standard_ksbs.id: (ksb_code, ksb_description)}`` for ``standard_ids``."""
+    """``{ksb_standard_definitions.id: (ksb_code, ksb_description)}`` for ``standard_ids``."""
     wanted = {value for value in standard_ids if value is not None}
     if not wanted:
         return {}
@@ -65,7 +65,7 @@ def standard_ksb_texts(
         found = {}
         with connection.cursor() as cursor:
             for chunk in _chunks(missing):
-                cursor.execute(f'select id, ksb_code, ksb_description from {_internal("standard_ksbs")} where id = any(%s)', [chunk])
+                cursor.execute(f'select id, ksb_code, ksb_description from {_internal("ksb_standard_definitions")} where id = any(%s)', [chunk])
                 found.update({sid: (code, description) for sid, code, description in cursor.fetchall()})
         with _STANDARD_TEXTS_LOCK:
             known.update(found)
@@ -82,10 +82,17 @@ def _project_ksb_mappings(rows, derived, *, _chunks, _internal, connection, stan
                 placements.update({cid: (module_id, week_id) for cid, module_id, week_id in cursor.fetchall()})
     if {'ksb_code', 'ksb_description'} & set(derived):
         standards = standard_ksb_texts(row.get('standard_ksb_id') for row in rows)
+    identifiers = {}
+    if 'ksb_id' in derived:
+        with connection.cursor() as cursor:
+            for chunk in _chunks({r.get('standard_ksb_id') for r in rows if r.get('standard_ksb_id')}):
+                cursor.execute(f'select s.id,{standard_ksb_compatibility_id_sql("s")} from {_internal("ksb_standard_definitions")} s where s.id=any(%s)', [chunk])
+                identifiers.update(cursor.fetchall())
     for row in rows:
         module_id, week_id = placements.get(str(row.get('component_id')), (None, None))
         code, description = standards.get(row.get('standard_ksb_id'), ('', ''))
-        values = {'module_catalogue_id': module_id or '', 'week_id': week_id,
+        values = {'ksb_id': identifiers.get(row.get('standard_ksb_id'), ''),
+                  'module_catalogue_id': module_id or '', 'week_id': week_id,
                   'ksb_code': code or '', 'ksb_description': description}
         for key in derived:
             row.setdefault(key, values[key])
@@ -101,19 +108,20 @@ def component_mapping_items(component_ids, *, _chunks, _internal, active_conditi
         for chunk in _chunks(ids):
             cursor.execute(
                 f'''
-                select m.component_id, m.id, m.ksb_id, m.weight, m.classification, m.source_type,
-                       m.source_id, m.weight_class, s.ksb_code, s.ksb_description
+                select m.component_id, m.id, {standard_ksb_compatibility_id_sql("s")}, m.weight, m.classification, m.source_type,
+                       m.source_id, m.weight_class, s.ksb_code, s.ksb_description, m.standard_ksb_id
                 from {_internal("ksb_mappings")} m
-                left join {_internal("standard_ksbs")} s on s.id = m.standard_ksb_id
+                left join {_internal("ksb_standard_definitions")} s on s.id = m.standard_ksb_id
                 where m.component_id = any(%s) and {active_condition("m")}
                 order by m.component_id, s.ksb_code, m.id
                 ''',
                 [chunk],
             )
             for (component_id, mapping_id, ksb_id, weight, classification, source_type,
-                 source_id, weight_class, code, description) in cursor.fetchall():
+                 source_id, weight_class, code, description, *official_id) in cursor.fetchall():
                 items.setdefault(component_id, []).append({
                     'id': mapping_id, 'ksb_id': ksb_id or '',
+                    **({'standard_ksb_id': official_id[0]} if official_id else {}),
                     'weight': float(weight) if weight is not None else None,
                     'ksb_code': code or '', 'source_id': source_id or '',
                     'description': description or '', 'source_type': source_type or '',
@@ -132,3 +140,5 @@ def _project_components(rows, derived, *, component_mapping_items):
             if key == 'ksb_mappings':
                 continue
             row.setdefault(key, None if key == 'detached_at' else '')
+
+from curriculum_api.canonical_read_sql import standard_ksb_compatibility_id_sql, standard_source_sql, ksb_physical_table

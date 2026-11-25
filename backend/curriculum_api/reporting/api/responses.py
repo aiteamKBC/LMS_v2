@@ -155,7 +155,7 @@ def coverage_entry(
     through curriculum handlers, which bump the shared epoch and retire the
     entry at once (modules, weeks, components, KSB mappings, programme configs,
     KSB profiles). The exception is the Skills England requirement list: it is
-    read straight from standard_ksbs at build time, and that table changes by
+    read straight from ksb_standard_definitions at build time, and that table changes by
     manual SQL import, which bumps nothing. The 60s expiry is what bounds how
     long coverage can lag such an import, so it stays until the import path
     invalidates the curriculum cache itself.
@@ -200,7 +200,7 @@ def coverage_entry(
             return {name: encode_json_entry(coverage_part(dict(result), name)) for name in COVERAGE_PART_VIEWS}
 
         # Past its 60s an entry is re-checked against the one input no epoch
-        # covers (standard_ksbs / ksb_profiles, see the docstring) and kept when
+        # covers (ksb_standard_definitions / ksb_profiles, see the docstring) and kept when
         # it has not moved, instead of being rebuilt every minute.
         return cached_curriculum_value(
             f'{key}:parts-v4', build_parts, ttl=60, fingerprint=component_source_inputs_fingerprint,

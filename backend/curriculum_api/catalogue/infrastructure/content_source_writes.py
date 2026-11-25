@@ -22,62 +22,24 @@ def set_programme_modules_ksb_source(
     unique,
     update_authoring_rows,
 ):
-    raw_targets = unique([clean_str(value) for value in programme_values if clean_str(value)])
-    targets = {normalise(value) for value in raw_targets if normalise(value)}
-    source_value = normalise_ksb_profile_source_value(source_value)
-    if not raw_targets:
-        return 0
-    ensure_module_authoring_tables()
-    if connection.vendor == 'postgresql':
-        placeholders = ', '.join(['%s'] * len(raw_targets))
-        params = [source_value, datetime.utcnow(), *raw_targets]
-        with connection.cursor() as cursor:
-            cursor.execute(
-                f'''
-                update {authoring_table_name(AUTHORING_MODULES_TABLE)}
-                set ksb_profile_source_id = %s, updated_at = %s
-                where programme_id in ({placeholders})
-                   or programme_id in (
-                       select programme_id from {table_name('programmes')} where name in ({placeholders}))
-                ''',
-                [*params, *raw_targets],
-            )
-            # Raw SQL across a programme's modules: no helper reported it.
-            # Rare, so retiring every module's learner content costs little.
-            content_cache = load_content_cache()
-            content_cache.retire_all()
-            return cursor.rowcount
-    updated = 0
-    for module in authoring_fetch_all(AUTHORING_MODULES_TABLE):
-        module_programme_values = [
-            module.get('programme_id'),
-            module.get('programme_name'),
-        ]
-        if not any(normalise(value) in targets for value in module_programme_values):
-            continue
-        module_id = clean_str(module.get('module_catalogue_id'))
-        if not module_id:
-            continue
-        update_authoring_rows(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_id], {
-            'ksb_profile_source_id': source_value,
-            'updated_at': datetime.utcnow(),
-        })
-        updated += 1
-    return updated
+    """Module selectors inherit the programme pair; there is no copied column."""
+    from curriculum_api import content_cache
+    content_cache.retire_all()
+    return 0
 
 
 def component_source_inputs_fingerprint(*, authoring_table_name, column_names, connection, quote_ident, table_exists):
     """What a mapping's inferred KSB source depends on beyond the curriculum epoch.
 
     The component reads infer a mapping's source from the Skills England KSBs
-    (``standard_ksbs``). It is not written through a curriculum handler, so no
+    (``ksb_standard_definitions``). It is not written through a curriculum handler, so no
     epoch bump retires a cached read when it changes. This is its row count and
     newest stamp: one round trip, taken when a cached entry passes its ttl, so
     the entry is rebuilt only when it has moved (see cached_curriculum_value's
     ``fingerprint``).
     """
     parts = []
-    for table in ('standard_ksbs',):
+    for table in ('ksb_standard_definitions',):
         if not table_exists(table):
             parts.append((table, None))
             continue

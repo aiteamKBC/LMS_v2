@@ -9,7 +9,7 @@ from the group's data, or build by hand):
   members actually touched (activity_results), full catalogue as fallback;
 * assignments          -> "Last_audit".learner_assignments aggregated by the
   normalised component NAME (component ids are unique per learner);
-* KSBs                 -> curriculum.standard_ksbs (the IfATE standard list);
+* KSBs                 -> curriculum.ksb_standard_definitions (the IfATE standard list);
 * LMS groups           -> mirror groups/group_learners as membership seeds;
 * attendance modules   -> "Last_audit".learner_attendance module -> lecture
   pairs, cohort-wide (the inline activity-row name picker);
@@ -632,19 +632,30 @@ def picker_ksbs(request: HttpRequest) -> JsonResponse:
     """The IfATE standard KSB codes, grouped K/S/B, optionally per standard."""
     standard = str(request.GET.get("standard") or "").strip()[:300]
     search = str(request.GET.get("search") or "").strip()[:200]
+    reference = str(request.GET.get('standardRef') or '').strip()[:40]
+    version = str(request.GET.get('standardVersion') or '').strip()[:40]
+    if bool(reference) != bool(version):
+        return JsonResponse({'error': 'Select both Standard reference and version.'}, status=400)
     try:
         with connections[CONN].cursor() as cur:
-            cur.execute('select distinct standard_title from curriculum.standard_ksbs order by 1')
+            cur.execute('select distinct standard_title from curriculum.ksb_standard_definitions order by 1')
             standards = [row[0] for row in cur.fetchall()]
+            if standard and not reference:
+                cur.execute('''select distinct standard_ref,standard_version from curriculum.ksb_standard_definitions
+                    where standard_title=%s''', [standard])
+                identities = cur.fetchall()
+                if len(identities) > 1:
+                    return JsonResponse({'error': 'Standard title is ambiguous; select its reference and version.'}, status=409)
             cur.execute(
                 '''
-                select ksb_code, ksb_type, ksb_description
-                from curriculum.standard_ksbs
+                select ksb_code, ksb_type, ksb_description,id,standard_ref,standard_version
+                from curriculum.ksb_standard_definitions
                 where (%s = '' or standard_title = %s)
+                  and (%s = '' or (upper(standard_ref)=upper(%s) and standard_version=%s))
                   and (%s = '' or ksb_description ilike '%%' || %s || '%%' or ksb_code ilike %s || '%%')
                 order by ksb_type, length(ksb_code), ksb_code
                 ''',
-                [standard, standard, search, search, search],
+                [standard, standard, reference, reference, version, search, search, search],
             )
             rows = cur.fetchall()
     except (KeyError, DatabaseError) as error:
@@ -652,12 +663,13 @@ def picker_ksbs(request: HttpRequest) -> JsonResponse:
 
     grouped = {"K": [], "S": [], "B": []}
     type_map = {"knowledge": "K", "skill": "S", "behaviour": "B"}
-    for code, ksb_type, description in rows:
+    for code, ksb_type, description, definition_id, standard_ref, standard_version in rows:
         bucket = type_map.get(str(ksb_type or "").strip().lower())
         if not bucket:
             bucket = (str(code or "?")[:1].upper() if str(code or "?")[:1].upper() in grouped else None)
         if bucket:
-            grouped[bucket].append({"code": code, "description": description})
+            grouped[bucket].append({"code": code, "description": description,
+                'standardKsbId': definition_id, 'standardRef': standard_ref, 'standardVersion': standard_version})
     return JsonResponse({"standards": standards, "ksbs": grouped, "standard": standard})
 
 

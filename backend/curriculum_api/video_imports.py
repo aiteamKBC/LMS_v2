@@ -99,7 +99,7 @@ def _unassigned_programme(row):
 
 def target(kind, target_id):
     if kind == 'free_course':
-        from .free_course_videos import target as free_course_target
+        from curriculum_api.catalogue.infrastructure.free_course_video_jobs import target as free_course_target
         return free_course_target(target_id)
     from .learning_storage import course, native_authoring_scope
 
@@ -225,7 +225,8 @@ def _matches_current_source(asset):
 def _import_collection(asset, client):
     course_id = asset.scope.get('free_course_module_id')
     if not course_id:
-        return client.collection(asset.scope.get('programme_id'), asset.scope.get('programme_name'))
+        from .bunny_programme_collections import programme_collection
+        return programme_collection(asset, client)
     # Serialize collection discovery/creation for all free courses in this
     # library. Course names identify videos, never separate collections.
     # This short lock ends before any video download, upload or encoding poll.
@@ -241,6 +242,10 @@ def _import_collection(asset, client):
 
 
 def process(import_id, file_obj=None, *, session_lease_id=None):
+    from .bunny_module_collections import KIND, process_collection
+    container = CurriculumVideoImport.objects.filter(pk=import_id, target_kind=KIND).first()
+    if container is not None:
+        return process_collection(container)
     with transaction.atomic():
         asset = CurriculumVideoImport.objects.select_for_update().get(pk=import_id)
         if asset.status in ('ready', 'superseded'):
@@ -453,7 +458,7 @@ def public_asset(asset):
 @require_role('admin', 'staff')
 def component_video(request, kind, target_id, component_id):
     if kind == 'free_course':
-        from .free_course_videos import component_video as free_course_video
+        from curriculum_api.catalogue.api.free_course_videos import component_video as free_course_video
         return free_course_video(request, target_id, component_id)
     return _component_video(request, kind, target_id, component_id)
 

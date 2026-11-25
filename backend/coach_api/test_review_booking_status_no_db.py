@@ -31,6 +31,13 @@ def load(path, names, namespace):
     exec(compile(ast.Module(body=nodes, type_ignores=[]), str(path), 'exec'), namespace)
 
 
+def load_engine(names, namespace):
+    bindings = json.loads((BACKEND / 'curriculum_api/review_management/tests/fixtures/retired_review_exports.json').read_text())['curriculum_api.review_instances']
+    for name in names:
+        owner, symbol = bindings[name]
+        load(BACKEND.joinpath(*owner.split('.')).with_suffix('.py'), {symbol}, namespace)
+
+
 class ReviewBookingStatusTests(unittest.TestCase):
     def setUp(self):
         harness = runpy.run_path(str(BACKEND / 'learner_api/test_assignment_booking_no_db.py'))
@@ -83,7 +90,8 @@ class ReviewBookingStatusTests(unittest.TestCase):
         )
         self.engine = dict(curriculum_views=self.curriculum, REVIEW_INSTANCES_TABLE='review_instances',
                            datetime=datetime, **constants)
-        load(BACKEND / 'curriculum_api/review_instances.py',
+        self.engine.update(vars(self.curriculum))
+        load_engine(
              {'get_review_instance', 'mark_review_instance_scheduled',
               'mark_review_instance_not_scheduled', 'mark_review_instance_in_progress_from_attendance'},
              self.engine)
@@ -98,13 +106,16 @@ class ReviewBookingStatusTests(unittest.TestCase):
             build_booked_calendar_event=Mock(side_effect=lambda record: dict(self.base.event, status=record.status)),
             ReviewCreationBlocked=type('ReviewCreationBlocked', (Exception,), {}),
             native_review_creation_policy=Mock(return_value={'canAddReview': True, 'reviewSource': 'curriculum'}),
-            curriculum_review_instances=SimpleNamespace(**self.engine),
+            review_application_instance_creation=SimpleNamespace(**self.engine),
+            review_application_instance_lifecycle=SimpleNamespace(**self.engine),
+            review_infrastructure_instance_rows=SimpleNamespace(**self.engine),
+            review_domain_instance_rules=SimpleNamespace(**self.engine),
             clean_text=lambda value: str(value or '').strip(),
             clean_email=lambda value: str(value or '').strip().lower(),
             lock_learner_calendar=Mock(), ensure_learner_calendar_available=Mock(),
             ensure_learner_session_not_booked_in_week=Mock(),
             england_non_delivery_reason=lambda _day: None,
-            curriculum_reviews=SimpleNamespace(get_review_template_row=Mock(return_value={'id': 'REV-SYNTHETIC'})),
+            review_infrastructure_template_rows=SimpleNamespace(get_review_template_row=Mock(return_value={'id': 'REV-SYNTHETIC'})),
         )
         load(BACKEND / 'coach_api/views.py', {
             'persist_calendar_sync_reservation', 'sync_scheduled_review_instance',
@@ -234,8 +245,8 @@ class ReviewBookingStatusTests(unittest.TestCase):
                 self.assertEqual(result.status_code, 200, result)
                 self.assertEqual(self.record['status'], 'scheduled')
                 self.assertEqual(self.instance['status'], 'scheduled')
-        self.coach.curriculum_reviews.get_review_template_row.assert_not_called()
-        self.coach.curriculum_review_instances.ensure_review_instance.assert_not_called()
+        self.coach.review_infrastructure_template_rows.get_review_template_row.assert_not_called()
+        self.coach.review_application_instance_creation.ensure_review_instance.assert_not_called()
         self.assertEqual(len(self.updates), 2)
 
     def test_first_booking_links_and_schedules_in_one_transaction(self):
@@ -289,7 +300,7 @@ class ReviewBookingStatusTests(unittest.TestCase):
         self.record['review_instance_id'] = ''
         self.instance['calendar_event_id'] = None
         before = copy.deepcopy((self.record, self.instance))
-        self.coach.curriculum_review_instances.link_calendar_event.side_effect = RuntimeError('Synthetic link failure')
+        self.coach.review_application_instance_lifecycle.link_calendar_event.side_effect = RuntimeError('Synthetic link failure')
         with self.assertRaisesRegex(RuntimeError, 'link failure'):
             self.coach_book()
         self.assertEqual((self.record, self.instance), before)
@@ -316,14 +327,14 @@ class ReviewBookingStatusTests(unittest.TestCase):
         self.coach.synchronize_reserved_calendar_event.assert_not_called()
 
     def test_archived_template_and_stored_occurrence_survive_rescheduling(self):
-        self.coach.curriculum_reviews.get_review_template_row.return_value = None
+        self.coach.review_infrastructure_template_rows.get_review_template_row.return_value = None
         self.base.event['reviewTemplateId'] = ''
         self.base.event['occurrenceNumber'] = 99
         result = self.base.book()
         self.assertEqual(result.status_code, 200, result)
         self.assertEqual(self.record['review_template_id'], 'REV-SYNTHETIC')
         self.assertEqual(self.record['occurrence_number'], 1)
-        self.coach.curriculum_reviews.get_review_template_row.assert_not_called()
+        self.coach.review_infrastructure_template_rows.get_review_template_row.assert_not_called()
 
     def test_first_linkage_failure_returns_conflict_without_partial_booking(self):
         for book in (self.coach_book, self.base.book):
@@ -331,7 +342,7 @@ class ReviewBookingStatusTests(unittest.TestCase):
                 self.record['review_instance_id'] = ''
                 self.instance['calendar_event_id'] = None
                 before = copy.deepcopy((self.record, self.instance))
-                self.coach.curriculum_reviews.get_review_template_row.side_effect = [
+                self.coach.review_infrastructure_template_rows.get_review_template_row.side_effect = [
                     {'id': 'REV-SYNTHETIC'}, None,
                 ]
                 result = book()
@@ -412,7 +423,7 @@ class ReviewBookingStatusTests(unittest.TestCase):
             record_review_instance_manual_override=audit,
             _log_manual_in_progress_override=Mock(),
         )
-        load(BACKEND / 'curriculum_api/review_instances.py',
+        load_engine(
              {'mark_review_instance_in_progress_manually', '_manual_override_status_rejection'}, self.engine)
         ok, result = self.engine['mark_review_instance_in_progress_manually'](
             copy.deepcopy(self.instance), reason_code='coach-confirmed-live-start',
@@ -540,7 +551,7 @@ class ReviewBookingStatusTests(unittest.TestCase):
         ):
             self.coach.ensure_review_instance_for_calendar_record(row, self.base.event)
 
-        self.coach.curriculum_review_instances.ensure_review_instance.assert_not_called()
+        self.coach.review_application_instance_creation.ensure_review_instance.assert_not_called()
 
     def test_calendar_status_mirror_does_not_skip_lifecycle_steps(self):
         self.coach.datetime = datetime

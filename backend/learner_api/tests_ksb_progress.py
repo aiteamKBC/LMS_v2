@@ -10,8 +10,8 @@ from .ksb_progress import calculate_ksb_progress
 def assigned_profile(codes=('K1', 'S2', 'S3'), source_id='standard:st0845-v1-0'):
     version = SimpleNamespace(source_profile_id=source_id, programme='Programme')
     return SimpleNamespace(
-        ksb_assignment=SimpleNamespace(profile_version=version),
-        ksbs=[{'code': code} for code in codes],
+        standard_ref='ST0845', standard_version='1.0',
+        ksbs=[{'code': code, 'standardKsbId': {'K1':1,'S2':2,'S3':3}.get(code,999)} for code in codes],
     )
 
 
@@ -21,7 +21,7 @@ def component(component_id, codes, *, quiz_id=None):
         'type': 'quiz' if quiz_id is not None else 'video',
         'isQuiz': quiz_id is not None,
         'quizMeta': {'quizId': quiz_id} if quiz_id is not None else {},
-        'ksbMappings': [{'code': code} for code in codes],
+        'ksbMappings': [{'code': code, 'standardKsbId': {'K1':1,'K1.2':1,'S2':2,'S3':3}.get(code,999)} for code in codes],
     }
 
 
@@ -101,3 +101,11 @@ class KsbProgressTests(SimpleTestCase):
             'Project controls professional Apprenticeship Standard (v1.0) (Level 6)',
         )
 
+
+    def test_unresolved_excluded_and_other_standard_ids_never_achieve(self):
+        for mapping in ({'code':'K1'}, {'code':'K1','standardKsbId':99},
+                        {'code':'K1','standardKsbId':1,'is_excluded':True},
+                        {'code':'K1','standardKsbId':1,'mapping_status':'unresolved'}):
+            item=component('C1',['K1'])
+            item['ksbMappings']=[mapping]
+            self.assertEqual(self.calculate([item],[{'componentId':'C1'}])['actual'],0)

@@ -24,12 +24,15 @@ export function TutorClashNotice({
   sessionDates = [],
   freeTutors = [],
   onPickTutor,
+  tutorLabels,
 }: {
   verdict: CurriculumTutorAvailabilityVerdict;
   /** Every date the slot books, so the clash can be given as "3 of 36". */
   sessionDates?: string[];
   /** Tutors the same slot has no clash for. Trimmed for display by the caller. */
   freeTutors?: string[];
+  /** Display labels when callers carry canonical IDs in freeTutors. */
+  tutorLabels?: Record<string, string>;
   /** Given, each free name becomes a button that swaps the tutor over. */
   onPickTutor?: (tutor: string) => void;
 }) {
@@ -74,14 +77,14 @@ export function TutorClashNotice({
                   className="inline-flex h-7 items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 text-[11px] font-bold text-emerald-700 transition-smooth hover:bg-emerald-100"
                 >
                   <AppIcon className="ri-user-follow-line text-[12px]"></AppIcon>
-                  {name}
+                  {tutorLabels?.[name] ?? name}
                 </button>
               ) : (
                 <span
                   key={name}
                   className="inline-flex h-7 items-center rounded-full border border-emerald-200 bg-emerald-50 px-2.5 text-[11px] font-bold text-emerald-700"
                 >
-                  {name}
+                  {tutorLabels?.[name] ?? name}
                 </span>
               )
             ))}

@@ -94,7 +94,7 @@ def read_bulk(owners, read, *, now=None):
         a.source_key AS kbc_attendance_key,c.settings_json,c.type AS activity_type
         FROM "Learner".learner_progress_entries p
         JOIN "Learner".learners l ON l.id=p.learner_id
-        LEFT JOIN "Learner".source_lms_attendance a ON a.aptem_id=l.aptem_id
+        LEFT JOIN "Learner".source_lms_attendance a ON a.learner_id=l.id AND a.aptem_id=l.aptem_id
           AND substr(p.source_payload->>'original_source_ref',1,4)='att:'
           AND a.source_key=substr(p.source_payload->>'original_source_ref',5)
         LEFT JOIN curriculum.components c ON c.id=coalesce(nullif(p.curriculum_component_ref,''),p.component_ref)

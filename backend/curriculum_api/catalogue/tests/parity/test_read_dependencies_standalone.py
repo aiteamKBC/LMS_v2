@@ -86,6 +86,12 @@ class ReadDependencyContracts(unittest.TestCase):
             expected += [old.args.vararg.arg] if old.args.vararg else []
             expected += [a.arg for a in old.args.kwonlyargs]
             expected += [old.args.kwarg.arg] if old.args.kwarg else []
+            if name == 'module_calendar_end_date':
+                # Approved study-week support adds an optional module context;
+                # the original two-positional-argument contract remains valid.
+                expected.insert(2, 'module')
+                self.assertIs(actual.parameters['module'].default, None)
+                self.assertIs(actual.parameters['module'].kind, inspect.Parameter.POSITIONAL_OR_KEYWORD)
             self.assertEqual(list(actual.parameters)[:len(expected)], expected, name)
             for parameter in list(actual.parameters.values())[len(expected):]:
                 self.assertIs(parameter.kind, inspect.Parameter.KEYWORD_ONLY)

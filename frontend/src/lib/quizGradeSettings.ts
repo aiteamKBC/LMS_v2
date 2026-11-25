@@ -39,3 +39,13 @@ export function formatQuizGradeRange(rows: QuizGradeRow[], rowIndex: number) {
   const max = rowIndex === 0 ? 100 : Math.max(row.min, rows[rowIndex - 1].min - 1);
   return `${row.min}-${max}%`;
 }
+
+export function formatQuizResult(grade: number, settings?: QuizGradeSettings | null) {
+  const percentage = Math.round(grade * 1000) / 10;
+  if (!settings) return `${percentage}%`;
+  const row = [...settings.rows].sort((left, right) => right.min - left.min).find(item => percentage >= item.min);
+  if (settings.resultDisplay === 'percentage') return `${percentage}%`;
+  if (settings.resultDisplay === 'points') return row ? `${row.point} grade points` : `${percentage}%`;
+  if (settings.resultDisplay === 'grade' && row) return row.grade;
+  return row ? `${row.grade} (${percentage}%)` : `${percentage}%`;
+}

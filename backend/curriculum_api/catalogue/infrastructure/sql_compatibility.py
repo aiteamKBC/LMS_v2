@@ -31,6 +31,9 @@ def adapt_sql(
 
     def replace(match):
         table = (match.group('qt') or match.group('t') or '').lower()
+        original_table = table
+        if table == 'ksb_component_mappings':
+            table = 'ksb_mappings'
         if table not in RELATION_TABLES:
             return match.group(0)
         if re.search(r'\bdelete\s+$', lowered[max(0, match.start() - 12):match.start()]):
@@ -47,8 +50,8 @@ def adapt_sql(
         following = _NEXT_WORD.match(sql, match.end())
         word = (following.group(1) or '').lower() if following else ''
         if not word or word in _CLAUSE_WORDS:
-            relation += f' as "{table}"'
-            requalify.add(table)
+            relation += f' as "{original_table}"'
+            requalify.add(original_table)
         return match.group('kw') + relation
 
     requalify = set()

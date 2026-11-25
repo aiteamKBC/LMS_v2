@@ -43,8 +43,8 @@ def permitted_tests(items):
         if isinstance(test, unittest.TestSuite):
             selected.addTests(permitted_tests(test))
         elif test.id() in {
-            'curriculum_api.test_study_weeks_no_db.StudyWeekTests.test_migration_is_repeatable_and_leaves_old_data_null',
-            'curriculum_api.test_module_week_start_no_db.ModuleWeekStartContractTests.test_additive_migration_preserves_existing_rows_and_is_repeatable',
+            'curriculum_api.catalogue.tests.test_study_weeks_no_db.StudyWeekTests.test_migration_is_repeatable_and_leaves_old_data_null',
+            'curriculum_api.catalogue.tests.test_module_week_start_no_db.ModuleWeekStartContractTests.test_additive_migration_preserves_existing_rows_and_is_repeatable',
         }:
             blocked.append(test.id())
         else:

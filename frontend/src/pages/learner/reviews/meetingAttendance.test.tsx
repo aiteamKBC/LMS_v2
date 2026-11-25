@@ -69,7 +69,7 @@ describe.each(types)('$path meeting attendance', item => {
     const attend = await screen.findByRole('button', { name: action });
     await waitFor(() => expect(attend).toBeEnabled());
     if (item.source === 'mcr') {
-      expect(screen.getByText('10:00')).toBeInTheDocument();
+      expect(screen.getByText(/10:00.*Europe\/London.*90 minutes/)).toBeInTheDocument();
       expect(screen.getByText(/Europe\/London.*90 minutes/)).toBeInTheDocument();
     } else {
       expect(screen.getByText(/10:00.*Europe\/London/)).toBeInTheDocument();

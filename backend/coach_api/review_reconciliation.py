@@ -108,7 +108,8 @@ def dependency_counts(record):
 
 
 def _empty_native(record, instance):
-    from curriculum_api import review_instances as engine
+    import curriculum_api.review_management.infrastructure.instance_relations as review_infrastructure_instance_relations
+    import curriculum_api.review_management.infrastructure.instance_rows as review_infrastructure_instance_rows
     from curriculum_api import views as curriculum
     def has_history(table):
         return bool(curriculum.fetch_all(
@@ -118,10 +119,10 @@ def _empty_native(record, instance):
             or any(instance.get(key) not in empty for key in ("completed_at", "started_at", "progress_snapshot"))
             or record.review_responses not in empty or record.review_completed_at or record.manager_signed_at
             or record.manager_signed_by
-            or engine.get_review_instance_answers(instance["id"])
-            or engine.get_review_instance_signatures(instance["id"])
-            or has_history(engine.REVIEW_INSTANCE_MANUAL_OVERRIDES_TABLE)
-            or has_history(engine.REVIEW_INSTANCE_REOPENS_TABLE)):
+            or review_infrastructure_instance_rows.get_review_instance_answers(instance["id"])
+            or review_infrastructure_instance_rows.get_review_instance_signatures(instance["id"])
+            or has_history(review_infrastructure_instance_relations.REVIEW_INSTANCE_MANUAL_OVERRIDES_TABLE)
+            or has_history(review_infrastructure_instance_relations.REVIEW_INSTANCE_REOPENS_TABLE)):
         raise ReconciliationConflict("Native review contains work or lifecycle evidence; specialist review is required.", code="INVALID_NATIVE_STATE")
 
 
@@ -141,7 +142,9 @@ def _empty_overlay(overlay):
 
 
 def _inspect(calendar_event_id, source_review_id, *, lock=False, learners=None):
-    from curriculum_api import review_instances as engine, reviews, review_types
+    import curriculum_api.review_management.infrastructure.instance_rows as review_infrastructure_instance_rows
+    import curriculum_api.review_management.infrastructure.template_rows as review_infrastructure_template_rows
+    import curriculum_api.review_management.infrastructure.type_rows as review_infrastructure_type_rows
     from .migrated_reviews import review_family, initial_local_status
     from .review_sources import linked_booking
     from .views import _imported_review_definition
@@ -153,14 +156,14 @@ def _inspect(calendar_event_id, source_review_id, *, lock=False, learners=None):
             or record.status != "scheduled" or record.sync_state != "synced"
             or not record.graph_event_id or not record.meeting_link or not record.graph_organizer_email):
         raise ReconciliationConflict("A verified, unstarted Native MCM booking with preserved meeting identity is required.", code="INVALID_NATIVE_STATE")
-    instance = engine.get_review_instance(record.review_instance_id, for_update=lock)
+    instance = review_infrastructure_instance_rows.get_review_instance(record.review_instance_id, for_update=lock)
     if (not instance or instance.get("learner_id") != record.learner_id
             or instance.get("calendar_event_id") != record.pk
             or instance.get("review_template_id") != record.review_template_id
             or str(instance.get("coach_email", "")).casefold() != record.owner_email.casefold()):
         raise ReconciliationConflict("Native booking ownership/provenance is inconsistent.", code="INVALID_OWNERSHIP")
-    template = reviews.get_review_template_row(record.review_template_id, include_deleted=True)
-    type_row = review_types.get_review_type(template.get("review_type_id")) if template else None
+    template = review_infrastructure_template_rows.get_review_template_row(record.review_template_id, include_deleted=True)
+    type_row = review_infrastructure_type_rows.get_review_type(template.get("review_type_id")) if template else None
     if not type_row or type_row.get("code") != "mcm":
         raise ReconciliationConflict("The Native template family must be MCM.", code="INVALID_NATIVE_STATE")
     _empty_native(record, instance)

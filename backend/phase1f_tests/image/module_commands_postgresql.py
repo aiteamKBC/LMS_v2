@@ -15,9 +15,7 @@ from django.db import connection, transaction
 from curriculum_api import views, learning_storage, models
 from curriculum_api.catalogue.application import module_authoring
 from curriculum_api.catalogue.infrastructure import module_cover
-from curriculum_api.test_module_commands_boundary_no_db import (
-    fixture_scope, save_ports, structure_ports, request, response_value,
-)
+from curriculum_api.catalogue.tests.test_module_commands_boundary_no_db import fixture_scope, save_ports, structure_ports, request, response_value
 
 
 class ModuleCommandsPostgreSQL(unittest.TestCase):

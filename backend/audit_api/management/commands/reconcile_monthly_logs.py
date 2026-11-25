@@ -38,9 +38,9 @@ LEARNERS = {
 WEEKLY_CAPS = {4626: Decimal("13")}
 
 MANUAL = 'structured_manual_activities.manual_learner_activities'
-ROW_KSB = 'structured_manual_activities.learner_journal_row_ksbs'
-LEARNER_KSB = 'structured_manual_activities.learner_activity_ksbs'
-ACTIVITY_KSB = 'structured_manual_activities.activity_ksbs'
+from learner_api.journal_sources import table as journal_table
+ROW_KSB = journal_table('learner_journal_row_ksbs')
+LEARNER_KSB = journal_table('learner_activity_ksbs')
 REVISIONS = 'structured_manual_activities.manual_activity_hours_revision'
 AUDIT_TABLE = 'structured_manual_activities.monthly_log_reconciliation_audit'
 
@@ -276,7 +276,8 @@ class Command(BaseCommand):
         results = self._dicts(cursor)
         cursor.execute(f'''SELECT aptem_id,activity_id,ksbs FROM {LEARNER_KSB} WHERE aptem_id=ANY(%s)''', [aptem_ids])
         learner_ksbs = {(r["aptem_id"], r["activity_id"]): _codes(r["ksbs"]) for r in self._dicts(cursor)}
-        cursor.execute(f'''SELECT activity_id,ksbs FROM {ACTIVITY_KSB}''')
+        from curriculum_api.source_activity_ksbs import relation
+        cursor.execute(f'''SELECT activity_id,ksbs FROM {relation()} activity_ksbs''')
         activity_ksbs = {r["activity_id"]: _codes(r["ksbs"]) for r in self._dicts(cursor)}
         cursor.execute(f'''SELECT row_id,ksbs FROM {ROW_KSB} WHERE aptem_id=ANY(%s)''', [aptem_ids])
         row_ksbs = {int(r["row_id"]): _codes(r["ksbs"]) for r in self._dicts(cursor)}
@@ -494,8 +495,15 @@ class Command(BaseCommand):
             elif action["op"] == "actual":
                 cursor.execute(f"UPDATE {MANUAL} SET actual_hours=%s,updated_by=%s,updated_at=now() WHERE id=%s AND aptem_id=%s AND deleted_at IS NULL AND actual_hours=0", [action["new"], ACTOR, row_id, aid])
             elif action["op"] == "ksb":
-                payload = json.dumps([{"code": code} for code in action["new"]], ensure_ascii=False)
-                cursor.execute(f"INSERT INTO {ROW_KSB}(row_id,aptem_id,ksbs,version,created_by,updated_by) VALUES(%s,%s,%s::jsonb,1,%s,%s) ON CONFLICT (row_id) DO UPDATE SET ksbs=CASE WHEN {ROW_KSB}.ksbs IS NULL OR {ROW_KSB}.ksbs='[]'::jsonb THEN EXCLUDED.ksbs ELSE {ROW_KSB}.ksbs END, version={ROW_KSB}.version+1, updated_by=EXCLUDED.updated_by, updated_at=now()", [row_id, aid, payload, ACTOR, ACTOR])
+                from learner_api.journal_ksbs import fill_missing_snapshot
+                from learner_api.progress_cache import bump_learners
+                changed = fill_missing_snapshot(cursor, row_id, aid,
+                    [{"code": code} for code in action["new"]], actor=ACTOR)
+                if changed is None:
+                    continue
+                bump_learners({changed['learner_id']}, using=getattr(getattr(cursor, 'db', None), 'alias', None))
+                action = {**action, 'new': changed['snapshot'],
+                          'source': 'learner_override' if changed['learner_override'] else action.get('source')}
             cursor.execute(f"INSERT INTO {AUDIT_TABLE}(run_id,row_id,aptem_id,month,field,old_value,new_value,source,status,reason,created_by) VALUES(%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s,'applied',%s,%s)", [run_id, row_id, aid, action.get("month"), action["op"], _json(action.get("old")), _json(action.get("new")), action.get("source"), action.get("reason"), ACTOR])
         for item in plan["pending_review"]:
             cursor.execute(f"INSERT INTO {AUDIT_TABLE}(run_id,row_id,aptem_id,month,field,source,status,reason,created_by) VALUES(%s,%s,%s,%s,%s,%s,'pending_review',%s,%s)", [run_id, item["row_id"], item["aptem_id"], item["month"], item["field"], item.get("source"), item["reason"], ACTOR])

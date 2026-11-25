@@ -10,7 +10,7 @@ The cleaned database branch (``NEW_ENDPOINT_URL``) normalised ``curriculum``:
   ``module_ids``, ``group_ids``, ``assigned_*_ids`` ...) were dropped in favour
   of keys: ``modules.tutor_id -> tutors``, ``group_coaches -> groups, coaches`` (a group may have several);
 * ``ksb_mappings`` keeps ``component_id`` + ``ksb_id`` and points at
-  ``standard_ksbs`` (``standard_ksb_id``) for the code and description; its
+  ``ksb_standard_definitions`` (``standard_ksb_id``) for the code and description; its
   module and week come from the component, and ``components.ksb_mappings``
   (the JSON copy) is gone;
 * cohort holiday choices live in ``cohort_calendar_holidays``.
@@ -43,6 +43,7 @@ import time
 from datetime import datetime, timezone
 
 from django.db import connection
+from .canonical_read_sql import ksb_physical_table, standard_ksb_compatibility_id_sql, standard_source_sql
 
 # Compatibility exports: schema-shape values and pure rules have one owner.
 from .catalogue.infrastructure.schema_contracts import (
@@ -244,7 +245,7 @@ def _chunks(values, size=2000):
         yield values[start:start + size]
 
 
-# standard_ksbs ids -> (code, description), as last read. Reference data:
+# ksb_standard_definitions ids -> (code, description), as last read. Reference data:
 # changed only by a manual Skills England import, which the curriculum cache
 # already lets lag by up to 60 s (views.coverage_entry), so this lags no more.
 STANDARD_TEXTS_TTL_SECONDS = 60

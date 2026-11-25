@@ -51,14 +51,15 @@ def relation(
     only = _only()
     table = authoring_table_name(AUTHORING_KSB_MAPPINGS_TABLE)
     components = authoring_table_name(AUTHORING_COMPONENTS_TABLE)
-    standards = authoring_table_name('standard_ksbs')
+    standards = authoring_table_name('ksb_standard_definitions')
     description = ', s.ksb_description' if include_description else ''
     return (
-        '(select m.*, c.module_catalogue_id, c.week_id, '
+        f'(select m.*, {standard_ksb_compatibility_id_sql("s")} as ksb_id, c.module_catalogue_id, c.week_id, '
         f"coalesce(s.ksb_code, '') as ksb_code{description} "
         f'from {only}{table} m '
         f'left join {only}{components} c on c.id = m.component_id '
-        f'left join {only}{standards} s on s.id = m.standard_ksb_id) as "ksb_mappings"'
+        f'left join {only}{standards} s on s.id = m.standard_ksb_id '
+        f'where m.component_id is not null) as "ksb_mappings"'
     )
 
 
@@ -66,7 +67,8 @@ def standard_ksb_texts(
     standard_ids, *, STANDARD_TEXTS_TTL_SECONDS, _STANDARD_TEXTS, _STANDARD_TEXTS_LOCK, _chunks, _only,
     authoring_table_name, connection, time,
 ):
-    """``{standard_ksbs.id: (ksb_code, ksb_description)}`` for ``standard_ids``."""
+    """``{ksb_standard_definitions.id: (ksb_code, ksb_description)}`` for ``standard_ids``."""
+    from django.db import connection
     wanted = {value for value in standard_ids if value is not None}
     if not wanted:
         return {}
@@ -77,7 +79,7 @@ def standard_ksb_texts(
         missing = wanted - known.keys()
     if missing:
         found = {}
-        standards = authoring_table_name('standard_ksbs')
+        standards = authoring_table_name('ksb_standard_definitions')
         with connection.cursor() as cursor:
             for chunk in _chunks(missing):
                 placeholders = ', '.join(['%s'] * len(chunk))
@@ -95,20 +97,21 @@ def component_items(
     component_ids, *, AUTHORING_KSB_MAPPINGS_TABLE, _chunks, _only, authoring_table_name, connection,
 ):
     """``{component_id: [mapping item, ...]}``: each component's live KSB mappings."""
+    from django.db import connection
     items = {}
     ids = [str(value) for value in component_ids if value]
     if not ids:
         return items
     only = _only()
     mappings = authoring_table_name(AUTHORING_KSB_MAPPINGS_TABLE)
-    standards = authoring_table_name('standard_ksbs')
+    standards = authoring_table_name('ksb_standard_definitions')
     with connection.cursor() as cursor:
         for chunk in _chunks(ids):
             placeholders = ', '.join(['%s'] * len(chunk))
             cursor.execute(
                 f"""
-                select m.component_id, m.id, m.ksb_id, m.weight, m.classification, m.source_type,
-                       m.source_id, m.weight_class, s.ksb_code, s.ksb_description
+                select m.component_id, m.id, {standard_ksb_compatibility_id_sql("s")}, m.weight, m.classification, m.source_type,
+                       m.source_id, m.weight_class, s.ksb_code, s.ksb_description, m.standard_ksb_id
                 from {only}{mappings} m
                 left join {only}{standards} s on s.id = m.standard_ksb_id
                 where m.component_id in ({placeholders})
@@ -118,12 +121,15 @@ def component_items(
                 chunk,
             )
             for (component_id, mapping_id, ksb_id, weight, classification, source_type,
-                 source_id, weight_class, code, description) in cursor.fetchall():
+                 source_id, weight_class, code, description, *official_id) in cursor.fetchall():
                 items.setdefault(str(component_id), []).append({
                     'id': mapping_id, 'ksb_id': ksb_id or '',
+                    **({'standard_ksb_id': official_id[0]} if official_id else {}),
                     'weight': float(weight) if weight is not None else None,
                     'ksb_code': code or '', 'source_id': source_id or '',
                     'description': description or '', 'source_type': source_type or '',
                     'weight_class': weight_class or '', 'classification': classification or '',
                 })
     return items
+
+from curriculum_api.canonical_read_sql import standard_ksb_compatibility_id_sql, standard_source_sql, ksb_physical_table

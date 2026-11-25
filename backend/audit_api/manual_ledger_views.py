@@ -456,26 +456,42 @@ def reading_quiz_pairs(request: HttpRequest) -> JsonResponse:
         if raw_activity_ids is None:
             raw_activity_ids = [body.get("reading_activity_id"), body.get("quiz_activity_id")]
         activity_ids = list(dict.fromkeys(int(value) for value in raw_activity_ids))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, AttributeError):
         return JsonResponse({"error": "group_id and activity_ids must be integers"}, status=400)
     if len(activity_ids) < 2:
         return JsonResponse({"error": "Choose at least two different activities."}, status=400)
     anchor_id, member_ids = activity_ids[0], activity_ids[1:]
     try:
-        with _connection().cursor() as cursor:
+        with transaction.atomic(using=resolve(CONNECTION_ALIAS)), _connection().cursor() as cursor:
             _ensure_manual_tables(cursor)
+            # Serialize bundle edits within a group, including overlapping bundles
+            # whose conflicts cannot all be expressed by the unique constraints.
             cursor.execute(
-                f"SELECT activity_id FROM {GROUP_ACTIVITIES} WHERE group_id = %s AND activity_id = ANY(%s)",
+                "SELECT group_id FROM curriculum.source_lms_groups WHERE group_id=%s FOR UPDATE",
+                [group_id],
+            )
+            if cursor.fetchone() is None:
+                return JsonResponse({"error": "The selected group does not exist."}, status=400)
+            cursor.execute(
+                """SELECT ga.activity_id, a.quiz_id
+                   FROM curriculum.source_lms_group_activities ga
+                   LEFT JOIN curriculum.source_lms_activities a ON a.activity_id=ga.activity_id
+                   WHERE ga.group_id=%s AND ga.activity_id=ANY(%s)""",
                 [group_id, activity_ids],
             )
-            if len({int(row[0]) for row in cursor.fetchall()}) != len(activity_ids):
-                return JsonResponse({"error": "All activities must belong to the selected group."}, status=400)
+            owned = dict(cursor.fetchall())
+            if anchor_id not in owned:
+                return JsonResponse({"error": "The reading activity must belong to the selected group."}, status=400)
             if request.method == "DELETE":
                 cursor.execute(
                     f"DELETE FROM {READING_QUIZ_PAIRS} WHERE group_id=%s AND reading_activity_id=%s",
                     [group_id, anchor_id],
                 )
                 return JsonResponse({"ok": True, "deleted": cursor.rowcount})
+            # Some source quizzes are embedded identifiers, not standalone
+            # activities. Only the selected reading's explicit quiz is eligible.
+            if any(member not in owned and member != owned[anchor_id] for member in member_ids):
+                return JsonResponse({"error": "All activities must belong to the selected group or be its reading's embedded quiz."}, status=400)
             cursor.execute(
                 f"""
                 SELECT reading_activity_id, quiz_activity_id
@@ -498,8 +514,16 @@ def reading_quiz_pairs(request: HttpRequest) -> JsonResponse:
                     [group_id, anchor_id, member_id, _actor(body.get("created_by"))],
                 )
                 created += cursor.rowcount
+    except IntegrityError as error:
+        cause = error.__cause__
+        sqlstate = getattr(cause, "sqlstate", None) or getattr(cause, "pgcode", None)
+        if sqlstate == "23503":
+            return JsonResponse({"error": "The selected group or reading activity is no longer available."}, status=400)
+        if sqlstate == "23505":
+            return JsonResponse({"error": "One or more selected activities already belong to a bundle."}, status=409)
+        return JsonResponse({"error": "Could not save the Reading + Quiz link."}, status=503)
     except DatabaseError as error:
-        return JsonResponse({"error": "Could not save the Reading + Quiz link.", "details": str(error)}, status=503)
+        return JsonResponse({"error": "Could not save the Reading + Quiz link."}, status=503)
     return JsonResponse({"ok": True, "created": created, "group_id": group_id,
                          "activity_ids": activity_ids})
 

@@ -138,6 +138,23 @@ async function openPeople() {
 }
 
 describe('system-wide Audit Trail', () => {
+  it('reports unavailable history without claiming zero changes or timestamp recovery, then retries', async () => {
+    fetchCurriculumAuditTrail.mockResolvedValueOnce({
+      available: false, reason: 'Saved history is not enabled.',
+      totalRevisions: 0, totalNamedVersions: 0, count: 0, entities: [], versions: [], revisions: [],
+    }).mockResolvedValue(trail());
+    renderSystemPage();
+    expect(await screen.findByText('Change history unavailable')).toBeInTheDocument();
+    expect(screen.getByText('Saved history is not enabled.')).toBeInTheDocument();
+    expect(screen.queryByText('No changes in this window')).not.toBeInTheDocument();
+    expect(screen.queryByText('0 changes in this window')).not.toBeInTheDocument();
+    expect(screen.queryByText(/These changes are read from timestamps/)).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Retry history' }));
+    expect(await screen.findByText('No changes in this window')).toBeInTheDocument();
+    expect(screen.queryByText('Change history unavailable')).not.toBeInTheDocument();
+    expect(fetchCurriculumAuditTrail).toHaveBeenLastCalledWith(expect.objectContaining({ revalidate: true }));
+  });
+
   beforeEach(() => {
     fetchActivityPeople.mockReset();
     fetchActivityPeople.mockResolvedValue(people());

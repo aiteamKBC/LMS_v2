@@ -105,45 +105,24 @@ def profile_items(profile_id, raw_items):
 
 
 def fetch_profile(profile_id, using='default'):
-    """The profile row an applied source names, archived or not, or None."""
-    profile_id = _s(profile_id)
-    if not profile_id:
-        return None
-    try:
-        with connections[using].cursor() as cursor:
-            cursor.execute(
-                'SELECT id, name, ksb_items, COALESCE(is_active, true), standard_source_id '
-                'FROM curriculum.ksb_profiles '
-                'WHERE id = %s OR ksb_profile_id = %s '
-                'ORDER BY COALESCE(is_active, true) DESC, updated_at DESC NULLS LAST LIMIT 1',
-                [profile_id, profile_id],
-            )
-            row = cursor.fetchone()
-    except DatabaseError:
-        return None
-    if not row:
-        return None
-    return {'id': row[0], 'name': row[1], 'ksb_items': row[2], 'is_active': bool(row[3]),
-            'standard_source_id': row[4]}
+    """Retired selector identity: retain historical answers, but no official items."""
+    return None
 
 
 def fetch_standard_rows(standard_id, using='default'):
-    """Rows of curriculum.standard_ksbs for 'st0596-v1-0', in the standard's order."""
+    """Rows of curriculum.ksb_standard_definitions for 'st0596-v1-0', in the standard's order."""
     standard_id = _s(standard_id).lower()
     if not standard_id:
         return []
-    try:
-        with connections[using].cursor() as cursor:
-            cursor.execute(
-                "SELECT id, ksb_code, ksb_type, ksb_description, standard_title, standard_ref "
-                "FROM curriculum.standard_ksbs "
-                "WHERE lower(standard_ref) || '-v' || replace(standard_version, '.', '-') = %s "
-                "ORDER BY id",
-                [standard_id],
-            )
-            rows = cursor.fetchall()
-    except DatabaseError:
-        return []
+    with connections[using].cursor() as cursor:
+        cursor.execute(
+            "SELECT id, ksb_code, ksb_type, ksb_description, standard_title, standard_ref "
+            "FROM curriculum.ksb_standard_definitions "
+            "WHERE lower(standard_ref) || '-v' || replace(standard_version, '.', '-') = %s "
+            "ORDER BY id",
+            [standard_id],
+        )
+        rows = cursor.fetchall()
     return [{'id': r[0], 'ksb_code': r[1], 'ksb_type': r[2], 'ksb_description': r[3],
              'standard_title': r[4], 'standard_ref': r[5]} for r in rows]
 

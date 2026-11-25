@@ -20,11 +20,14 @@
 .current { background: #fff; border: 1px solid #e0e5ee; border-radius: var(--lms-radius, 16px); padding: 18px; box-shadow: 0 4px 20px #16345705; min-width: 0; }
 .currentTop { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .current h2 { margin: 12px 0 14px; font-size: clamp(18px, 2vw, 22px); line-height: 1.25; letter-spacing: -.025em; font-weight: 700; }
-.appointment { display: flex; gap: 11px; align-items: center; }
-.dateIcon { width: 44px; height: 46px; display: grid; place-items: center; background: #f1ecfa; color: #754bb7; border-radius: var(--lms-radius, 16px); flex-shrink: 0; }
-.appointment p { font-size: 16px; line-height: 1.35; font-weight: 700; letter-spacing: -.02em; }
-.appointment span:not(.dateIcon) { display: block; color: #536782; font-size: 13px; }
-.appointment .timeZone { font-size: 11px !important; color: #6a778d !important; margin-top: 2px; }
+.meetingNumber { color: #536782; font-weight: 700; letter-spacing: normal; }
+.meetingDates { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 10px; }
+.dateDetail { display: flex; gap: 11px; align-items: center; min-width: 0; border: 1px solid #e8edf4; border-radius: var(--lms-radius, 16px); background: #fafbfd; padding: 11px 12px; }
+.dateDetail > div { min-width: 0; }
+.dateIcon { width: 38px; height: 40px; display: grid; place-items: center; background: #f1ecfa; color: #754bb7; border-radius: var(--lms-radius, 16px); flex-shrink: 0; }
+.dateDetailLabel { display: block; color: #61718a; font-size: 11px; font-weight: 650; }
+.dateDetail p { font-size: 14px; line-height: 1.35; font-weight: 700; letter-spacing: -.02em; overflow-wrap: anywhere; }
+.dateDetailMeta { display: block; color: #6a778d; font-size: 11px; margin-top: 2px; }
 .coach { display: flex; align-items: center; gap: 8px; border-block: 1px solid #edf0f5; padding: 12px 0; margin: 14px 0 12px; }
 .coach > span:first-child { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; background: #eef3f8; color: #5a6f88; flex-shrink: 0; }
 .coach small { display: block; font-size: 11px; color: #65758a; }
@@ -118,8 +121,8 @@
 :global(:is(.dark, [data-theme="dark"])) .current, :global(:is(.dark, [data-theme="dark"])) .archive, :global(:is(.dark, [data-theme="dark"])) .lastMeeting, :global(:is(.dark, [data-theme="dark"])) .secondaryButton, :global(:is(.dark, [data-theme="dark"])) .optionPanel, :global(:is(.dark, [data-theme="dark"])) .optionsExpanded summary, :global(:is(.dark, [data-theme="dark"])) .pagination button, :global(:is(.dark, [data-theme="dark"])) .skeleton { background: #192a40; border-color: #35465f; color: #e3eaf5; }
 :global([data-theme="dark"]) .skeleton span { background: #2b4562; }
 :global(:is(.dark, [data-theme="dark"])) .preparation, :global(:is(.dark, [data-theme="dark"])) .archiveHint { background: #213049; border-color: #35465f; }
-:global(:is(.dark, [data-theme="dark"])) .intro, :global(:is(.dark, [data-theme="dark"])) .nextStep, :global(:is(.dark, [data-theme="dark"])) .preparation p, :global(:is(.dark, [data-theme="dark"])) .listIdentity p, :global(:is(.dark, [data-theme="dark"])) .archiveHint, :global(:is(.dark, [data-theme="dark"])) .coach small, :global(:is(.dark, [data-theme="dark"])) .coach .provider, :global(:is(.dark, [data-theme="dark"])) .empty p, :global(:is(.dark, [data-theme="dark"])) .appointment span:not(.dateIcon) { color: #b0bdd0; }
-:global(:is(.dark, [data-theme="dark"])) .appointment .timeZone { color: #a9b8ce !important; }
+:global(:is(.dark, [data-theme="dark"])) .intro, :global(:is(.dark, [data-theme="dark"])) .nextStep, :global(:is(.dark, [data-theme="dark"])) .preparation p, :global(:is(.dark, [data-theme="dark"])) .listIdentity p, :global(:is(.dark, [data-theme="dark"])) .archiveHint, :global(:is(.dark, [data-theme="dark"])) .coach small, :global(:is(.dark, [data-theme="dark"])) .coach .provider, :global(:is(.dark, [data-theme="dark"])) .empty p, :global(:is(.dark, [data-theme="dark"])) .dateDetailLabel, :global(:is(.dark, [data-theme="dark"])) .dateDetailMeta, :global(:is(.dark, [data-theme="dark"])) .meetingNumber { color: #b0bdd0; }
+:global(:is(.dark, [data-theme="dark"])) .dateDetail { background: #213049; border-color: #35465f; }
 :global(:is(.dark, [data-theme="dark"])) .coach, :global(:is(.dark, [data-theme="dark"])) .meetingList > li + li, :global(:is(.dark, [data-theme="dark"])) .tabs, :global(:is(.dark, [data-theme="dark"])) .pagination { border-color: #35465f; }
 :global(:is(.dark, [data-theme="dark"])) .eyebrow, :global(:is(.dark, [data-theme="dark"])) .lastMeeting a, :global(:is(.dark, [data-theme="dark"])) .footerNote a { color: #bea0f2; }
 :global(:is(.dark, [data-theme="dark"])) .attention { background: #352f26; border-color: #625337; }
@@ -146,8 +149,6 @@
   .currentLayout { grid-template-columns: minmax(0, 1fr); }
   .current { padding: 16px; border-radius: var(--lms-radius, 16px); }
   .current h2 { font-size: 20px; }
-  .appointment p { font-size: 16px; }
-  .dateIcon { width: 44px; height: 46px; }
   .currentActions { gap: 10px; }
   .currentActions .primaryButton { flex: 1 1 100%; }
   .optionPanel { left: 0; }

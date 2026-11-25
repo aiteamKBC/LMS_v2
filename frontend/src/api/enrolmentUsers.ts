@@ -79,6 +79,24 @@ export type LearnerType = 'apprenticeship' | 'commercial';
 
 export const LEARNER_TYPE_OPTIONS: LearnerType[] = ['apprenticeship', 'commercial'];
 
+export interface ExistingLearnerConflict {
+  id: string;
+  name: string;
+  programme: string;
+  learnerType: LearnerType;
+  archived: boolean;
+}
+
+export class EnrolmentUserApiError extends Error {
+  readonly existingUser?: ExistingLearnerConflict;
+
+  constructor(message: string, existingUser?: ExistingLearnerConflict) {
+    super(message);
+    this.name = 'EnrolmentUserApiError';
+    this.existingUser = existingUser;
+  }
+}
+
 export interface CreateEnrolmentUserInput extends AptemUserFields {
   username: string;
   email: string;
@@ -189,7 +207,9 @@ async function request<T>(url: string, init?: Parameters<typeof fetch>[1]): Prom
   }
   if (!res.ok) {
     const error = data && typeof data === 'object' && 'error' in data ? String(data.error) : '';
-    throw new Error(error || `Request failed (${res.status})`);
+    const existing = data && typeof data === 'object' && 'existingUser' in data
+      ? data.existingUser as ExistingLearnerConflict : undefined;
+    throw new EnrolmentUserApiError(error || `Request failed (${res.status})`, existing);
   }
   return data as T;
 }
@@ -234,6 +254,13 @@ export async function updateEnrolmentUser(id: string, patch: Partial<CreateEnrol
   invalidateWizardCacheById(id);
   invalidateLearnerDetailCache();
   return board;
+}
+
+/** Archive or restore a learner while retaining their previous subscription status. */
+export async function setEnrolmentUserArchived(id: string, archived: boolean): Promise<void> {
+  await request(`${BASE}/${id}/${archived ? 'archive' : 'restore'}/`, { method: 'POST' });
+  invalidateWizardCacheById(id);
+  invalidateLearnerDetailCache();
 }
 
 /** Permanently delete the enrolment record and its linked sign-in account. */

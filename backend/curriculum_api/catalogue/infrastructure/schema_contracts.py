@@ -31,12 +31,13 @@ DERIVED_COLUMNS = {
     # They remain FK reads, never copied storage.
     'cohorts': ('programme_name',),
     'groups': ('programme_name', 'cohort_name'),
-    'modules': ('programme_name', 'cohort_name', 'group_name'),
+    'modules': ('programme_name', 'cohort_name', 'group_name', 'ksb_profile_source_id'),
+    'programmes': ('ksb_profile_source_id',),
     # Staff names (tutor_name ...), child lists (module_ids,
     # group_ids, assigned_*_ids ...) and a cohort's holiday choices are not
     # here: curriculum_names puts them on the rows natively, by key
     # (curriculum_names.ROW_FIELDS, calendar_holidays.attach_cohort_choices).
-    'ksb_mappings': ('module_catalogue_id', 'week_id', 'ksb_code', 'ksb_description'),
+    'ksb_mappings': ('module_catalogue_id', 'week_id', 'ksb_code', 'ksb_description', 'ksb_id'),
     'components': ('ksb_mappings', 'library_state', 'detached_at', 'origin_module_catalogue_id',
                    'origin_week_id', 'origin_module_title', 'origin_week_label'),
     'weeks': ('library_state', 'detached_at', 'origin_module_catalogue_id', 'origin_week_id',
@@ -102,9 +103,11 @@ def _lifecycle_select(table, columns, alias='t'):
     if not uses_status_lifecycle(table, columns):
         return []
     inactive = inactive_condition(alias)
+    timestamp = f'{alias}."updated_at"' if 'updated_at' in columns else (
+        f'{alias}."created_at"' if 'created_at' in columns else 'null::timestamp')
     expressions = {
         'is_programme_deleted': f'({inactive}) as "is_programme_deleted"',
-        'deleted_at': f'case when {inactive} then coalesce({alias}."updated_at", now()) end as "deleted_at"',
+        'deleted_at': f'case when {inactive} then coalesce({timestamp}, now()) end as "deleted_at"',
         'deleted_by': 'null::varchar as "deleted_by"',
         'deleted_via_parent': 'null::varchar as "deleted_via_parent"',
         'is_archived': f'({inactive}) as "is_archived"',

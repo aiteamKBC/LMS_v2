@@ -136,7 +136,7 @@ class BookingOnlyCalendarIntegrationTests(SimpleTestCase):
                 reviewGenerationIssues=[], aptemProfileIds={7}),
             'coach_api.views.fetch_standalone_event_records': [row],
             'coach_api.review_sources.load_imported_links': ({}, {}),
-            'coach_api.views.curriculum_review_instances.reconcile_review_event_keys': {},
+            'curriculum_api.review_management.domain.occurrence_identity.reconcile_review_event_keys': {},
             'coach_api.views.review_type_fields_by_template': {},
             'coach_api.views.review_titles_by_template': {},
             'coach_api.views.build_catchup_calendar_event': event(row),

@@ -13,8 +13,8 @@ import unittest
 from django.db import connection, transaction
 from curriculum_api import views, calendar_holidays as calendar, england_holidays
 from curriculum_api.catalogue.infrastructure import holiday_store
-from curriculum_api.test_holiday_boundary_no_db import original_holidays, request, response, NOW
-from curriculum_api.test_hierarchy_commands_boundary_no_db import FrozenClock
+from curriculum_api.catalogue.tests.test_holiday_boundary_no_db import original_holidays, request, response, NOW
+from curriculum_api.catalogue.tests.test_hierarchy_commands_boundary_no_db import FrozenClock
 
 SCHEMA = 'phase1f_holiday_boundary'
 

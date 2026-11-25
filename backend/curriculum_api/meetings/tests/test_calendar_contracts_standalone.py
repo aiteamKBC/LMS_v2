@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT.parent))
 from curriculum_api.meetings.tests.calendar_oracle import restore_tree
 from curriculum_api.meetings.tests.policy_composition_oracle import assert_export_contract, assert_owner_imports
+from curriculum_api.meetings.tests.approved_dev_contracts import DEV_PORTS, reference_source
 
 SNAPSHOT_PATH = Path(__file__).parent / 'fixtures/calendar_snapshot.json'
 SNAPSHOT = json.loads(SNAPSHOT_PATH.read_text(encoding='utf-8'))
@@ -37,7 +38,7 @@ class CalendarBoundaryContracts(unittest.TestCase):
                 return self.generic_visit(node)
 
         for name, entry in SNAPSHOT['functions'].items():
-            old = ast.parse(entry['source']).body[0]
+            old = ast.parse(reference_source(name, entry['source'])).body[0]
             tree = ast.parse((ROOT / (entry['owner'].replace('.', '/') + '.py')).read_text(encoding='utf-8'))
             actual = copy.deepcopy(next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name))
             actual.args = copy.deepcopy(old.args)
@@ -52,7 +53,7 @@ class CalendarBoundaryContracts(unittest.TestCase):
         tree = current_entry_tree()
         functions = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
         for name, entry in SNAPSHOT['functions'].items():
-            old = ast.parse(entry['source']).body[0]
+            old = ast.parse(reference_source(name, entry['source'])).body[0]
             if assert_export_contract(self, tree, name, old):
                 continue
             actual = functions[name]
@@ -61,7 +62,7 @@ class CalendarBoundaryContracts(unittest.TestCase):
                 self.assertEqual([ast.dump(n) for n in actual.decorator_list], [ast.dump(n) for n in old.decorator_list])
                 call = actual.body[-1].value
                 self.assertEqual([ast.unparse(a) for a in call.args], [a.arg for a in old.args.args])
-                self.assertEqual({k.arg for k in call.keywords}, set(entry['capabilities']) | {a.arg for a in old.args.kwonlyargs})
+                self.assertEqual({k.arg for k in call.keywords}, set(entry['capabilities']) | set(DEV_PORTS.get(name, ())) | {a.arg for a in old.args.kwonlyargs})
                 for k in call.keywords:
                     direct_owner_bindings = {'apply_shared_teams_settings_to_weeks', 'teams_delivery_metadata_from_live_session'}
                     self.assertEqual(ast.unparse(k.value), "globals().get('teams_module_owner_id')" if k.arg == 'teams_module_owner_id' and name not in direct_owner_bindings else k.arg)

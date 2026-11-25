@@ -50,18 +50,6 @@ class QuizPackage(models.Model):
         return self.title
 
 
-class QuizDefaults(models.Model):
-    id = models.PositiveIntegerField(primary_key=True, default=1)
-    general = models.JSONField()
-    grades = models.JSONField()
-    revision = models.PositiveIntegerField(default=1)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        managed = False
-        db_table = '"curriculum"."quiz_defaults"'
-
-
 class QuizQuestion(models.Model):
     quiz = models.ForeignKey(QuizPackage, on_delete=models.CASCADE, related_name="quiz_questions")
     question_text = models.TextField()

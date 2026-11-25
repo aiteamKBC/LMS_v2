@@ -9,7 +9,7 @@ def add_week_starts_on(apps, schema_editor):
             cursor.execute('alter table curriculum.modules add column if not exists week_starts_on varchar(9)')
             cursor.execute("select to_regclass('curriculum.learning_courses')")
             if cursor.fetchone()[0] is not None:
-                from curriculum_api.free_course_native_schema import create_read_views
+                from curriculum_api.catalogue.infrastructure.free_course_native_schema import create_read_views
                 create_read_views(connection, tables={'modules'})
         else:
             cursor.execute('pragma table_info(modules)')

@@ -8,6 +8,21 @@ SNAPSHOT_PATH = ROOT / 'catalogue/tests/fixtures/legacy_snapshots/authoring_stor
 SNAPSHOT = json.loads(SNAPSHOT_PATH.read_text(encoding='utf-8'))
 
 
+def runtime_source(source):
+    """Rebind retired imports; leave the immutable writer body unchanged."""
+    class Imports(ast.NodeTransformer):
+        def visit_ImportFrom(self, node):
+            if node.level == 1 and node.module is None and len(node.names) == 1:
+                if node.names[0].name == 'free_course_catalogue_store':
+                    node.level = 0
+                    node.module = 'curriculum_api.catalogue.infrastructure'
+            elif node.level == 1 and node.module == 'free_course_contract':
+                node.level = 0
+                node.module = 'curriculum_api.catalogue.infrastructure.free_course_contract'
+            return node
+    return ast.fix_missing_locations(Imports().visit(ast.parse(source)))
+
+
 def restore_views_tree(tree):
     import importlib.util
     spec = importlib.util.spec_from_file_location('content_oracle', Path(__file__).with_name('content_commands_oracle.py'))

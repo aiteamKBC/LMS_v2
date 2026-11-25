@@ -320,7 +320,7 @@ class TrainingPlanDashboardTests(SimpleTestCase):
 
     def test_overview_reads_current_calendar_targets_and_stored_booking_changes(self):
         from coach_api.models import CoachCalendarEvent
-        from curriculum_api.review_instances import review_calendar_event_key
+        from curriculum_api.review_management.domain.occurrence_identity import review_calendar_event_key
 
         source = SimpleNamespace(pk=125, aptem_id=None, email='learner@example.com',
                                  start_date='2024-11-04', learner_start_date='2024-11-04', end_date='2026-11-03')

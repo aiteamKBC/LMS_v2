@@ -48,7 +48,8 @@ class ContentCompositionContracts(unittest.TestCase):
             self.assertEqual([hashlib.sha256(ast.dump(n).encode()).hexdigest() for n in restored.body],
                              entry['order'], relative)
 
-    def test_actual_query_bodies_only_change_dependency_lookup(self):
+    def test_historical_query_bodies_after_explicit_count_compatibility_fix(self):
+        from curriculum_api.catalogue.tests.parity.component_count_contracts import restore_tree as restore_count_fix
         replacements = {
             'database_reads.AUTHORING_COMPONENTS_TABLE': 'AUTHORING_COMPONENTS_TABLE',
             'database_reads.AUTHORING_KSB_MAPPINGS_TABLE': 'AUTHORING_KSB_MAPPINGS_TABLE',
@@ -68,7 +69,7 @@ class ContentCompositionContracts(unittest.TestCase):
             ('catalogue/infrastructure/grouped_content.py', 'grouped_catalogue_content_rows'),
             ('catalogue/domain/content_values.py', 'active_component_rows'),
         ):
-            current = next(n for n in ast.parse((ROOT / relative).read_text()).body
+            current = next(n for n in restore_count_fix(ast.parse((ROOT / relative).read_text()), relative).body
                            if isinstance(n, ast.FunctionDef) and n.name == name)
             previous = ast.parse(oracle.SNAPSHOT['original_functions'][relative + ':' + name]).body[0]
             if name == 'authoring_module_content_counts':

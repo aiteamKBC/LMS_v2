@@ -80,6 +80,7 @@ def component_ksb_mappings_from_row(
         return [
             component_ksb_mapping_json_item({
                 'id': mapping.get('id'),
+                'standard_ksb_id': mapping.get('standardKsbId') or mapping.get('standard_ksb_id'),
                 'ksb_id': mapping.get('ksbId') or mapping.get('ksb_id'),
                 'ksb_code': mapping.get('code') or mapping.get('ksbCode') or mapping.get('ksb_code'),
                 'ksb_description': mapping.get('description') or mapping.get('ksbDescription') or mapping.get('ksb_description'),
@@ -249,6 +250,7 @@ def component_ksb_mapping_json_item(
     ksb_id = clean_str(mapping_payload.get('ksb_id') or mapping_payload.get('ksbId') or code)
     return {
         'id': clean_str(mapping_payload.get('id')),
+        **({'standard_ksb_id': mapping_payload['standard_ksb_id']} if mapping_payload.get('standard_ksb_id') else {}),
         'ksb_id': ksb_id,
         'ksb_code': code,
         'description': clean_str(mapping_payload.get('ksb_description') or mapping_payload.get('description')),
@@ -276,6 +278,7 @@ def component_ksb_mapping_api_item(
     ksb_id = clean_str(mapping.get('ksb_id') or mapping.get('ksbId') or code)
     return {
         'id': clean_str(mapping.get('id')),
+        **({'standardKsbId': mapping['standard_ksb_id']} if mapping.get('standard_ksb_id') else {}),
         'ksbId': ksb_id,
         'code': code,
         'description': clean_str(mapping.get('description') or mapping.get('ksb_description')),

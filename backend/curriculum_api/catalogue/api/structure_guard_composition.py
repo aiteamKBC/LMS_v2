@@ -3,7 +3,7 @@
 Existing algorithms and call contracts are preserved; dependencies have explicit owners.
 No import of the legacy views module.
 """
-from curriculum_api import free_course_pricing
+from curriculum_api.catalogue.infrastructure import free_course_pricing as free_course_pricing
 from curriculum_api.catalogue.api.authoring_errors import StaleModuleStructureWrite
 from curriculum_api.catalogue.api.structure_composition import get_authoring_structure_payload
 from curriculum_api.catalogue.domain.attachment_content import payload_week_list

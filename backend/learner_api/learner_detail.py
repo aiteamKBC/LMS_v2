@@ -29,6 +29,7 @@ from django.utils import timezone
 from login.errors import DATABASE_ERRORS, database_unavailable
 from login.permissions import learner_self_or_staff
 from old_otjh.service import ServiceError
+from old_otjh.repository import request_read_scope
 from curriculum_api import content_cache
 from curriculum_api.session_component_identity import occurrence_fallbacks as _live_session_occurrence_fallbacks
 
@@ -41,6 +42,7 @@ from .learner_progression import access_gate, advance_learner
 from .learning_plan import effective_training_plan
 from .learning_plans.public import hydrate_normalized_plan
 from .programme_access import cohort_programme_filter, learning_access
+from .weekly_read_cache import weekly_read_scope
 from .mappers import _s, get_training_plan, to_learner_detail
 from .models import EnrolmentUser, LearnerProfile
 from .retained_quiz_progress import retain_quiz_progress
@@ -243,7 +245,7 @@ def _active_profile_for_source(source, source_pk, *, heal=True):
         # only when an older profile has no current KSB assignment.
         prefetch_related_objects(
             [profile],
-            "ksb_assignment__profile_version__definitions",
+            "ksb_standard__definitions",
             "progress_entries__ksb_links",
             "progress_entries__quiz_answers__chosen_answers",
             "progress_entries__quiz_answers__correct_answers",
@@ -633,7 +635,7 @@ def _matching_module_ids_for_quiz_record(quiz_record, modules_by_id, explicit_mo
 
 
 def _append_week_quizzes(weeks, components, assigned_modules=None, *, strict=False, native_week_ids=False,
-                         resolved_metadata=None, catalogue_facts=False):
+                         resolved_metadata=None, catalogue_facts=False, reuse_loaded_quizzes=False):
     """Append published quizzes for the learner's weeks/modules.
 
     Visibility now honours explicit module assignments (curriculum.quiz_course_links)
@@ -801,6 +803,8 @@ def _append_week_quizzes(weeks, components, assigned_modules=None, *, strict=Fal
                     explicit_week_ids_by_quiz_module = {}
 
                 explicit_quiz_ids = sorted(explicit_module_ids_by_quiz)
+                if reuse_loaded_quizzes:
+                    explicit_quiz_ids = [qid for qid in explicit_quiz_ids if qid not in quiz_rows_by_id]
                 if explicit_quiz_ids:
                     cur.execute(
                         f"""
@@ -815,6 +819,7 @@ def _append_week_quizzes(weeks, components, assigned_modules=None, *, strict=Fal
                     store_quiz_rows(cur.fetchall())
 
                 if module_titles:
+                    already_loaded = sorted(quiz_rows_by_id) if reuse_loaded_quizzes else []
                     cur.execute(
                         f"""
                         SELECT id, week_id, title, {quiz_detail_columns},
@@ -822,8 +827,8 @@ def _append_week_quizzes(weeks, components, assigned_modules=None, *, strict=Fal
                         FROM curriculum.quizzes
                         WHERE lower(COALESCE(status, '')) = 'published'
                           AND lower(COALESCE(module, '')) = ANY(%s)
-                        """,
-                        [module_titles],
+                        """ + (' AND NOT (id = ANY(%s))' if already_loaded else ''),
+                        [module_titles, *([already_loaded] if already_loaded else [])],
                     )
                     store_quiz_rows(cur.fetchall())
             represented = {
@@ -1197,7 +1202,7 @@ def _review_otjh_hours(learner_profile):
     if learner_profile is None:
         return 0.0, 0.0
 
-    from curriculum_api import review_otjh
+    import curriculum_api.review_management.application.otjh_queries as review_application_otjh_queries
 
     learner_id = getattr(learner_profile, "id", None)
     start_date = getattr(learner_profile, "start_date", None)
@@ -1213,11 +1218,11 @@ def _review_otjh_hours(learner_profile):
         planned = sum(row["hours"] for row in planned_meetings(learner_profile, start_date, end_date)) if start_date and end_date else 0
         # Newly credited migrated reviews already exist in training_plan_progress
         # and the canonical ledger. Only old Native credit is additional here.
-        return planned, review_otjh.completed_hours(learner_id)
+        return planned, review_application_otjh_queries.completed_hours(learner_id)
     if not learner_id or not start_date or not end_date:
-        return 0.0, review_otjh.completed_hours(learner_id) if learner_id else 0.0
+        return 0.0, review_application_otjh_queries.completed_hours(learner_id) if learner_id else 0.0
 
-    planned = review_otjh.planned_hours(
+    planned = review_application_otjh_queries.planned_hours(
         _s(getattr(learner_profile, "programme_id", "")),
         learner_id,
         _s(getattr(learner_profile, "programme_status", "")),
@@ -1225,7 +1230,7 @@ def _review_otjh_hours(learner_profile):
         start_date,
         end_date,
     )
-    return planned, review_otjh.completed_hours(learner_id)
+    return planned, review_application_otjh_queries.completed_hours(learner_id)
 
 
 def _live_otjh_snapshot(detail, learner_profile=None):
@@ -1637,7 +1642,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                          live_session_ids=True, expected_otjh=False, strict=False, week_ids=None, identities_only=False,
                          resolved_metadata=None, routing_only=False, compact_content=False, catalogue_facts=False,
                          schedule_metadata=False, monthly_content=False,
-                         selected_component_ids=None, plan_owned_only=False):
+                         selected_component_ids=None, plan_owned_only=False, batch_modules=False, include_presentation=True):
     """Rebuild the module -> week -> component tree LIVE from the master
     authoring tables (curriculum.modules/weeks/components) so coach edits in the
     Module Builder show up immediately for already-enrolled learners.
@@ -1884,16 +1889,19 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                     f"WHEN {normalised_type}='video' THEN jsonb_build_object('_monthlyPlayable',({playable})) "
                     "ELSE '{}'::jsonb END")
 
-            # Point labels, playable audio alternatives and recording links are
-            # activity-detail facts.  The initial My Learning catalogue never
-            # returns component rows, and only uses this projection to count
-            # identities, completion and upcoming dates.  In particular, the
-            # legacy fallbacks below may carry the component's entire imported
-            # settings document; projecting them for thousands of catalogue
-            # rows made a four-card response transfer megabytes internally.
-            if not (identities_only and catalogue_facts) and not monthly_content:
-                settings_sql = (f"({settings_sql}) || {POINT_SETTINGS_SQL} || "
-                                f"{AUDIO_ALTERNATIVE_SETTINGS_SQL} || {LINKED_RECORDING_SETTINGS_SQL}")
+            # Material/week readers keep display metadata. Catalogue counts
+            # explicitly opt out so legacy lesson bodies are not transferred
+            # merely to decode a point label or an alternative audio URL.
+            if include_presentation and not monthly_content:
+                settings_sql = f"({settings_sql}) || {POINT_SETTINGS_SQL} || {AUDIO_ALTERNATIVE_SETTINGS_SQL}"
+            if not monthly_content:
+                settings_sql = f"({settings_sql}) || {LINKED_RECORDING_SETTINGS_SQL}"
+            if identities_only and catalogue_facts and not include_presentation:
+                # Missing optional values are read with .get below. Avoid
+                # sending dozens of null properties per catalogue component,
+                # but retain an explicitly cleared quiz link: its presence
+                # suppresses fallback to an older normalized link.
+                settings_sql = f"jsonb_strip_nulls({settings_sql}) || {quiz_settings_sql}"
 
             detail_columns = (f"CASE WHEN coalesce(btrim(live_sessions_link,'{strip_chars}'),'')<>'' THEN 'content' END AS live_sessions_link, display_order, NULL AS ksb_mappings, "
                               "false AS reflection_required, NULL AS \"Reflection_Question\", false AS tutor_validation_required") if identities_only else (
@@ -1907,6 +1915,8 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                 # Keep ->> text semantics for dates independent of the native
                 # identity projection's JSON types and display overrides.
                 schedule_column = ', ' + COMPONENT_SCHEDULE_SETTINGS.replace('c.settings_json', 'settings_json')
+                if not include_presentation:
+                    schedule_column = ', jsonb_strip_nulls(' + schedule_column[2:] + ')'
             def component_sql(week_filter, component_filter):
                 exact_plan_scope = plan_owned_only and component_filter
                 return read_sql(
@@ -1950,11 +1960,12 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                         cur.execute(component_sql(False, True), [selected_component_ids])
                         master_components = cur.fetchall()
                 else:
-                    module_batches = (
-                        [[mid] for mid in module_ids]
-                        if compact and not (identities_only or week_ids is not None or compact_content)
-                        else [module_ids]
-                    )
+                    if batch_modules:
+                        module_batches = [module_ids[index:index + 4] for index in range(0, len(module_ids), 4)]
+                    elif compact and not (identities_only or week_ids is not None or compact_content):
+                        module_batches = [[mid] for mid in module_ids]
+                    else:
+                        module_batches = [module_ids]
                     statement = component_sql(week_ids is not None, selected_component_ids is not None)
                     if selected_component_ids:
                         for module_batch in module_batches:
@@ -1966,6 +1977,9 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                         for module_batch in module_batches:
                             cur.execute(statement, [module_batch, *([week_ids] if week_ids is not None else [])])
                             master_components.extend(cur.fetchall())
+            if batch_modules and not plan_owned_only:
+                module_order = {mid: index for index, mid in enumerate(module_ids)}
+                master_components.sort(key=lambda row: module_order[row[2]])
             if plan_owned_only:
                 rebound = []
                 for row in master_components:
@@ -2161,7 +2175,8 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                                            **({'expectedOtjh': float(component_row[13]) if component_row[13] is not None else None}
                                               if expected_otjh else {}),
                                            **presentation_link,
-                                           'quizMeta': quiz, 'component': title, **point_projection(settings),
+                                           'quizMeta': quiz, 'component': title,
+                                           **(point_projection(settings) if include_presentation else {}),
                                            **({'type': ctype, 'sessionDate': _s(settings.get('sessionDate')) or None,
                                                'sessionDateTimeUtc': _s(settings.get('sessionDateTimeUtc')) or None,
                                                **({'_liveSessionOccurrenceId': None if _s(settings.get('extraTeamsMeetingUrl')) else settings.get('teamsOccurrenceId')}
@@ -2213,8 +2228,8 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                         cur, 'ksbm',
                         "SELECT mapping.component_id, standard_ksb.ksb_code AS ksb_code, "
                         "standard_ksb.ksb_description AS ksb_description, "
-                        "mapping.classification, mapping.weight, mapping.weight_class, component.module_catalogue_id "
-                        "FROM curriculum.ksb_mappings mapping "
+                        "mapping.classification, mapping.weight, mapping.weight_class, component.module_catalogue_id, mapping.standard_ksb_id "
+                        "FROM curriculum.ksb_component_mappings mapping "
                         + standard_ksb_join_sql('mapping', 'standard_ksb') + " "
                         "JOIN curriculum.components component ON component.id = mapping.component_id "
                         "WHERE component.module_catalogue_id = ANY(%s) "
@@ -2227,9 +2242,9 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                     if by_module is not None:
                         wanted = set(component_ids)
                         mapping_rows = sorted(
-                            ((cid, code, None if compact_content else desc, cls, weight, weight_class)
+                            ((cid, code, None if compact_content else desc, cls, weight, weight_class, *identity)
                              for rows in by_module.values()
-                             for cid, code, desc, cls, weight, weight_class, _module in rows if cid in wanted),
+                             for cid, code, desc, cls, weight, weight_class, _module, *identity in rows if cid in wanted),
                             key=lambda row: (content_cache.null_last(row[0]), content_cache.null_last(row[1])),
                         )
                 if mapping_rows is None:
@@ -2242,8 +2257,8 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                         f"AND {visible_child_sql('component')} ")
                     cur.execute(
                         f"SELECT mapping.component_id, standard_ksb.ksb_code AS ksb_code, {ksb_description}, "
-                        "mapping.classification, mapping.weight, mapping.weight_class "
-                        "FROM curriculum.ksb_mappings mapping "
+                        "mapping.classification, mapping.weight, mapping.weight_class, mapping.standard_ksb_id "
+                        "FROM curriculum.ksb_component_mappings mapping "
                         + standard_ksb_join_sql('mapping', 'standard_ksb') + " "
                         + component_scope +
                         f"AND {visible_child_sql('mapping')} "
@@ -2252,11 +2267,12 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                         [component_ids] if compact_content or plan_owned_only else [module_ids, component_ids],
                     )
                     mapping_rows = cur.fetchall()
-                for comp_id, code, description, classification, weight, weight_class in mapping_rows:
+                for comp_id, code, description, classification, weight, weight_class, *identity in mapping_rows:
                     if comp_id in inline_ksb_component_ids:
                         continue
                     ksbs_by_component.setdefault(comp_id, []).append({
                         "code": _s(code),
+                        **({"standardKsbId": identity[0]} if identity else {}),
                         "description": _s(description) or None,
                         "classification": _s(classification) or None,
                         "weight": float(weight or 0),
@@ -2836,6 +2852,7 @@ def build_learner_detail(source, pk, *, compact=False, read_only=False, quiz_vie
         detail["modules"], detail["week"], detail["components"],
         assigned_modules=resolution_assignments,
         **({"compact": True} if compact else {}),
+        **({"batch_modules": True} if quiz_view else {}),
         **({"strict": True} if activity_component_id else {}),
     )
     detail["components"] = _apply_programme_assignment_template(
@@ -3040,7 +3057,11 @@ def learner_detail(request, kind, pk):
             section=request.GET.get('content') or 'complete',
         ) as measurement:
             with measurement.stage('detail'):
-                detail = build_learner_detail(source, pk, **options)
+                if options.get('quiz_view'):
+                    with weekly_read_scope(), request_read_scope():
+                        detail = build_learner_detail(source, pk, **options)
+                else:
+                    detail = build_learner_detail(source, pk, **options)
                 if getattr(getattr(request, 'login_account', None), 'role', None) == 'learner':
                     from quiz_api.policy import visible_learner_attempts
                     detail = visible_learner_attempts(detail)

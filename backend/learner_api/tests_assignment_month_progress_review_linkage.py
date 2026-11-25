@@ -24,7 +24,8 @@ from unittest.mock import patch
 
 from coach_api import views as coach_views
 from coach_api.models import CoachCalendarEvent
-from curriculum_api import review_instances, review_types
+import curriculum_api.review_management.domain.classification as review_domain_classification
+import curriculum_api.review_management.infrastructure.instance_rows as review_infrastructure_instance_rows
 
 from . import calendar as learner_calendar
 from .tests_learner_review_pages import PROGRAMME_ID
@@ -71,7 +72,7 @@ class AssignmentMonthProgressReviewTestCase(ReviewSchedulingSyncTestCase):
 
 class CanonicalLinkageTests(AssignmentMonthProgressReviewTestCase):
     def test_uses_curriculum_template_and_populates_linkage(self):
-        template = self.template(name='Progress Review', type_code=review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW)
+        template = self.template(name='Progress Review', type_code=review_domain_classification.REVIEW_TYPE_CODE_PROGRESS_REVIEW)
 
         response = self.learner_books_assignment_month()
         body = json.loads(response.content.decode())
@@ -81,14 +82,14 @@ class CanonicalLinkageTests(AssignmentMonthProgressReviewTestCase):
         self.assertEqual(record.review_template_id, template['id'])
         self.assertTrue(record.review_instance_id)
         self.assertTrue(record.occurrence_number)
-        instance = review_instances.get_review_instance(record.review_instance_id)
+        instance = review_infrastructure_instance_rows.get_review_instance(record.review_instance_id)
         self.assertEqual(str(instance['calendar_event_id']), str(record.id))
         # The imported "Learner".reviews sync still runs, unchanged.
         self.last_mark_review_call.assert_called_once()
         self.assertEqual(self.last_mark_review_call.call_args.args[0], '9')
 
     def test_target_date_is_canonical_scheduled_date_is_the_actual_booking(self):
-        self.template(name='Progress Review', type_code=review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW)
+        self.template(name='Progress Review', type_code=review_domain_classification.REVIEW_TYPE_CODE_PROGRESS_REVIEW)
         day = bookable_day(30)
 
         response = self.learner_books_assignment_month(day=day, clock='14:00')
@@ -100,7 +101,7 @@ class CanonicalLinkageTests(AssignmentMonthProgressReviewTestCase):
         self.assertEqual(record.scheduled_time, time(14, 0))
 
     def test_new_bookings_use_the_canonical_identity_event_key(self):
-        self.template(name='Progress Review', type_code=review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW)
+        self.template(name='Progress Review', type_code=review_domain_classification.REVIEW_TYPE_CODE_PROGRESS_REVIEW)
         response = self.learner_books_assignment_month()
         body = json.loads(response.content.decode())
         event_key = body['event']['eventKey']
@@ -108,7 +109,7 @@ class CanonicalLinkageTests(AssignmentMonthProgressReviewTestCase):
         self.assertNotRegex(event_key, r'^progress-review:\d+:\d+:\d{4}-\d{2}-\d{2}$')
 
     def test_no_standalone_progress_review_event_is_created(self):
-        self.template(name='Progress Review', type_code=review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW)
+        self.template(name='Progress Review', type_code=review_domain_classification.REVIEW_TYPE_CODE_PROGRESS_REVIEW)
         self.learner_books_assignment_month()
         self.assertEqual(CoachCalendarEvent.objects.filter(event_type='progress-review').count(), 1)
         record = CoachCalendarEvent.objects.get(event_type='progress-review')
@@ -116,7 +117,7 @@ class CanonicalLinkageTests(AssignmentMonthProgressReviewTestCase):
         self.assertTrue(record.review_instance_id)
 
     def test_graph_payload_uses_the_actual_booked_date_and_time_not_the_canonical_date(self):
-        self.template(name='Progress Review', type_code=review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW)
+        self.template(name='Progress Review', type_code=review_domain_classification.REVIEW_TYPE_CODE_PROGRESS_REVIEW)
         day = bookable_day(30)
         self.learner_books_assignment_month(day=day, clock='11:30')
         payloads = [call['payload'] for call in self.graph_calls if call.get('payload')]
@@ -130,7 +131,7 @@ class NoMcmWindowAppliesTests(AssignmentMonthProgressReviewTestCase):
         through the 5th of the next) must not apply here -- a day nowhere
         near that window, and a duration other than 60 minutes, must both be
         accepted for a Progress Review."""
-        self.template(name='Progress Review', type_code=review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW)
+        self.template(name='Progress Review', type_code=review_domain_classification.REVIEW_TYPE_CODE_PROGRESS_REVIEW)
         far_from_any_mcm_window = bookable_day(90)
         response = self.learner_books_assignment_month(day=far_from_any_mcm_window, clock='09:00', duration=45)
         body = json.loads(response.content.decode())
@@ -143,7 +144,7 @@ class NoMcmWindowAppliesTests(AssignmentMonthProgressReviewTestCase):
         review, not a target-date calculation input -- the canonical
         occurrence's target_date comes only from the template's own
         recurrence off the learner's start date."""
-        self.template(name='Progress Review', type_code=review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW,
+        self.template(name='Progress Review', type_code=review_domain_classification.REVIEW_TYPE_CODE_PROGRESS_REVIEW,
                        interval=8, unit='weeks')
         response = self.learner_books_assignment_month()
         body = json.loads(response.content.decode())
@@ -153,7 +154,7 @@ class NoMcmWindowAppliesTests(AssignmentMonthProgressReviewTestCase):
 
 class IdempotencyTests(AssignmentMonthProgressReviewTestCase):
     def test_repeated_request_with_the_resolved_key_does_not_duplicate(self):
-        self.template(name='Progress Review', type_code=review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW)
+        self.template(name='Progress Review', type_code=review_domain_classification.REVIEW_TYPE_CODE_PROGRESS_REVIEW)
         first = self.learner_books_assignment_month(day=bookable_day(30), clock='09:00')
         event_key = json.loads(first.content.decode())['event']['eventKey']
 
@@ -168,7 +169,7 @@ class IdempotencyTests(AssignmentMonthProgressReviewTestCase):
         self.assertEqual(record.scheduled_time, time(10, 0))
         first_body, second_body = json.loads(first.content.decode()), json.loads(second.content.decode())
         self.assertEqual(first_body['event']['reviewInstanceId'], second_body['event']['reviewInstanceId'])
-        instance_count = len(review_instances.list_review_instances_for_learner(MIRROR_ID))
+        instance_count = len(review_infrastructure_instance_rows.list_review_instances_for_learner(MIRROR_ID))
         self.assertEqual(instance_count, 1)
 
     def test_second_no_eventkey_request_links_the_next_occurrence_not_a_duplicate(self):
@@ -177,7 +178,7 @@ class IdempotencyTests(AssignmentMonthProgressReviewTestCase):
         outstanding occurrence (a real, distinct Progress Review), never a
         second booking of the same one. Mirrors the equivalent, already
         accepted, MCM behaviour."""
-        self.template(name='Progress Review', type_code=review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW)
+        self.template(name='Progress Review', type_code=review_domain_classification.REVIEW_TYPE_CODE_PROGRESS_REVIEW)
         first = self.learner_books_assignment_month(day=bookable_day(30))
         first_key = json.loads(first.content.decode())['event']['eventKey']
 
@@ -198,14 +199,14 @@ class RejectionTests(AssignmentMonthProgressReviewTestCase):
         self.assertEqual(CoachCalendarEvent.objects.count(), 0)
 
     def test_multiple_enabled_progress_review_templates_is_rejected_clearly(self):
-        self.template(name='Progress Review (stream A)', type_code=review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW)
-        self.template(name='Progress Review (stream B)', type_code=review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW)
+        self.template(name='Progress Review (stream A)', type_code=review_domain_classification.REVIEW_TYPE_CODE_PROGRESS_REVIEW)
+        self.template(name='Progress Review (stream B)', type_code=review_domain_classification.REVIEW_TYPE_CODE_PROGRESS_REVIEW)
         response = self.learner_books_assignment_month(expect_status=409)
         self.assertIn('More than one Progress Review', json.loads(response.content.decode())['error'])
         self.assertEqual(CoachCalendarEvent.objects.count(), 0)
 
     def test_missing_learner_start_date_is_rejected_clearly(self):
-        self.template(name='Progress Review', type_code=review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW)
+        self.template(name='Progress Review', type_code=review_domain_classification.REVIEW_TYPE_CODE_PROGRESS_REVIEW)
         self.learner.learner_start_date = ''
         response = self.learner_books_assignment_month(expect_status=422)
         self.assertIn('learner start date is missing', json.loads(response.content.decode())['error'])
@@ -219,8 +220,8 @@ class McmPathUnaffectedTests(AssignmentMonthProgressReviewTestCase):
         tests_assignment_month_mcm_linkage.py already proves -- this fix
         only adds a new branch alongside the existing 'mcr' one."""
         from .monthly_assignment import coaching_booking_bounds
-        mcm_template = self.template(name='Monthly Coaching Meeting', type_code=review_types.REVIEW_TYPE_CODE_MCM)
-        self.template(name='Progress Review', type_code=review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW)
+        mcm_template = self.template(name='Monthly Coaching Meeting', type_code=review_domain_classification.REVIEW_TYPE_CODE_MCM)
+        self.template(name='Progress Review', type_code=review_domain_classification.REVIEW_TYPE_CODE_PROGRESS_REVIEW)
         start, end = coaching_booking_bounds('2026-09')
         mcm_day = start + (end - start) // 2
 
@@ -253,8 +254,8 @@ class LearnerReviewAdditionsUnaffectedTests(AssignmentMonthProgressReviewTestCas
         coach_review_learner_additions_create) does not go through
         learner_calendar_book at all, and none of its helpers were edited --
         confirmed here by resolving one and checking its shape is unchanged."""
-        from curriculum_api.review_instances import create_learner_review_addition
-        template = self.template(name='Progress Review', type_code=review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW)
+        from curriculum_api.review_management.application.instance_creation import create_learner_review_addition
+        template = self.template(name='Progress Review', type_code=review_domain_classification.REVIEW_TYPE_CODE_PROGRESS_REVIEW)
         result = create_learner_review_addition(
             review_template_id=template['id'], programme_id=PROGRAMME_ID, learner_id=MIRROR_ID,
             target_date=bookable_day(30), reason_code='learner-request', reason='', actor='coach@example.com',

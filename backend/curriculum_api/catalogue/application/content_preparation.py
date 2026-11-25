@@ -48,6 +48,7 @@ def authoring_mapping_payload(
         'module_catalogue_id': module_catalogue_id,
         'week_id': week_id,
         'component_id': component_id,
+        'standard_ksb_id': mapping.get('standard_ksb_id') or mapping.get('standardKsbId'),
         'ksb_id': mapping.get('ksbId') or mapping.get('ksb_id') or mapping.get('code') or mapping.get('ksb_code'),
         'ksb_code': code,
         'ksb_description': mapping.get('description') or mapping.get('ksbDescription') or '',

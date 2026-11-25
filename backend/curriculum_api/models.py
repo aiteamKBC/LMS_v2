@@ -271,10 +271,10 @@ class ModuleAuthoringComponent(StatusLifecycleModel):
 
 
 class ModuleAuthoringKsbMapping(StatusLifecycleModel):
-    """``curriculum.ksb_mappings``: a component's link to one standard KSB.
+    """``curriculum.ksb_component_mappings``: a component's link to one standard KSB.
 
     The module and week are the component's; the KSB code and description are
-    the ``standard_ksbs`` row's (``standard_ksb_id``).
+    the ``ksb_standard_definitions`` row's (``standard_ksb_id``).
     """
     CLASSIFICATION_CHOICES = [
         ('main', 'Main'),
@@ -284,9 +284,9 @@ class ModuleAuthoringKsbMapping(StatusLifecycleModel):
     ]
 
     id = models.CharField(max_length=128, primary_key=True)
-    component_id = models.CharField(max_length=128, blank=True, null=True, db_index=True)
-    ksb_id = models.CharField(max_length=255, blank=True, null=True)
-    standard_ksb_id = models.BigIntegerField()
+    component = models.ForeignKey('ModuleAuthoringComponent', on_delete=models.PROTECT, null=True, blank=True, db_column='component_id')
+    template_component = models.ForeignKey('WeekTemplateComponent', on_delete=models.PROTECT, null=True, blank=True, db_column='template_component_id')
+    standard_ksb = models.ForeignKey('learner_api.KsbDefinition', on_delete=models.PROTECT, db_column='standard_ksb_id')
     source_type = models.CharField(max_length=32, blank=True, null=True)
     source_id = models.CharField(max_length=255, blank=True, null=True)
     classification = models.CharField(max_length=32, choices=CLASSIFICATION_CHOICES, default='secondary')
@@ -297,8 +297,15 @@ class ModuleAuthoringKsbMapping(StatusLifecycleModel):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        db_table = 'curriculum"."ksb_mappings'
+        db_table = 'curriculum"."ksb_component_mappings'
         managed = False
+        constraints = [
+            models.CheckConstraint(condition=(models.Q(component__isnull=False, template_component__isnull=True)
+                                              | models.Q(component__isnull=True, template_component__isnull=False)),
+                                   name='chk_ksb_mapping_owner'),
+            models.UniqueConstraint(fields=('component', 'standard_ksb'), name='ksb_mappings_component_standard_unique'),
+            models.UniqueConstraint(fields=('template_component', 'standard_ksb'), name='uq_template_component_standard_ksb'),
+        ]
 
 
 class ModuleAuthoringCompletionCriteria(models.Model):
@@ -640,7 +647,6 @@ class WeekTemplate(models.Model):
     group_id = models.CharField(max_length=255, blank=True, null=True)
     group_name = models.CharField(max_length=255, blank=True, null=True)
     status = models.CharField(max_length=32, default='draft')
-    ksb_mappings = models.JSONField(default=list, blank=True)
     total_otjh = models.DecimalField(max_digits=8, decimal_places=2, default=0)
     points = models.IntegerField(default=0)
     component_count = models.IntegerField(default=0)
@@ -667,7 +673,6 @@ class WeekTemplateComponent(models.Model):
     reflection_required = models.BooleanField(default=False)
     workplace_evidence_required = models.BooleanField(default=False)
     tutor_validation_required = models.BooleanField(default=False)
-    ksb_mappings = models.JSONField(default=list, blank=True)
     settings_json = models.JSONField(default=dict, blank=True, null=True)
     display_order = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)

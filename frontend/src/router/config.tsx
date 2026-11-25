@@ -229,6 +229,7 @@ const MisTeamsSessionsPage = lazyRoute(() => import("../pages/mis/teams-sessions
 const MisTimetablesPage = lazyRoute(() => import("../pages/mis/timetables/page"));
 const MisTutorAssignmentPage = lazyRoute(() => import("../pages/mis/tutor-assignment/page"));
 const ModuleBuilder = lazyRoute(() => import("../pages/curriculum/module-builder/page"));
+const ModuleHoursPage = lazyRoute(() => import("../pages/curriculum/module-hours/page"));
 const LearnerModuleProgressPage = lazyRoute(() => import("../pages/curriculum/learner-module-progress/page"));
 const ModulesPage = lazyRoute(() => import("../pages/learner/my-learning/page"));
 const ExtraActivityPage = lazyRoute(() => import("../pages/learner/monthly-submission/ExtraActivityPage"));
@@ -1201,6 +1202,10 @@ const routes: RouteObject[] = [
   {
     path: "/curriculum/module-builder",
     element: <ModuleBuilder />,
+  },
+  {
+    path: "/curriculum/module-hours",
+    element: <ModuleHoursPage />,
   },
   {
     path: "/curriculum/learner-module-progress",

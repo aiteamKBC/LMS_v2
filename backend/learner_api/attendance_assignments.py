@@ -5,6 +5,7 @@ from django.db import connections
 
 from .learning_plan import _effective_plan_ids, request_preset_cache
 from .models import LearnerProfile
+from .weekly_read_cache import reuse_weekly_read
 
 
 def assigned_module_ids(source):
@@ -43,6 +44,7 @@ def roster_sources(alias='enrolment'):
         ))) for row in cursor.fetchall()]
 
 
+@reuse_weekly_read
 def module_roster(module_id):
     """Effective members with existing profiles, without provisioning anything.
 

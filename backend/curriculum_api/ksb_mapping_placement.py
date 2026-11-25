@@ -45,65 +45,76 @@ def standard_reference(source_id):
     return match.group(1).upper(), (match.group(2) or '').replace('-', '.')
 
 
-def standard_ksb_id_for(ksb_id='', ksb_code='', programme_id='', module_catalogue_id='', source_type='', source_id=''):
-    """``standard_ksbs.id`` for a mapping being written, or None when unknown.
+def standard_ksb_id_for(ksb_id='', ksb_code='', programme_id='', module_catalogue_id='', source_type='', source_id='', standard_ksb_id=None, component_id=''):
+    """Resolve an exact version, never silently choosing a newer definition.
 
-    The mapping's own standard decides first: a component in one programme may
-    carry a KSB of another standard (ST0596 codes on a Marketing Manager
-    module), and the module's profile would point that code at the wrong
-    standard -- or at none, failing the NOT NULL. The profile is the fallback
-    for a mapping that names no standard (a framework source, or none).
+    Explicit sources must match the destination programme. A component's actual
+    module takes precedence over client-supplied placement information.
     """
+    if source_type and source_type.strip().lower() != 'standard':
+        return None
     with connection.cursor() as cursor:
-        if ksb_id:
-            cursor.execute(f'select standard_ksb_id from {_table("ksb_mappings")} where ksb_id = %s limit 1', [ksb_id])
-            found = cursor.fetchone()
-            if found:
-                return found[0]
-        code = (ksb_code or '').strip()
-        if not code and ksb_id:
-            return None
+        if component_id:
+            cursor.execute(f'SELECT module_catalogue_id FROM {_table("components")} WHERE id=%s', [component_id])
+            owner = cursor.fetchone()
+            if not owner or not owner[0] or (module_catalogue_id and module_catalogue_id != owner[0]):
+                return None
+            module_catalogue_id = owner[0]
         reference, version = standard_reference(source_id) if (source_type or 'standard').strip().lower() == 'standard' else ('', '')
-        if code and reference:
-            cursor.execute(
-                f'select id from {_table("standard_ksbs")} where upper(standard_ref) = %s and upper(ksb_code) = upper(%s) '
-                f"order by (standard_version = %s) desc, date_updated desc nulls last, id desc limit 1",
-                [reference, code, version],
-            )
-            found = cursor.fetchone()
-            if found:
-                return found[0]
-        # The module's (else the programme's) KSB profile names the standard,
-        # e.g. 'standard:st0845-v1-1' -> ST0845.
-        profile = ''
-        if module_catalogue_id:
-            cursor.execute(
-                f'''
-                select coalesce(nullif(m.ksb_profile_source_id, ''), p.ksb_profile_source_id), m.programme_id
-                from {_table("modules")} m
-                left join {_table("programmes")} p on p.programme_id = m.programme_id
-                where m.module_catalogue_id = %s
-                ''',
-                [module_catalogue_id],
-            )
-            found = cursor.fetchone()
-            if found:
-                profile, programme_id = found[0] or '', programme_id or found[1] or ''
-        if not profile and programme_id:
-            cursor.execute(f'select ksb_profile_source_id from {_table("programmes")} where programme_id = %s',
-                           [programme_id])
-            found = cursor.fetchone()
-            profile = (found[0] if found else '') or ''
-        reference = profile.split(':', 1)[-1].split('-v', 1)[0].upper() if profile else ''
-        if not reference:
+        if standard_ksb_id is not None:
+            try:
+                standard_ksb_id = int(str(standard_ksb_id))
+            except (ValueError, TypeError):
+                return None
+            cursor.execute(f'SELECT standard_ref,standard_version,ksb_code FROM {_table("ksb_standard_definitions")} WHERE id=%s', [standard_ksb_id])
+            definition = cursor.fetchone()
+            if not definition:
+                return None
+            if source_id and (reference, version) != tuple(definition[:2]):
+                return None
+            if ksb_code and ksb_code.strip().upper() != definition[2].strip().upper():
+                return None
+            reference, version, ksb_code = definition
+        if source_id and (source_type or 'standard').strip().lower() == 'standard' and not (reference and version):
             return None
-        cursor.execute(
-            f'select id from {_table("standard_ksbs")} where upper(standard_ref) = %s and upper(ksb_code) = upper(%s) '
-            f'order by date_updated desc nulls last, id desc limit 1',
-            [reference, code],
-        )
-        found = cursor.fetchone()
-        return found[0] if found else None
+        if not reference:
+            profile = ''
+            if module_catalogue_id:
+                cursor.execute(f'''select {standard_source_sql('p')}
+                    from {_table("modules")} m left join {_table("programmes")} p on p.programme_id=m.programme_id
+                    where m.module_catalogue_id=%s''', [module_catalogue_id])
+                found = cursor.fetchone()
+                profile = found[0] if found else ''
+            if not profile and programme_id:
+                cursor.execute(f"select {standard_source_sql('p')} from {_table('programmes')} p where programme_id=%s", [programme_id])
+                found = cursor.fetchone()
+                profile = found[0] if found else ''
+            reference, version = standard_reference(profile)
+        if not reference or not version:
+            return None
+        if module_catalogue_id:
+            cursor.execute(f'''select p.standard_ref,p.standard_version
+                from {_table("modules")} m join {_table("programmes")} p on p.programme_id=m.programme_id
+                where m.module_catalogue_id=%s''', [module_catalogue_id])
+            destination = cursor.fetchone()
+            if not destination or tuple(destination) != (reference, version):
+                return None
+        code = (ksb_code or '').strip()
+        if code:
+            cursor.execute(f'''select id from {_table("ksb_standard_definitions")}
+                where upper(standard_ref)=%s and standard_version=%s and upper(ksb_code)=upper(%s)''',
+                [reference, version, code])
+        elif ksb_id and module_catalogue_id:
+            cursor.execute(f'''select distinct s.id from {_table("ksb_mappings")} k
+                join {_table("ksb_standard_definitions")} s on s.id=k.standard_ksb_id
+                join {_table("components")} c on c.id=k.component_id
+                where ({standard_ksb_compatibility_id_sql("s")})=%s and c.module_catalogue_id=%s
+                    and upper(s.standard_ref)=%s and s.standard_version=%s''',
+                [ksb_id, module_catalogue_id, reference, version])
+        else:
+            return None
+        found = cursor.fetchall()
+        return found[0][0] if len(found) == 1 else None
 
 
 def reuse_mapping_rows(payloads):
@@ -130,6 +141,20 @@ def reuse_mapping_rows(payloads):
             [component_ids],
         )
         stored = {(str(component_id), standard_id): str(row_id) for component_id, standard_id, row_id in cursor.fetchall()}
+        supplied_ids = [str(payload['id']) for payload in keyed if payload.get('id')]
+        cursor.execute(
+            f'select id, component_id from {_table("ksb_mappings")} where id = any(%s)',
+            [supplied_ids],
+        )
+        owners = {str(row_id): str(component_id or '') for row_id, component_id in cursor.fetchall()}
+    # A copied template (or placed component) must never move the source row.
+    payloads = [
+        {**payload, 'id': f'KSBMAP-{uuid.uuid4().hex.upper()}'}
+        if str(payload.get('id')) in owners
+        and owners[str(payload['id'])] != str(payload.get('component_id') or '')
+        else payload
+        for payload in payloads
+    ]
     own_ids = {str(payload.get('id')) for payload in payloads if payload.get('id')}
     seen, result, renamed = set(), [], {}
     for payload in payloads:
@@ -155,3 +180,5 @@ def reuse_mapping_rows(payloads):
             for payload in result
         ]
     return result
+
+from curriculum_api.canonical_read_sql import standard_ksb_compatibility_id_sql, standard_source_sql, ksb_physical_table

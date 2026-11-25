@@ -62,6 +62,35 @@ with connection.cursor() as cursor:
     cursor.execute('ALTER TABLE curriculum.groups ADD COLUMN IF NOT EXISTS session_week_day varchar(255)')
     cursor.execute('ALTER TABLE "Learner".learner_progress_entries ADD COLUMN IF NOT EXISTS reporting_month varchar(7), ADD COLUMN IF NOT EXISTS curriculum_component_ref text')
     cursor.execute('ALTER TABLE "Learner".learner_progress_ksbs ADD COLUMN IF NOT EXISTS ksb_definition_id bigint, ADD COLUMN IF NOT EXISTS ksb_description text, ADD COLUMN IF NOT EXISTS source_type text, ADD COLUMN IF NOT EXISTS source_id text, ADD COLUMN IF NOT EXISTS classification text')
+    # Idempotence is required because the reused current ORM fixture already
+    # owns some of these columns. Do not let IF NOT EXISTS conceal schema drift:
+    # prove every resulting disposable column still has the reviewed contract.
+    cursor.execute('''SELECT table_schema,table_name,column_name,data_type,character_maximum_length
+        FROM information_schema.columns
+        WHERE (table_schema,table_name,column_name) IN (
+            ('curriculum','groups','session_week_day'),
+            ('Learner','learner_progress_entries','reporting_month'),
+            ('Learner','learner_progress_entries','curriculum_component_ref'),
+            ('Learner','learner_progress_ksbs','ksb_definition_id'),
+            ('Learner','learner_progress_ksbs','ksb_description'),
+            ('Learner','learner_progress_ksbs','source_type'),
+            ('Learner','learner_progress_ksbs','source_id'),
+            ('Learner','learner_progress_ksbs','classification'))''')
+    actual_fixture_columns = {
+        (schema, table, column): (data_type, maximum_length)
+        for schema, table, column, data_type, maximum_length in cursor.fetchall()
+    }
+    expected_fixture_columns = {
+        ('curriculum', 'groups', 'session_week_day'): ('character varying', 255),
+        ('Learner', 'learner_progress_entries', 'reporting_month'): ('character varying', 7),
+        ('Learner', 'learner_progress_entries', 'curriculum_component_ref'): ('text', None),
+        ('Learner', 'learner_progress_ksbs', 'ksb_definition_id'): ('bigint', None),
+        ('Learner', 'learner_progress_ksbs', 'ksb_description'): ('text', None),
+        ('Learner', 'learner_progress_ksbs', 'source_type'): ('text', None),
+        ('Learner', 'learner_progress_ksbs', 'source_id'): ('text', None),
+        ('Learner', 'learner_progress_ksbs', 'classification'): ('text', None),
+    }
+    assert actual_fixture_columns == expected_fixture_columns, actual_fixture_columns
 views.provision_live_sessions_table()
 views.provision_live_session_tracking_tables()
 for name in ('session_results_archive.sql','teams_calendar_create_claims.sql','teams_calendar_create_drafts.sql',
@@ -71,10 +100,10 @@ for name in ('session_results_archive.sql','teams_calendar_create_claims.sql','t
 # No outside HTTP/Graph transport can escape the namespace. The tests provide
 # synthetic Graph responses; all six aliases still address this disposable DB.
 targets = ('curriculum_api.tests.CurriculumTeamsMeetingTests',
-           'curriculum_api.tests_study_weeks',
-           'curriculum_api.tests_module_weekly_schedule',
+           'curriculum_api.catalogue.tests.tests_study_weeks',
+           'curriculum_api.catalogue.tests.tests_module_weekly_schedule',
            'curriculum_api.tests.TeamsCalendarSyncVerdictTests',
-           'curriculum_api.test_teams_delivery_sync')
+           'curriculum_api.meetings.tests.test_teams_delivery_sync')
 suite = unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromName(n) for n in targets)
 from curriculum_api.meetings.tests.invitees_postgresql import suite as invitee_suite
 suite.addTests(invitee_suite(fixture_namespace))
@@ -84,7 +113,7 @@ def permitted_tests(items):
     for test in items:
         if isinstance(test, unittest.TestSuite):
             selected.addTests(permitted_tests(test))
-        elif test.id() == 'curriculum_api.tests_study_weeks.StudyWeekPersistenceTests.test_migration_refreshes_existing_read_views_and_preserves_legacy_rows':
+        elif test.id() == 'curriculum_api.catalogue.tests.tests_study_weeks.StudyWeekPersistenceTests.test_migration_refreshes_existing_read_views_and_preserves_legacy_rows':
             blocked.append(test.id())
         else:
             selected.addTest(test)

@@ -14,6 +14,7 @@ import {
   previewModuleSessionPlan,
   previewTutorAvailabilityRoster,
   fetchTutorAssignmentEmailStatus,
+  fetchTutorNotificationOptions,
   sendTutorAssignmentEmail,
   updateCurriculumModule,
 } from '@/lib/curriculumApi';
@@ -57,6 +58,10 @@ vi.mock('@/lib/curriculumApi', async importOriginal => ({
   sendTutorAssignmentEmail: vi.fn(async () => ({ sent: true, tutor: 'Tutor One', modules: 1 })),
   // Nothing emailed, which is what an unnotified module answers. Tests about
   // the notified states say so per case.
+  fetchTutorNotificationOptions: vi.fn(async () => ({
+    tutors: [{ id: 'TUTOR-1', name: 'Tutor One' }, { id: 'TUTOR-2', name: 'Tutor Two' }],
+    assignments: [{ moduleId: 'MOD-1', tutorId: 'TUTOR-1' }],
+  })),
   fetchTutorAssignmentEmailStatus: vi.fn(async () => ({
     tutor: { name: 'Tutor One', hasEmail: true },
     total: 1, emailed: 0, lastSentAt: null,
@@ -139,6 +144,10 @@ const sendTutorAssignmentEmailMock = vi.mocked(sendTutorAssignmentEmail);
 const tutorEmailStatusMock = vi.mocked(fetchTutorAssignmentEmailStatus);
 
 function renderDrawer(props: Partial<Parameters<typeof ModuleFormDrawer>[0]> = {}) {
+  vi.mocked(fetchTutorNotificationOptions).mockResolvedValueOnce({
+    tutors: (props.tutorNames ?? ['Tutor One', 'Tutor Two']).map((name, index) => ({ id: `TUTOR-${index + 1}`, name })),
+    assignments: props.module?.id ? [{ moduleId: props.module.id, tutorId: 'TUTOR-1' }] : [],
+  });
   const onSaved = vi.fn(async () => undefined);
   const onClose = vi.fn();
   // The drawer offers to take the reader to the Teams Meetings page when a save
@@ -575,12 +584,24 @@ describe('ModuleFormDrawer', () => {
     expect(sendTutorAssignmentEmailMock).not.toHaveBeenCalled();
   });
 
+  it('keeps distinct canonical preview identities when two tutors share a display name', async () => {
+    renderDrawer({ module: assignedModule() as never, tutorNames: ['Same Tutor', 'Same Tutor'] });
+    await waitFor(() => expect(tutorEmailStatusMock).toHaveBeenCalledWith(['MOD-1'], 'TUTOR-1', expect.anything()));
+    await userEvent.click(screen.getByRole('combobox', { name: /tutor/i }));
+    const choices = screen.getAllByRole('option', { name: /^Same Tutor/ });
+    expect(choices).toHaveLength(2);
+    await userEvent.click(choices[1]);
+    await waitFor(() => expect(tutorEmailStatusMock).toHaveBeenLastCalledWith(['MOD-1'], 'TUTOR-2', expect.anything()));
+    expect(updateCurriculumModuleMock).not.toHaveBeenCalled();
+    expect(sendTutorAssignmentEmailMock).not.toHaveBeenCalled();
+  });
+
   it('still shows the tick for a tutor who has not changed, reading its state from the ledger', async () => {
     tutorEmailStatusMock.mockResolvedValue(emailedStatus as never);
     renderDrawer({ module: assignedModule() as never });
 
     // Asked about this delivery, for the tutor currently selected.
-    await waitFor(() => expect(tutorEmailStatusMock).toHaveBeenCalledWith(['MOD-1'], 'Tutor One', expect.anything()));
+    await waitFor(() => expect(tutorEmailStatusMock).toHaveBeenCalledWith(['MOD-1'], 'TUTOR-1', expect.anything()));
     const box = await screen.findByRole('checkbox', { name: /Tutor One has been emailed about this module/ });
     // Checked because the ledger says so -- nothing in the drawer remembered it.
     expect(box).toBeChecked();
@@ -603,7 +624,7 @@ describe('ModuleFormDrawer', () => {
     } as never);
     await choose('Tutor', 'Tutor Two');
 
-    await waitFor(() => expect(tutorEmailStatusMock).toHaveBeenCalledWith(['MOD-1'], 'Tutor Two', expect.anything()));
+    await waitFor(() => expect(tutorEmailStatusMock).toHaveBeenCalledWith(['MOD-1'], 'TUTOR-2', expect.anything()));
     const box = await screen.findByRole('checkbox', { name: /Email Tutor Two about this module/ });
     expect(box).not.toBeChecked();
     expect(box).toBeEnabled();
@@ -1109,7 +1130,7 @@ describe('ModuleFormDrawer', () => {
     expect(screen.getByRole('combobox', { name: /programme/i })).toHaveTextContent('Data Analyst');
     expect(screen.getByRole('combobox', { name: /^Cohort/ })).toHaveTextContent('Sept 2026');
     expect(screen.getByRole('button', { name: /Group A/, pressed: true })).toBeInTheDocument();
-    expect(screen.getByRole('combobox', { name: /tutor/i })).toHaveTextContent('Tutor One');
+    await waitFor(() => expect(screen.getByRole('combobox', { name: /tutor/i })).toHaveTextContent('Tutor One'));
     expect(screen.getByPlaceholderText('Optional delivery notes')).toHaveValue('Bring calculators.');
 
     await userEvent.click(screen.getByRole('button', { name: 'Save module' }));
@@ -1322,6 +1343,7 @@ describe('ModuleFormDrawer tutor availability', () => {
     await userEvent.type(screen.getByPlaceholderText('e.g. Data Modelling'), 'Multi group');
     await userEvent.click(screen.getByRole('button', { name: /Group A/ }));
     await userEvent.click(screen.getByRole('button', { name: /Group B/ }));
+    await waitFor(() => expect(previewTutorAvailabilityRosterMock).toHaveBeenCalled());
     await choose('Tutor', 'Tutor One');
     expect(await screen.findByText(/You can keep this tutor and save anyway/)).toBeInTheDocument();
     if (screen.queryByRole('combobox', { name: /Study week starts on/i })?.textContent?.includes('Choose a weekday')) {

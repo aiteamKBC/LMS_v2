@@ -177,7 +177,7 @@ def _scope_learner_ksb_impact_payload(
             'learnerActivityPlanCount': len(activity_plan),
         } if include_activity_plan else {}),
         'ksbAchievementPolicy': {
-            'achievedWeightSource': 'learner_progress_ksbs',
+            'achievedWeightSource': 'ksb_learner_progress',
             'reflectionKsbRole': 'supplementary_evidence',
             'reflectionKsbCountsTowardAchievedWeight': False,
             'reflectionLearnerResolution': 'progress_entry_id',

@@ -58,12 +58,12 @@ urlpatterns = [
     path('curriculum_api/curriculum/week-components/<str:component_id>/upload/', views.curriculum_week_component_upload),
 ]
 targets = [
-    'curriculum_api.tests_ai_material',
-    'curriculum_api.tests_pptx_slides',
-    'curriculum_api.tests_slide_fallback',
-    'curriculum_api.tests_office_preview',
-    'curriculum_api.tests_upload_storage',
-    'curriculum_api.test_media_delivery_boundary_no_db',
+    'curriculum_api.catalogue.tests.tests_ai_material',
+    'curriculum_api.catalogue.tests.tests_pptx_slides',
+    'curriculum_api.catalogue.tests.tests_slide_fallback',
+    'curriculum_api.catalogue.tests.tests_office_preview',
+    'curriculum_api.catalogue.tests.tests_upload_storage',
+    'curriculum_api.catalogue.tests.test_media_delivery_boundary_no_db',
 ]
 suite = unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromName(name) for name in targets)
 result = unittest.TextTestRunner(verbosity=2).run(suite)

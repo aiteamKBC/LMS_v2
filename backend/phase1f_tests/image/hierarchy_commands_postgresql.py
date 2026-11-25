@@ -18,7 +18,7 @@ from django.test import RequestFactory
 from curriculum_api import views, learning_storage
 from curriculum_api.catalogue.application import programme_tree
 from curriculum_api.catalogue.infrastructure import hierarchy_writes
-from curriculum_api.test_hierarchy_commands_boundary_no_db import original_hierarchy, FrozenClock
+from curriculum_api.catalogue.tests.test_hierarchy_commands_boundary_no_db import original_hierarchy, FrozenClock
 
 
 class HierarchyCommandsPostgreSQL(unittest.TestCase):

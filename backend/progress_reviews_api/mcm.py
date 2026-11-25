@@ -50,7 +50,8 @@ def _interval(programme_id: Optional[str]) -> timedelta:
     if programme_id:
         try:
             from coach_api.views import REVIEW_TYPE_CODE_MCM
-            from curriculum_api.review_instances import get_review_type_template, template_recurrence_config
+            from curriculum_api.review_management.application.learner_occurrences import get_review_type_template
+            from curriculum_api.review_management.domain.instance_rules import template_recurrence_config
 
             row = get_review_type_template(programme_id, REVIEW_TYPE_CODE_MCM)
         except Exception:
