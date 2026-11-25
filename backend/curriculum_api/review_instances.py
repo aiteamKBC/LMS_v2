@@ -1086,30 +1086,6 @@ def ensure_review_instance(
     return row
 
 
-def force_review_instance_status_for_tests(instance_id, status, *, actor='system', extra=None):
-    """TEST FIXTURES ONLY -- an UNGUARDED status write. NEVER call from runtime code.
-
-    This is the one writer in this module with no compare-and-swap and no
-    transition rules: ``where id = %s`` and nothing else. It exists purely so a
-    test can arrange an instance into a starting lifecycle state in one step.
-
-    It had exactly one runtime caller (signature completion). That caller now
-    performs a guarded ``awaiting-signature -> completed`` CAS inside the same
-    transaction as its Calendar mirror -- see
-    ``record_review_instance_signature`` -- so nothing in the application calls
-    this any more, and nothing should. The deliberately alarming name is the
-    isolation: every legitimate runtime transition already has a guarded writer
-    (``mark_review_instance_scheduled``, ``mark_review_instance_not_scheduled``,
-    ``mark_review_instance_in_progress_from_attendance``,
-    ``mark_review_instance_in_progress_manually``, ``complete_review_instance``,
-    ``record_review_instance_signature``). If you need a new transition, add a
-    guarded writer beside those -- do not reach for this.
-    """
-    payload = {'status': status, 'updated_by': actor, 'updated_at': datetime.utcnow(), **(extra or {})}
-    rows = curriculum_views.update_rows(REVIEW_INSTANCES_TABLE, 'id = %s', [instance_id], payload)
-    return rows[0] if rows else None
-
-
 @native_write
 def mark_review_instance_scheduled(instance_id, *, actor='system'):
     """not-scheduled -> scheduled, once a real booking (date/time) exists on
@@ -2222,7 +2198,6 @@ def _all_required_signatures_present(instance_id, snapshot):
         return True
     signatures_by_role = get_review_instance_signatures(instance_id)
     return all(signatures_by_role.get(role, {}).get('signed_at') for role in required_roles)
-
 
 
 def _locked_linked_calendar_for_mirror(instance_row):
