@@ -3,6 +3,8 @@ import base64
 import json
 import os
 import unittest
+from http.client import HTTPConnection
+from urllib.parse import parse_qs, urlsplit
 from contextlib import nullcontext
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -195,6 +197,23 @@ class TransferTests(unittest.TestCase):
     def test_bad_pagination_is_not_a_partial_success(self):
         get = Mock(side_effect=[{'value': [message()], '@odata.nextLink': 'https://evil.invalid/next'}])
         with self.assertRaises(RuntimeError): importer.bounded_messages(get, 'THREAD', datetime(2026, 11, 26, tzinfo=timezone.utc), 'https://graph.microsoft.com/v1.0')
+
+    def test_chat_query_is_accepted_by_the_http_transport_and_preserves_graph_filters(self):
+        paths = []
+        def get(method, path):
+            # putrequest validates the HTTP request target without opening a socket.
+            connection = HTTPConnection('graph.microsoft.com')
+            try:
+                connection.putrequest(method, '/v1.0/' + path)
+            finally:
+                connection.close()
+            paths.append(path)
+            return {'value': [message()]}
+        result = importer.bounded_messages(get, 'THREAD', datetime(2026, 11, 26, tzinfo=timezone.utc),
+                                          'https://graph.microsoft.com/v1.0')
+        self.assertEqual(result, [message()])
+        self.assertEqual(parse_qs(urlsplit(paths[0]).query), {'$top': ['50'],
+            '$orderby': ['lastModifiedDateTime desc'], '$filter': ['lastModifiedDateTime gt 2026-11-26T00:00:00Z']})
 
     def test_disabled_import_does_not_call_microsoft_or_read_database(self):
         with patch.dict(os.environ, {}, clear=True), patch('curriculum_api.session_results.read') as read:

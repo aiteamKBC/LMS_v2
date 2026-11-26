@@ -8,7 +8,7 @@ import hashlib
 import json
 import tempfile
 from datetime import timedelta
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 import requests
 
@@ -17,8 +17,9 @@ from .session_graph import graph_path
 
 
 def bounded_messages(graph_get, thread_id, since, graph_base):
-    path = (f'chats/{quote(thread_id, safe="")}/messages?$top=50&$orderby=lastModifiedDateTime desc'
-            f'&$filter=lastModifiedDateTime gt {since.isoformat().replace("+00:00", "Z")}')
+    query = urlencode({'$top': 50, '$orderby': 'lastModifiedDateTime desc',
+                       '$filter': 'lastModifiedDateTime gt ' + since.isoformat().replace('+00:00', 'Z')})
+    path = f'chats/{quote(thread_id, safe="")}/messages?{query}'
     output, seen = [], set()
     for _ in range(10):
         path = graph_path(path, graph_base)
