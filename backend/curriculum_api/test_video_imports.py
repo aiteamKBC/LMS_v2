@@ -1,0 +1,742 @@
+"""Run with config.settings_sqlite_test; all storage/network calls are mocked."""
+import io
+import json
+from contextlib import nullcontext
+from datetime import timedelta
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
+
+from django.http import JsonResponse
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import RequestFactory, TestCase
+from django.utils import timezone
+
+from . import video_imports as imports
+from .bunny_stream import VideoImportError, playback_url
+from .models import CurriculumVideoImport
+from .video_uploads import stored_video_path
+
+VIDEO_ID = 'c1c2c3c4-1234-5678-abcd-123456789abc'
+SCOPE = {'programme_id': 'PROG-PCP-L6', 'programme_name': 'Project Controls Professional Level 6',
+         'cohort_id': 'C1', 'cohort_name': 'Example cohort', 'group_id': 'G1', 'group_name': 'Example group'}
+SOURCE = 'https://example.com/lesson.mp4'
+MP4 = b'\x00\x00\x00\x20ftypisom' + b'\x00' * 64
+
+
+class VideoImportTests(TestCase):
+    def setUp(self):
+        self.component = {'id': 'COMP1', 'type': 'video', 'title': 'Example lesson', 'module_catalogue_id': 'MOD1',
+                          'settings_json': {'videoUrl': SOURCE, 'requiredProgressPercentage': 80, 'lessonContent': 'Keep this'}}
+        self.client = Mock()
+        self.client.collection.return_value = 'collection'
+        self.client.find_import.return_value = None
+        self.client.create.return_value = {'guid': VIDEO_ID, 'status': 0}
+        self.client.video.return_value = {'guid': VIDEO_ID, 'status': 4}
+        download = patch.object(imports, 'download_video', side_effect=lambda _: nullcontext(io.BytesIO(MP4)))
+        download.start()
+        self.addCleanup(download.stop)
+
+    def asset(self):
+        return imports.enqueue('module', 'MOD1', self.component, SCOPE)
+
+    def test_repeated_source_uses_same_durable_import(self):
+        self.assertEqual(self.asset().id, self.asset().id)
+        self.assertEqual(CurriculumVideoImport.objects.count(), 1)
+
+    def test_other_group_and_component_do_not_share_import_identity(self):
+        one = self.asset()
+        two = imports.enqueue('module', 'MOD2', {**self.component, 'id': 'COMP2'}, {**SCOPE, 'group_id': 'G2'})
+        self.assertNotEqual(one.id, two.id)
+
+    def test_reselecting_a_completed_source_reuses_its_stored_video(self):
+        asset = self.asset()
+        asset.status, asset.video_id = 'ready', VIDEO_ID
+        asset.save()
+        repeated = self.asset()
+        self.assertEqual(repeated.id, asset.id)
+        self.assertEqual(repeated.video_id, VIDEO_ID)
+        self.assertEqual(repeated.status, 'ready')
+
+    def test_inaccessible_source_does_not_create_an_empty_remote_video(self):
+        with patch.object(imports, 'BunnyStream', return_value=self.client), \
+             patch.object(imports, 'download_video', side_effect=VideoImportError('Source needs permission.')):
+            result = imports.process(self.asset().id)
+        self.assertEqual(result.status, 'failed')
+        self.client.create.assert_not_called()
+
+    def test_large_youtube_video_reaches_bunny_for_programme_and_free_course(self):
+        from .video_sources import MAX_VIDEO_BYTES, download_video
+
+        source = 'https://www.youtube.com/watch?v=abcdefghijk'
+        self.component['settings_json']['videoUrl'] = source
+        free_scope = {'free_course_module_id': 'MOD1', 'free_course_name': 'Independent study',
+                      'course_type': 'free_course', 'collection_name': 'Free course'}
+        self.client.free_course_collection.return_value = 'free-collection'
+        for scope, collection in ((SCOPE, 'collection'), (free_scope, 'free-collection')):
+            with self.subTest(free=bool(scope.get('free_course_module_id'))):
+                # Simulate a large seekable video without allocating hundreds of MB.
+                stream = Mock(wraps=io.BytesIO(MP4))
+                stream.tell.return_value = MAX_VIDEO_BYTES + 1
+                with patch.object(imports, 'BunnyStream', return_value=self.client), \
+                     patch.object(imports, 'download_video', side_effect=download_video), \
+                     patch('curriculum_api.youtube_download.download_youtube', return_value=nullcontext(stream)), \
+                     patch.object(imports, '_matches_current_source', return_value=True):
+                    asset = imports.enqueue('module', 'MOD1', self.component, scope)
+                    result = imports.process(asset.pk)
+                self.assertEqual((result.status, result.error), ('ready', ''))
+                self.assertEqual(result.collection_id, collection)
+                self.client.upload.assert_called_once_with(VIDEO_ID, stream)
+                self.assertEqual(self.component['settings_json']['videoUrl'], source)
+                self.client.reset_mock()
+
+    def test_large_non_youtube_video_remains_subject_to_upload_limit(self):
+        from .video_sources import MAX_VIDEO_BYTES
+
+        stream = Mock(wraps=io.BytesIO(MP4))
+        stream.tell.return_value = MAX_VIDEO_BYTES + 1
+        with patch.object(imports, 'BunnyStream', return_value=self.client), \
+             patch.object(imports, 'download_video', return_value=nullcontext(stream)):
+            result = imports.process(self.asset().pk)
+        self.assertEqual(result.status, 'failed')
+        self.assertIn('300 MB', result.error)
+        self.client.create.assert_not_called()
+        self.client.upload.assert_not_called()
+
+    def test_empty_or_non_video_youtube_download_never_reaches_bunny(self):
+        from .video_sources import download_video
+
+        self.component['settings_json']['videoUrl'] = 'https://www.youtube.com/watch?v=abcdefghijk'
+        for content in (b'', b'<html>sign in</html>'):
+            with self.subTest(content=content), \
+                 patch.object(imports, 'BunnyStream', return_value=self.client), \
+                 patch.object(imports, 'download_video', side_effect=download_video), \
+                 patch('curriculum_api.youtube_download.download_youtube', return_value=nullcontext(io.BytesIO(content))):
+                result = imports.process(self.asset().pk)
+                self.assertEqual(result.status, 'failed')
+                self.client.create.assert_not_called()
+                self.client.upload.assert_not_called()
+
+    def test_empty_or_already_bunny_source_is_not_queued(self):
+        for source in ('', playback_url('798153', VIDEO_ID)):
+            self.assertIsNone(imports.enqueue('module', 'MOD1', {**self.component, 'settings_json': {'videoUrl': source}}, SCOPE))
+
+    def test_processing_does_not_replace_playable_source(self):
+        self.client.video.return_value = {'status': 3}
+        with patch.object(imports, 'BunnyStream', return_value=self.client), patch.object(imports, '_matches_current_source') as attach:
+            asset = imports.process(self.asset().id)
+        self.assertEqual(asset.status, 'processing')
+        attach.assert_not_called()
+
+    def test_uploaded_identity_is_reused_after_lost_upload_response(self):
+        asset = self.asset()
+        asset.video_id = VIDEO_ID
+        asset.save()
+        with patch.object(imports, 'BunnyStream', return_value=self.client), patch.object(imports, '_matches_current_source', return_value=True):
+            result = imports.process(asset.id)
+        self.assertEqual(result.status, 'ready')
+        self.client.create.assert_not_called()
+        self.client.upload.assert_not_called()
+
+    def test_accepted_create_can_be_recovered_by_marker(self):
+        self.client.find_import.return_value = {'guid': VIDEO_ID, 'status': 4}
+        with patch.object(imports, 'BunnyStream', return_value=self.client), patch.object(imports, '_matches_current_source', return_value=True):
+            result = imports.process(self.asset().id)
+        self.assertEqual(result.video_id, VIDEO_ID)
+        self.client.create.assert_not_called()
+
+    def test_active_lease_prevents_concurrent_upload(self):
+        asset = self.asset()
+        asset.lease_until = timezone.now() + timedelta(minutes=10)
+        asset.save()
+        with patch.object(imports, 'BunnyStream') as client:
+            imports.process(asset.id)
+        client.assert_not_called()
+
+    def test_expired_lease_can_recover_after_worker_exit(self):
+        asset = self.asset()
+        asset.lease_until = timezone.now() - timedelta(minutes=1)
+        asset.video_id = VIDEO_ID
+        asset.save()
+        with patch.object(imports, 'BunnyStream', return_value=self.client), patch.object(imports, '_matches_current_source', return_value=True):
+            self.assertEqual(imports.process(asset.id).status, 'ready')
+
+    def test_provider_error_remains_visible_and_releases_lease(self):
+        self.client.collection.side_effect = VideoImportError('Library permission denied.')
+        with patch.object(imports, 'BunnyStream', return_value=self.client), patch.object(imports, '_matches_current_source') as attach:
+            result = imports.process(self.asset().id)
+        self.assertEqual(result.status, 'failed')
+        self.assertEqual(result.error, 'Library permission denied.')
+        self.assertIsNone(result.lease_until)
+        attach.assert_not_called()
+
+    def test_watch_link_never_creates_empty_bunny_video(self):
+        self.component['settings_json']['videoUrl'] = 'https://www.youtube.com/watch?v=example'
+        with patch.object(imports, 'BunnyStream') as client:
+            result = imports.process(self.asset().id)
+        self.assertEqual(result.status, 'failed')
+        self.assertIn('YouTube link to one video', result.error)
+        client.assert_not_called()
+
+    def test_uploaded_mp4_retries_require_the_file_when_not_yet_uploaded(self):
+        asset = imports.enqueue('module', 'MOD1', self.component, SCOPE, file_hash='hash')
+        result = imports.process(asset.id)
+        self.assertEqual(result.status, 'failed')
+        self.assertIn('Choose the MP4', result.error)
+
+    def test_superseded_source_does_not_report_ready(self):
+        with patch.object(imports, 'BunnyStream', return_value=self.client), patch.object(imports, '_matches_current_source', return_value=False):
+            result = imports.process(self.asset().id)
+        self.assertEqual(result.status, 'superseded')
+        self.assertNotIn('url', imports.public_asset(result))
+
+    def test_completed_copy_preserves_source_and_all_component_settings(self):
+        asset = self.asset()
+        asset.video_id = VIDEO_ID
+        asset.save()
+        original = json.loads(json.dumps(self.component))
+        views = Mock()
+        with patch.object(imports, 'target', return_value=('components', [self.component], SCOPE)), \
+             patch.object(imports, '_views', return_value=views), patch.object(imports, 'BunnyStream', return_value=self.client):
+            result = imports.process(asset.id)
+        self.assertEqual(result.status, 'ready')
+        self.assertEqual(self.component, original)
+        views.update_rows.assert_not_called()
+        self.assertNotIn('url', imports.public_asset(result))
+        self.assertEqual(imports.public_asset(result)['bunnyUrl'], playback_url('798153', VIDEO_ID))
+
+    def test_source_changed_during_upload_is_not_overwritten(self):
+        asset = self.asset()
+        self.component['settings_json']['videoUrl'] = 'https://example.com/new.mp4'
+        with patch.object(imports, 'target', return_value=('components', [self.component], SCOPE)):
+            self.assertFalse(imports._matches_current_source(asset))
+        self.assertEqual(self.component['settings_json']['videoUrl'], 'https://example.com/new.mp4')
+
+    def test_newer_file_choice_does_not_report_previous_copy_as_current(self):
+        asset = self.asset()
+        newer = imports.enqueue('module', 'MOD1', self.component, SCOPE, file_hash='new-file')
+        # This case requires a later request; rapid Windows clock readings can
+        # give two fixtures the same timestamp.
+        newer.requested_at = asset.requested_at + timedelta(seconds=1)
+        newer.save(update_fields=['requested_at'])
+        with patch.object(imports, 'target', return_value=('components', [self.component], SCOPE)):
+            self.assertFalse(imports._matches_current_source(asset))
+
+    def test_active_lease_does_not_starve_other_pending_videos(self):
+        leased = self.asset()
+        leased.lease_until = timezone.now() + timedelta(minutes=10)
+        leased.save()
+        pending = imports.enqueue('module', 'MOD1', {**self.component, 'id': 'COMP2'}, SCOPE)
+        with patch.object(imports, 'process') as process:
+            self.assertEqual(imports.run_pending(limit=1), 1)
+        process.assert_called_once_with(pending.id)
+
+    def test_ordinary_title_edit_does_not_migrate_old_videos(self):
+        request = RequestFactory().patch('/module/', '{}', content_type='application/json')
+        def save(*args, **kwargs):
+            self.component['title'] = 'New title'
+            return JsonResponse({'saved': True})
+        with patch.object(imports, 'enabled', return_value=True), patch.object(imports, 'target', return_value=('components', [self.component], SCOPE)), \
+             patch('login.sessions.authenticate_request', return_value=SimpleNamespace(role='staff')):
+            response = imports.tracked_save(save, 'module')(request, module_catalogue_id='MOD1')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(CurriculumVideoImport.objects.count(), 0)
+
+    def save_video_request(self, *, kind='module', status=200, ids=None):
+        request = RequestFactory().patch('/save/', json.dumps({
+            'importVideoComponentIds': ids if ids is not None else ['COMP1'],
+        }), content_type='application/json')
+        sibling = {**self.component, 'id': 'OLD'}
+        result = JsonResponse({'saved': status == 200}, status=status)
+        with patch.object(imports, 'enabled', return_value=True), \
+             patch.object(imports, 'target', return_value=('components', [self.component, sibling], SCOPE)), \
+             patch('login.sessions.authenticate_request', return_value=SimpleNamespace(role='staff')):
+            response = imports.tracked_save(lambda *a, **k: result, kind)(request, **(
+                {'identifier': 'W1'} if kind == 'template' else {'module_catalogue_id': 'MOD1'}))
+        self.assertIs(response, result)
+        return response
+
+    def test_save_queues_the_selected_unchanged_video_only_and_wakes_after_commit(self):
+        with patch.object(imports, 'wake_worker') as wake, self.captureOnCommitCallbacks(execute=True):
+            self.save_video_request(ids=['COMP1', 'COMP-IN-OTHER-MODULE'])
+            self.assertEqual(list(CurriculumVideoImport.objects.values_list('component_id', flat=True)), ['COMP1'])
+            wake.assert_not_called()
+        wake.assert_called_once()
+
+    def test_save_retries_failed_copy_and_reuses_ready_copy(self):
+        asset = self.asset()
+        asset.status, asset.error = 'failed', 'Download failed'
+        asset.save()
+        self.save_video_request()
+        asset.refresh_from_db()
+        self.assertEqual((asset.status, asset.error), ('queued', ''))
+        asset.status, asset.video_id = 'ready', VIDEO_ID
+        asset.save()
+        self.save_video_request()
+        asset.refresh_from_db()
+        self.assertEqual((asset.status, asset.video_id), ('ready', VIDEO_ID))
+        self.assertEqual(CurriculumVideoImport.objects.count(), 1)
+
+    def test_template_save_queues_its_selected_video(self):
+        self.save_video_request(kind='template')
+        asset = CurriculumVideoImport.objects.get()
+        self.assertEqual((asset.target_kind, asset.target_id, asset.component_id), ('template', 'W1', 'COMP1'))
+
+    def test_failed_save_never_requests_an_import(self):
+        with patch.object(imports, 'wake_worker') as wake, self.captureOnCommitCallbacks(execute=True):
+            self.save_video_request(status=409)
+        wake.assert_not_called()
+        self.assertFalse(CurriculumVideoImport.objects.exists())
+
+    def test_missing_or_out_of_scope_selection_does_not_backfill_old_sources(self):
+        self.save_video_request(ids=['COMP-IN-OTHER-MODULE'])
+        self.assertFalse(CurriculumVideoImport.objects.exists())
+
+    def test_save_does_not_interrupt_an_active_transfer(self):
+        asset = self.asset()
+        asset.status = 'uploading'
+        asset.lease_until = timezone.now() + timedelta(minutes=10)
+        asset.save()
+        self.save_video_request()
+        refreshed = CurriculumVideoImport.objects.get(pk=asset.pk)
+        self.assertEqual((refreshed.status, refreshed.lease_until), (asset.status, asset.lease_until))
+
+    def test_changed_video_is_queued_but_failed_save_is_not(self):
+        request = RequestFactory().patch('/module/', '{}', content_type='application/json')
+        def save(*args, **kwargs):
+            self.component['settings_json']['videoUrl'] = 'https://example.com/new.mp4'
+            return JsonResponse({'saved': True})
+        with patch.object(imports, 'enabled', return_value=True), patch.object(imports, 'target', return_value=('components', [self.component], SCOPE)), \
+             patch('login.sessions.authenticate_request', return_value=SimpleNamespace(role='staff')):
+            imports.tracked_save(save, 'module')(request, module_catalogue_id='MOD1')
+            self.component['settings_json']['videoUrl'] = 'https://example.com/third.mp4'
+            imports.tracked_save(lambda *a, **k: JsonResponse({'error': 'conflict'}, status=409), 'module')(request, module_catalogue_id='MOD1')
+        self.assertEqual(CurriculumVideoImport.objects.count(), 1)
+        self.assertEqual(CurriculumVideoImport.objects.get().source_url, 'https://example.com/new.mp4')
+
+    def test_component_create_uses_saved_scope_without_backfilling_siblings(self):
+        request = RequestFactory().post('/components/', '{}', content_type='application/json')
+        views = Mock()
+        views.authoring_fetch_all.return_value = []
+        sibling = {**self.component, 'id': 'OLD'}
+        result = JsonResponse({'created': True, 'component': {'id': 'COMP1', 'moduleCatalogueId': 'MOD1'}}, status=201)
+        with patch.object(imports, 'enabled', return_value=True), patch.object(imports, '_views', return_value=views), \
+             patch.object(imports, 'target', return_value=('components', [self.component, sibling], SCOPE)), \
+             patch('login.sessions.authenticate_request', return_value=SimpleNamespace(role='staff')):
+            response = imports.tracked_save(lambda *a, **k: result, 'component')(request)
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(list(CurriculumVideoImport.objects.values_list('component_id', flat=True)), ['COMP1'])
+
+    def test_legacy_module_create_keeps_original_response(self):
+        request = RequestFactory().post('/modules/', '{}', content_type='application/json')
+        result = JsonResponse({'created': True, 'module': {'id': 'LEGACY1'}}, status=201)
+        with patch.object(imports, 'enabled', return_value=True), \
+             patch.object(imports, 'target', side_effect=VideoImportError('No authoring module.')), \
+             patch('login.sessions.authenticate_request', return_value=SimpleNamespace(role='staff')):
+            response = imports.tracked_save(lambda *a, **k: result, 'module')(request)
+        self.assertIs(response, result)
+        self.assertEqual(CurriculumVideoImport.objects.count(), 0)
+
+    def test_module_create_retry_does_not_backfill_existing_videos(self):
+        request = RequestFactory().post('/modules/', '{}', content_type='application/json')
+        result = JsonResponse({'existing': True, 'module': {'catalogueId': 'MOD1'}})
+        with patch.object(imports, 'enabled', return_value=True), patch.object(imports, 'target') as target, \
+             patch('login.sessions.authenticate_request', return_value=SimpleNamespace(role='staff')):
+            response = imports.tracked_save(lambda *a, **k: result, 'module')(request)
+        self.assertIs(response, result)
+        target.assert_not_called()
+
+
+class FreeCourseVideoImportTests(TestCase):
+    def setUp(self):
+        self.scope = {'module_id': 'FREE1', 'module_title': 'Independent study',
+                      'free_course_module_id': 'FREE1', 'free_course_name': 'Independent study',
+                      'course_type': 'free_course', 'collection_name': 'Free course'}
+        self.component = {'id': 'COMP1', 'type': 'video', 'title': 'Introduction',
+                          'settings_json': {'videoUrl': SOURCE, 'requiredProgressPercentage': 80}}
+        self.bunny = Mock()
+        self.bunny.free_course_collection.return_value = 'free-collection'
+        self.bunny.find_import.return_value = None
+        self.bunny.create.return_value = {'guid': VIDEO_ID}
+        self.bunny.video.return_value = {'guid': VIDEO_ID, 'status': 4}
+        self.enterContext(patch.object(imports, 'BunnyStream', return_value=self.bunny))
+        self.enterContext(patch.object(imports, 'target', return_value=('components', [self.component], self.scope)))
+        self.download = self.enterContext(patch.object(imports, 'download_video', side_effect=lambda _: nullcontext(io.BytesIO(MP4))))
+
+    def asset(self, **overrides):
+        return imports.enqueue('module', 'FREE1', {**self.component, **overrides}, self.scope)
+
+    def test_link_and_device_video_complete_without_programme_and_preserve_source(self):
+        for device in (False, True):
+            with self.subTest(device=device):
+                original = json.loads(json.dumps(self.component))
+                asset = self.asset()
+                result = imports.process(asset.id, io.BytesIO(MP4) if device else None)
+                self.assertEqual(result.status, 'ready')
+                self.assertEqual(result.collection_id, 'free-collection')
+                self.assertEqual(self.component, original)
+                self.bunny.collection.assert_not_called()
+                # Repeated processing does not duplicate the completed video.
+                imports.process(asset.id)
+                self.assertEqual(self.bunny.create.call_count, 1)
+                self.bunny.metadata.assert_called_once_with(VIDEO_ID, {**self.scope, 'component_id': 'COMP1'}, 'Introduction')
+                CurriculumVideoImport.objects.all().delete()
+                self.bunny.reset_mock()
+
+    def test_components_from_different_courses_share_collection_but_not_import_identity(self):
+        first = self.asset()
+        self.assertEqual(imports._import_collection(first, self.bunny), 'free-collection')
+        second = self.asset(id='COMP2')
+        self.assertEqual(imports._import_collection(second, self.bunny), 'free-collection')
+        self.bunny.free_course_collection.assert_called_once_with()
+        other_scope = {**self.scope, 'free_course_module_id': 'FREE2', 'free_course_name': 'Other course'}
+        other = imports.enqueue('module', 'FREE2', self.component, other_scope)
+        self.assertEqual(imports._import_collection(other, self.bunny), 'free-collection')
+        self.bunny.free_course_collection.assert_called_once_with()
+        self.assertNotEqual(first.id, other.id)
+        self.assertEqual(other.scope['free_course_name'], 'Other course')
+
+    def test_another_library_resolves_its_own_shared_collection(self):
+        first = self.asset()
+        self.assertEqual(imports._import_collection(first, self.bunny), 'free-collection')
+        other = self.asset(id='COMP2')
+        other.library_id = '99'
+        other.save(update_fields=['library_id'])
+        self.bunny.free_course_collection.return_value = 'other-library-collection'
+        self.assertEqual(imports._import_collection(other, self.bunny), 'other-library-collection')
+        self.assertEqual(self.bunny.free_course_collection.call_count, 2)
+
+    def test_resave_repairs_old_failed_scope_without_new_import_or_changed_source(self):
+        old_scope = {'module_id': 'FREE1', 'module_title': 'Independent study'}
+        old = imports.enqueue('module', 'FREE1', self.component, old_scope)
+        old.status, old.error = 'failed', 'The programme must match exactly one collection.'
+        old.save()
+        repaired = imports.enqueue_saved_video('module', 'FREE1', self.component, self.scope)
+        self.assertEqual(repaired.id, old.id)
+        self.assertEqual(repaired.status, 'queued')
+        self.assertEqual(repaired.scope, self.scope)
+        self.assertEqual(repaired.source_at_start, SOURCE)
+        self.assertEqual(imports.process(repaired.id).status, 'ready')
+        self.assertEqual(CurriculumVideoImport.objects.count(), 1)
+
+    def test_collection_failure_is_visible_without_creating_video_or_overwriting_settings(self):
+        self.bunny.free_course_collection.side_effect = VideoImportError('Bunny could not be reached.')
+        asset = self.asset()
+        result = imports.process(asset.id)
+        self.assertEqual(result.status, 'failed')
+        self.assertEqual(result.error, 'Bunny could not be reached.')
+        self.assertEqual(result.collection_id, '')
+        self.bunny.create.assert_not_called()
+        self.assertEqual(self.component['settings_json']['videoUrl'], SOURCE)
+
+    def test_pending_course_named_destination_is_replaced_before_upload(self):
+        old_scope = {key: value for key, value in self.scope.items() if key not in ('course_type', 'collection_name')}
+        old = imports.enqueue('module', 'FREE1', self.component, old_scope)
+        old.collection_id = 'old-course-named-collection'
+        old.save(update_fields=['collection_id'])
+        result = imports.process(old.id)
+        self.assertEqual(result.status, 'ready')
+        self.assertEqual(result.collection_id, 'free-collection')
+        self.assertEqual(result.scope['course_type'], 'free_course')
+        self.bunny.create.assert_called_once_with(old.id, 'Introduction', 'free-collection', scope=self.scope)
+
+    def test_resave_clears_old_destination_only_for_an_unuploaded_import(self):
+        old_scope = {key: value for key, value in self.scope.items() if key not in ('course_type', 'collection_name')}
+        old = imports.enqueue('module', 'FREE1', self.component, old_scope)
+        old.status, old.collection_id = 'failed', 'old-course-named-collection'
+        old.save()
+        retried = imports.enqueue_saved_video('module', 'FREE1', self.component, self.scope)
+        self.assertEqual(retried.id, old.id)
+        self.assertEqual(retried.collection_id, '')
+        self.assertEqual(retried.scope['collection_name'], 'Free course')
+        retried.status, retried.video_id, retried.collection_id = 'ready', VIDEO_ID, 'stored-collection'
+        retried.save()
+        same = imports.enqueue_saved_video('module', 'FREE1', self.component, self.scope)
+        self.assertEqual((same.video_id, same.collection_id, same.status), (VIDEO_ID, 'stored-collection', 'ready'))
+
+
+class VideoImportScopeTests(TestCase):
+    def test_free_course_scope_comes_from_saved_module_type_and_name(self):
+        for source_type, free in [('free_course', True), ('module_authoring', False)]:
+            placement = {} if free else SCOPE
+            views = Mock()
+            views.authoring_fetch_all.side_effect = [
+                [{'module_catalogue_id': 'FREE1', 'title': 'Independent study', 'source_type': source_type, **placement}],
+                [{'id': 'COMP1', 'type': 'video'}],
+            ]
+            with patch.object(imports, '_views', return_value=views):
+                _, _, scope = imports.target('module', 'FREE1')
+            self.assertEqual(scope.get('free_course_module_id'), 'FREE1' if free else None)
+            self.assertEqual(scope.get('free_course_name'), 'Independent study' if free else None)
+            self.assertEqual(scope.get('course_type'), 'free_course' if free else None)
+            self.assertEqual(scope.get('collection_name'), 'Free course' if free else None)
+            self.assertEqual([scope[k] for k in ('programme_id', 'cohort_id', 'group_id')],
+                             [placement.get(k, '') for k in ('programme_id', 'cohort_id', 'group_id')])
+
+    def test_unassigned_programme_routes_saved_course_to_shared_collection(self):
+        for programme in (None, '', 'Unassigned', ' Unassigned   programme ', 'NOT ASSIGNED', 'Not assigned program'):
+            with self.subTest(programme=programme):
+                parent = {'module_catalogue_id': 'MOD1', 'title': 'Independent study',
+                          'source_type': 'module_authoring', 'programme_id': None, 'programme_name': programme}
+                views = Mock()
+                views.authoring_fetch_all.side_effect = [[parent], []]
+                with patch.object(imports, '_views', return_value=views):
+                    _, _, scope = imports.target('module', 'MOD1')
+                self.assertEqual(scope['free_course_module_id'], 'MOD1')
+                self.assertEqual(scope['free_course_name'], 'Independent study')
+                self.assertEqual(scope['course_type'], 'free_course')
+                self.assertEqual(scope['collection_name'], 'Free course')
+                self.assertEqual(scope['programme_name'], programme or '')
+                self.assertEqual(parent['source_type'], 'module_authoring')
+
+    def test_real_programme_identity_prevents_unassigned_fallback(self):
+        for placement in (
+            {'programme_id': 'PROG-PCP-L6', 'programme_name': 'Unassigned programme'},
+            {'programme_id': None, 'programme_name': 'Project Controls Professional Level 6'},
+            {'programme_id': None, 'programme_name': 'Unassigned creative studies'},
+        ):
+            with self.subTest(placement=placement):
+                views = Mock()
+                views.authoring_fetch_all.side_effect = [
+                    [{'module_catalogue_id': 'MOD1', 'title': 'MSP', **placement}], []]
+                with patch.object(imports, '_views', return_value=views):
+                    _, _, scope = imports.target('module', 'MOD1')
+                self.assertNotIn('free_course_module_id', scope)
+
+    def test_attached_week_uses_unassigned_course_name_but_not_for_a_programme_module(self):
+        for placement, free in (({}, True), (SCOPE, False)):
+            views = Mock()
+            views.authoring_fetch_all.side_effect = [
+                [{'id': 'W1', 'module_catalogue_id': 'MOD1', 'title': 'Week One'}], [],
+                [{'module_catalogue_id': 'MOD1', 'title': 'Independent study', **placement}],
+            ]
+            with patch.object(imports, '_views', return_value=views):
+                _, _, scope = imports.target('template', 'W1')
+            self.assertEqual(scope.get('free_course_name'), 'Independent study' if free else None)
+            self.assertEqual(scope.get('collection_name'), 'Free course' if free else None)
+
+    def test_unattached_week_template_is_not_mistaken_for_a_course(self):
+        views = Mock()
+        views.authoring_fetch_all.side_effect = [[{'id': 'W1', 'title': 'Week One'}], []]
+        with patch.object(imports, '_views', return_value=views):
+            _, _, scope = imports.target('template', 'W1')
+        self.assertNotIn('free_course_module_id', scope)
+
+    def test_free_course_template_uses_parent_course_name(self):
+        views = Mock()
+        views.authoring_fetch_all.side_effect = [
+            [{'id': 'W1', 'module_catalogue_id': 'FREE1', 'title': 'Week One'}],
+            [{'id': 'COMP1', 'type': 'video'}],
+            [{'module_catalogue_id': 'FREE1', 'title': 'Independent study', 'source_type': 'free_course'}],
+        ]
+        with patch.object(imports, '_views', return_value=views):
+            _, _, scope = imports.target('template', 'W1')
+        self.assertEqual(scope['free_course_module_id'], 'FREE1')
+        self.assertEqual(scope['free_course_name'], 'Independent study')
+
+    def test_template_prefix_uses_assigned_module_instead_of_week_title(self):
+        views = Mock()
+        views.AUTHORING_MODULES_TABLE = 'modules'
+        views.WEEK_TEMPLATES_TABLE = 'templates'
+        views.WEEK_TEMPLATE_COMPONENTS_TABLE = 'template_components'
+        views.authoring_fetch_all.side_effect = [
+            [{'id': 'W1', 'module_catalogue_id': 'MOD1', 'title': 'Week One', **SCOPE, 'group_id': ''}],
+            [{'id': 'COMP1', 'type': 'video'}],
+            [{'module_catalogue_id': 'MOD1', 'title': 'MSP'}],
+        ]
+        with patch.object(imports, '_views', return_value=views):
+            _, _, scope = imports.target('template', 'W1')
+        self.assertEqual(scope['module_title'], 'MSP')
+        self.assertEqual(scope['template_title'], 'Week One')
+        self.assertEqual(scope['module_id'], 'MOD1')
+        views.authoring_fetch_all.assert_any_call('modules', 'module_catalogue_id = %s', ['MOD1'], ensure_tables=False)
+
+    def test_module_scope_keeps_its_saved_title_and_programme(self):
+        views = Mock()
+        views.authoring_fetch_all.side_effect = [
+            [{'module_catalogue_id': 'MOD1', 'title': 'MSP', **SCOPE}],
+            [{'id': 'COMP1', 'type': 'video'}],
+        ]
+        with patch.object(imports, '_views', return_value=views):
+            _, _, scope = imports.target('module', 'MOD1')
+        self.assertEqual(scope['module_title'], 'MSP')
+        self.assertEqual(scope['programme_id'], SCOPE['programme_id'])
+
+
+class UnassignedCourseVideoTests(TestCase):
+    def setUp(self):
+        self.module = {'module_catalogue_id': 'MOD1', 'title': 'Independent study',
+                       'source_type': 'module_authoring', 'programme_id': None,
+                       'programme_name': 'Unassigned programme'}
+        self.component = {'id': 'COMP1', 'type': 'video', 'title': 'Introduction',
+                          'settings_json': {'videoUrl': SOURCE, 'requiredProgressPercentage': 80}}
+        views = Mock(AUTHORING_MODULES_TABLE='modules', AUTHORING_COMPONENTS_TABLE='components')
+        views.authoring_fetch_all.side_effect = lambda table, *args, **kwargs: (
+            [self.module] if table == 'modules' else [self.component])
+        self.enterContext(patch.object(imports, '_views', return_value=views))
+        self.bunny = Mock()
+        self.bunny.free_course_collection.return_value = 'free-collection'
+        self.bunny.find_import.return_value = None
+        self.bunny.create.return_value = {'guid': VIDEO_ID}
+        self.bunny.video.return_value = {'guid': VIDEO_ID, 'status': 4}
+        self.enterContext(patch.object(imports, 'BunnyStream', return_value=self.bunny))
+        self.enterContext(patch.object(imports, 'download_video', side_effect=lambda _: nullcontext(io.BytesIO(MP4))))
+
+    def test_link_and_mp4_use_shared_collection_and_keep_source_and_module_unchanged(self):
+        for file_hash in ('', 'synthetic-mp4-hash'):
+            with self.subTest(device=bool(file_hash)):
+                original = json.loads(json.dumps((self.module, self.component)))
+                _, _, scope = imports.target('module', 'MOD1')
+                asset = imports.enqueue('module', 'MOD1', self.component, scope, file_hash=file_hash)
+                result = imports.process(asset.pk, io.BytesIO(MP4) if file_hash else None)
+                self.assertEqual((result.status, result.collection_id), ('ready', 'free-collection'))
+                self.bunny.collection.assert_not_called()
+                self.bunny.create.assert_called_once_with(asset.pk, 'Introduction', 'free-collection', scope=scope)
+                self.bunny.metadata.assert_called_once_with(VIDEO_ID, {**scope, 'component_id': 'COMP1'}, 'Introduction')
+                self.assertEqual(scope['free_course_name'], 'Independent study')
+                self.assertEqual(scope['course_type'], 'free_course')
+                self.assertEqual([self.module, self.component], original)
+                self.bunny.reset_mock()
+
+    def test_saving_failed_unassigned_import_repairs_same_request_but_keeps_existing_remote_copy(self):
+        _, _, scope = imports.target('module', 'MOD1')
+        previous_scope = {key: value for key, value in scope.items()
+                          if key not in ('free_course_module_id', 'free_course_name', 'course_type', 'collection_name')}
+        old = imports.enqueue('module', 'MOD1', self.component, previous_scope)
+        old.status, old.error, old.collection_id = 'failed', 'Programme collection not found.', 'wrong-collection'
+        old.save()
+        retried = imports.enqueue_saved_video('module', 'MOD1', self.component, scope)
+        self.assertEqual((retried.pk, retried.status, retried.collection_id), (old.pk, 'queued', ''))
+        self.assertEqual(imports.process(retried.pk).status, 'ready')
+        self.assertEqual(CurriculumVideoImport.objects.count(), 1)
+        self.bunny.reset_mock()
+        same = imports.enqueue_saved_video('module', 'MOD1', self.component, scope)
+        result = imports.process(same.pk)
+        self.assertEqual((result.video_id, result.collection_id), (VIDEO_ID, 'free-collection'))
+        self.bunny.create.assert_not_called()
+        self.bunny.free_course_collection.assert_not_called()
+
+    def test_database_source_event_can_queue_unassigned_course_without_waiting_for_programme(self):
+        from . import video_changes
+        from .models import CurriculumVideoChange
+        event = CurriculumVideoChange.objects.create(
+            target_kind='module', target_id='MOD1', component_id='COMP1',
+            settings=self.component['settings_json'], previous_settings={},
+        )
+        with patch.object(imports, 'enabled', return_value=True):
+            self.assertEqual(video_changes.capture_pending(), 1)
+        asset = CurriculumVideoImport.objects.get()
+        self.assertEqual(asset.scope['collection_name'], 'Free course')
+        self.assertEqual(asset.scope['free_course_name'], 'Independent study')
+        self.assertFalse(CurriculumVideoChange.objects.filter(pk=event.pk).exists())
+        self.bunny.create.assert_not_called()
+
+
+class VideoImportAccessTests(TestCase):
+    def request(self, method='get', **kwargs):
+        request = getattr(RequestFactory(), method)('/video/', **kwargs)
+        request._dont_enforce_csrf_checks = True
+        return request
+
+    def test_anonymous_and_other_roles_cannot_import(self):
+        for role in (None, 'learner', 'coach', 'employer', 'tutor'):
+            account = SimpleNamespace(role=role) if role else None
+            with self.subTest(role=role), patch('login.permissions.authenticate_request', return_value=account), patch.object(imports, 'target') as target:
+                response = imports.component_video(self.request(), 'module', 'MOD1', 'COMP1')
+            self.assertEqual(response.status_code, 403 if role else 401)
+            target.assert_not_called()
+
+    def test_admin_and_staff_can_read_status(self):
+        for role in ('admin', 'staff'):
+            with self.subTest(role=role), patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role=role)), \
+                 patch.object(imports, 'enabled', return_value=True), patch.object(imports, 'target', return_value=('components', [{'id': 'COMP1'}], SCOPE)):
+                response = imports.component_video(self.request(), 'module', 'MOD1', 'COMP1')
+            self.assertEqual(response.status_code, 200)
+
+    def test_unsaved_video_status_is_informational_but_import_is_refused(self):
+        with patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role='staff')), \
+             patch.object(imports, 'enabled', return_value=True), \
+             patch.object(imports, 'target', return_value=('components', [], SCOPE)):
+            response = imports.component_video(self.request(), 'module', 'MOD1', 'NEW')
+            self.assertEqual(response.status_code, 200)
+            self.assertFalse(json.loads(response.content)['saved'])
+            response = imports.component_video(self.request('post'), 'module', 'MOD1', 'NEW')
+            self.assertEqual(response.status_code, 400)
+
+    def test_post_requires_csrf(self):
+        request = RequestFactory().post('/video/')
+        with patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role='staff')), patch.object(imports, 'target') as target:
+            response = imports.component_video(request, 'module', 'MOD1', 'COMP1')
+        self.assertEqual(response.status_code, 403)
+        target.assert_not_called()
+
+    def test_client_cannot_override_programme_scope(self):
+        with patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role='staff')), \
+             patch.object(imports, 'enabled', return_value=True), patch.object(imports, 'target', return_value=('components', [{'id': 'COMP1'}], SCOPE)), patch.object(imports, 'enqueue') as enqueue:
+            response = imports.component_video(self.request('post', data={'programme_id': 'OTHER'}), 'module', 'MOD1', 'COMP1')
+        self.assertEqual(response.status_code, 400)
+        enqueue.assert_not_called()
+
+    def test_device_upload_returns_the_saved_lms_source_without_waiting_for_bunny(self):
+        component = {'id': 'COMP1', 'settings_json': {}}
+        url = '/curriculum_api/curriculum/uploads/videos/module/MOD1/COMP1/hash.mp4'
+        asset = imports.enqueue('module', 'MOD1', {**component, 'settings_json': {'videoUrl': url}}, SCOPE)
+        saved = {'videoUrl': url, 'sourceType': 'HTML (MP4)', 'provider': 'Upload file', 'embedCode': ''}
+        with patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role='staff')), \
+             patch.object(imports, 'enabled', return_value=True), \
+             patch.object(imports, 'target', return_value=('components', [component], SCOPE)), \
+             patch.object(imports, 'save_mp4', return_value=(asset, saved)), \
+             patch.object(imports, 'BunnyStream') as bunny:
+            response = imports.component_video(self.request('post', data={
+                'file': SimpleUploadedFile('lesson.mp4', MP4, content_type='video/mp4'),
+            }), 'module', 'MOD1', 'COMP1')
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(json.loads(response.content)['savedSettings'], saved)
+        bunny.assert_not_called()
+
+    def test_invalid_file_does_not_persist_a_source(self):
+        for name, content in [('video.html', MP4), ('video.mp4', b'<html>not a video</html>')]:
+            with self.subTest(name=name), \
+                 patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role='staff')), \
+                 patch.object(imports, 'enabled', return_value=True), \
+                 patch.object(imports, 'target', return_value=('components', [{'id': 'COMP1'}], SCOPE)), \
+                 patch.object(imports, 'save_mp4') as save:
+                response = imports.component_video(self.request('post', data={
+                    'file': SimpleUploadedFile(name, content),
+                }), 'module', 'MOD1', 'COMP1')
+                self.assertEqual(response.status_code, 400)
+                save.assert_not_called()
+
+    def test_local_video_resolver_rejects_arbitrary_files_and_remote_addresses(self):
+        prefix = '/curriculum_api/curriculum/uploads/'
+        for source in (prefix + '../private.mp4', prefix + 'videos/module/M/C/../../secret.mp4',
+                       prefix + 'videos/module/M/C/test.mp4?token=x', prefix + 'slides/document.mp4',
+                       'https://example.com' + prefix + 'videos/module/M/C/test.mp4',
+                       'file:///private.mp4', prefix + 'videos/module/M/C/%2e%2e.mp4'):
+            self.assertIsNone(stored_video_path(source))
+        self.assertEqual(stored_video_path(prefix + 'videos/module/M/C/hash.mp4'),
+                         'curriculum_component_uploads/videos/module/M/C/hash.mp4')
+
+    def test_saved_mp4_survives_authoring_validation_and_learner_source_mapping(self):
+        from .views import validate_component_authoring_payload
+        from learner_api.learner_detail import _video_url_from_settings
+        url = '/curriculum_api/curriculum/uploads/videos/module/M1/C1/hash.mp4'
+        component = {'type': 'video', 'title': 'Lesson', 'settings': {
+            'sourceType': 'HTML (MP4)', 'provider': 'Upload file', 'videoUrl': url,
+            'requiredProgressPercentage': 80, 'lessonContent': 'Keep this',
+        }}
+        for status in ('Draft', 'Ready for QA', 'Approved'):
+            component['settings']['contentStatus'] = status
+            self.assertEqual(validate_component_authoring_payload(component, 'component'), [])
+            self.assertEqual(_video_url_from_settings(component['settings']), url)
+            self.assertEqual(component['settings']['requiredProgressPercentage'], 80)
+
+    def test_other_video_sources_keep_their_existing_validation(self):
+        from .views import validate_component_authoring_payload
+        for source_type, url in [('HTML (MP4)', '/private/file.mp4'), ('HTML (MP4)', 'file:///secret.mp4'),
+                                 ('External Link', '/curriculum_api/curriculum/uploads/videos/module/M/C/hash.mp4'),
+                                 ('YouTube', '/curriculum_api/curriculum/uploads/videos/module/M/C/hash.mp4')]:
+            errors = validate_component_authoring_payload({'title': 'Lesson', 'type': 'video', 'settings': {
+                'sourceType': source_type, 'videoUrl': url,
+            }}, 'component')
+            self.assertTrue(any(error['path'] == 'component.settings.videoUrl' for error in errors))
+

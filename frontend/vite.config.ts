@@ -26,7 +26,7 @@ export default defineConfig(({ mode }) => {
     react(),
     AutoImport({
       include: [/[\\/]src[\\/].*\.[jt]sx?$/],
-      exclude: [/[\\/]src[\\/].*mocks[\\/].*/],
+      exclude: [/[\\/]src[\\/].*(?:__tests__|\.test\.|\.spec\.|mocks)[\\/].*/],
       imports: [
         {
           react: [

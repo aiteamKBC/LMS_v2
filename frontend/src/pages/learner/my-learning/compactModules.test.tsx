@@ -1,0 +1,495 @@
+import { StrictMode } from 'react';
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react';
+import { MemoryRouter, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
+import MyLearningPage from './page';
+import { useMyLearningSearch, useMyLearningCatalogue, useMyLearningModule, myLearningCatalogue, type MyLearningCatalogue } from '@/api/myLearning';
+import { clearAllCachedResources } from '@/api/cachedRequest';
+import { invalidateLearnerReads } from '@/api/learnerRead';
+import { buildUnifiedLearningSummary } from './learningSummary';
+import type { LearnerDetail } from '@/api/learnerDetail';
+import contractFixture from '@/test/myLearningFixtures.json';
+
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ auth: { account: { role: 'staff', id: 1 } }, isInitialized: true }) }));
+vi.mock('@/hooks/useMyLearner', () => ({ useResolvedLearner: (kind: string, id: string) => ({ kind, id }) }));
+vi.mock('@/hooks/useLearnerWorkspaceAccess', () => ({ useLearnerWorkspaceAccess: () => ({ canProgress: false, showReadOnlyNotice: false }) }));
+vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: React.ReactNode }) => <main>{children}</main> }));
+vi.stubGlobal('AppIcon', () => <span />);
+
+const makeCatalogue = (kind: 'commercial' | 'apprenticeship' = 'commercial', id = '7'): MyLearningCatalogue => ({
+  learner: { id, kind, name: 'Synthetic learner', programme: 'Programme', cohort: '', group: '' },
+  summary: { current: { subjects: 1, total: 2, completed: 1, percent: 50 }, previous: { subjects: 1, total: 3, completed: 1, percent: 33.33 }, subjectCount: 2 },
+  modules: [{ id: 'current:M1', title: 'One', source: 'current', moduleId: 'M1', activityCount: 2, completedActivityCount: 1, progress: 50,
+    status: 'In progress', nextTitle: 'Final test', finalTestPassed: false, actualHours: 1,
+    planModule: { start_date: '2026-01-01', end_date: '2026-12-31', tutor_name: 'Tutor', total_otjh: 10, educational_session_count: 2 } },
+    { id: 'legacy:50', title: 'Old', source: 'legacy', activityCount: 3, completedActivityCount: 1, progress: 33.33,
+      status: 'In progress', finalTestPassed: false, actualHours: 2 }],
+  otjh: { actual: 3, planned: 10 }, upcoming: [], hasMoreUpcoming: false,
+});
+const makeModule = (subject = 'current:M1', id = '7') => ({ subjectId: subject,
+  detail: { id, name: 'Synthetic learner', programme: 'Programme', modules: ['One'], week: [], components: [{
+    componentId: 'C1', moduleId: 'M1', module: 'One', component: 'Quiet lesson', type: 'reading', contentAvailable: false }], quizAttempts: [], componentProgress: [], videoProgress: [] },
+  activity: null, metadata: { covers: {}, current_subjects: [{ id: 'M1', title: 'One' }], builder_subjects: {} },
+  schedule: { modules: [], moduleLinks: {}, generatedAt: '' }, sessions: [] });
+const urls = () => vi.mocked(fetch).mock.calls.map(([url]) => String(url));
+const reply = (data: unknown) => new Response(JSON.stringify(data));
+function ActivityDestination() {
+  const location = useLocation();
+  return <output data-testid="activity-destination">{location.pathname}{location.search}</output>;
+}
+function route(path = '/learner/my-learning/commercial/7') {
+  return render(<StrictMode><MemoryRouter initialEntries={[path]}><Routes>
+    <Route path="/learner/my-learning/:kind/:id" element={<MyLearningPage />} />
+    <Route path="/learner/:type/:kind/:id/:activityId" element={<ActivityDestination />} />
+  </Routes></MemoryRouter></StrictMode>);
+}
+beforeEach(() => {
+  clearAllCachedResources();
+  vi.stubGlobal('fetch', vi.fn(async input => {
+    const url = String(input);
+    if (url.includes('/search/')) return reply({ matches: [{ id: 'current:M1' }], nextOffset: null });
+    if (url.includes('/certificates/')) return reply({ template: null, csrfToken: '' });
+    if (/\/my-learning\/(commercial|apprenticeship)\/7\/$/.test(url)) return reply(makeCatalogue(url.includes('/apprenticeship/') ? 'apprenticeship' : 'commercial'));
+    if (url.includes('/modules/')) return reply(makeModule());
+    throw new Error(`Unexpected API request: ${url}`);
+  }));
+});
+afterEach(() => { cleanup(); clearAllCachedResources(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+describe('compact My Learning route', () => {
+  it.each(['commercial', 'apprenticeship'] as const)('keeps an existing certificate accessible below a newly published threshold (%s)', async kind => {
+    const catalogue = makeCatalogue(kind);
+    vi.mocked(fetch).mockImplementation(async input => String(input).includes('/certificates/')
+      ? reply({ template: { id: 2, version: 4, title: 'Updated design', minimumProgress: 100,
+        requireFinalTest: false, issuedModuleRefs: ['current:M1'] }, csrfToken: 'csrf' }) : reply(catalogue));
+    route(`/learner/my-learning/${kind}/7`);
+    const current = within((await screen.findByRole('heading', { name: 'One' })).closest('article')!);
+    expect(await current.findByRole('button', { name: 'View certificate' })).toBeVisible();
+    const other = within(screen.getByRole('heading', { name: 'Old' }).closest('article')!);
+    expect(other.queryByRole('button', { name: /certificate/i })).not.toBeInTheDocument();
+    expect(urls().filter(url => url.includes('/certificates/'))).toHaveLength(1);
+  });
+
+  it.each(['quizzes', 'assignments'])('loads the %s list without requesting dashboard hour totals', async tab => {
+    vi.mocked(fetch).mockImplementation(async input => {
+      const url = String(input);
+      if (url.includes('/learner-detail/') && url.includes('content=quiz')) return reply({
+        id: '7', name: 'Synthetic learner', programme: 'Programme', components: [],
+        quizAttempts: [], componentProgress: [], retiredQuizComponents: [] });
+      if (url.includes('/reflection/submissions/')) return reply({ assignments: [], statuses: [] });
+      throw new Error(`Unexpected assessment request: ${url}`);
+    });
+    route(`/learner/my-learning/commercial/7?tab=${tab}`);
+    expect(await screen.findByText(tab === 'quizzes' ? 'No quizzes linked yet' : 'No assignments linked yet')).toBeVisible();
+    expect(urls().some(url => url.includes('content=quiz'))).toBe(true);
+    expect(urls().some(url => url.includes('content=summary'))).toBe(false);
+  });
+
+  it.each(['commercial', 'apprenticeship'] as const)('shows certificates for an old course and inside an assigned builder free course (%s)', async kind => {
+    const catalogue = makeCatalogue(kind);
+    catalogue.modules = [{ ...catalogue.modules[1], completedActivityCount: 3, requiredActivityCount: 1, completedRequiredActivityCount: 1, progress: 100, status: 'Completed' }];
+    const module = makeModule();
+    const completedModule = { ...module, detail: { ...module.detail,
+      components: module.detail.components.map(component => ({ ...component, expectedOtjh: 1 })),
+      componentProgress: [{ componentId: 'C1', passed: true }] } };
+    vi.mocked(fetch).mockImplementation(async input => {
+      const url = String(input);
+      if (url.includes('/certificates/')) return reply({ template: { id: 1, version: 2, title: 'Achievement', minimumProgress: 80, requireFinalTest: true }, csrfToken: 'csrf' });
+      if (url.includes('/free-courses/')) return reply({ freeCourses: [{ freeCourseId: 'FC-1', moduleId: 'M1', courseName: 'One', weeks: [], weekCount: 1, activityCount: 1 }] });
+      if (url.includes('/modules/')) return reply(completedModule);
+      return reply(catalogue);
+    });
+    route(`/learner/my-learning/${kind}/7`);
+    expect(await screen.findByRole('button', { name: 'Get certificate' })).toBeVisible();
+    fireEvent.click(screen.getByRole('radio', { name: 'Free courses' }));
+    fireEvent.click(await screen.findByRole('button', { name: /Open course/ }));
+    await screen.findByRole('region', { name: 'Module progress' });
+    expect(await screen.findByRole('button', { name: 'Get certificate' })).toBeVisible();
+  });
+
+  it.each(['commercial', 'apprenticeship'] as const)('shows each course KSB percentage from the catalogue (%s)', async kind => {
+    const catalogue = makeCatalogue(kind);
+    catalogue.modules[0].ksbProgress = { completed: 1, total: 4, percent: 25, status: 'ready' };
+    catalogue.modules[1].ksbProgress = { completed: 2, total: 3, percent: 66.67, status: 'ready' };
+    vi.mocked(fetch).mockImplementation(async input => String(input).includes('/certificates/')
+      ? reply({ template: null, csrfToken: '' }) : reply(catalogue));
+    route(`/learner/my-learning/${kind}/7`);
+    const first = within((await screen.findByRole('heading', { name: 'One' })).closest('article')!);
+    expect(first.getByRole('progressbar', { name: 'One KSBs achieved' })).toHaveAttribute('aria-valuenow', '25');
+    expect(first.queryByText('1 of 2 completed')).not.toBeInTheDocument();
+    expect(screen.getByRole('progressbar', { name: 'Old KSBs achieved' })).toHaveAttribute('aria-valuenow', '66.67');
+    expect(first.getByRole('progressbar', { name: 'One hours progress' })).toHaveAttribute('aria-valuenow', '10');
+  });
+
+  it.each(['commercial', 'apprenticeship'] as const)('opens standalone content only from Free courses when absent from My courses (%s)', async kind => {
+    const catalogue = makeCatalogue(kind);
+    catalogue.modules = catalogue.modules.filter(card => card.id !== 'current:M1');
+    catalogue.summary.current = { subjects: 0, total: 0, completed: 0, percent: 0 };
+    catalogue.summary.subjectCount = 1;
+    vi.mocked(fetch).mockImplementation(async input => {
+      const url = String(input);
+      if (url.includes('/certificates/')) return reply({ template: null, csrfToken: '' });
+      if (url.includes('/free-courses/')) return reply({ freeCourses: [{
+        freeCourseId: 'FC-1', moduleId: 'M1', courseName: 'One', description: '', coverImageUrl: '',
+        weekCount: 1, activityCount: 1, weeks: [],
+      }] });
+      if (url.includes('/modules/')) return reply(makeModule());
+      return reply(catalogue);
+    });
+    route(`/learner/my-learning/${kind}/7`);
+    await screen.findByRole('heading', { name: 'Old' });
+    expect(screen.queryByRole('heading', { name: 'One' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('radio', { name: 'Free courses' }));
+    const card = (await screen.findByRole('heading', { name: 'One' })).closest('article')!;
+    fireEvent.click(within(card).getByRole('button', { name: /Open course/ }));
+    expect(await screen.findByRole('region', { name: 'Module progress' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Quiet lesson', level: 5 })).toBeVisible();
+    expect(urls()).toContain(`/learner_api/my-learning/${kind}/7/modules/current%3AM1/`);
+  });
+
+  it.each(['commercial', 'apprenticeship'] as const)('resumes the most recently studied assigned module for %s', async kind => {
+    const catalogue = makeCatalogue(kind);
+    catalogue.modules[0].lastActivityAt = '2026-10-01T10:00:00Z';
+    catalogue.modules.push({ ...catalogue.modules[0], id: 'current:M2', moduleId: 'M2', title: 'Recent module',
+      lastActivityAt: '2026-11-11T10:00:00Z',
+      planModule: { ...catalogue.modules[0].planModule!, start_date: '2026-11-01', end_date: '2026-11-30' } });
+    vi.mocked(fetch).mockImplementation(async input => {
+      const url = String(input);
+      if (url.includes('/certificates/')) return reply({ template: null, csrfToken: '' });
+      if (url.includes('/modules/')) return reply(makeModule());
+      return reply(catalogue);
+    });
+    route(`/learner/my-learning/${kind}/7?resume=1`);
+    await waitFor(() => expect(urls()).toContain(`/learner_api/my-learning/${kind}/7/modules/current%3AM2/`));
+    expect(urls().some(url => url.includes('/modules/current%3AM1/'))).toBe(false);
+  });
+  it('keeps the catalogue available when all assigned learning is complete', async () => {
+    const catalogue = makeCatalogue();
+    catalogue.modules = catalogue.modules.map(card => ({ ...card, completedActivityCount: card.activityCount,
+      progress: 100, status: 'Completed' }));
+    vi.mocked(fetch).mockImplementation(async () => reply(catalogue));
+    route('/learner/my-learning/commercial/7?resume=1');
+    expect(await screen.findByRole('heading', { name: 'One' })).toBeVisible();
+    expect(urls().some(url => url.includes('/modules/'))).toBe(false);
+  });
+
+  it.each(['commercial', 'apprenticeship'] as const)('resolves resume for %s from saved progress in earlier assigned modules', async kind => {
+    const catalogue = makeCatalogue(kind);
+    catalogue.modules[0].planModule!.end_date = '2026-09-30';
+    catalogue.modules.push({ ...catalogue.modules[0], id: 'current:M2', moduleId: 'M2', title: 'New module',
+      planModule: { ...catalogue.modules[0].planModule!, start_date: '2026-11-01', end_date: '2026-11-30' } });
+    vi.mocked(fetch).mockImplementation(async input => {
+      const url = String(input);
+      if (url.includes('/certificates/')) return reply({ template: null, csrfToken: '' });
+      if (url.includes('/modules/')) return reply(makeModule());
+      return reply(catalogue);
+    });
+    route(`/learner/my-learning/${kind}/7?resume=1`);
+    await waitFor(() => expect(urls()).toContain(`/learner_api/my-learning/${kind}/7/modules/current%3AM1/`));
+    expect(urls().some(url => url.includes('/modules/current%3AM2/'))).toBe(false);
+  });
+
+  it.each([
+    ['commercial', false], ['commercial', true], ['apprenticeship', false], ['apprenticeship', true],
+  ] as const)('uses saved component completion inside the module and hides the old percentage (%s, completed=%s)', async (kind, completed) => {
+    const reference = { percent: 100, capturedAt: '2026-10-30T12:00:00+00:00' };
+    const catalogue = makeCatalogue(kind);
+    catalogue.modules[0].legacyProgressReference = reference;
+    const module = makeModule();
+    const detail = { ...module,
+      detail: { ...module.detail, componentProgress: completed ? [{ componentId: 'C1', kind: 'reading', passed: true }] : [] },
+      metadata: { ...module.metadata, legacy_progress_references: { 'current:M1': reference } } };
+    vi.mocked(fetch).mockImplementation(async input => reply(String(input).includes('/certificates/')
+      ? { template: null, csrfToken: '' } : String(input).includes('/modules/') ? detail : catalogue));
+    route(`/learner/my-learning/${kind}/7?subject=current%3AM1`);
+    const progress = within(await screen.findByRole('region', { name: 'Module progress' }));
+    expect(screen.queryByText(/Old LMS progress:/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Historical course progress')).not.toBeInTheDocument();
+    expect(progress.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', completed ? '100' : '0');
+    expect(progress.getByText(`${completed ? 1 : 0} of 1 completed`)).toBeVisible();
+  });
+
+  it.each(['commercial', 'apprenticeship'] as const)('shows each module cohort independently of the learner cohort (%s)', async kind => {
+    const catalogue = makeCatalogue(kind);
+    catalogue.learner.cohort = 'Account cohort';
+    catalogue.modules[0].planModule!.cohort_name = 'October 2026';
+    catalogue.modules.push({ ...catalogue.modules[0], id: 'current:M2', moduleId: 'M2', title: 'Two',
+      planModule: { ...catalogue.modules[0].planModule, cohort_name: 'February 2026' } });
+    vi.mocked(fetch).mockImplementation(async input => reply(String(input).includes('/certificates/')
+      ? { template: null, csrfToken: '' } : catalogue));
+    route(`/learner/my-learning/${kind}/7`);
+    await screen.findByRole('heading', { name: 'One' });
+    const cards = new Map(screen.getAllByRole('heading', { level: 3 }).map(heading => [heading.textContent, heading.closest('article')!]));
+    const card = (title: string) => cards.get(title)!;
+    expect(card('One')).toHaveTextContent('Cohort: October 2026');
+    expect(card('Two')).toHaveTextContent('Cohort: February 2026');
+    expect(card('Old')).toHaveTextContent('Cohort: Not available');
+    expect(card('One')).not.toHaveTextContent('Account cohort');
+    fireEvent.click(screen.getByRole('button', { name: 'Grid' }));
+    expect(within(card('One')).getByText('October 2026')).toBeVisible();
+    expect(within(card('Two')).getByText('February 2026')).toBeVisible();
+  });
+
+  it('retries a failed initial catalogue read and replaces the error with real subjects', async () => {
+    let failed = true;
+    vi.mocked(fetch).mockImplementation(async input => String(input).includes('/certificates/')
+      ? reply({ template: null, csrfToken: '' })
+      : failed ? new Response(JSON.stringify({ error: 'Could not load your learning. Please try again.' }), { status: 400 })
+        : reply(makeCatalogue()));
+    route();
+    const alert = await screen.findByRole('alert');
+    // Failed reads remain visible, with learner-facing copy rather than API text.
+    expect(within(alert).getByText('Could not load your subjects')).toBeVisible();
+    expect(alert).toHaveTextContent('contact your tutor or the support team');
+    failed = false;
+    fireEvent.click(within(alert).getByRole('button', { name: 'Try again' }));
+    expect(await screen.findByRole('heading', { name: 'One' })).toBeVisible();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it.each(['commercial', 'apprenticeship'])('uses one catalogue read for %s and preserves the visible module UI', async kind => {
+    route(`/learner/my-learning/${kind}/7`);
+    await screen.findByRole('heading', { name: 'One' });
+    expect(urls().filter(url => url.includes('/my-learning/'))).toEqual([`/learner_api/my-learning/${kind}/7/`]);
+    expect(urls().filter(url => url.includes('/certificates/'))).toHaveLength(1);
+    expect(urls().some(url => /learner-detail|student-activity|subject-covers|metrics|training-plan-dashboard/.test(url))).toBe(false);
+    expect(screen.getByText('1 of 2 activities completed')).toBeVisible();
+    expect(screen.getByText(/1 of 3 previous activities completed/)).toBeVisible();
+    expect(within(screen.getByRole('navigation', { name: 'My Learning section' })).getByRole('button', { name: 'Modules' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Quizzes' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Assignments' })).toBeVisible();
+    const requests = urls().length;
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search modules or activities' }), { target: { value: 'Quiet lesson' } });
+    expect(await screen.findByRole('heading', { name: 'One' })).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'Old' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Grid' }));
+    fireEvent.change(screen.getByRole('combobox', { name: 'Sort by' }), { target: { value: 'progress' } });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Status' }), { target: { value: 'started' } });
+    expect(urls()).toHaveLength(requests + 1);
+    expect(urls().filter(url => url.includes('/search/'))).toHaveLength(1);
+  });
+
+  it('renders cached cards immediately while a refresh preserves search and publishes new totals atomically', async () => {
+    await myLearningCatalogue.read('commercial', '7');
+    route();
+    expect(screen.getByRole('heading', { name: 'One' })).toBeVisible();
+    const search = screen.getByRole('textbox', { name: 'Search modules or activities' });
+    fireEvent.change(search, { target: { value: 'Quiet lesson' } });
+    let finish!: (response: Response) => void;
+    vi.mocked(fetch).mockImplementation(async input => String(input).includes('/certificates/')
+      ? reply({ template: null, csrfToken: '' }) : new Promise(resolve => { finish = resolve; }));
+    act(() => invalidateLearnerReads());
+    expect(screen.getByText('1 of 2 activities completed')).toBeVisible();
+    expect(search).toHaveValue('Quiet lesson');
+    const updated = makeCatalogue();
+    updated.summary.current = { subjects: 1, total: 3, completed: 2, percent: 66.67 };
+    updated.modules[0] = { ...updated.modules[0], activityCount: 3, completedActivityCount: 2, progress: 66.67 };
+    await act(async () => finish(reply(updated)));
+    expect(screen.getByText('2 of 3 activities completed')).toBeVisible();
+    expect(search).toHaveValue('Quiet lesson');
+    expect(screen.queryByText('1 of 2 activities completed')).not.toBeInTheDocument();
+  });
+
+  it('retains complete saved cards and exposes a genuine refresh failure', async () => {
+    route();
+    await screen.findByRole('heading', { name: 'One' });
+    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ error: 'Catalogue refresh unavailable' }), { status: 400 }));
+    act(() => invalidateLearnerReads());
+    expect(await screen.findByRole('alert')).toHaveTextContent('Your subjects could not be refreshed');
+    expect(screen.getByRole('heading', { name: 'One' })).toBeVisible();
+    expect(screen.getByText('1 of 2 activities completed')).toBeVisible();
+  });
+
+  it.each(['current-only', 'legacy-only', 'mixed'])('keeps %s counts and source filters', async variant => {
+    const fixture = makeCatalogue();
+    if (variant === 'current-only') {
+      fixture.modules = fixture.modules.filter(card => card.source === 'current');
+      fixture.summary.previous = { subjects: 0, total: 0, completed: 0, percent: 0 };
+      fixture.summary.subjectCount = 1;
+    } else if (variant === 'legacy-only') {
+      fixture.modules = fixture.modules.filter(card => card.source === 'legacy');
+      fixture.summary.current = { subjects: 0, total: 0, completed: 0, percent: 0 };
+      fixture.summary.subjectCount = 1;
+    }
+    vi.mocked(fetch).mockImplementation(async input => String(input).includes('/certificates/') ? reply({ template: null, csrfToken: '' }) : reply(fixture));
+    route();
+    await screen.findByRole('heading', { name: variant === 'legacy-only' ? 'Old' : 'One' });
+    expect(screen.getByText(`${fixture.summary.current.completed} of ${fixture.summary.current.total} activities completed`)).toBeVisible();
+    fireEvent.click(screen.getByRole('tab', { name: 'Old LMS' }));
+    expect(screen.queryByRole('heading', { name: 'One' })).not.toBeInTheDocument();
+    if (variant !== 'current-only') expect(screen.getByRole('heading', { name: 'Old' })).toBeVisible();
+  });
+
+  it.each(['commercial', 'apprenticeship'] as const)('opens the subject directly in its player from the shared JSON contract (%s)', async kind => {
+    const catalogue = { ...contractFixture.catalogue, learner: { ...contractFixture.catalogue.learner, kind } };
+    vi.mocked(fetch).mockImplementation(async input => String(input).includes('/certificates/')
+      ? reply({ template: null, csrfToken: '' }) : String(input).includes('/modules/')
+        ? reply(contractFixture.module) : reply(catalogue));
+    route(`/learner/my-learning/${kind}/7`);
+    fireEvent.click(await screen.findByRole('button', { name: 'All modules' }));
+    fireEvent.click(await screen.findByRole('button', { name: /New LMS.*Example module.*Open subject/ }));
+    await waitFor(() => expect(urls().filter(url => url.includes('/modules/'))).toHaveLength(1));
+    expect(urls().find(url => url.includes('/modules/'))).toContain('current%3AM1');
+    expect(await screen.findByTestId('activity-destination')).toHaveTextContent(`/learner/quiz/${kind}/7/1?week=Week%201`);
+    expect(screen.queryByRole('button', { name: 'All subjects' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Open activity' })).not.toBeInTheDocument();
+    expect(urls().some(url => url.includes('/learner-detail/'))).toBe(false);
+  });
+
+  it.each(['commercial', 'apprenticeship'] as const)('defaults to active cards and opens an older subject through All (%s)', async kind => {
+    const catalogue = makeCatalogue(kind);
+    catalogue.moduleActivity = { 'current:M1': { startDate: '2000-01-01', lastLiveDate: '2099-12-31' } };
+    vi.mocked(fetch).mockImplementation(async input => reply(String(input).includes('/certificates/')
+      ? { template: null, csrfToken: '' } : String(input).includes('/modules/') ? makeModule('legacy:50') : catalogue));
+    route(`/learner/my-learning/${kind}/7`);
+    const card = (await screen.findByRole('heading', { name: 'One' })).closest('article')!;
+    expect(within(card).getByText('Active')).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'Old' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'All modules' }));
+    fireEvent.click(screen.getByRole('button', { name: /Old LMS.*Old.*Open subject/ }));
+    await waitFor(() => expect(urls().some(url => url.includes('/modules/legacy%3A50/'))).toBe(true));
+  });
+
+  it('loads only the opened module and reuses its cache on revisits', async () => {
+    route();
+    fireEvent.click(await screen.findByRole('button', { name: /New LMS.*One.*Open subject/ }));
+    await screen.findByRole('button', { name: 'All subjects' });
+    expect(urls().filter(url => url.includes('/modules/'))).toEqual(['/learner_api/my-learning/commercial/7/modules/current%3AM1/']);
+    expect(urls().some(url => /learner-detail|student-activity|subject-covers|metrics|training-plan-dashboard/.test(url))).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'All subjects' }));
+    fireEvent.click(await screen.findByRole('button', { name: /New LMS.*One.*Open subject/ }));
+    await screen.findByRole('button', { name: 'All subjects' });
+    expect(urls().filter(url => url.includes('/modules/'))).toHaveLength(1);
+  });
+
+  it('shows an invalid module error without falling back to unrelated content', async () => {
+    vi.mocked(fetch).mockImplementation(async input => String(input).includes('/modules/')
+      ? new Response(JSON.stringify({ error: 'Module not found in this learner plan.' }), { status: 404 })
+      : reply(makeCatalogue()));
+    route('/learner/my-learning/commercial/7?subject=current%3AFOREIGN');
+    expect(await screen.findByRole('alert')).toHaveTextContent('Module not found');
+    expect(screen.queryByRole('heading', { name: 'One' })).not.toBeInTheDocument();
+  });
+
+  it('refreshes the catalogue and open module after progress invalidation', async () => {
+    route('/learner/my-learning/commercial/7?subject=current%3AM1');
+    await screen.findByRole('button', { name: 'All subjects' });
+    act(() => invalidateLearnerReads());
+    await waitFor(() => expect(urls().filter(url => url.includes('/modules/'))).toHaveLength(2));
+    await waitFor(() => expect(urls().filter(url => url.endsWith('/7/'))).toHaveLength(2));
+  });
+});
+
+describe('module state isolation', () => {
+  it('never renders another learner or selected module while a request is pending', async () => {
+    let select!: (id: string) => void;
+    function Consumer() {
+      const location = useLocation(); const navigate = useNavigate();
+      const id = location.pathname.slice(1) || '7';
+      select = id => navigate('/' + id);
+      const result = useMyLearningCatalogue('commercial', id);
+      const detail = useMyLearningModule('commercial', id, 'current:M1');
+      return <output>{result.data?.learner.id}:{detail.data?.detail.id}</output>;
+    }
+    const mounted = render(<MemoryRouter initialEntries={['/7']}><Consumer /></MemoryRouter>);
+    await waitFor(() => expect(mounted.container).toHaveTextContent('7:7'));
+    vi.mocked(fetch).mockImplementation(() => new Promise(() => {}));
+    act(() => select('8'));
+    expect(mounted.container).toHaveTextContent(':');
+    expect(mounted.container).not.toHaveTextContent('7');
+  });
+});
+
+describe('compact activity search', () => {
+  it('debounces typing, aborts superseded requests and ignores late results across learners', async () => {
+    const pending: { signal: AbortSignal; finish: (value: Response) => void }[] = [];
+    vi.mocked(fetch).mockImplementation((_input,init) => new Promise(resolve => pending.push({ signal: init!.signal!, finish: resolve })));
+    const hook=renderHook(({ id,query }) => useMyLearningSearch('commercial',id,query,true),{ initialProps:{ id:'7',query:'q' } });
+    hook.rerender({id:'7',query:'quiet'});
+    expect(fetch).not.toHaveBeenCalled();
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+    hook.rerender({id:'8',query:'quiet'});
+    expect(pending[0].signal.aborted).toBe(true);
+    expect(hook.result.current.ids).toEqual([]);
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    await act(async () => pending[0].finish(reply({matches:[{id:'current:FOREIGN'}],nextOffset:null})));
+    expect(hook.result.current.ids).toEqual([]);
+    await act(async () => pending[1].finish(reply({matches:[{id:'current:OWN'}],nextOffset:null})));
+    await waitFor(() => expect(hook.result.current.ids).toEqual(['current:OWN']));
+    hook.rerender({id:'8',query:''});
+    expect(hook.result.current.ids).toEqual([]);
+  });
+
+  it('consumes bounded pages and exposes search errors', async () => {
+    vi.mocked(fetch).mockImplementation(async input => reply(String(input).endsWith('offset=0')
+      ? { matches:[{id:'current:M1'}],nextOffset:50 } : { matches:[{id:'legacy:50'}],nextOffset:null }));
+    const hook=renderHook(({ query }) => useMyLearningSearch('apprenticeship','7',query,true),{ initialProps:{query:'lesson'} });
+    await waitFor(() => expect(hook.result.current.ids).toEqual(['current:M1','legacy:50']));
+    expect(urls()).toEqual([
+      '/learner_api/my-learning/apprenticeship/7/search/?q=lesson&offset=0',
+      '/learner_api/my-learning/apprenticeship/7/search/?q=lesson&offset=50',
+    ]);
+    vi.mocked(fetch).mockResolvedValue(new Response('{}',{status:503}));
+    hook.rerender({query:'different'});
+    await waitFor(() => expect(hook.result.current.error).toMatch(/Could not search/));
+  });
+});
+
+it('preserves upcoming actions and fetches the remaining navigation links only on expansion', async () => {
+  const fixture=makeCatalogue();
+  fixture.upcoming=[{id:'session:1',title:'Live teaching',type:'session',date:'2099-01-01T10:00:00Z',href:'/learner/component/commercial/7/LIVE',online:true},
+    {id:'deadline:1',title:'Assignment due',type:'assignment',date:'2099-01-02',href:'/learner/component/commercial/7/TASK',online:false}];
+  fixture.hasMoreUpcoming=true;
+  vi.mocked(fetch).mockImplementation(async input => String(input).includes('/certificates/') ? reply({template:null})
+    : String(input).includes('/upcoming/') ? reply({upcoming:[...fixture.upcoming,{id:'deadline:2',title:'Later assignment',type:'assignment',date:'2099-02-01',href:'/learner/component/commercial/7/LATER',online:false}]}) : reply(fixture));
+  route();
+  expect(await screen.findByRole('link',{name:/Live teaching/})).toHaveAttribute('href','/learner/component/commercial/7/LIVE');
+  expect(screen.getByRole('link',{name:/Assignment due/})).toHaveAttribute('href','/learner/component/commercial/7/TASK');
+  expect(urls().some(url => url.includes('/upcoming/'))).toBe(false);
+  fireEvent.click(screen.getByRole('button',{name:'View all'}));
+  expect(await screen.findByRole('link',{name:/Later assignment/})).toBeVisible();
+  expect(urls().filter(url => url.includes('/upcoming/'))).toHaveLength(1);
+});
+
+it.each(['commercial', 'apprenticeship'] as const)('retries upcoming learning directly and keeps the %s catalogue visible', async kind => {
+  const fixture = makeCatalogue(kind);
+  fixture.hasMoreUpcoming = true;
+  let attempts = 0;
+  vi.mocked(fetch).mockImplementation(async input => {
+    if (String(input).includes('/certificates/')) return reply({ template: null });
+    if (String(input).includes('/upcoming/')) {
+      attempts += 1;
+      // The transport already retries transient reads once before surfacing a failure.
+      return attempts <= 2 ? new Response('{}', { status: 503 }) : reply({ upcoming: [
+        { id: 'deadline:1', title: 'Later assignment', type: 'assignment', date: '2099-02-01', href: `/learner/component/${kind}/7/LATER`, online: false },
+      ] });
+    }
+    return reply(fixture);
+  });
+  route(`/learner/my-learning/${kind}/7`);
+  await screen.findByRole('heading', { name: 'One' });
+  const catalogueReads = urls().filter(url => url.endsWith('/7/')).length;
+  fireEvent.click(screen.getByRole('button', { name: 'View all' }));
+  expect(await screen.findByRole('alert', {}, { timeout: 3000 })).toHaveTextContent('Upcoming learning could not be loaded');
+  expect(screen.getByRole('heading', { name: 'One' })).toBeVisible();
+  expect(urls().filter(url => url.includes('/upcoming/'))).toHaveLength(2);
+  fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+  expect(await screen.findByRole('link', { name: /Later assignment/ })).toHaveAttribute('href', `/learner/component/${kind}/7/LATER`);
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  expect(urls().filter(url => url.includes('/upcoming/'))).toHaveLength(3);
+  expect(urls().filter(url => url.endsWith('/7/'))).toHaveLength(catalogueReads);
+});
+
+it('retains the frontend current/previous canonical summary fixture', () => {
+  const real = { modules: ['One'], components: [
+    { componentId: 'C1', moduleId: 'M1', module: 'One', component: 'Lesson', type: 'reading' },
+    { componentId: 'Q1', moduleId: 'M1', module: 'One', component: 'Quiz', isQuiz: true, quizMeta: { quizId: 1 } },
+    { componentId: 'Q2', moduleId: 'M1', module: 'One', component: 'Quiz 2', isQuiz: true, quizMeta: { quizId: 1 } },
+    { componentId: 'L1', moduleId: 'M1', module: 'One', component: 'Live', type: 'live_session', attendanceCompleted: true,
+      reflectionRequired: true, liveSessionLearning: { attendance: 'present', status: 'completed',
+        requirementsStatus: 'reflection-required', attendedSeconds: 7200, attendedAt: '2026-11-11T10:00:00Z' } }],
+    componentProgress: [{ componentId: 'C1', kind: 'component' }], quizAttempts: [
+      { componentId: 'Q2', quizId: 1, passed: true }, { componentId: 'Q2', quizId: 1, passed: false }, { componentId: 'OLD', quizId: 99, passed: true }],
+    retiredQuizComponents: [{ componentId: 'OLD', moduleId: 'M1', module: 'One', component: 'Old quiz', isQuiz: true, quizMeta: { quizId: 99 } }] } as unknown as LearnerDetail;
+  expect(buildUnifiedLearningSummary(null,real).percent).toBe(80);
+});

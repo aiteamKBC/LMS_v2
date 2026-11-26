@@ -1,0 +1,183 @@
+/**
+ * Which authored links can be shown inline.
+ *
+ * The bug this guards: an uploaded deck is stored as a relative path
+ * ("/curriculum_api/curriculum/uploads/…"), and handing that straight to the
+ * Office Online viewer produced "An error occurred — we can't open this for
+ * you" on the learner's screen, in every environment.
+ */
+import { describe, expect, it } from 'vitest';
+import { absoluteDocUrl, resolveDocEmbed } from '../docEmbed';
+
+const PUBLIC = 'https://lms.kentbusinesscollege.net';
+const LOCAL = 'http://localhost:3000';
+
+describe('absoluteDocUrl', () => {
+  it('resolves an upload path against the page origin', () => {
+    expect(absoluteDocUrl('/curriculum_api/curriculum/uploads/m/c/deck.pptx', PUBLIC))
+      .toBe(`${PUBLIC}/curriculum_api/curriculum/uploads/m/c/deck.pptx`);
+  });
+
+  it('leaves an absolute link alone', () => {
+    expect(absoluteDocUrl('https://example.com/deck.pptx', PUBLIC)).toBe('https://example.com/deck.pptx');
+  });
+
+  it('rejects blanks and non-web schemes', () => {
+    expect(absoluteDocUrl('   ', PUBLIC)).toBeNull();
+    expect(absoluteDocUrl('javascript:alert(1)', PUBLIC)).toBeNull();
+    expect(absoluteDocUrl('file:///C:/deck.pptx', PUBLIC)).toBeNull();
+  });
+});
+
+describe('resolveDocEmbed', () => {
+  it('uses the authenticated upload preview for Office files on local and public origins', () => {
+    for (const origin of [PUBLIC, LOCAL]) {
+      for (const extension of ['doc', 'docx', 'docm', 'xls', 'xlsx', 'ppt']) {
+        expect(resolveDocEmbed(`/curriculum_api/curriculum/uploads/m/c/brief.${extension}`, origin))
+          .toEqual({ mode: 'native', src: `${origin}/curriculum_api/curriculum/uploads/m/c/brief.${extension}?preview=1` });
+      }
+    }
+  });
+
+  it('retains existing query parameters on the authenticated preview', () => {
+    const embed = resolveDocEmbed('/curriculum_api/curriculum/uploads/m/c/brief.docx', PUBLIC);
+    expect(embed.mode).toBe('native');
+    expect(resolveDocEmbed('/curriculum_api/curriculum/uploads/m/c/brief.doc?version=2', PUBLIC))
+      .toEqual({ mode: 'native', src: `${PUBLIC}/curriculum_api/curriculum/uploads/m/c/brief.doc?version=2&preview=1` });
+  });
+
+  it.each(['http://127.0.0.1:8000', 'http://192.168.1.20', 'http://10.0.0.5', 'http://172.20.3.4', 'http://kbc-laptop', 'http://box.local'])(
+    'treats %s as unreachable from the public internet',
+    origin => {
+      expect(resolveDocEmbed('/uploads/notes.docx', origin).mode).toBe('unavailable');
+    },
+  );
+
+  it('renders one of our own uploaded decks in-house, on any origin', () => {
+    // The whole point: this is what used to hand a relative path to the Office
+    // viewer and produce its "An error occurred" page.
+    for (const origin of [PUBLIC, LOCAL]) {
+      expect(resolveDocEmbed('/curriculum_api/curriculum/uploads/m/c/deck.pptx', origin))
+        .toEqual({ mode: 'deck', src: `${origin}/curriculum_api/curriculum/uploads/m/c/deck.pptx` });
+    }
+  });
+
+  it.each(['deck.pptx', 'deck.ppsx', 'deck.pptm'])('renders %s in-house', name => {
+    expect(resolveDocEmbed(`/uploads/${name}`, PUBLIC).mode).toBe('deck');
+  });
+
+  it('leaves a deck hosted elsewhere to the Office viewer', () => {
+    // We can only render files we host; a third-party link is not ours to read.
+    expect(resolveDocEmbed('https://partner.example.com/deck.pptx', PUBLIC).mode).toBe('office');
+  });
+
+  it('cannot render a legacy .ppt, so it falls back to the Office preview', () => {
+    expect(resolveDocEmbed('/curriculum_api/curriculum/uploads/m/c/old.ppt', PUBLIC))
+      .toEqual({ mode: 'native', src: `${PUBLIC}/curriculum_api/curriculum/uploads/m/c/old.ppt?preview=1` });
+    expect(resolveDocEmbed('https://partner.example.com/old.ppt', PUBLIC).mode).toBe('office');
+    expect(resolveDocEmbed('/uploads/old.ppt', LOCAL).mode).toBe('unavailable');
+  });
+
+  it.each(['rtf', 'odt', 'pps', 'xlsm', 'ods', 'odp', 'dotx'])('sends an uploaded .%s to the Office preview', extension => {
+    expect(resolveDocEmbed(`/curriculum_api/curriculum/uploads/m/c/brief.${extension}`, PUBLIC))
+      .toEqual({ mode: 'native', src: `${PUBLIC}/curriculum_api/curriculum/uploads/m/c/brief.${extension}?preview=1` });
+  });
+
+  it('never hands Office a same-site link it would need our session to fetch', () => {
+    // The learner's "File not found" screen: Office downloads the URL from
+    // Microsoft's servers, and every path on this site sits behind a sign-in.
+    expect(resolveDocEmbed('/learner_api/media/legacy-attachment/42/', PUBLIC).mode).toBe('unavailable');
+    expect(resolveDocEmbed('/uploads/old.ppt', PUBLIC).mode).toBe('unavailable');
+  });
+
+  it('judges an extension-less protected link by its authored file name', () => {
+    const legacy = '/learner_api/media/legacy-attachment/42/';
+    expect(resolveDocEmbed(legacy, PUBLIC, 'Week 3 slides.pptx'))
+      .toEqual({ mode: 'deck', src: `${PUBLIC}${legacy}` });
+    expect(resolveDocEmbed(legacy, PUBLIC, 'handout.pdf'))
+      .toEqual({ mode: 'native', src: `${PUBLIC}${legacy}` });
+    expect(resolveDocEmbed(legacy, PUBLIC, 'notes.doc').mode).toBe('unavailable');
+  });
+
+  it('uses Drive’s own preview for Google Drive file links', () => {
+    for (const link of [
+      'https://drive.google.com/file/d/1AbCdEfGhIjKlMn/view?usp=sharing',
+      'https://drive.google.com/open?id=1AbCdEfGhIjKlMn',
+      'https://drive.google.com/uc?export=download&id=1AbCdEfGhIjKlMn',
+    ]) {
+      expect(resolveDocEmbed(link, PUBLIC))
+        .toEqual({ mode: 'native', src: 'https://drive.google.com/file/d/1AbCdEfGhIjKlMn/preview' });
+    }
+  });
+
+  it('uses the read-only preview for Google Sheets', () => {
+    expect(resolveDocEmbed('https://docs.google.com/spreadsheets/d/SHEET789/edit#gid=0', PUBLIC))
+      .toEqual({ mode: 'native', src: 'https://docs.google.com/spreadsheets/d/SHEET789/preview' });
+  });
+
+  it('does not send SharePoint or OneDrive links to the Office viewer', () => {
+    for (const link of [
+      'https://kbc.sharepoint.com/:w:/s/curriculum/EaBcD?e=xyz',
+      'https://kbc-my.sharepoint.com/personal/someone/Documents/brief.docx',
+      'https://1drv.ms/w/s!AbCd',
+      'https://onedrive.live.com/view.aspx?resid=ABC',
+    ]) {
+      const embed = resolveDocEmbed(link, PUBLIC);
+      expect(embed.mode).toBe('unavailable');
+      if (embed.mode !== 'unavailable') throw new Error('expected unavailable');
+      expect(embed.reason).toMatch(/SharePoint\/OneDrive/);
+    }
+  });
+
+  it('tells the reader a legacy deck is the reason, not just the server', () => {
+    // On localhost a .ppt has no route to a preview at all: our renderer reads
+    // OOXML only and Microsoft cannot fetch the file. Saying "we cannot reach
+    // this server" alone leaves nothing to act on; the format is the fixable
+    // part.
+    const embed = resolveDocEmbed('/uploads/old.ppt', LOCAL);
+
+    expect(embed.mode).toBe('unavailable');
+    if (embed.mode !== 'unavailable') throw new Error('expected unavailable');
+    expect(embed.reason).toMatch(/97-2003/);
+    expect(embed.reason).toMatch(/\.pptx/);
+  });
+
+  it('keeps the plain server message for a modern file it cannot reach', () => {
+    const embed = resolveDocEmbed('https://intranet.local/brief.docx', LOCAL);
+
+    expect(embed.mode).toBe('unavailable');
+    if (embed.mode !== 'unavailable') throw new Error('expected unavailable');
+    expect(embed.reason).not.toMatch(/97-2003/);
+  });
+
+  it('renders one of our own PDFs in-house, page by page', () => {
+    // Not the browser's viewer: whether a browser previews a PDF in a frame or
+    // offers it as a download is a setting on the reader's machine, and the
+    // download prompt is what learners were getting.
+    const embed = resolveDocEmbed('/curriculum_api/curriculum/uploads/m/c/handout.pdf', LOCAL);
+    expect(embed).toEqual({ mode: 'deck', src: `${LOCAL}/curriculum_api/curriculum/uploads/m/c/handout.pdf` });
+  });
+
+  it('leaves a PDF hosted elsewhere to the browser, since we cannot render it', () => {
+    const embed = resolveDocEmbed('https://partner.example.com/handout.pdf', PUBLIC);
+    expect(embed).toEqual({ mode: 'native', src: 'https://partner.example.com/handout.pdf' });
+  });
+
+  it('uses the native Google embeds for Slides and Docs links', () => {
+    expect(resolveDocEmbed('https://docs.google.com/presentation/d/ABC123/edit#slide=id.p1', LOCAL))
+      .toEqual({ mode: 'native', src: 'https://docs.google.com/presentation/d/ABC123/embed' });
+    expect(resolveDocEmbed('https://docs.google.com/document/d/DOC456/edit', LOCAL))
+      .toEqual({ mode: 'native', src: 'https://docs.google.com/document/d/DOC456/preview' });
+  });
+
+  it('reports an unusable link rather than embedding it', () => {
+    expect(resolveDocEmbed('', PUBLIC).mode).toBe('unavailable');
+    expect(resolveDocEmbed('javascript:alert(1)', PUBLIC).mode).toBe('unavailable');
+  });
+
+  it('says so for free-text junk instead of showing Office’s “File not found”', () => {
+    // Authored URLs are a plain text field. Junk resolves as a relative path on
+    // this site, which the Office viewer can never fetch.
+    expect(resolveDocEmbed('not a url at all', PUBLIC).mode).toBe('unavailable');
+  });
+});

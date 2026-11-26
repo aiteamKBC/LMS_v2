@@ -1,0 +1,954 @@
+"""Calendar management regressions. AST-only service loading; no Django setup or DB.
+
+Run directly with Python. Every external transport and storage boundary is mocked;
+the fixture rejects socket connections, including accidental Graph/DB access.
+"""
+import copy
+import functools
+import hashlib
+from collections import defaultdict
+import json
+import re
+import sys
+import types
+import uuid
+from contextlib import contextmanager, nullcontext
+from datetime import datetime, timedelta, timezone
+from unittest.mock import Mock, patch
+from urllib.parse import quote, urlencode, unquote_plus
+from zoneinfo import ZoneInfo
+import unittest
+
+from test_calendar_state_no_db import CalendarFixture, ROOT, Response, functions, package, native_calendar_context
+from curriculum_api.session_overrides import (
+    apply_session_overrides, override_clock, schedule_override, session_overrides, validate_exception_plan,
+)
+from curriculum_api.teams_cancellation_checks import CalendarStateError, cancellation_plan
+from curriculum_api.teams_cancel import cancellation_confirmed, send_cancellation
+from curriculum_api.weekly_schedule import module_weekly_schedule
+from curriculum_api.teams_calendar_checks import utc_datetime, event_instant
+
+
+class Frozen(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        return datetime(2026, 9, 16, 12, tzinfo=timezone.utc).astimezone(tz) if tz else datetime(2026, 9, 16, 12)
+
+
+class TransportError(Exception):
+    pass
+
+
+class ActionNotSent(CalendarStateError):
+    pass
+
+
+class ManagementTests(CalendarFixture):
+    def setUp(self):
+        super().setUp()
+        self.series.update(module_catalogue_id='MODULE-1', module_title='Synthetic module', timezone='GMT Standard Time')
+        for item in self.instances:
+            item['onlineMeeting'] = self.master['onlineMeeting']
+        self.module = {'module_catalogue_id': 'MODULE-1', 'session_overrides': {}, 'sessions_number': 2}
+        self.base_plan = {'sessions': [dict(sessionNumber=row['session_number'], date=row['scheduled_start'][:10],
+            startTime='09:00', endTime='11:00', durationMinutes=120) for row in self.rows], 'slots': []}
+        self.v = types.SimpleNamespace(graph_timezone_iana=lambda _: 'Europe/London',
+            module_has_external_teams_calendar=lambda _module, series: series.get('meeting_type') == 'linked-external',
+            module_stored_session_count=lambda m: 2,
+            module_session_plan_for_count=lambda m, _: apply_session_overrides(copy.deepcopy(self.base_plan), m),
+            module_schedule_view=lambda m: m, find_tutor_schedule_conflicts=Mock(return_value=[]),
+            module_cohort_selected_holidays=Mock(return_value=[]), parse_json_value=lambda value, fallback: value or fallback,
+            holiday_date_set=lambda items: {datetime.fromisoformat(item).date() for item in items})
+        self.previous_views = getattr(package, 'views', None)
+        package.views = self.v
+        self.addCleanup(lambda: setattr(package, 'views', self.previous_views))
+        self.tokens = {}
+        def sign(operation, **_):
+            token = uuid.uuid4().hex
+            self.tokens[token] = copy.deepcopy(operation)
+            return token
+        self.ns = dict(hashlib=hashlib, json=json, uuid=uuid, datetime=Frozen, timedelta=timedelta, timezone=timezone,
+            ZoneInfo=ZoneInfo, quote=quote, CalendarStateError=CalendarStateError, ActionNotSent=ActionNotSent,
+            cancellation_plan=cancellation_plan, utc_datetime=utc_datetime, event_instant=event_instant,
+            schedule_override=schedule_override, session_overrides=session_overrides, validate_exception_plan=validate_exception_plan,
+            signing=types.SimpleNamespace(dumps=sign, loads=lambda token, **_: copy.deepcopy(self.tokens[token])), SALT='test',
+            httpx=types.SimpleNamespace(HTTPError=TransportError), transaction=types.SimpleNamespace(atomic=nullcontext),
+            __package__='curriculum_api')
+        names = ['saved_operation', 'fingerprint', 'eligible', 'require_managed_calendar', 'action_preview', 'confirm_action', 'continue_action', 'action_result', 'verified_move']
+        functions(ROOT / 'teams_calendar_actions.py', names, self.ns)
+        @contextmanager
+        def reader():
+            yield self.read
+        def save(_live, snapshot):
+            self.saved = copy.deepcopy(snapshot)
+        self.ns.update(calendar_reader=reader,
+            load_calendar_state=lambda _live, **_: (copy.deepcopy(self.series), copy.deepcopy(self.rows), copy.deepcopy(self.saved)),
+            load_module=lambda *_args, **_kwargs: copy.deepcopy(self.module), store_snapshot=Mock(side_effect=save),
+            graph_action=Mock(side_effect=self.graph_action), verified_move=Mock(return_value=True),
+            # The cancellation verifier is the real one: what counts as proof
+            # that Microsoft cancelled a meeting is the behaviour under test.
+            cancellation_confirmed=cancellation_confirmed,
+            persist_move=Mock(side_effect=self.persist),
+            persist_cancellation=Mock(side_effect=self.cancel_locally))
+
+    def persist(self, _series, _rows, _module, command, _snapshot):
+        self.module['session_overrides'][str(command['sessionNumber'])] = command['exception']
+        row = next(row for row in self.rows if row['id'] == command['occurrenceId'])
+        row.update(scheduled_start=command['start'], scheduled_end=command['end'], graph_event_id=command['eventId'])
+
+    def graph_action(self, _series, command, _comment, _notify=True):
+        """Microsoft accepting the mutation, and its calendar afterwards.
+
+        A cancelled occurrence leaves the master's instances and joins its
+        cancelledOccurrences; a cancelled master leaves the calendar entirely.
+        A move is verified separately, so it only has to be accepted here.
+        """
+        if command['action'] != 'cancel':
+            return True
+        if command.get('rootId') and command['rootId'] != command['eventId']:
+            gone = next(item for item in self.instances if item['id'] == command['eventId'])
+            self.instances = [item for item in self.instances if item['id'] != gone['id']]
+            self.master['cancelledOccurrences'] = [*self.master['cancelledOccurrences'], gone['occurrenceId']]
+        else:
+            self.master = None
+        return True
+
+    def cancel_locally(self, _live, command, scope, complete=False):
+        if scope == 'occurrence':
+            for row in self.rows:
+                if row['id'] == command.get('occurrenceId'):
+                    row['status'] = 'cancelled'
+        elif complete:
+            for row in self.rows:
+                if row['status'] == 'scheduled':
+                    row['status'] = 'cancelled'
+            self.series['status'] = 'cancelled'
+
+    def review(self, action='cancel', scope='occurrence', **kwargs):
+        return self.ns['action_preview']('LIVE-1', dict(action=action, scope=scope, sessionNumber=1, **kwargs), 'ACTOR-1')
+
+    def move(self, **kwargs):
+        return self.review('reschedule', changes=[dict(sessionNumber=1, startDateTimeUtc='2026-10-09T11:00:00Z', durationMinutes=120)], **kwargs)
+
+    def confirm(self, review):
+        return self.ns['confirm_action']('LIVE-1', {
+            'reviewToken': review['reviewToken'],
+            'notifyAttendees': True,
+            'acknowledgeNotifications': True,
+        }, 'ACTOR-1')
+
+    def test_imported_calendar_cannot_review_a_calendar_mutation(self):
+        self.series['meeting_type'] = 'linked-external'
+        with self.assertRaisesRegex(CalendarStateError, 'original Teams calendar'):
+            self.review()
+        self.ns['graph_action'].assert_not_called()
+        self.ns['store_snapshot'].assert_not_called()
+
+    def test_replacement_after_review_blocks_confirmation_without_graph_write(self):
+        review = self.review()
+        self.v.module_has_external_teams_calendar = lambda _module, _series: True
+        with self.assertRaisesRegex(CalendarStateError, 'original Teams calendar'):
+            self.confirm(review)
+        self.ns['graph_action'].assert_not_called()
+        self.ns['store_snapshot'].assert_not_called()
+
+    def test_review_is_read_only_and_uses_exact_occurrence(self):
+        review = self.review()
+        command = self.tokens[review['reviewToken']]['commands'][0]
+        self.assertEqual(command['eventId'], 'instance-OCC-1')
+        self.assertEqual(len(review['sessions']), 1)
+        self.assertTrue(review['notificationRequired'])
+        self.ns['store_snapshot'].assert_not_called()
+        self.ns['graph_action'].assert_not_called()
+
+    def test_series_review_uses_one_master_not_twelve_cancels(self):
+        review = self.review(scope='series')
+        self.assertEqual(review['calendarRequests'], 1)
+        self.assertEqual(self.tokens[review['reviewToken']]['commands'][0]['eventId'], 'master-1')
+        self.assertEqual(len(review['sessions']), 2)
+
+    def test_reschedule_always_notifies_invitees(self):
+        review = self.move()
+        self.assertFalse(review['notificationRequired'])
+        result = self.ns['confirm_action']('LIVE-1', {
+            'reviewToken': review['reviewToken'],
+            'notifyAttendees': False,
+            'acknowledgeNotifications': True,
+        }, 'ACTOR-1')
+        self.assertEqual(result['status'], 'done')
+        self.ns['graph_action'].assert_called_once()
+        self.assertTrue(self.ns['graph_action'].call_args.args[3])
+
+    def test_foreign_session_is_rejected(self):
+        with self.assertRaises(ValueError):
+            self.ns['action_preview']('LIVE-1', {'action': 'cancel', 'scope': 'occurrence', 'sessionNumber': 99}, 'ACTOR-1')
+
+    def test_boolean_session_is_rejected(self):
+        with self.assertRaises(ValueError):
+            self.ns['action_preview']('LIVE-1', {'action': 'cancel', 'scope': 'occurrence', 'sessionNumber': True}, 'ACTOR-1')
+
+    def test_attendance_prevents_single_session_mutation(self):
+        self.rows[0]['participant_count'] = 1
+        with self.assertRaisesRegex(ValueError, 'history'):
+            self.review()
+
+    def test_saved_clock_requires_storage_prerequisite(self):
+        del self.module['session_overrides']
+        with self.assertRaisesRegex(CalendarStateError, 'not configured'):
+            self.move()
+
+    def test_no_acknowledgement_sends_nothing(self):
+        review = self.review()
+        with self.assertRaises(ValueError):
+            self.ns['confirm_action']('LIVE-1', {'reviewToken': review['reviewToken']}, 'ACTOR-1')
+        self.ns['graph_action'].assert_not_called()
+
+    def test_token_is_bound_to_calendar_and_actor(self):
+        review = self.review()
+        payload = {'reviewToken': review['reviewToken'], 'acknowledgeNotifications': True}
+        for live, actor in [('OTHER', 'ACTOR-1'), ('LIVE-1', 'OTHER')]:
+            with self.assertRaises(ValueError):
+                self.ns['confirm_action'](live, payload, actor)
+        self.ns['graph_action'].assert_not_called()
+
+    def test_local_change_after_review_blocks_send(self):
+        review = self.review()
+        self.module['title'] = 'A later user edit'
+        with self.assertRaisesRegex(CalendarStateError, 'changed'):
+            self.confirm(review)
+        self.ns['graph_action'].assert_not_called()
+
+    def test_single_cancellation_keeps_neighbour(self):
+        self.assertEqual(self.confirm(self.review())['status'], 'done')
+        self.assertEqual([row['status'] for row in self.rows], ['cancelled', 'scheduled'])
+        self.assertEqual(self.series['status'], 'active')
+        self.ns['graph_action'].assert_called_once()
+
+    def test_a_cancelled_occurrence_is_confirmed_even_when_the_master_never_lists_it(self):
+        """The production failure: Microsoft cancelled it, the LMS never agreed.
+
+        The occurrence is gone from the calendar but the master's
+        `cancelledOccurrences` stays empty. Read only through that one property,
+        the session "could not be matched", the operation stopped at uncertain,
+        its email never went and every later cancellation was refused.
+        """
+        def cancel_without_listing_it(*args, **kwargs):
+            self.graph_action(*args, **kwargs)
+            self.master['cancelledOccurrences'] = []
+            return True
+        self.ns['graph_action'].side_effect = cancel_without_listing_it
+        self.assertEqual(self.confirm(self.review())['status'], 'done')
+        self.assertEqual([row['status'] for row in self.rows], ['cancelled', 'scheduled'])
+        self.assertEqual(self.series['status'], 'active')
+
+    def test_an_occurrence_the_master_lists_as_cancelled_is_confirmed(self):
+        """Microsoft is still processing the 202: the instance reads back alive."""
+        def list_it_but_keep_it(_series, command, *_args, **_kwargs):
+            occurrence = next(item for item in self.instances if item['id'] == command['eventId'])
+            self.master['cancelledOccurrences'] = [occurrence['occurrenceId']]
+            return True
+        self.ns['graph_action'].side_effect = list_it_but_keep_it
+        self.assertEqual(self.confirm(self.review())['status'], 'done')
+        self.assertEqual([row['status'] for row in self.rows], ['cancelled', 'scheduled'])
+
+    def test_a_meeting_still_live_is_never_recorded_as_cancelled(self):
+        """No evidence is not evidence. Nothing local moves until Microsoft says so."""
+        self.ns['graph_action'].side_effect = lambda *_args, **_kwargs: True
+        self.assertEqual(self.confirm(self.review())['status'], 'uncertain')
+        self.assertEqual([row['status'] for row in self.rows], ['scheduled', 'scheduled'])
+        self.ns['persist_cancellation'].assert_not_called()
+        # Recovery re-reads only; it never sends the mutation a second time.
+        self.ns['graph_action'].side_effect = self.graph_action
+        self.master['cancelledOccurrences'] = ['OID-OCC-1']
+        self.assertEqual(self.ns['continue_action']('LIVE-1', self.saved['management']['id'])['status'], 'done')
+        self.ns['graph_action'].assert_called_once()
+        self.assertEqual([row['status'] for row in self.rows], ['cancelled', 'scheduled'])
+
+    def test_series_cancellation_closes_the_calendar_and_its_remaining_sessions(self):
+        self.assertEqual(self.confirm(self.review(scope='series'))['status'], 'done')
+        self.assertEqual(self.series['status'], 'cancelled')
+        self.assertEqual([row['status'] for row in self.rows], ['cancelled', 'cancelled'])
+        self.ns['graph_action'].assert_called_once()
+
+    def test_double_confirmation_does_not_send_twice(self):
+        review = self.review()
+        self.confirm(review)
+        self.assertEqual(self.confirm(review)['status'], 'done')
+        self.ns['graph_action'].assert_called_once()
+
+    def test_verified_move_updates_only_one_session(self):
+        old_second = copy.deepcopy(self.rows[1])
+        result = self.confirm(self.move())
+        self.assertEqual(result['status'], 'done')
+        self.assertEqual(self.module['session_overrides']['1']['startTime'], '12:00')
+        self.assertEqual(self.rows[1], old_second)
+        self.ns['persist_move'].assert_called_once()
+
+    def test_unverified_move_preserves_plan_until_read_only_recovery(self):
+        self.ns['verified_move'].return_value = False
+        result = self.confirm(self.move())
+        self.assertEqual(result['status'], 'uncertain')
+        self.ns['persist_move'].assert_not_called()
+        self.ns['verified_move'].return_value = True
+        result = self.ns['continue_action']('LIVE-1', self.saved['management']['id'])
+        self.assertEqual(result['status'], 'done')
+        self.ns['graph_action'].assert_called_once()
+
+    def test_connection_loss_never_auto_retries_write(self):
+        self.ns['graph_action'].side_effect = TransportError('connection lost after send')
+        result = self.confirm(self.move())
+        self.assertEqual(result['status'], 'uncertain')
+        result = self.ns['continue_action']('LIVE-1', self.saved['management']['id'])
+        self.assertEqual(result['status'], 'done')
+        self.ns['graph_action'].assert_called_once()
+
+    def test_definitive_rejection_allows_fresh_review(self):
+        self.ns['graph_action'].side_effect = ActionNotSent('Rejected before change')
+        self.assertEqual(self.confirm(self.move())['status'], 'failed')
+        self.ns['persist_move'].assert_not_called()
+        self.assertTrue(self.move()['reviewToken'])
+
+    def test_status_does_not_interfere_with_active_request(self):
+        self.ns['continue_action'] = Mock(return_value={'status': 'processing'})
+        self.confirm(self.review())
+        original = {}
+        original.update(self.ns)
+        functions(ROOT / 'teams_calendar_actions.py', ['continue_action'], original)
+        self.assertEqual(original['continue_action']('LIVE-1', self.saved['management']['id'])['status'], 'processing')
+        self.ns['graph_action'].assert_not_called()
+
+    def test_uncertain_action_blocks_new_review(self):
+        self.saved['management'] = {'status': 'uncertain'}
+        with self.assertRaisesRegex(CalendarStateError, 'status check'):
+            self.review()
+
+    def test_review_reconciles_confirmed_uncertain_action_before_next_session(self):
+        def lost_after_send(*args, **kwargs):
+            # Microsoft cancelled it; the answer never reached us.
+            self.graph_action(*args, **kwargs)
+            raise TransportError('connection lost after send')
+        self.ns['graph_action'].side_effect = lost_after_send
+        first = self.review()
+        self.assertEqual(self.confirm(first)['status'], 'uncertain')
+        self.ns['with_change_notice'] = lambda _live, result: result
+        self.ns['with_change_emails'] = lambda _live, result: result
+        next_review = self.ns['action_preview']('LIVE-1', {
+            'action': 'cancel', 'scope': 'occurrence', 'sessionNumber': 2,
+        }, 'ACTOR-1')
+        self.assertTrue(next_review['reviewToken'])
+        # The second review only reconciles the first operation; it never
+        # sends another Graph mutation for the already accepted cancellation.
+        self.ns['graph_action'].assert_called_once()
+        self.assertEqual(self.rows[0]['status'], 'cancelled')
+        self.assertEqual(self.rows[1]['status'], 'scheduled')
+
+    def test_holiday_is_rejected(self):
+        self.v.module_cohort_selected_holidays.return_value = ['2026-10-09']
+        with self.assertRaisesRegex(ValueError, 'holiday'):
+            self.move()
+
+    def test_tutor_collision_is_rejected(self):
+        self.v.find_tutor_schedule_conflicts.return_value = ['conflict']
+        with self.assertRaisesRegex(ValueError, 'tutor'):
+            self.move()
+
+    def test_out_of_order_move_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'order'):
+            self.review('reschedule', changes=[dict(sessionNumber=1, startDateTimeUtc='2026-10-16T10:00:00Z', durationMinutes=120)])
+
+    def test_duplicate_or_malformed_changes_are_rejected(self):
+        for changes in [[{'sessionNumber': []}], [{'sessionNumber': True}], [{'sessionNumber': 1}, {'sessionNumber': 1}]]:
+            with self.assertRaises(ValueError):
+                self.review('reschedule', changes=changes)
+
+    def test_past_session_move_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'future'):
+            self.review('reschedule', changes=[dict(sessionNumber=1, startDateTimeUtc='2026-09-01T10:00:00Z', durationMinutes=120)])
+
+    def test_old_worker_cannot_touch_a_new_action_journal(self):
+        self.saved['management'] = {'id': 'new-action', 'status': 'reviewed', 'commands': []}
+        with self.assertRaisesRegex(CalendarStateError, 'superseded'):
+            self.ns['continue_action']('LIVE-1', 'old-action', send=True)
+        self.ns['graph_action'].assert_not_called()
+        self.ns['store_snapshot'].assert_not_called()
+
+    def test_saved_learner_plan_reads_new_dates_without_rewriting_membership_or_history(self):
+        module = {**self.module, 'end_date': '2026-10-15'}
+        cursor = Mock()
+        cursor.fetchall.return_value = [(module,)]
+        ns = {'copy': copy, '_s': lambda value: str(value or ''),
+              'connections': {'default': types.SimpleNamespace(cursor=lambda: nullcontext(cursor))}}
+        functions(ROOT.parent / 'learner_api/active_users.py', ['refresh_saved_session_dates'], ns)
+        def apply(_module, _group, weeks):
+            weeks[0].update(sessionDate='2026-10-09', sessionDay='Friday', sessionStartTime='12:00', sessionDurationMinutes=90, sessionRescheduled=True)
+            weeks[0]['components'][0]['settings'].update(sessionRescheduled=True, sessionDate='2026-10-09',
+                sessionTime='12:00', sessionDateTimeUtc='2026-10-09T11:00:00Z', durationMinutes=90)
+        self.v.apply_module_session_plan_to_weeks = apply
+        with patch.dict(sys.modules, {'curriculum_api.views': self.v}):
+            plan = [{'moduleId': 'MODULE-1', 'assignmentMode': 'explicit', 'weeks': [
+                {'weekId': 'W1', 'sessionDate': '2026-10-08', 'components': [
+                    {'componentId': 'C1', 'type': 'live_session', 'completed': True}]}]},
+                {'moduleId': 'OTHER', 'weeks': []}]
+            result = ns['refresh_saved_session_dates'](plan)
+        self.assertEqual(result[0]['weeks'][0]['sessionDate'], '2026-10-09')
+        self.assertEqual(result[0]['weeks'][0]['components'][0]['sessionTime'], '12:00')
+        self.assertTrue(result[0]['weeks'][0]['components'][0]['completed'])
+        self.assertEqual(result[0]['assignmentMode'], 'explicit')
+        self.assertEqual(result[1], plan[1])
+        self.assertEqual(plan[0]['weeks'][0]['sessionDate'], '2026-10-08')
+        cursor.execute.assert_called_once()
+        self.assertTrue(cursor.execute.call_args.args[0].strip().startswith('SELECT'))
+
+
+class PureTests(unittest.TestCase):
+    def setUp(self):
+        native_calendar_context(self)
+        self.socket = patch('socket.socket', side_effect=AssertionError('Network forbidden'))
+        self.socket.start()
+        self.addCleanup(self.socket.stop)
+
+    def test_london_noon_and_dst_preserve_utc_instants(self):
+        for day, utc_hour in [('2026-10-08', '11'), ('2026-11-05', '12')]:
+            instant = utc_datetime(f'{day}T{utc_hour}:00:00Z')
+            value = schedule_override(instant, 120, ZoneInfo('Europe/London'))
+            self.assertEqual(value['startTime'], '12:00')
+            self.assertEqual(value['endTime'], '14:00')
+            self.assertEqual(utc_datetime(value['startDateTimeUtc']), instant)
+
+    def test_override_does_not_mutate_original_or_other_session(self):
+        plan = {'sessions': [{'sessionNumber': 1, 'date': '2026-10-08'}, {'sessionNumber': 2, 'date': '2026-10-15'}],
+                'slots': [{'type': 'live-session', 'sessionNumber': 1, 'date': '2026-10-08'}]}
+        exception = schedule_override(utc_datetime('2026-10-09T11:00:00Z'), 90, ZoneInfo('Europe/London'))
+        module = {'session_overrides': {'1': exception}}
+        result = apply_session_overrides(plan, module)
+        self.assertEqual(plan['sessions'][0]['date'], '2026-10-08')
+        self.assertEqual(result['sessions'][0]['date'], '2026-10-09')
+        self.assertEqual(result['slots'][0]['date'], '2026-10-09')
+        self.assertEqual(result['sessions'][1], plan['sessions'][1])
+        self.assertEqual(override_clock(module, '2026-10-09'), ('12:00', '13:30', 90))
+        self.assertIsNone(override_clock(module, '2026-10-15'))
+
+    def test_cross_midnight_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'same local day'):
+            schedule_override(utc_datetime('2026-11-05T23:30:00Z'), 120, ZoneInfo('Europe/London'))
+
+    def test_ambiguous_dst_clock_is_rejected_without_losing_the_utc_offset(self):
+        with self.assertRaisesRegex(ValueError, 'twice'):
+            schedule_override(utc_datetime('2026-10-25T01:30:00Z'), 120, ZoneInfo('Europe/London'))
+        with self.assertRaisesRegex(ValueError, 'clock change'):
+            schedule_override(utc_datetime('2026-10-24T23:30:00Z'), 180, ZoneInfo('Europe/London'))
+
+    def test_same_date_collision_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'separate date'):
+            validate_exception_plan({'sessions': [dict(date='2026-10-08', startTime=time, durationMinutes=60) for time in ['09:00', '12:00']]})
+
+    def test_directory_escapes_query_and_limits_results(self):
+        ns = {'re': re, 'urlencode': urlencode}
+        functions(ROOT / 'teams_directory.py', ['directory_query', 'directory_people'], ns)
+        query = unquote_plus(ns['directory_query']("O'Neil"))
+        self.assertIn("O''Neil", query)
+        self.assertIn('$top=12', query)
+        self.assertIn("userType eq 'Member'", query)
+        self.assertNotIn("userType eq 'Guest'", query)
+        guest_query = unquote_plus(ns['directory_query']("O'Neil", include_guests=True))
+        self.assertIn("userType eq 'Member' or userType eq 'Guest'", guest_query)
+        self.assertIsNone(ns['directory_query']('A'))
+        with self.assertRaises(ValueError):
+            ns['directory_query']('a' * 81)
+        response = {'value': [
+            {'id': '1', 'displayName': 'Synthetic Person', 'mail': 'one@example.invalid', 'accountEnabled': True, 'userType': 'Member'},
+            {'id': '2', 'mail': 'one@example.invalid', 'accountEnabled': True, 'userType': 'Member'},
+            {'id': '3', 'mail': 'disabled@example.invalid', 'accountEnabled': False, 'userType': 'Member'},
+            {'id': '4', 'mail': 'guest@example.invalid', 'accountEnabled': True, 'userType': 'Guest'},
+        ]}
+        people = ns['directory_people'](response)
+        self.assertEqual(len(people['people']), 1)
+        self.assertEqual(people['people'][0]['id'], '1')
+        people_with_guests = ns['directory_people'](response, include_guests=True)
+        self.assertEqual([person['id'] for person in people_with_guests['people']], ['1', '4'])
+
+    def test_graph_transport_checks_identity_and_updates_only_time_and_privacy(self):
+        graph = types.ModuleType('coach_api.views')
+        graph.get_graph_settings = lambda: {'base_url': 'https://graph.microsoft.com/v1.0'}
+        graph.microsoft_graph_token = lambda: 'synthetic-token'
+        event = {'isCancelled': False, '@odata.etag': 'version-1', 'onlineMeeting': {'joinUrl': 'synthetic-link'}}
+        client = types.SimpleNamespace(get=Mock(return_value=types.SimpleNamespace(status_code=200, json=lambda: event)),
+            post=Mock(return_value=types.SimpleNamespace(status_code=202)), patch=Mock(return_value=types.SimpleNamespace(status_code=200)))
+        ns = {'httpx': types.SimpleNamespace(Client=lambda **_: nullcontext(client), HTTPError=TransportError),
+              'quote': quote, 'CalendarStateError': CalendarStateError, 'ActionNotSent': ActionNotSent,
+              'SILENT_UPDATE_HEADERS': {'Prefer': 'outlook.send-invitations="none"'}}
+        functions(ROOT / 'teams_calendar_actions.py', ['graph_action'], ns)
+        series = {'organizer_email': 'owner@example.invalid'}
+        command = {'eventId': 'exact/occurrence', 'joinUrl': 'synthetic-link', 'etag': 'version-1',
+                   'action': 'reschedule', 'start': '2026-11-01T12:00:00Z', 'end': '2026-11-01T14:00:00Z'}
+        with patch.dict(sys.modules, {'coach_api': types.ModuleType('coach_api'), 'coach_api.views': graph}):
+            self.assertTrue(ns['graph_action'](series, command, ''))
+            path, = client.patch.call_args.args
+            self.assertIn('exact%2Foccurrence', path)
+            self.assertEqual(set(client.patch.call_args.kwargs['json']), {'start', 'end', 'hideAttendees'})
+            self.assertIsNone(client.patch.call_args.kwargs['headers'])
+            self.assertTrue(ns['graph_action'](series, command, '', False))
+            self.assertEqual(client.patch.call_args.kwargs['headers'], {'Prefer': 'outlook.send-invitations="none"'})
+            client.post.assert_not_called()
+            event['@odata.etag'] = 'changed'
+            with self.assertRaises(ActionNotSent):
+                ns['graph_action'](series, command, '')
+            self.assertEqual(client.patch.call_count, 2)
+
+    def test_new_endpoints_enforce_staff_roles_before_directory_or_actions(self):
+        ns = {'functools': functools, 'JsonResponse': Response,
+              'authenticate_request': lambda request: request.account, 'session_unreadable': lambda request: False}
+        functions(ROOT.parent / 'login/permissions.py', {'_unauthenticated', '_unavailable', '_forbidden', 'require_role'}, ns)
+        def method_only(method):
+            return lambda fn: lambda request, *args: fn(request, *args) if request.method == method else Response(status=405)
+        review = Mock(return_value={'reviewToken': 'synthetic'})
+        directory = Mock(return_value={'people': [], 'hasMore': False})
+        directory_query = Mock(return_value='users?synthetic')
+        ns.update(transaction=types.SimpleNamespace(non_atomic_requests=lambda fn: fn), require_POST=method_only('POST'),
+            require_GET=method_only('GET'), json=json, action_preview=review,
+            directory_query=directory_query,
+            directory_people=directory, signing=types.SimpleNamespace(BadSignature=type('BadSignature', (Exception,), {})),
+            CalendarStateError=CalendarStateError, httpx=types.SimpleNamespace(HTTPError=TransportError))
+        functions(ROOT / 'teams_calendar_actions.py', ['calendar_action'], ns)
+        functions(ROOT / 'teams_directory.py', ['search_teams_directory'], ns)
+        graph = types.ModuleType('coach_api.views')
+        graph.microsoft_graph_request = Mock(return_value={'value': []})
+        with patch.dict(sys.modules, {'coach_api': types.ModuleType('coach_api'), 'coach_api.views': graph}):
+            for role, code in [(None, 401), ('learner', 403), ('employer', 403), ('coach', 403), ('staff', 200), ('admin', 200)]:
+                account = types.SimpleNamespace(role=role, pk='ACTOR') if role else None
+                request = types.SimpleNamespace(account=account, login_account=account, method='POST', body=b'{"stage":"review"}', GET={'q': 'Alex'})
+                self.assertEqual(ns['calendar_action'](request, 'LIVE-1').status_code, code)
+                request.method = 'GET'
+                self.assertEqual(ns['search_teams_directory'](request).status_code, code)
+            account = types.SimpleNamespace(role='admin', pk='ACTOR')
+            guest_request = types.SimpleNamespace(account=account, login_account=account, method='GET',
+                                                  GET={'q': 'Alex', 'includeGuests': '1'})
+            self.assertEqual(ns['search_teams_directory'](guest_request).status_code, 200)
+            self.assertTrue(directory_query.call_args.kwargs['include_guests'])
+            self.assertTrue(directory.call_args.kwargs['include_guests'])
+            self.assertEqual(review.call_count, 2)
+            self.assertEqual(graph.microsoft_graph_request.call_count, 3)
+            self.assertFalse(getattr(ns['calendar_action'], 'csrf_exempt', False))
+
+    def test_directory_search_failures_answer_with_a_reason_not_a_crash(self):
+        ns = {'JsonResponse': Response, 'require_role': lambda *roles: (lambda fn: fn), 'require_GET': lambda fn: fn,
+              'logger': Mock(), 'directory_query': lambda value, include_guests=False: 'users?synthetic',
+              'directory_people': lambda data, include_guests=False: data}
+        functions(ROOT / 'teams_directory.py', ['search_teams_directory'], ns)
+        request = types.SimpleNamespace(GET={'q': 'enga'})
+        cases = [
+            (RuntimeError('Microsoft Graph GET users failed: HTTP 403; code=Authorization_RequestDenied'), "isn't allowed to search"),
+            (RuntimeError('Microsoft Graph GET users failed: HTTP 503'), 'Retry or enter a full email address'),
+            (TimeoutError('The read operation timed out'), 'Retry or enter a full email address'),
+        ]
+        for failure, message in cases:
+            graph = types.ModuleType('coach_api.views')
+            graph.microsoft_graph_request = Mock(side_effect=failure)
+            with self.subTest(failure=str(failure)), patch.dict(sys.modules, {'coach_api': types.ModuleType('coach_api'), 'coach_api.views': graph}):
+                response = ns['search_teams_directory'](request)
+                self.assertEqual(response.status_code, 502)
+                self.assertIn(message, response['error'])
+                self.assertNotIn('Authorization_RequestDenied', response['error'])
+                self.assertEqual(response['Cache-Control'], 'no-store, private')
+
+    def test_readers_apply_rescheduled_component_dates_and_preserve_other_settings(self):
+        module = {'sessions_number': 2, 'session_overrides': {'1': schedule_override(utc_datetime('2026-10-09T11:00:00Z'), 90, ZoneInfo('Europe/London'))}}
+        plan = apply_session_overrides({'sessions': [dict(sessionNumber=n, date=day, day='Thursday')
+                for n, day in [(1, '2026-10-08'), (2, '2026-10-15')]]}, module)
+        weeks = [{'components': [{'type': 'live-session', 'settings': {
+            'sessionDate': day, 'teamsSessionNumber': n, 'teamsLiveSessionId': 'LIVE-1', 'teamsJoinUrl': 'keep-link', 'custom': 'keep'}}]}
+                 for n, day in [(1, '2026-10-08'), (2, '2026-10-15')]]
+        ns = {'module_week_delivery_days': lambda *_: 1, 'module_stored_session_count': lambda *_: 2,
+            'module_structure_uses_session_rows': lambda *_: False, 'module_structure_live_session_counts': lambda _: [1, 1],
+            'module_session_plan_for_count': lambda *_args, **_kwargs: plan,
+            # The reader numbers the plan into calendar weeks now, and buckets it
+            # by `weekNumber`; these plan entries carry none, so every component
+            # is matched by the session number it already names.
+            'module_session_plan_for_weeks': lambda *_args, **_kwargs: plan,
+            'module_week_delivery_slots': lambda *_args, **_kwargs: ([[row] for row in plan['sessions']], copy.deepcopy(plan['sessions'])),
+            'defaultdict': defaultdict,
+            'module_session_clock': lambda module, group=None, session_date=None: override_clock(module, session_date) or ('09:00', '11:00', 120),
+            # Group-first resolution is its own subject, in
+            # test_group_delivery_pattern_no_db; this call passes no group.
+            'module_delivery_row': lambda module, group=None: module,
+            'clean_str': lambda v: str(v or '').strip(), 'parse_int': lambda v, default=0: int(v or default),
+            'format_date': lambda v: str(v or ''),
+            # The reader resolves each slot through the real live-session clock,
+            # so an override still outranks the component's stored time here.
+            'module_weekly_schedule': module_weekly_schedule, 'override_clock': override_clock, 're': re,
+            'calendar_clock_to_utc_iso': lambda day, clock, zone=None: day + 'T' + clock + ':00+01:00'}
+        functions(ROOT / 'views.py', ['apply_module_session_plan_to_weeks', 'module_live_session_clock',
+                                      'clock_time_plus_minutes', 'parse_clock_minutes'], ns)
+        ns['apply_module_session_plan_to_weeks'](module, {}, weeks, holidays=[])
+        first = weeks[0]['components'][0]['settings']
+        self.assertEqual((first['sessionDate'], first['sessionTime']), ('2026-10-09', '12:00'))
+        self.assertEqual(first['teamsJoinUrl'], 'keep-link')
+        self.assertEqual(first['custom'], 'keep')
+        self.assertEqual(weeks[1]['components'][0]['settings']['sessionDate'], '2026-10-15')
+
+    def test_group_schedule_persists_unbooked_dates_but_not_confirmed_teams_occurrences(self):
+        module = {
+            'module_catalogue_id': 'MODULE-1', 'cohort_id': 'COHORT-1',
+            'sessions_number': 2, 'weeks_number': 2,
+        }
+        weeks = [
+            {'id': 'WEEK-1', 'week_number': 1, 'display_order': 1},
+            {'id': 'WEEK-2', 'week_number': 2, 'display_order': 2},
+        ]
+        components = [
+            {'id': 'OPEN', 'week_id': 'WEEK-1', 'type': 'live_session', 'display_order': 1,
+             'settings_json': {'sessionDate': '2026-09-10', 'sessionTime': '09:00', 'custom': 'keep'}},
+            {'id': 'BOOKED', 'week_id': 'WEEK-2', 'type': 'live_session', 'display_order': 1,
+             'settings_json': {'sessionDate': '2026-09-17', 'sessionTime': '09:00',
+                               'teamsLiveSessionId': 'LIVE-1', 'teamsSessionNumber': 2}},
+        ]
+        writes = []
+
+        def fetch(table, *_args):
+            return copy.deepcopy(weeks if table == 'weeks' else components if table == 'components' else [])
+
+        def update(table, where, params, values):
+            writes.append((table, where, params, copy.deepcopy(values)))
+
+        plan = {'sessions': [
+            {'sessionNumber': 1, 'weekNumber': 1, 'date': '2026-09-11', 'day': 'Friday'},
+            {'sessionNumber': 2, 'weekNumber': 2, 'date': '2026-09-18', 'day': 'Friday'},
+        ]}
+        ns = {
+            'AUTHORING_WEEKS_TABLE': 'weeks', 'AUTHORING_COMPONENTS_TABLE': 'components',
+            'authoring_fetch_all': fetch, 'active_week_rows': lambda rows: rows,
+            'active_component_rows': lambda rows: rows, 'frontend_component_type': lambda value: str(value).replace('_', '-'),
+            'as_json_value': lambda value, fallback: value if isinstance(value, dict) else fallback,
+            'clean_str': lambda value: str(value or '').strip(),
+            'parse_int': lambda value, default=0: int(value or default),
+            'cohort_selected_holidays_by_cohort': lambda _ids: {'COHORT-1': []},
+            'module_session_plan_for_weeks': lambda *_args, **_kwargs: copy.deepcopy(plan),
+            'module_week_delivery_slots': lambda *_args, **_kwargs: ([[row] for row in plan['sessions']], copy.deepcopy(plan['sessions'])),
+            'module_session_clock': lambda *_args, **_kwargs: ('09:00', '11:00', 120),
+            # As above: this call passes no group row of its own.
+            'module_delivery_row': lambda module, group=None: module,
+            'calendar_clock_to_utc_iso': lambda day, clock, zone=None: f'{day}T{clock}:00Z',
+            'format_date': lambda value: str(value or ''), 'defaultdict': defaultdict,
+            'datetime': Frozen, 'json_db_value': lambda value: value,
+            # As above: the real clock decides the slot; this module states no
+            # weekly schedule and no override, so the stored time stands.
+            'module_weekly_schedule': module_weekly_schedule, 'override_clock': override_clock, 're': re,
+            'update_authoring_rows': update,
+        }
+        functions(ROOT / 'views.py', ['apply_module_session_plan_to_weeks', 'persist_group_module_session_dates',
+                                      'module_live_session_clock', 'clock_time_plus_minutes', 'parse_clock_minutes'], ns)
+
+        updated = ns['persist_group_module_session_dates']([module], {})
+
+        self.assertEqual(updated, 1)
+        self.assertEqual([row[2] for row in writes], [['OPEN']])
+        settings = writes[0][3]['settings_json']
+        self.assertEqual((settings['sessionDate'], settings['sessionDay']), ('2026-09-11', 'Friday'))
+        self.assertEqual(settings['custom'], 'keep')
+
+
+class PersistMoveTests(unittest.TestCase):
+    """Where a confirmed move writes, and what it writes there.
+
+    The subject is the write path, not the diff: ``persist_move`` wrote its
+    components with a raw UPDATE that never reached ``versioning.record_rows``,
+    so a session moving to a different day left no trace. It goes through the
+    authoring helper now. What the trail then keeps of that write is the
+    recorder's decision and is proved against a real database in
+    ``tests_audit_trail.CalendarMoveAuditTests``.
+    """
+
+    STORED = {'version': '0.1', 'contentStatus': 'Draft', 'sessionDate': '2026-10-08',
+              'sessionDay': 'Thursday', 'sessionTime': '09:00', 'durationMinutes': 120,
+              'teamsOccurrenceId': 'OCC-1', 'teamsLiveSessionId': 'LIVE-1', 'teamsSessionNumber': 1}
+
+    def setUp(self):
+        network = patch('socket.socket', side_effect=AssertionError('Network forbidden'))
+        network.start()
+        self.addCleanup(network.stop)
+        self.matched = [{'id': 'COMP-1', 'settings_json': {**self.STORED, 'custom': 'keep'}}]
+        self.reads, self.writes, self.statements = [], [], []
+
+        def fetch(table, where='', params=None, *_args, **_kwargs):
+            self.reads.append((table, ' '.join(where.split()), list(params or [])))
+            return copy.deepcopy(self.matched)
+
+        def update(table, where, params, values):
+            self.writes.append((table, where, list(params), copy.deepcopy(values)))
+            return []
+
+        self.v = types.SimpleNamespace(
+            AUTHORING_COMPONENTS_TABLE='components', authoring_fetch_all=fetch,
+            update_authoring_rows=update, json_db_value=lambda value: value,
+            as_json_value=lambda value, fallback: value if isinstance(value, dict) else fallback,
+            module_stored_session_count=lambda _module: 2,
+            module_session_plan_for_count=lambda *_args: {'finalEndDate': '2026-12-10'},
+            invalidate_curriculum_cache=Mock())
+        self.previous_views = getattr(package, 'views', None)
+        package.views = self.v
+        self.addCleanup(lambda: setattr(package, 'views', self.previous_views))
+
+        test = self
+
+        class Cursor:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_exc):
+                return False
+
+            def execute(self, sql, params):
+                test.statements.append((' '.join(sql.split()), list(params)))
+
+        self.ns = dict(json=json, datetime=datetime, timezone=timezone,
+                       session_overrides=session_overrides,
+                       connection=types.SimpleNamespace(cursor=Cursor),
+                       __package__='curriculum_api')
+        functions(ROOT / 'teams_calendar_actions.py', ['persist_move'], self.ns)
+        self.module = {'module_catalogue_id': 'MODULE-1', 'session_overrides': {}, 'sessions_number': 2}
+        self.snapshot = {'occurrences': {'OCC-1': {'eventId': 'event-before', 'dates': []}}}
+
+    def move(self, **exception):
+        command = {'sessionNumber': 1, 'occurrenceId': 'OCC-1', 'eventId': 'event-after',
+                   'start': '2026-10-15T08:00:00Z', 'end': '2026-10-15T10:00:00Z',
+                   'exception': {'date': '2026-10-15', 'startTime': '09:00', 'durationMinutes': 120, **exception}}
+        self.ns['persist_move']({'id': 'LIVE-1'}, [], self.module, command, self.snapshot)
+        return command
+
+    def test_components_are_written_through_the_audited_helper(self):
+        self.move()
+        self.assertEqual([write[0] for write in self.writes], ['components'])
+        # And never again as a statement of its own, which is what bypassed the
+        # recorder before.
+        self.assertFalse([sql for sql, _params in self.statements if 'components' in sql])
+
+    def test_the_moved_schedule_is_what_gets_written(self):
+        self.move()
+        settings = self.writes[0][3]['settings_json']
+        self.assertEqual(settings['sessionDate'], '2026-10-15')
+        self.assertEqual(settings['sessionDay'], 'Thursday')
+        self.assertEqual(settings['sessionTime'], '09:00')
+        self.assertEqual(settings['durationMinutes'], 120)
+        self.assertEqual(settings['teamsDurationMinutes'], 120)
+        self.assertEqual(settings['sessionDateTimeUtc'], '2026-10-15T08:00:00Z')
+        self.assertEqual(settings['teamsStartDateTimeUtc'], '2026-10-15T08:00:00Z')
+        self.assertEqual(settings['teamsEventId'], 'event-after')
+
+    def test_settings_the_move_does_not_name_survive(self):
+        """The statement this replaced merged into settings_json; so must this."""
+        self.move()
+        settings = self.writes[0][3]['settings_json']
+        self.assertEqual(settings['custom'], 'keep')
+        self.assertEqual(settings['contentStatus'], 'Draft')
+        self.assertEqual(settings['teamsOccurrenceId'], 'OCC-1')
+
+    def test_each_component_keeps_its_own_other_settings(self):
+        """One assignment for every matched row would flatten them into one."""
+        self.matched.append({'id': 'COMP-2', 'settings_json': {**self.STORED, 'custom': 'second'}})
+        self.move()
+        self.assertEqual([write[2] for write in self.writes], [['COMP-1'], ['COMP-2']])
+        self.assertEqual([write[3]['settings_json']['custom'] for write in self.writes], ['keep', 'second'])
+
+    def test_one_matched_component_is_written_once(self):
+        self.move()
+        self.assertEqual(len(self.writes), 1)
+        self.assertEqual(self.writes[0][1], 'id = %s')
+
+    def test_only_this_session_is_selected(self):
+        """Scoping is the invariant: never another group's or another session's."""
+        self.move()
+        table, where, params = self.reads[0]
+        self.assertEqual(table, 'components')
+        self.assertIn('deleted_at IS NULL', where)
+        self.assertIn("type IN ('live-session', 'live_session')", where)
+        self.assertIn("settings_json->>'teamsOccurrenceId' = %s", where)
+        self.assertIn("settings_json->>'teamsLiveSessionId' = %s", where)
+        self.assertEqual(params, ['MODULE-1', 'OCC-1', 'LIVE-1', '1'])
+
+    def test_a_component_nothing_matches_is_not_invented(self):
+        self.matched = []
+        self.move()
+        self.assertEqual(self.writes, [])
+        self.v.invalidate_curriculum_cache.assert_called_once()
+
+    def test_the_module_and_the_occurrence_are_written_as_before(self):
+        """Everything either side of the component write is untouched by this fix."""
+        command = self.move()
+        modules, occurrences = self.statements
+        self.assertIn('UPDATE curriculum.modules', modules[0])
+        self.assertEqual(modules[1][1], '2026-12-10')
+        self.assertIn('UPDATE curriculum.live_session_occurrences', occurrences[0])
+        self.assertEqual(occurrences[1][:3], [command['start'], command['end'], command['eventId']])
+        self.assertEqual(occurrences[1][4:], ['OCC-1', 'LIVE-1'])
+
+    def test_the_saved_snapshot_still_follows_the_move(self):
+        command = self.move()
+        binding = self.snapshot['occurrences']['OCC-1']
+        self.assertEqual(binding['eventId'], 'event-after')
+        self.assertEqual(binding['dates'], [command['start'], command['end']])
+        self.assertEqual(self.module['session_overrides'], {})
+
+
+class PersistCancellationTests(unittest.TestCase):
+    """What a confirmed cancellation writes locally, and what it leaves alone."""
+
+    def setUp(self):
+        network = patch('socket.socket', side_effect=AssertionError('Network forbidden'))
+        network.start()
+        self.addCleanup(network.stop)
+        self.statements = []
+        self.rowcount = 1
+        test = self
+
+        class Cursor:
+            rowcount = 1
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_exc):
+                return False
+
+            def execute(self, sql, params):
+                test.statements.append((' '.join(sql.split()), list(params)))
+                self.rowcount = test.rowcount
+
+        self.v = types.SimpleNamespace(invalidate_curriculum_cache=Mock())
+        self.previous_views = getattr(package, 'views', None)
+        package.views = self.v
+        self.addCleanup(lambda: setattr(package, 'views', self.previous_views))
+        self.ns = dict(datetime=datetime, timezone=timezone,
+                       connection=types.SimpleNamespace(cursor=Cursor), __package__='curriculum_api')
+        functions(ROOT / 'teams_cancel.py', ['persist_cancellation'], self.ns)
+
+    def persist(self, scope, complete=False):
+        return self.ns['persist_cancellation'](
+            'LIVE-1', {'occurrenceId': 'OCC-1', 'eventId': 'instance-OCC-1'}, scope, complete=complete)
+
+    def test_one_session_writes_only_its_own_row(self):
+        self.persist('occurrence')
+        self.assertEqual(len(self.statements), 1)
+        sql, params = self.statements[0]
+        self.assertIn('UPDATE curriculum.live_session_occurrences', sql)
+        self.assertEqual(params[1:], ['OCC-1', 'LIVE-1'])
+        self.assertNotIn('live_sessions SET', sql)
+
+    def test_history_is_never_rewritten(self):
+        """Attendance, an actual start or a report means the session happened."""
+        self.persist('occurrence')
+        sql = self.statements[0][0]
+        self.assertIn("status = 'scheduled'", sql)
+        self.assertIn('actual_start IS NULL', sql)
+        self.assertIn("COALESCE(attendance_report_id, '') = ''", sql)
+        self.assertIn('COALESCE(participant_count, 0) = 0', sql)
+
+    def test_a_series_closes_the_calendar_only_once_every_meeting_is_confirmed(self):
+        self.persist('series')
+        self.assertEqual(self.statements, [])
+        self.persist('series', complete=True)
+        self.assertEqual(len(self.statements), 2)
+        self.assertIn('live_session_occurrences', self.statements[0][0])
+        self.assertIn("UPDATE curriculum.live_sessions SET status = 'cancelled'", self.statements[1][0])
+        self.assertIn("status = 'active'", self.statements[1][0])
+
+    def test_the_curriculum_cache_is_dropped_only_when_something_changed(self):
+        self.rowcount = 0
+        self.persist('occurrence')
+        self.v.invalidate_curriculum_cache.assert_not_called()
+        self.rowcount = 1
+        self.persist('occurrence')
+        self.v.invalidate_curriculum_cache.assert_called_once()
+
+
+class CancelTransportTests(unittest.TestCase):
+    """One accepted mutation per meeting, and what counts as accepted."""
+
+    def setUp(self):
+        self.sent = []
+
+    def client(self, *answers):
+        replies = list(answers)
+        def record(verb):
+            def call(path, **kwargs):
+                self.sent.append((verb, path, kwargs.get('json')))
+                return replies.pop(0)
+            return call
+        return types.SimpleNamespace(post=record('POST'), delete=record('DELETE'))
+
+    def cancel(self, client, *, occurrence=False, comment=''):
+        return send_cancellation(client, 'users/o/events/e', comment, occurrence=occurrence, not_sent=ActionNotSent)
+
+    def test_every_accepted_answer_counts_as_sent(self):
+        for status in (200, 202, 204):
+            with self.subTest(status=status):
+                self.assertTrue(self.cancel(self.client(Response(status=status))))
+
+    def test_an_ambiguous_answer_is_verified_rather_than_resent(self):
+        # 500/408/409 leave the caller to read Microsoft back; it must not
+        # raise "nothing was sent", which would invite a second cancellation.
+        for status in (408, 409, 500, 503):
+            with self.subTest(status=status):
+                self.assertFalse(self.cancel(self.client(Response(status=status))))
+
+    def test_a_rejected_whole_meeting_is_definitively_not_sent(self):
+        with self.assertRaisesRegex(ActionNotSent, 'rejected'):
+            self.cancel(self.client(Response({'error': {'code': 'ErrorInvalidRequest'}}, 400)))
+
+    def test_an_occurrence_graph_will_not_cancel_is_deleted_instead(self):
+        client = self.client(Response({'error': {'code': 'ErrorCannotCancelOccurrence'}}, 400), Response(status=204))
+        self.assertTrue(self.cancel(client, occurrence=True, comment='Tutor unavailable'))
+        self.assertEqual([verb for verb, *_ in self.sent], ['POST', 'DELETE'])
+        self.assertEqual(self.sent[0][2], {'comment': 'Tutor unavailable'})
+
+    def test_an_occurrence_rejected_for_another_reason_is_not_deleted(self):
+        client = self.client(Response({'error': {'code': 'ErrorAccessDenied'}}, 403))
+        with self.assertRaisesRegex(ActionNotSent, 'rejected'):
+            self.cancel(client, occurrence=True)
+        self.assertEqual([verb for verb, *_ in self.sent], ['POST'])
+
+
+class CancellationEvidenceTests(CalendarFixture):
+    """What the LMS will and will not accept as proof of a cancellation."""
+
+    def setUp(self):
+        super().setUp()
+        self.occurrence = {'eventId': 'instance-OCC-1', 'rootId': 'master-1', 'occurrenceId': 'OCC-1',
+                           'occurrenceGraphId': 'OID-OCC-1', 'action': 'cancel'}
+        self.whole = {'eventId': 'master-1', 'action': 'cancel'}
+
+    def confirmed(self, command):
+        return cancellation_confirmed(self.series, command, self.read)
+
+    def test_a_meeting_gone_from_the_calendar_is_cancelled(self):
+        self.instances = self.instances[1:]
+        self.assertTrue(self.confirmed(self.occurrence))
+
+    def test_a_meeting_flagged_cancelled_is_cancelled(self):
+        self.instances[0]['isCancelled'] = True
+        self.assertTrue(self.confirmed(self.occurrence))
+
+    def test_an_occurrence_listed_on_its_master_is_cancelled(self):
+        self.master['cancelledOccurrences'] = ['OID-OCC-1']
+        self.assertTrue(self.confirmed(self.occurrence))
+
+    def test_a_cancelled_series_carries_its_occurrences_with_it(self):
+        self.instances = self.instances[1:]
+        self.master['isCancelled'] = True
+        self.assertTrue(self.confirmed(self.occurrence))
+
+    def test_a_live_meeting_is_not_cancelled(self):
+        self.assertFalse(self.confirmed(self.occurrence))
+        self.assertFalse(self.confirmed(self.whole))
+
+    def test_a_whole_meeting_off_the_calendar_is_cancelled(self):
+        self.master = None
+        self.assertTrue(self.confirmed(self.whole))
+
+    def test_verification_never_writes_to_microsoft(self):
+        self.master = None
+        self.confirmed(self.whole)
+        self.assertTrue(all('/cancel' not in path for path in self.calls))
+
+
+if __name__ == '__main__':
+    unittest.main(verbosity=2)

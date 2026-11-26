@@ -1,0 +1,362 @@
+"""No database, credentials, Django setup or live HTTP calls."""
+import io
+import hashlib
+import os
+import unittest
+from urllib.parse import parse_qs, urlsplit
+from unittest.mock import Mock, patch
+
+import requests
+
+from curriculum_api.bunny_stream import BunnyStream, MissingProgrammeCollection, VideoImportError, is_bunny_url, playback_url, video_title
+from curriculum_api.video_sources import _drive_confirmation, _public_target, download_url, download_video, source_url, validate_video, youtube_url
+
+VIDEO_ID = 'c1c2c3c4-1234-5678-abcd-123456789abc'
+MP4 = b'\x00\x00\x00\x20ftypisom' + b'\x00' * 64
+
+
+def response(data, status=200):
+    result = Mock(status_code=status)
+    result.json.return_value = data
+    return result
+
+
+class BunnyTransportTests(unittest.TestCase):
+    def setUp(self):
+        self.http = Mock()
+        self.client = BunnyStream('798153', 'synthetic-library-key', self.http)
+
+    def test_collection_uses_existing_programme_and_does_not_create_one(self):
+        self.http.request.return_value = response({'items': [
+            {'guid': 'ME', 'name': 'Marketing Excutive Level 4'},
+            {'guid': 'PCP', 'name': 'Project Controls Professional Level 6'},
+        ]})
+        self.assertEqual(self.client.collection('PROG-ME-L4', 'Marketing Executive Level 4'), 'ME')
+        self.assertEqual(self.client.collection('PROG-PCP-L6', 'Project Controls Professional Level 6'), 'PCP')
+        self.assertTrue(all(call.args[0] == 'GET' for call in self.http.request.call_args_list))
+
+    def test_ambiguous_collection_is_refused(self):
+        self.http.request.return_value = response({'items': [
+            {'guid': 'A', 'name': 'Example'}, {'guid': 'B', 'name': 'Example'}]})
+        with self.assertRaises(VideoImportError):
+            self.client.collection('UNKNOWN', 'Example')
+
+    def test_missing_collection_is_refused(self):
+        self.http.request.return_value = response({'items': []})
+        with self.assertRaises(VideoImportError):
+            self.client.collection('UNKNOWN', '')
+
+    def test_collection_discovery_distinguishes_absence_from_provider_failure(self):
+        self.http.request.return_value = response({'items': []})
+        with self.assertRaises(MissingProgrammeCollection):
+            self.client.collection('NEW-PROGRAMME', 'Example programme')
+        self.http.request.return_value = response({}, status=503)
+        with self.assertRaises(VideoImportError) as caught:
+            self.client.collection('NEW-PROGRAMME', 'Example programme')
+        self.assertNotIsInstance(caught.exception, MissingProgrammeCollection)
+        self.assertEqual(caught.exception.status_code, 503)
+
+    def test_programme_collection_matches_normalised_whitespace(self):
+        self.http.request.return_value = response({'items': [{'guid': VIDEO_ID, 'name': 'Example Programme'}]})
+        self.assertEqual(self.client.collection('P', '  Example  Programme '), VIDEO_ID)
+        self.assertEqual(self.http.request.call_args.args[0], 'GET')
+
+    def test_new_programme_collection_is_created_with_saved_name(self):
+        self.http.request.return_value = response({'guid': VIDEO_ID})
+        self.assertEqual(self.client.create_programme_collection('P', '  Example  Programme '), VIDEO_ID)
+        self.assertEqual(self.http.request.call_args.args, ('POST', 'https://video.bunnycdn.com/library/798153/collections'))
+        self.assertEqual(self.http.request.call_args.kwargs['json'], {'name': 'Example Programme'})
+
+    def test_collection_discovery_failure_or_ambiguity_never_creates(self):
+        for data in ({'items': None}, {'items': [None]}, {'items': [{'name': 'Example', 'guid': ''}]},
+                     {'items': [{'name': 'Example', 'guid': VIDEO_ID}] * 2}):
+            with self.subTest(data=data):
+                self.http.request.return_value = response(data)
+                with self.assertRaises(VideoImportError):
+                    self.client.collection('P', 'Example')
+                self.assertEqual(self.http.request.call_args.args[0], 'GET')
+
+    def test_collection_creation_requires_programme_and_confirmed_guid(self):
+        with self.assertRaises(VideoImportError):
+            self.client.create_programme_collection('', 'Example')
+        self.http.request.assert_not_called()
+        self.http.request.return_value = response({'guid': ''})
+        with self.assertRaises(VideoImportError):
+            self.client.create_programme_collection('P', 'Example')
+
+    def test_upload_sends_bytes_and_never_follows_redirects_with_key(self):
+        self.http.request.return_value = response({'success': True})
+        stream = io.BytesIO(MP4)
+        self.client.upload(VIDEO_ID, stream)
+        args, kwargs = self.http.request.call_args
+        self.assertEqual(args[0], 'PUT')
+        self.assertIs(kwargs['data'], stream)
+        self.assertFalse(kwargs['allow_redirects'])
+        self.assertEqual(kwargs['headers']['Content-Type'], 'application/octet-stream')
+
+    def test_upload_400_is_distinguished_from_other_bunny_failures(self):
+        self.http.request.return_value = response({'message': 'private provider detail'}, status=400)
+        with self.assertRaises(VideoImportError) as caught:
+            self.client.upload(VIDEO_ID, io.BytesIO(MP4))
+        self.assertEqual(type(caught.exception).__name__, 'VideoUploadConflict')
+        self.assertNotIn('private provider detail', str(caught.exception))
+        self.http.request.return_value = response({}, status=400)
+        with self.assertRaises(VideoImportError) as metadata:
+            self.client.metadata(VIDEO_ID, {}, 'Synthetic video')
+        self.assertEqual(type(metadata.exception), VideoImportError)
+
+    def test_free_courses_use_only_the_shared_collection_name(self):
+        self.http.request.side_effect = [response({'items': []}), response({'guid': VIDEO_ID})]
+        self.assertEqual(self.client.free_course_collection(), VIDEO_ID)
+        call = self.http.request.call_args
+        self.assertEqual(call.args, ('POST', 'https://video.bunnycdn.com/library/798153/collections'))
+        self.assertEqual(call.kwargs['json'], {'name': 'Free course'})
+
+    def test_free_course_reuses_shared_collection_in_later_page(self):
+        self.http.request.side_effect = [response({'items': [{'guid': str(i), 'name': f'Other {i}'} for i in range(100)]}),
+            response({'items': [{'guid': VIDEO_ID, 'name': 'Free course'}]})]
+        self.assertEqual(self.client.free_course_collection(), VIDEO_ID)
+        self.assertTrue(all(call.args[0] == 'GET' for call in self.http.request.call_args_list))
+        self.assertEqual(self.http.request.call_args.kwargs['params']['page'], 2)
+
+    def test_free_course_retry_recovers_collection_after_a_lost_create_response(self):
+        self.http.request.side_effect = [response({'items': []}), requests.Timeout('private address'),
+            response({'items': [{'guid': VIDEO_ID, 'name': 'Free course'}]})]
+        with self.assertRaises(VideoImportError):
+            self.client.free_course_collection()
+        self.assertEqual(self.client.free_course_collection(), VIDEO_ID)
+        self.assertEqual(sum(call.args[0] == 'POST' for call in self.http.request.call_args_list), 1)
+
+    def test_free_course_ambiguous_or_invalid_collections_do_not_claim_success(self):
+        for data in ({'items': [{'guid': VIDEO_ID, 'name': 'Free course'}] * 2},
+                     {'items': [{'guid': '', 'name': 'Free course'}]}, {'items': None}):
+            with self.subTest(data=data):
+                self.http.reset_mock()
+                self.http.request.return_value = response(data)
+                with self.assertRaises(VideoImportError):
+                    self.client.free_course_collection()
+                self.assertEqual(self.http.request.call_args.args[0], 'GET')
+
+    def test_named_course_collection_does_not_override_shared_destination(self):
+        self.http.request.side_effect = [response({'items': [{'guid': 'old', 'name': 'Independent study'}]}),
+            response({'guid': VIDEO_ID})]
+        self.assertEqual(self.client.free_course_collection(), VIDEO_ID)
+        self.assertEqual(self.http.request.call_args.kwargs['json'], {'name': 'Free course'})
+
+    def test_free_course_metadata_identifies_the_course_and_type_in_shared_collection(self):
+        self.http.request.return_value = response({'success': True})
+        self.client.metadata(VIDEO_ID, {'free_course_module_id': 'FREE-1',
+            'free_course_name': 'Independent study', 'course_type': 'free_course',
+            'collection_name': 'Free course'}, 'Introduction')
+        tags = {tag['property']: tag['value'] for tag in self.http.request.call_args.kwargs['json']['metaTags']}
+        self.assertEqual(tags, {'lms.free_course_module_id': 'FREE-1',
+            'lms.free_course_name': 'Independent study', 'lms.course_type': 'free_course',
+            'lms.collection_name': 'Free course', 'lms.title': 'Introduction'})
+
+    def test_free_course_video_title_uses_course_name_without_programme_aliases(self):
+        name = 'Managing Successful Programmes for beginners'
+        scope = {'free_course_module_id': 'FREE-1', 'free_course_name': name, 'module_title': name}
+        self.assertEqual(video_title('asset', 'Introduction', scope), f'{name} — Introduction [LMS:asset]')
+
+    def test_api_failure_never_exposes_upstream_text(self):
+        for status in (401, 403, 429, 500):
+            with self.subTest(status=status):
+                self.http.request.return_value = response({'message': 'private upstream secret'}, status)
+                with self.assertRaises(VideoImportError) as caught:
+                    self.client.video(VIDEO_ID)
+                self.assertNotIn('secret', str(caught.exception))
+                self.http.request.return_value.close.assert_called_once()
+
+    def test_success_false_is_not_reported_as_uploaded(self):
+        self.http.request.return_value = response({'success': False})
+        with self.assertRaises(VideoImportError):
+            self.client.upload(VIDEO_ID, io.BytesIO(MP4))
+
+    def test_timeout_is_not_blindly_retried(self):
+        self.http.request.side_effect = requests.Timeout('sensitive address')
+        with self.assertRaises(VideoImportError) as caught:
+            self.client.create('asset', 'Lesson', 'collection')
+        self.assertNotIn('sensitive', str(caught.exception))
+        self.http.request.assert_called_once()
+
+    def test_retry_search_requires_exact_import_marker(self):
+        self.http.request.return_value = response({'items': [
+            {'guid': 'wrong', 'title': 'Copy [LMS:asset] Lesson'},
+            {'guid': VIDEO_ID, 'title': '[LMS:asset] Lesson'},
+        ]})
+        self.assertEqual(self.client.find_import('asset')['guid'], VIDEO_ID)
+
+    def test_recovery_ignores_retired_empty_upload_in_stale_search_results(self):
+        self.http.request.return_value = response({'items': [
+            {'guid': 'retired', 'title': 'Lesson [LMS:asset]'},
+            {'guid': VIDEO_ID, 'title': 'Lesson [LMS:asset]'},
+        ]})
+        self.assertEqual(self.client.find_import('asset', exclude_video_ids=['retired'])['guid'], VIDEO_ID)
+
+    def test_create_starts_with_module_name_and_keeps_programme_collection(self):
+        self.http.request.return_value = response({'guid': VIDEO_ID})
+        self.client.create('asset', 'Introduction', 'PCP', scope={
+            'module_title': 'Managing Successful Programmes: Project Controls for Transformational Change'})
+        self.assertEqual(self.http.request.call_args.kwargs['json'], {
+            'title': 'MSP — Introduction [LMS:asset]', 'collectionId': 'PCP'})
+
+    def test_new_title_can_be_recovered_after_a_lost_create_response(self):
+        self.http.request.return_value = response({'items': [
+            {'guid': 'wrong', 'title': 'MSP — Introduction [LMS:asset] copy'},
+            {'guid': VIDEO_ID, 'title': 'MSP — Introduction [LMS:asset]'},
+        ]})
+        self.assertEqual(self.client.find_import('asset')['guid'], VIDEO_ID)
+
+    def test_renaming_does_not_move_video_or_replace_metadata(self):
+        self.http.request.return_value = response({'success': True})
+        self.client.rename(VIDEO_ID, 'asset', 'Introduction', {'module_title': 'MSP'})
+        self.assertEqual(self.http.request.call_args.kwargs['json'], {'title': 'MSP — Introduction [LMS:asset]'})
+
+    def test_title_format_is_idempotent_and_handles_other_module_names(self):
+        scope = {'module_title': 'Project Planning'}
+        title = video_title('asset', 'Introduction', scope)
+        self.assertEqual(title, 'Project Planning — Introduction [LMS:asset]')
+        self.assertEqual(video_title('asset', title, scope), title)
+        self.assertEqual(video_title('asset', '[LMS:asset] Introduction', scope), title)
+
+    def test_unassigned_template_uses_its_saved_title(self):
+        self.assertEqual(video_title('asset', 'Introduction', {'template_title': 'Week One'}),
+                         'Week One — Introduction [LMS:asset]')
+
+    def test_metadata_carries_scope_without_secrets_or_source_url(self):
+        self.http.request.return_value = response({'success': True})
+        self.client.metadata(VIDEO_ID, {'programme_id': 'PCP', 'cohort_id': 'C1', 'group_id': 'G1'}, 'Lesson')
+        data = self.http.request.call_args.kwargs['json']
+        self.assertEqual({x['property']: x['value'] for x in data['metaTags']}, {
+            'lms.programme_id': 'PCP', 'lms.cohort_id': 'C1', 'lms.group_id': 'G1', 'lms.title': 'Lesson'})
+
+
+class VideoSourceTests(unittest.TestCase):
+    def test_embed_source_is_unwrapped_without_changing_query(self):
+        self.assertEqual(source_url({'embedCode': '<iframe src="https://example.com/a.mp4?x=1&amp;y=2"></iframe>'}),
+                         'https://example.com/a.mp4?x=1&y=2')
+
+    def test_drive_preview_becomes_download(self):
+        self.assertEqual(download_url('https://drive.google.com/file/d/abc123456789/preview'),
+                         'https://drive.google.com/uc?export=download&id=abc123456789')
+
+    def test_youtube_watch_embed_short_and_mobile_links_select_one_video(self):
+        expected = 'https://www.youtube.com/watch?v=abcdefghijk'
+        for url in ('https://www.youtube.com/watch?v=abcdefghijk&list=PLAYLIST',
+                    'https://youtu.be/abcdefghijk?t=3', 'https://m.youtube.com/watch?v=abcdefghijk',
+                    'https://www.youtube-nocookie.com/embed/abcdefghijk',
+                    'https://www.youtube.com/shorts/abcdefghijk'):
+            with self.subTest(url=url):
+                self.assertEqual(download_url(url), expected)
+
+    def test_youtube_playlist_redirect_and_lookalike_host_are_not_accepted(self):
+        for url in ('https://youtube.com/playlist?list=PL1', 'https://youtube.com/redirect?q=http://127.0.0.1',
+                    'https://youtube.com/watch?v=invalid', 'https://name:password@youtube.com/watch?v=abcdefghijk'):
+            with self.subTest(url=url), self.assertRaises(VideoImportError):
+                youtube_url(url)
+        self.assertEqual(youtube_url('https://youtube.com.attacker.invalid/watch?v=abcdefghijk'), '')
+
+    def test_youtube_download_yields_verified_bytes_without_fetching_the_watch_page(self):
+        from contextlib import nullcontext
+        with patch('curriculum_api.youtube_download.download_youtube', return_value=nullcontext(io.BytesIO(MP4))) as downloader, \
+             patch('curriculum_api.video_sources.public_response') as public:
+            with download_video('https://youtu.be/abcdefghijk') as stream:
+                self.assertEqual(stream.read(), MP4)
+        self.assertEqual(downloader.call_args.args[0], 'https://www.youtube.com/watch?v=abcdefghijk')
+        public.assert_not_called()
+
+    def test_credentials_and_unsupported_schemes_are_rejected(self):
+        for url in ('file:///etc/passwd', 'ftp://example.com/video', 'https://user:secret@example.com/video'):
+            with self.subTest(url=url), self.assertRaises(VideoImportError):
+                download_url(url)
+
+    def test_all_resolved_addresses_must_be_public(self):
+        with patch('curriculum_api.video_sources.socket.getaddrinfo', return_value=[
+            (2, 1, 6, '', ('8.8.8.8', 443)), (2, 1, 6, '', ('127.0.0.1', 443))]):
+            with self.assertRaises(VideoImportError):
+                _public_target('https://example.com/video')
+
+    def test_private_ipv6_is_rejected(self):
+        with patch('curriculum_api.video_sources.socket.getaddrinfo', return_value=[(10, 1, 6, '', ('::1', 443, 0, 0))]):
+            with self.assertRaises(VideoImportError):
+                _public_target('https://example.com/video')
+
+    def test_nonstandard_port_is_rejected(self):
+        with self.assertRaises(VideoImportError):
+            _public_target('https://example.com:8000/video')
+
+    def test_download_confirmation_cannot_redirect_to_arbitrary_host(self):
+        page = '<form id="download-form" action="http://127.0.0.1/file"><input name="id" value="x"></form>'
+        self.assertEqual(_drive_confirmation(page), '')
+
+    def test_html_named_mp4_is_not_a_video(self):
+        with self.assertRaises(VideoImportError):
+            validate_video(io.BytesIO(b'<html>sign in</html>'))
+        self.assertEqual(validate_video(io.BytesIO(MP4)), len(MP4))
+
+    def test_empty_and_oversized_uploads_are_rejected(self):
+        with self.assertRaises(VideoImportError):
+            validate_video(io.BytesIO())
+        with patch('curriculum_api.video_sources.MAX_VIDEO_BYTES', 10), self.assertRaises(VideoImportError):
+            validate_video(io.BytesIO(MP4))
+
+    def test_stream_download_is_bounded_and_not_returned_on_failure(self):
+        from contextlib import contextmanager
+        @contextmanager
+        def upstream(_):
+            yield Mock(headers={'Content-Type': 'video/mp4'}, read=Mock(side_effect=[MP4, b'']))
+        with patch('curriculum_api.video_sources.public_response', upstream), patch('curriculum_api.video_sources.MAX_VIDEO_BYTES', 10):
+            with self.assertRaisesRegex(VideoImportError, '300 MB'):
+                with download_video('https://example.com/a.mp4'):
+                    self.fail('Oversized source must not be yielded')
+
+    def test_bunny_parser_only_recognises_exact_embed_host_and_path(self):
+        self.assertTrue(is_bunny_url(playback_url('798153', VIDEO_ID)))
+        self.assertFalse(is_bunny_url(f'https://iframe.mediadelivery.net.attacker.test/embed/798153/{VIDEO_ID}'))
+
+
+class SeparateLibraryCredentialsTests(unittest.TestCase):
+    def setUp(self):
+        env = patch.dict(os.environ, {
+            'BUNNY_STREAM_LIBRARY_ID': '798153', 'BUNNY_STREAM_API_KEY': 'synthetic-materials-api',
+            'BUNNY_STREAM_TOKEN_KEY': 'synthetic-materials-token',
+            'BUNNY_LIVE_STREAM_LIBRARY_ID': '796471', 'BUNNY_LIVE_STREAM_API_KEY': 'synthetic-live-api',
+            'BUNNY_LIVE_STREAM_TOKEN_KEY': 'synthetic-live-token',
+        }, clear=True)
+        env.start(); self.addCleanup(env.stop)
+
+    def test_materials_and_live_sessions_use_their_own_credentials(self):
+        self.assertEqual(BunnyStream().library_id, '798153')
+        self.assertEqual(BunnyStream('798153').api_key, 'synthetic-materials-api')
+        self.assertEqual(BunnyStream('796471').api_key, 'synthetic-live-api')
+
+    def test_missing_live_key_never_sends_the_materials_key_to_another_library(self):
+        with patch.dict(os.environ, BUNNY_LIVE_STREAM_API_KEY=''):
+            with self.assertRaises(VideoImportError):
+                BunnyStream('796471')
+            self.assertEqual(BunnyStream('798153').api_key, 'synthetic-materials-api')
+
+    def test_unknown_library_requires_an_explicit_credential(self):
+        with self.assertRaises(VideoImportError):
+            BunnyStream('999999')
+        self.assertEqual(BunnyStream('999999', api_key='explicit-synthetic').api_key, 'explicit-synthetic')
+
+    def test_saved_playback_uses_the_security_key_for_its_library(self):
+        from curriculum_api.session_bunny_policy import signed_embed
+        for library, key in (('798153', 'synthetic-materials-token'), ('796471', 'synthetic-live-token')):
+            url = signed_embed(library, VIDEO_ID, now=100)
+            query = parse_qs(urlsplit(url).query)
+            expected = hashlib.sha256(f'{key}{VIDEO_ID}{100 + 4 * 60 * 60}'.encode()).hexdigest()
+            self.assertEqual(query['token'], [expected])
+            self.assertIn('/embed/' + library + '/', url)
+
+    def test_missing_live_security_key_leaves_old_playback_working(self):
+        from curriculum_api.session_bunny_policy import signed_embed
+        with patch.dict(os.environ, BUNNY_LIVE_STREAM_TOKEN_KEY=''):
+            with self.assertRaises(VideoImportError):
+                signed_embed('796471', VIDEO_ID)
+            self.assertIn('/embed/798153/', signed_embed('798153', VIDEO_ID))
+
+
+if __name__ == '__main__':
+    unittest.main()

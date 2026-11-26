@@ -1,0 +1,679 @@
+"""Contract extraction and access controls without a test database."""
+from types import SimpleNamespace
+from datetime import date, datetime, time, timezone, timedelta
+from unittest.mock import patch, MagicMock
+from hashlib import sha256
+import json
+import pymupdf as fitz
+from django.test import SimpleTestCase, RequestFactory
+from .training_plan_contract import parse_contract, read_verified_extract, contract_extract_metadata, read_contract, verified_planned_hours
+from .training_plan_dashboard import training_plan_dashboard, number, selected_contract, plan_session, read_dashboard, assigned_group_coach, contract_plan, valid_aptem_id, _canonical_actual_rows, _canonical_module_progress, is_educational_live_session_week
+
+
+def contract_pdf(total=30, review_on_same_page=False, joined_provider=False, split_header=False, split_total=False):
+    document = fitz.open()
+    page = document.new_page()
+    page.insert_text((65,55),'Off-The-Job Training Hours',fontsize=9)
+    for x, text in [(65, 'Activity/Unit'), (190, 'Method'), (270, 'Delivery'), (370, 'Planned Date'), (485, 'Planned')]:
+        page.insert_text((x,100),text,fontsize=9)
+    if split_header:
+        page = document.new_page()
+        page.insert_text((485,50),'OTJ (hr)',fontsize=9)
+    else:
+        page.insert_text((485,112),'OTJ (hr)',fontsize=9)
+    for y, title, date, hours in [(145,'Marketing foundations','05/09/2026','10'),(180,'Brand strategy','19/09/2026','20')]:
+        delivery = [(280,'Kent'+date)] if joined_provider else [(270,'College'),(370,date)]
+        for x,text in [(65,title),(190,'Assignment'),*delivery,(490,hours)]:
+            page.insert_text((x,y),text,fontsize=9)
+        page.draw_line((65,y+12),(535,y+12))
+    page.insert_text((375,218),'Total (hr)',fontsize=9)
+    if split_total:
+        page = document.new_page()
+        page.insert_text((490,110),'0',fontsize=9)
+        page.insert_text((490,145),str(total),fontsize=9)
+        page.insert_text((65,180),'Progress Reviews',fontsize=12)
+    else:
+        page.insert_text((490,218),str(total),fontsize=9)
+    if review_on_same_page:
+        page.insert_text((65,260),'Progress Reviews',fontsize=12)
+        page.insert_text((65,285),'Review type',fontsize=9)
+        page.insert_text((370,310),'20/09/2026',fontsize=9)
+        page.insert_text((490,310),'99',fontsize=9)
+    result=document.tobytes()
+    document.close()
+    return result
+
+
+class TrainingPlanDashboardTests(SimpleTestCase):
+    def setUp(self):
+        self.effective_plan = self.enterContext(
+            patch('learner_api.training_plan_dashboard._effective_plan_ids', return_value=['M1']),
+        )
+
+    def test_educational_session_count_excludes_onboarding_but_keeps_teaching_introductions(self):
+        self.assertFalse(is_educational_live_session_week('Introduction'))
+        self.assertFalse(is_educational_live_session_week('Welcome, module guide and assessment resources'))
+        self.assertTrue(is_educational_live_session_week('Introduction to AI in Marketing'))
+        self.assertTrue(is_educational_live_session_week('L1: Project controls'))
+
+    def test_ssot_contract_uses_monthly_targets_without_legacy_queries(self):
+        owner = {'id': 70, 'start_date': date(2026, 9, 1), 'end_date': date(2027, 9, 1)}
+        source = SimpleNamespace(pk=125, aptem_id=987, email='learner@example.com', _canonical_profile=owner)
+        connection = MagicMock()
+        with patch('learner_api.training_plan_dashboard.connections', {'enrolment': connection}), \
+             patch('learner_api.training_plan_dashboard.canonical_learning.targets_for',
+                   return_value={'2026-09': 20, '2026-10': 30}):
+            result = read_dashboard(source, section='contract')
+
+        self.assertEqual(result['contractStatus'], 'ready')
+        self.assertEqual(result['months']['2026-09']['planned'], 20)
+        self.assertEqual(result['months']['2026-09']['source'], 'ssot')
+        connection.cursor.return_value.__enter__.return_value.execute.assert_not_called()
+
+    def test_ssot_actuals_allow_grouped_and_ungrouped_entries_in_same_month(self):
+        records = [
+            {'accepted': True, 'reporting_month': '2026-09', 'actual_seconds': 3600,
+             'module_ref': None, 'segments': []},
+            {'accepted': True, 'reporting_month': '2026-09', 'actual_seconds': 7200,
+             'module_ref': 'module-1', 'segments': []},
+        ]
+        with patch('learner_api.training_plan_dashboard.canonical_learning.entries_for', return_value=records):
+            result = _canonical_actual_rows({'id': 70})
+
+        self.assertEqual(result, [
+            {'month': '2026-09', 'groupId': None, 'hours': 1.0, 'count': 1},
+            {'month': '2026-09', 'groupId': 'module-1', 'hours': 2.0, 'count': 1},
+        ])
+
+    def test_module_progress_uses_learner_progress_entries_and_authored_session_target(self):
+        records = [
+            {'module_ref': 'M1', 'module_title': 'Marketing', 'accepted': True,
+             'actual_seconds': 5400, 'ksbs': ['K1', 'S1']},
+            {'module_ref': '', 'module_title': 'Marketing', 'accepted': False,
+             'actual_seconds': 3600, 'ksbs': ['K1'], 'kind': 'activity_event',
+             'feed_kind': 'attendance_confirmation', 'time_tracking_session_ref': 'session-1'},
+            # A duplicate confirmation cannot normally be saved, but must not
+            # make the presented attendance exceed the authored target.
+            {'module_ref': '', 'module_title': 'Marketing', 'accepted': False,
+             'ksbs': [], 'kind': 'activity_event', 'feed_kind': 'attendance_confirmation',
+             'time_tracking_session_ref': 'session-2'},
+        ]
+        modules = [{'id': 'M1', 'title': 'Marketing', 'educational_session_count': 1, 'sessions_number': 4}]
+        result = _canonical_module_progress(records, modules)
+
+        self.assertEqual(result, {'M1': {
+            'hours': {'actual': 1.5}, 'ksb': {'completed': 2, 'total': 3, 'achievedCodes': ['K1', 'S1']},
+            'attendance': {'attended': 2, 'total': 2},
+        }})
+
+    def test_achieved_ksb_codes_use_accepted_evidence_and_stay_with_their_module(self):
+        modules = [{'id': 'M1', 'title': 'Marketing'}, {'id': 'M2', 'title': 'Strategy'},
+                   {'id': 'M3', 'title': 'Duplicate'}, {'id': 'M4', 'title': 'Duplicate'}]
+        records = [
+            {'module_ref': 'M1', 'accepted': True, 'ksbs': ['K1', 'K1', ' ', 'S2']},
+            {'module_title': 'Marketing', 'accepted': True, 'ksbs': ['K1']},
+            {'module_ref': 'M1', 'accepted': False, 'ksbs': ['B3']},
+            {'module_ref': 'M1', 'accepted': None, 'ksbs': ['K4']},
+            {'module_ref': 'M2', 'accepted': True, 'ksbs': ['B2']},
+            {'module_title': 'Duplicate', 'accepted': True, 'ksbs': ['K9']},
+            {'module_ref': 'unassigned', 'accepted': True, 'ksbs': ['K8']},
+        ]
+        result = _canonical_module_progress(records, modules)
+        self.assertEqual(result['M1']['ksb'], {'completed': 3, 'total': 5, 'achievedCodes': ['K1', 'S2']})
+        self.assertEqual(result['M2']['ksb']['achievedCodes'], ['B2'])
+        self.assertEqual(result['M3']['ksb']['achievedCodes'], [])
+        self.assertEqual(result['M4']['ksb']['achievedCodes'], [])
+
+    def test_learning_section_returns_only_module_selection_data(self):
+        source = SimpleNamespace(pk=125, aptem_id=987, email='learner@example.com')
+        connection = MagicMock()
+        cursor = connection.cursor.return_value.__enter__.return_value
+        cursor.fetchall.return_value = [('M1',)]
+        module = {'id': 'M1', 'title': 'Marketing', 'description': '', 'start_date': date(2026, 10, 5),
+                  'end_date': date(2027, 2, 11), 'weeks_number': 1, 'total_otjh': 10, 'sessions_number': 1,
+                  'session_week_day': 'Thursday', 'session_start_time': '09:00', 'session_end_time': '10:00',
+                  'coach_name': '', 'programme_name': '', 'cohort_name': '', 'group_name': ''}
+        with patch('learner_api.training_plan_dashboard.connections', {'enrolment': connection}), \
+             patch('learner_api.training_plan_dashboard.LearnerProfile') as profiles, \
+             patch('learner_api.training_plan_dashboard._builder_subject_metadata', return_value=({}, {'current:M1': {'id': 'M1'}})), \
+             patch('learner_api.training_plan_dashboard.attach_curriculum_slots'), \
+             patch('learner_api.training_plan_dashboard.rows', side_effect=[[module], []]):
+            result = read_dashboard(source, section='learning')
+        self.assertEqual(set(result), {'modules', 'moduleLinks', 'generatedAt'})
+        self.assertEqual(result['modules'][0]['id'], 'M1')
+        profiles.objects.filter.assert_not_called()
+        sql = ' '.join(str(call.args[0]) for call in cursor.execute.call_args_list)
+        self.assertNotIn('manual_learner_activities', sql)
+        self.assertNotIn('live_sessions', sql)
+        self.effective_plan.assert_called_with(source, {})
+
+    def test_learning_section_requests_saved_and_inherited_module_metadata(self):
+        source = SimpleNamespace(pk=125, aptem_id=None, email='learner@example.com')
+        self.effective_plan.return_value = ['SAVED', 'GROUP-NEW']
+        connection = MagicMock()
+        builder = MagicMock(return_value=({}, {}))
+        with patch('learner_api.training_plan_dashboard.connections', {'enrolment': connection}), \
+             patch('learner_api.training_plan_dashboard._builder_subject_metadata', builder):
+            result = read_dashboard(source, section='learning')
+
+        self.assertEqual(result['modules'], [])
+        builder.assert_called_once_with(
+            connection.cursor.return_value.__enter__.return_value,
+            ['current:SAVED', 'current:GROUP-NEW'],
+        )
+
+    def test_effective_current_module_is_projected_without_builder_metadata(self):
+        source = SimpleNamespace(pk=125, aptem_id=None, email='learner@example.com')
+        connection = MagicMock()
+        module = {'id': 'M1', 'title': 'Marketing', 'description': '',
+                  'start_date': date(2026, 10, 5), 'end_date': date(2027, 2, 11),
+                  'weeks_number': 1, 'total_otjh': 10, 'sessions_number': 1,
+                  'session_week_day': 'Thursday', 'session_start_time': '09:00',
+                  'session_end_time': '10:00', 'coach_name': '',
+                  'programme_name': '', 'cohort_name': '', 'group_name': ''}
+        with patch('learner_api.training_plan_dashboard.connections', {'enrolment': connection}), \
+             patch('learner_api.training_plan_dashboard._builder_subject_metadata', return_value=({}, {})), \
+             patch('learner_api.training_plan_dashboard.attach_curriculum_slots'), \
+             patch('learner_api.training_plan_dashboard.rows', side_effect=[[module], []]):
+            result = read_dashboard(source, section='learning')
+
+        self.assertEqual([item['id'] for item in result['modules']], ['M1'])
+        self.assertEqual(result['moduleLinks'], {})
+
+    def test_valid_aptem_projects_effective_current_module_when_catalogue_row_exists(self):
+        source = SimpleNamespace(pk=125, aptem_id=987, email='learner@example.com')
+        connection = MagicMock()
+        module = {'id': 'M1', 'title': 'Marketing', 'description': '',
+                  'start_date': date(2026, 10, 5), 'end_date': date(2027, 2, 11),
+                  'weeks_number': 1, 'total_otjh': 10, 'sessions_number': 1,
+                  'session_week_day': 'Thursday', 'session_start_time': '09:00',
+                  'session_end_time': '10:00', 'coach_name': '',
+                  'programme_name': '', 'cohort_name': '', 'group_name': ''}
+        with patch('learner_api.training_plan_dashboard.connections', {'enrolment': connection}), \
+             patch('learner_api.training_plan_dashboard._builder_subject_metadata', return_value=({}, {})), \
+             patch('learner_api.training_plan_dashboard.attach_curriculum_slots'), \
+             patch('learner_api.training_plan_dashboard.rows', side_effect=[[module], []]):
+            result = read_dashboard(source, section='learning')
+
+        self.assertEqual([item['id'] for item in result['modules']], ['M1'])
+
+    def test_valid_aptem_keeps_builder_linked_current_module(self):
+        source = SimpleNamespace(pk=125, aptem_id=987, email='learner@example.com')
+        connection = MagicMock()
+        module = {'id': 'M1', 'title': 'Marketing', 'description': '',
+                  'start_date': date(2026, 10, 5), 'end_date': date(2027, 2, 11),
+                  'weeks_number': 1, 'total_otjh': 10, 'sessions_number': 1,
+                  'session_week_day': 'Thursday', 'session_start_time': '09:00',
+                  'session_end_time': '10:00', 'coach_name': '',
+                  'programme_name': '', 'cohort_name': '', 'group_name': ''}
+        with patch('learner_api.training_plan_dashboard.connections', {'enrolment': connection}), \
+             patch('learner_api.training_plan_dashboard._builder_subject_metadata', return_value=({}, {'current:M1': {'id': 'M1'}})), \
+             patch('learner_api.training_plan_dashboard.attach_curriculum_slots'), \
+             patch('learner_api.training_plan_dashboard.rows', side_effect=[[module], []]):
+            result = read_dashboard(source, section='learning')
+
+        self.assertEqual([item['id'] for item in result['modules']], ['M1'])
+
+    def test_zero_and_negative_aptem_ids_use_native_projection(self):
+        for aptem_id in (0, -1):
+            with self.subTest(aptem_id=aptem_id):
+                source = SimpleNamespace(pk=125, aptem_id=aptem_id, email='learner@example.com')
+                connection = MagicMock()
+                module = {'id': 'M1', 'title': 'Marketing', 'description': '',
+                          'start_date': date(2026, 10, 5), 'end_date': date(2027, 2, 11),
+                          'weeks_number': 1, 'total_otjh': 10, 'sessions_number': 1,
+                          'session_week_day': 'Thursday', 'session_start_time': '09:00',
+                          'session_end_time': '10:00', 'coach_name': '',
+                          'programme_name': '', 'cohort_name': '', 'group_name': ''}
+                with patch('learner_api.training_plan_dashboard.connections', {'enrolment': connection}), \
+                     patch('learner_api.training_plan_dashboard._builder_subject_metadata', return_value=({}, {})), \
+                     patch('learner_api.training_plan_dashboard._aptem_subject_modules') as aptem_subjects, \
+                     patch('learner_api.training_plan_dashboard.attach_curriculum_slots'), \
+                     patch('learner_api.training_plan_dashboard.rows', side_effect=[[module], []]):
+                    result = read_dashboard(source, section='learning')
+                self.assertEqual([item['id'] for item in result['modules']], ['M1'])
+                aptem_subjects.assert_not_called()
+                sql = ' '.join(str(call.args[0]) for call in connection.cursor.return_value.__enter__.return_value.execute.call_args_list)
+                self.assertNotIn('Last_audit', sql)
+
+    def test_only_positive_aptem_ids_select_aptem(self):
+        self.assertIsNone(valid_aptem_id(None))
+        self.assertIsNone(valid_aptem_id(''))
+        self.assertIsNone(valid_aptem_id(0))
+        self.assertIsNone(valid_aptem_id(-1))
+        self.assertEqual(valid_aptem_id(' 987 '), 987)
+
+
+    def test_coach_fallback_uses_only_the_current_programme_cohort_and_group(self):
+        source = SimpleNamespace(programme=' Marketing Level 4 ', cohort='October 2026', group='G1')
+        current = {'programme_name': 'Marketing Level 4', 'cohort_name': 'October 2026', 'group_name': 'g1', 'coach_name': 'Omar'}
+        old = {**current, 'cohort_name': 'Final Cohort', 'group_name': 'Aya Group', 'coach_name': 'Test Coach'}
+        self.assertEqual(assigned_group_coach(source, [old, current, current]), 'Omar')
+        self.assertEqual(assigned_group_coach(source, [old]), '')
+        self.assertEqual(assigned_group_coach(source, [current, {**current, 'coach_name': 'Another coach'}]), '')
+        self.assertEqual(assigned_group_coach(SimpleNamespace(), [current]), '')
+
+    def test_module_overview_keeps_authored_plan_and_outcomes_without_inventing_booked_sessions(self):
+        source = SimpleNamespace(pk=125, aptem_id=None, email='learner@example.com',
+                                 programme='Marketing Level 4', cohort='October 2026', group='G1')
+        connection = MagicMock()
+        connection.cursor.return_value.__enter__.return_value.fetchall.return_value = [('M1',)]
+        module = {'id': 'M1', 'title': '<b>Marketing</b>', 'description': 'Learn &amp; apply',
+                  'start_date': date(2026, 10, 5), 'end_date': date(2027, 2, 11), 'weeks_number': 16,
+                  'total_otjh': '140.00', 'sessions_number': 16, 'session_week_day': 'Thursday',
+                  'session_start_time': '09:00', 'session_end_time': '11:00', 'coach_name': 'Group coach',
+                  'programme_name': 'Marketing Level 4', 'cohort_name': 'October 2026', 'group_name': 'G1'}
+        with patch('learner_api.training_plan_dashboard.connections', {'enrolment': connection}), \
+             patch('learner_api.training_plan_dashboard.LearnerProfile') as profiles, \
+             patch('learner_api.training_plan_dashboard._builder_subject_metadata', return_value=({}, {'current:M1': {'id': 'M1'}})), \
+             patch('learner_api.training_plan_dashboard.rows', side_effect=[[module], [
+                 {'id': 'W1', 'module_catalogue_id': 'M1', 'week_number': 1, 'title': 'Welcome, module guide and assessment resources',
+                  'learning_outcomes': '["<b>Plan a campaign</b>", ""]',
+                  'holiday_note_enabled': False, 'holiday_note': '', 'live_session_count': 1},
+                 {'id': 'W2', 'module_catalogue_id': 'M1', 'week_number': 2, 'title': 'Week 2',
+                  'learning_outcomes': ['Plan a campaign', 'Measure results', None],
+                  'holiday_note_enabled': False, 'holiday_note': '', 'live_session_count': 2},
+             ], []]), \
+             patch('learner_api.calendar.coaching_events_for_learner', return_value=[]):
+            profiles.objects.filter.return_value.only.return_value.first.return_value = None
+            result = read_dashboard(source, section='overview')
+        detail = result['modules'][0]
+        self.assertEqual((detail['title'], detail['description']), ('Marketing', 'Learn & apply'))
+        self.assertEqual((detail['total_otjh'], detail['sessions_number'], detail['weeks_number']), (140, 16, 16))
+        self.assertEqual(detail['educational_session_count'], 2)
+        self.assertEqual(detail['learning_outcomes'], ['Plan a campaign', 'Measure results'])
+        self.assertEqual(detail['session_start_time'], '09:00')
+        self.assertEqual(detail['coach_name'], 'Group coach')
+        self.assertEqual(detail['end_date'], '2027-02-11')
+        self.assertEqual(result['sessions'], [])
+        self.assertEqual(result['coach'], {'name': 'Group coach', 'bookingUrl': None})
+        week_sql = next(str(call.args[0]) for call in connection.cursor.return_value.__enter__.return_value.execute.call_args_list
+                        if 'FROM curriculum.weeks w' in str(call.args[0]))
+        self.assertIn("lower(replace(coalesce(c.type, ''), '-', '_'))='live_session'", week_sql)
+
+    def test_overview_exposes_review_form_links_from_learner_calendar(self):
+        source = SimpleNamespace(pk=125, aptem_id=None, email='learner@example.com',
+                                 coach_name='', coach_email='')
+        connection = MagicMock()
+        events = [
+            {'id': 'mcm-event', 'eventKey': 'mcm-event', 'source': 'mcr',
+             'reviewTemplateId': 'mcm-template', 'reviewInstanceId': None},
+            {'id': 'pr-event', 'eventKey': 'pr-event', 'source': 'progress-review',
+             'reviewTemplateId': None, 'reviewInstanceId': 'pr-instance'},
+            {'id': 'legacy-event', 'eventKey': 'legacy-event', 'source': 'mcr'},
+        ]
+        self.effective_plan.return_value = []
+        with patch('learner_api.training_plan_dashboard.connections', {'enrolment': connection}), \
+             patch('learner_api.training_plan_dashboard.LearnerProfile') as profiles, \
+             patch('learner_api.training_plan_dashboard._builder_subject_metadata', return_value=({}, {})), \
+             patch('learner_api.calendar.coaching_events_for_learner', return_value=events), \
+             patch('learner_api.training_plan_dashboard.coach_phone', return_value=''):
+            profiles.objects.filter.return_value.only.return_value.first.return_value = None
+            reviews = read_dashboard(source, section='overview')['reviews']
+
+        self.assertEqual([(row['eventKey'], row['reviewTemplateId'], row['reviewInstanceId']) for row in reviews], [
+            ('mcm-event', 'mcm-template', None),
+            ('pr-event', None, 'pr-instance'),
+            ('legacy-event', None, None),
+        ])
+
+    def test_overview_reads_current_calendar_targets_and_stored_booking_changes(self):
+        from coach_api.models import CoachCalendarEvent
+        from curriculum_api.review_instances import review_calendar_event_key
+
+        source = SimpleNamespace(pk=125, aptem_id=None, email='learner@example.com',
+                                 start_date='2024-11-04', learner_start_date='2024-11-04', end_date='2026-11-03')
+        profile = SimpleNamespace(id=272, lifecycle_status='active', email=source.email,
+                                  start_date=None, end_date=None, coach_name='Assigned Coach', coach_email='coach@example.com',
+                                  programme_id='PROG-TEST', programme='Synthetic curriculum')
+        connection = MagicMock()
+        connection.cursor.return_value.__enter__.return_value.fetchall.return_value = []
+        records = []
+        event_key = review_calendar_event_key(272, 'REV-MCM', 23)
+        with patch('learner_api.training_plan_dashboard.connections', {'enrolment': connection}), \
+             patch('learner_api.training_plan_dashboard.LearnerProfile') as profiles, \
+             patch('learner_api.training_plan_dashboard._builder_subject_metadata', return_value=({}, {})), \
+             patch('learner_api.training_plan_dashboard.coach_phone', return_value=''), \
+             patch('coach_api.views.resolve_curriculum_programme_id', return_value='PROG-TEST'), \
+             patch('coach_api.views.resolve_curriculum_review_occurrences', side_effect=lambda **kwargs: [{
+                 'reviewTemplateId': 'REV-MCM', 'reviewName': 'Monthly Coaching Meeting',
+                 'reviewTypeCode': 'mcm', 'reviewTypeId': 'REVT-MCM', 'reviewTypeName': 'Monthly Coaching Meeting',
+                 'reviewTypeIsSystem': True, 'occurrenceNumber': 23,
+                 'targetDate': date(2026, 9, 25) + (kwargs['learner_start_date'] - date(2024, 11, 4)),
+             }]), \
+             patch('learner_api.calendar.CoachCalendarEvent.objects.filter') as stored:
+            profiles.objects.filter.return_value.only.return_value.first.return_value = profile
+            stored.return_value.order_by.return_value = records
+
+            def current():
+                return [event for event in read_dashboard(source, section='overview')['reviews']
+                        if event['eventKey'] == event_key]
+
+            target = current()
+            self.assertEqual(len(target), 1)
+            self.assertEqual(target[0]['targetDate'], '2026-09-25')
+            self.assertEqual(target[0]['status'], 'not-scheduled')
+            self.assertIsNone(target[0]['scheduledDate'])
+            self.assertIsNone(target[0]['meetingLink'])
+
+            # Unsaved fixture only: exercise the actual calendar serializer and
+            # generated/stored merge without making any database changes.
+            booking = CoachCalendarEvent(event_key=event_key, event_type='mcr', learner_id=272,
+                                         learner_email=source.email, sequence=23, target_date=date(2026, 9, 25),
+                                         scheduled_date=date(2026, 9, 28), scheduled_time=time(14),
+                                         status='scheduled', owner_name='Assigned Coach', review_template_id='REV-MCM')
+            records.append(booking)
+            booked = current()
+            self.assertEqual(len(booked), 1)
+            self.assertEqual(booked[0]['scheduledDate'], '2026-09-28')
+            self.assertFalse(booked[0]['invited'])
+
+            booking.scheduled_date = date(2026, 9, 20)
+            booking.scheduled_time = time(10, 30)
+            booking.owner_name = 'New Coach'
+            booking.graph_event_id = 'invitation-synced'
+            booking.meeting_link = 'https://teams.microsoft.com/l/meetup-join/review-23'
+            moved = current()[0]
+            self.assertEqual((moved['scheduledDate'], moved['scheduledTime'], moved['coachName'], moved['invited']),
+                             ('2026-09-20', '10:30', 'New Coach', True))
+            self.assertEqual(moved['meetingLink'], booking.meeting_link)
+            booking.meeting_link = 'javascript:alert(1)'
+            self.assertIsNone(current()[0]['meetingLink'])
+
+            for status in ('cancelled', 'completed'):
+                booking.status = status
+                booking.scheduled_date = None
+                booking.scheduled_time = None
+                result = current()
+                self.assertEqual(len(result), 1)
+                self.assertEqual(result[0]['status'], status)
+                # The stored inactive row must suppress its generated target;
+                # Upcoming filters it rather than showing a duplicate To book.
+
+            # Unbooked targets also track changes to the source programme window.
+            records.clear()
+            source.start_date = '2024-11-05'
+            source.learner_start_date = '2024-11-05'
+            source.end_date = '2026-09-30'
+            profile.coach_name = 'Replacement Coach'
+            reviews = read_dashboard(source, section='overview')['reviews']
+            monthly = [event for event in reviews if event['source'] == 'mcr']
+            self.assertEqual(monthly[-1]['sequence'], 23)
+            self.assertEqual(monthly[-1]['targetDate'], '2026-09-26')
+            self.assertEqual(monthly[-1]['coachName'], 'Replacement Coach')
+            # Native occurrence identity is stable when the configured target date changes.
+            self.assertIn(event_key, [event['eventKey'] for event in reviews])
+
+    def test_overview_does_not_download_or_parse_contract(self):
+        source = SimpleNamespace(pk=125, aptem_id='92', email='learner@example.com')
+        connection = MagicMock()
+        connection.cursor.return_value.__enter__.return_value.fetchall.return_value = []
+        with patch('learner_api.training_plan_dashboard.connections', {'enrolment': connection}), \
+             patch('learner_api.training_plan_dashboard.LearnerProfile') as profiles, \
+             patch('learner_api.training_plan_dashboard.rows', return_value=[]), \
+             patch('learner_api.training_plan_dashboard.find_contract', return_value={'azure_path':'stored'}), \
+             patch('learner_api.training_plan_dashboard._builder_subject_metadata', return_value=({}, {})), \
+             patch('learner_api.calendar.coaching_events_for_learner', return_value=[]), \
+             patch('learner_api.training_plan_dashboard.contract_plan') as extract:
+            profiles.objects.filter.return_value.only.return_value.first.return_value = None
+            result = read_dashboard(source, section='overview')
+        self.assertEqual(result['contractStatus'], 'not-available')
+        self.assertEqual(result['months'], {})
+        extract.assert_not_called()
+
+    def test_contract_section_does_not_read_modules_or_reviews(self):
+        source = SimpleNamespace(pk=101, aptem_id=None, email='learner@example.com')
+        connection = MagicMock()
+        with patch('learner_api.training_plan_dashboard.connections', {'enrolment': connection}), \
+             patch('learner_api.training_plan_dashboard.LearnerProfile') as profiles, \
+             patch('learner_api.calendar.coaching_events_for_learner') as reviews:
+            self.assertEqual(read_dashboard(source, section='contract'), {
+                'months': {}, 'contractStatus': 'not-available',
+                'programmeStartDate': None, 'programmeEndDate': None,
+            })
+        profiles.objects.filter.assert_not_called()
+        connection.cursor.return_value.__enter__.return_value.execute.assert_not_called()
+        reviews.assert_not_called()
+
+    def test_contract_section_returns_programme_dates_from_selected_training_plan(self):
+        contract = {
+            'azure_path': 'az://contracts/training-plan.pdf',
+            'training_plan_planned_hours': 30,
+            'fetched_at': datetime(2026, 1, 20, tzinfo=timezone.utc),
+            'extraction_metadata': None,
+            'program_start_date': date(2026, 1, 19),
+            'planned_end_date': date(2027, 1, 31),
+        }
+        with patch('learner_api.training_plan_dashboard.read_contract', return_value={
+            '2026-01': {'planned': 3, 'topics': [], 'activities': []},
+        }):
+            result = contract_plan(SimpleNamespace(pk=125), contract)
+
+        self.assertEqual(result['programmeStartDate'], '2026-01-19')
+        self.assertEqual(result['programmeEndDate'], '2027-01-31')
+        self.assertEqual(result['contractStatus'], 'ready')
+
+    def test_contract_cache_version_changes_only_with_source_contract(self):
+        contract = {
+            'id': 77,
+            'azure_path': 'az://contracts/training-plan.pdf',
+            'training_plan_planned_hours': 30,
+            'fetched_at': datetime(2026, 1, 20, tzinfo=timezone.utc),
+            'date': datetime(2026, 1, 19, tzinfo=timezone.utc),
+            'fully_signed_date': date(2026, 1, 18),
+            'extraction_metadata': None,
+            'program_start_date': date(2026, 1, 19),
+            'planned_end_date': date(2027, 1, 31),
+        }
+        with patch('learner_api.training_plan_dashboard.read_contract', return_value={}) as extract:
+            contract_plan(SimpleNamespace(pk=125), contract)
+            contract_plan(SimpleNamespace(pk=125), contract)
+
+        first_version = extract.call_args_list[0].args[2]
+        self.assertEqual(extract.call_args_list[1].args[2], first_version)
+        self.assertIn('77', first_version)
+        self.assertIn('training-plan.pdf', first_version)
+
+        with patch('learner_api.training_plan_dashboard.read_contract', return_value={}) as replaced:
+            contract_plan(SimpleNamespace(pk=125), {**contract, 'id': 78})
+        self.assertNotEqual(replaced.call_args.args[2], first_version)
+
+    def test_contract_download_uses_one_size_check_and_reuses_versioned_extract(self):
+        read_contract.cache_clear()
+        service = MagicMock()
+        client = service.get_blob_client.return_value
+        client.get_blob_properties.return_value.size = 100
+        client.download_blob.return_value.readall.return_value = contract_pdf()
+        try:
+            with patch('audit_api.views._azure_service_client') as storage, \
+                 patch('audit_api.views._parse_contract_azure_path', return_value=('contracts', 'plan.pdf')):
+                storage.return_value.__enter__.return_value = service
+                first = read_contract('stored', 30, 'version-1')
+                self.assertEqual(read_contract('stored', 30, 'version-1'), first)
+                self.assertEqual(first['2026-09']['planned'], 30)
+                client.get_blob_properties.assert_called_once_with(connection_timeout=5, read_timeout=10, retry_total=0)
+                client.download_blob.assert_called_once()
+                read_contract('stored', 30, 'version-2')
+                self.assertEqual(client.download_blob.call_count, 2)
+        finally:
+            read_contract.cache_clear()
+
+    def test_oversized_contract_is_not_downloaded(self):
+        read_contract.cache_clear()
+        service = MagicMock()
+        client = service.get_blob_client.return_value
+        client.get_blob_properties.return_value.size = 31 * 1024 * 1024
+        try:
+            with patch('audit_api.views._azure_service_client') as storage, \
+                 patch('audit_api.views._parse_contract_azure_path', return_value=('contracts', 'plan.pdf')):
+                storage.return_value.__enter__.return_value = service
+                self.assertIsNone(read_contract('oversize', None, '1'))
+                client.download_blob.assert_not_called()
+        finally:
+            read_contract.cache_clear()
+
+    def test_occurrence_link_and_rescheduled_duration_win_over_series_defaults(self):
+        start=datetime(2026,9,14,12,0,tzinfo=timezone.utc)
+        row={'occurrence_id':'O1','session_id':'S1','module_id':'M1','module_title':'Marketing',
+             'scheduled_start':start,'scheduled_end':start+timedelta(minutes=45),'start_datetime':start-timedelta(days=7),
+             'duration_minutes':60,'join_url':'https://teams.microsoft.com/occurrence','series_join_url':'https://teams.microsoft.com/series',
+             'status':'completed','series_status':'active','attended':False}
+        self.assertEqual(plan_session(row),{'id':'O1','moduleId':'M1','title':'Marketing','start':start.isoformat(),
+          'end':(start+timedelta(minutes=45)).isoformat(),'minutes':45,'joinUrl':row['join_url'],'status':'completed','attended':False})
+        row.update(occurrence_id=None,scheduled_start=None,scheduled_end=None,status=None,series_status='completed',join_url='')
+        self.assertEqual(plan_session(row)['status'],'completed')
+        self.assertEqual(plan_session(row)['joinUrl'],row['series_join_url'])
+
+    def test_overview_attendance_reads_the_meeting_behind_a_replaced_link(self):
+        source = SimpleNamespace(pk=125, aptem_id=None, email='learner@example.com',
+                                 programme='', cohort='', group='')
+        connection = MagicMock()
+        module = {'id': 'M1', 'title': 'Marketing', 'description': '', 'start_date': None, 'end_date': None,
+                  'weeks_number': 1, 'total_otjh': 0, 'sessions_number': 1, 'session_week_day': 'Monday',
+                  'session_start_time': '10:00', 'session_end_time': '12:00', 'coach_name': '',
+                  'programme_name': '', 'cohort_name': '', 'group_name': ''}
+        with patch('learner_api.training_plan_dashboard.connections', {'enrolment': connection}), \
+             patch('learner_api.training_plan_dashboard.LearnerProfile') as profiles, \
+             patch('learner_api.training_plan_dashboard._builder_subject_metadata', return_value=({}, {})), \
+             patch('learner_api.training_plan_dashboard.rows', side_effect=[[module], [], []]), \
+             patch('learner_api.calendar.coaching_events_for_learner', return_value=[]), \
+             patch('learner_api.training_plan_dashboard.coach_phone', return_value=''):
+            profiles.objects.filter.return_value.only.return_value.first.return_value = None
+            read_dashboard(source, section='overview')
+        sql = ' '.join(str(call.args[0]) for call in connection.cursor.return_value.__enter__.return_value.execute.call_args_list)
+        self.assertIn('WITH RECURSIVE owners', sql)
+        self.assertIn('teams_shared_source_module_id', sql)
+        self.assertIn('delivery.module_id', sql)
+        self.assertIn('liveSessionLinkOverride', sql)
+        self.assertIn('COALESCE(replaced_attendance.occurrence_id,o.id)', sql)
+
+    def reviewed_extract(self, **changes):
+        return json.dumps({'version':1,'pdf_sha256':sha256(b'reviewed PDF').hexdigest(),'printed_total':10,
+            'activities':[{'date':'2026-09-14','title':'Marketing','method':'Assignment','hours':10}],**changes})
+
+    def test_reviewed_scan_preserves_its_monthly_plan(self):
+        result=read_verified_extract(b'reviewed PDF',self.reviewed_extract())
+        self.assertEqual(result['2026-09']['planned'],10)
+        self.assertEqual(result['2026-09']['topics'],['Marketing'])
+
+    def test_reviewed_extract_cannot_be_used_for_a_replaced_pdf(self):
+        self.assertIsNone(read_verified_extract(b'changed PDF',self.reviewed_extract()))
+
+    def test_reviewed_extract_must_match_its_printed_total(self):
+        self.assertIsNone(read_verified_extract(b'reviewed PDF',self.reviewed_extract(printed_total=11)))
+
+    def test_reviewed_extract_rejects_invalid_rows_and_numbers(self):
+        for changes in ({'date':'2026-02-30'},{'hours':'NaN'},{'hours':-1},{'hours':True},{'title':''}):
+            row={'date':'2026-09-14','title':'Marketing','method':'Assignment','hours':10,**changes}
+            self.assertIsNone(read_verified_extract(b'reviewed PDF',self.reviewed_extract(activities=[row])))
+
+    def test_bad_reviewed_metadata_does_not_break_the_dashboard(self):
+        for metadata in (None,'invalid','[]','{"activities": null}',self.reviewed_extract(version=2)):
+            self.assertIsNone(read_verified_extract(b'reviewed PDF',metadata))
+        for raw in (None,'invalid','[]',{'other':'metadata'}):
+            self.assertIsNone(contract_extract_metadata(raw))
+        raw={'_verified_training_plan':json.loads(self.reviewed_extract()),'other':'preserved'}
+        self.assertEqual(json.loads(contract_extract_metadata(json.dumps(raw))),raw['_verified_training_plan'])
+
+    def test_missing_review_placeholder_uses_its_matching_azure_document(self):
+        date = datetime(2025,5,8,23,16,46,616667,tzinfo=timezone.utc)
+        placeholder = {'id':6320,'date':date,'document_name':'Training Plan.pdf','azure_path':None}
+        document = {'id':790,'date':date-timedelta(microseconds=1),'document_name':'Training Plan','azure_path':'az://existing.pdf'}
+        self.assertIs(selected_contract([placeholder, document]),document)
+        self.assertIs(selected_contract([placeholder, {**document,'date':date-timedelta(days=1)}]),placeholder)
+        self.assertIs(selected_contract([placeholder, document, {**document,'id':791}]),placeholder)
+
+    def test_renamed_duplicate_keeps_its_original_document_identity(self):
+        date = datetime(2026, 8, 13, 11, 12, tzinfo=timezone.utc)
+        placeholder = {'id': 6330, 'date': date, 'original_name': 'TrainingPlan-v1.pdf',
+                       'document_name': 'TrainingPlan-v1.pdf', 'azure_path': None}
+        document = {'id': 5540, 'date': date, 'original_name': 'TrainingPlan-v1.pdf',
+                    'document_name': 'Training Plan', 'azure_path': 'az://existing.pdf'}
+        self.assertIs(selected_contract([placeholder, document]), document)
+        self.assertIs(selected_contract([placeholder, {**document, 'original_name': 'TrainingPlan-v2.pdf'}]), placeholder)
+
+    def test_centred_hours_and_shifted_total_remain_in_the_otj_column(self):
+        with fitz.open(stream=contract_pdf(), filetype='pdf') as document:
+            page = document[0]
+            for text in ('10', '20', '30'):
+                for rect in page.search_for(text):
+                    if rect.x0 > 480:
+                        page.add_redact_annot(rect)
+            page.apply_redactions()
+            for y, value in [(145, '10'), (180, '20'), (226, '30')]:
+                page.insert_text((480, y), value, fontsize=9)
+                page.insert_text((450, y), '5', fontsize=9)  # unrelated EM hours
+            self.assertEqual(verified_planned_hours(document.tobytes()), 30)
+
+    def test_total_value_can_touch_its_units(self):
+        with fitz.open(stream=contract_pdf(), filetype='pdf') as document:
+            page = document[0]
+            page.add_redact_annot(fitz.Rect(370, 200, 530, 230))
+            page.apply_redactions()
+            page.insert_text((375, 218), 'Total OTJ', fontsize=9)
+            page.insert_text((478, 218), '(hr)30', fontsize=9)
+            self.assertEqual(verified_planned_hours(document.tobytes()), 30)
+
+    def test_reads_topics_and_contract_total_without_adding_the_total_row(self):
+        result = parse_contract(contract_pdf(),30)
+        self.assertEqual(result['2026-09']['planned'],30)
+        self.assertEqual(result['2026-09']['topics'],['Marketing foundations','Brand strategy'])
+        self.assertEqual(len(result['2026-09']['activities']),2)
+
+    def test_rejects_an_extract_that_disagrees_with_the_pdf_total(self):
+        self.assertIsNone(parse_contract(contract_pdf(31)))
+
+    def test_planned_hours_come_from_the_verified_table_not_ilr_or_minimums(self):
+        with fitz.open(stream=contract_pdf(), filetype='pdf') as document:
+            document[0].insert_text((65, 75), 'ILR Planned Hours: 576', fontsize=9)
+            document[0].insert_text((65, 330), 'Published minimum off-the-job training: 557', fontsize=9)
+            data = document.tobytes()
+        self.assertEqual(verified_planned_hours(data), 30)
+        self.assertIsNone(verified_planned_hours(contract_pdf(total=31)))
+
+    def test_verified_zero_is_preserved(self):
+        metadata = self.reviewed_extract(printed_total=0, activities=[{
+            'date': '2026-09-14', 'title': 'Prior learning', 'method': 'Assignment', 'hours': 0,
+        }])
+        with patch('learner_api.training_plan_contract.parse_contract', return_value=None):
+            self.assertEqual(verified_planned_hours(b'reviewed PDF', metadata), 0)
+            self.assertIsNone(verified_planned_hours(b'changed PDF', metadata))
+
+    def test_uses_verified_pdf_total_when_database_extraction_is_stale(self):
+        self.assertEqual(parse_contract(contract_pdf(),29)['2026-09']['planned'],30)
+
+    def test_learning_total_and_reviews_can_share_the_last_page(self):
+        result = parse_contract(contract_pdf(review_on_same_page=True),30)
+        self.assertEqual(result['2026-09']['planned'],30)
+        self.assertEqual(len(result['2026-09']['activities']),2)
+
+    def test_dates_can_touch_the_delivery_provider_text(self):
+        result = parse_contract(contract_pdf(joined_provider=True),30)
+        self.assertEqual(result['2026-09']['planned'],30)
+
+    def test_table_heading_can_split_between_pdf_pages(self):
+        result = parse_contract(contract_pdf(split_header=True),30)
+        self.assertEqual(result['2026-09']['planned'],30)
+        self.assertEqual(result['2026-09']['topics'],['Marketing foundations','Brand strategy'])
+
+    def test_printed_total_can_continue_on_the_next_page_before_reviews(self):
+        result = parse_contract(contract_pdf(split_total=True),30)
+        self.assertEqual(result['2026-09']['planned'],30)
+        self.assertIsNone(parse_contract(contract_pdf(total=31, split_total=True)))
+
+    def test_missing_numeric_values_are_not_reported_as_zero(self):
+        for value in (None,'invalid','NaN','Infinity',-1):
+            self.assertIsNone(number(value))
+        self.assertEqual(number(0),0)
+
+    def test_other_learner_cannot_read_dashboard(self):
+        account=SimpleNamespace(role='learner',subject_type='learner',subject_id=125)
+        request=RequestFactory().get('/?aptem_id=92')
+        with patch('login.permissions.authenticate_request',return_value=account), patch('learner_api.training_plan_dashboard.read_dashboard') as read:
+            response=training_plan_dashboard(request,kind='commercial',pk=126)
+        self.assertEqual(response.status_code,404)
+        read.assert_not_called()
+
+    def test_dashboard_has_no_write_method(self):
+        response=training_plan_dashboard(RequestFactory().post('/'),kind='commercial',pk=125)
+        self.assertEqual(response.status_code,405)

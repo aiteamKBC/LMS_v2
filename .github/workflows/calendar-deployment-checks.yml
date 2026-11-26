@@ -5,6 +5,7 @@ on:
     paths:
       - '.github/ci/deploy.sh'
       - '.github/ci/calendar_*.py'
+      - '.github/ci/test_calendar_*.py'
       - '.github/workflows/deploy-aws.yml'
       - '.github/workflows/calendar-deployment-checks.yml'
   workflow_call:
@@ -14,9 +15,11 @@ permissions:
 
 jobs:
   guards:
-    name: Deployment script syntax
+    name: Candidate and schema guards (mock AWS)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Test candidate, migration and rollback ordering without AWS
+        run: python3 -m unittest discover -s .github/ci -p 'test_calendar_*.py' -v
       - name: Check deployment shell syntax
         run: bash -n .github/ci/deploy.sh

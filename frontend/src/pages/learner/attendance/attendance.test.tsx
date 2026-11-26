@@ -1,0 +1,1010 @@
+import * as React from 'react';
+import { MemoryRouter, useLocation } from 'react-router-dom';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import AttendancePage from './page';
+import { lectureCounts } from './lectureCounts';
+import AbsenceReportForm from './components/AbsenceReportForm';
+import { AppIcon } from '@/components/feature/AppIcon';
+import { peekAttendanceWorkspace, type AttendanceLecture, type AttendanceMode, type AttendanceWorkspace } from '@/api/attendanceLectures';
+import type { LearningSchedule } from '@/api/learnerOverview';
+import type { PlanModule } from '@/api/trainingPlanDashboard';
+import { clearAllCachedResources } from '@/api/cachedRequest';
+
+const learnerIdentity = vi.hoisted(() => ({ kind: 'apprenticeship', id: '12' }));
+vi.mock('@/hooks/useMyLearner', () => ({ useMyLearner: () => learnerIdentity }));
+vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: React.ReactNode }) => <main>{children}</main> }));
+
+const lecture = (overrides: Partial<AttendanceLecture> = {}): AttendanceLecture => ({
+  id: 'legacy-one', sessionId: 'legacy-one', reportId: '8000000000000000012', date: '2026-09-01', title: 'First lecture',
+  moduleId: 'legacy:business', module: 'Business', source: 'kbc-attendance', startTime: '10:00', endTime: '11:00',
+  durationMinutes: 60, contentSummary: 'Business strategy', ksbs: ['K1', 'S2'], activities: [], status: 'completed',
+  catchupStatus: null, updatedAt: null, canReportAbsence: false, absenceReport: null, ...overrides,
+});
+let payload: AttendanceWorkspace;
+let schedulePayload: LearningSchedule;
+let posts: { url: string; body: unknown }[];
+const planModule = (id: string, title: string, overrides: Partial<PlanModule> = {}): PlanModule => ({
+  id, title, description: '', start_date: '2020-01-01', end_date: '2099-12-31', tutor_name: '', coach_name: '', ...overrides,
+});
+beforeEach(() => {
+  learnerIdentity.kind = 'apprenticeship'; learnerIdentity.id = '12';
+  clearAllCachedResources(); posts = [];
+  Object.defineProperties(HTMLDialogElement.prototype, {
+    showModal: { configurable: true, value: function(this: HTMLDialogElement) { this.setAttribute('open', ''); } },
+    close: { configurable: true, value: function(this: HTMLDialogElement) { this.removeAttribute('open'); } },
+  });
+  vi.stubGlobal('React', React); vi.stubGlobal('AppIcon', AppIcon);
+  payload = {
+    csrfToken: 'test-csrf', timeZone: 'Europe/London',
+    lectures: [lecture(), lecture({ id: 'missed', title: 'Missed lecture', status: 'absent', catchupStatus: 'completed',
+      activities: [{ id: 'a', title: 'Recording', type: 'video', completed: true, groupId: 20, activityId: 4 }], canReportAbsence: true }),
+      lecture({ id: 'future', title: 'Future lecture', status: 'upcoming', moduleId: 'native:new', module: 'New module', canReportAbsence: true })],
+    totals: { total: 3, attended: 1, absent: 1, covered: 1, upcoming: 1, attendanceRate: 50 },
+    modules: [{ id: 'legacy:business', title: 'Business' }, { id: 'native:new', title: 'New module' }],
+    summary: null, recentActivity: [],
+    mode: { available: true, mode: 'live', requestedMode: null, status: 'active', emailSent: false, managerAvailable: true, remindersEnabled: true, updatedAt: null },
+  };
+  schedulePayload = { modules: [], moduleLinks: {}, generatedAt: '2026-09-01T00:00:00Z' };
+  vi.stubGlobal('fetch', vi.fn(async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+    const url = String(input);
+    if (init?.method === 'POST') {
+      posts.push({ url, body: init.body });
+      if (url.endsWith('/mode/')) {
+        payload = { ...payload, mode: { ...payload.mode, requestedMode: 'lazy', status: 'pending', emailSent: true, remindersEnabled: false } };
+        return new Response(JSON.stringify(payload.mode));
+      }
+      return new Response(JSON.stringify({ id: 1, sessionTitle: 'Future lecture', sessionDate: '2026-10-01', reference: 'AR-0001', status: 'pending' }), { status: 201 });
+    }
+    if (url.includes('/calendar/')) return new Response(JSON.stringify({ events: [] }));
+    if (url.includes('/training-plan-dashboard/')) return new Response(JSON.stringify(schedulePayload));
+    if (url.includes('/absence-reports/')) return new Response(JSON.stringify({ results: [], missedSessions: [
+      { id: 'future', sessionId: 'teams:future', reportId: '8000000000000000013', title: 'Future lecture', dateIso: '2026-10-01',
+        startTime: '10:00', endTime: '11:00', module: 'New module', sessionType: 'live_session', coach: '', status: 'upcoming' },
+    ] }));
+    return new Response(JSON.stringify(payload));
+  }));
+});
+afterEach(() => {
+  cleanup(); clearAllCachedResources(); vi.restoreAllMocks(); vi.unstubAllGlobals();
+  Reflect.deleteProperty(HTMLDialogElement.prototype, 'showModal');
+  Reflect.deleteProperty(HTMLDialogElement.prototype, 'close');
+});
+function CurrentLocation() {
+  const location = useLocation();
+  return <span data-testid="location">{location.pathname}{location.search}</span>;
+}
+
+it('shows recorded learning credit separately from make-up and keeps waiting outside absence actions', async () => {
+  payload.mode.mode = 'lazy';
+  payload.lectures = [
+    // The API sends canonical "present"; the client maps it to a display status.
+    lecture({ id: 'recorded', title: 'Recorded delivery', status: 'present' as AttendanceLecture['status'], rawStatus: 'absent', effectiveAttendance: 1,
+      attendanceBasis: 'recorded', finalOutcome: 'recorded', catchupStatus: null, canReportAbsence: false }),
+    lecture({ id: 'waiting', title: 'Awaiting delivery', status: 'awaiting_recording', rawStatus: 'absent',
+      attendanceBasis: 'awaiting_recording', counted: false, canReportAbsence: false }),
+  ];
+  payload.totals = { total: 2, attended: 1, absent: 0, covered: 0, upcoming: 0, attendanceRate: 100 };
+  render(<MemoryRouter><AttendancePage /></MemoryRouter>);
+  expect(await screen.findByText('Completed by recording')).toBeInTheDocument();
+  expect(screen.getByText('Awaiting recording')).toBeInTheDocument();
+  expect(screen.queryByText('Made up')).not.toBeInTheDocument();
+  expect(screen.queryByText('Make-up needed')).not.toBeInTheDocument();
+});
+const mount = () => render(<MemoryRouter><AttendancePage /><CurrentLocation /></MemoryRouter>);
+
+describe('Attendance lecture workspace', () => {
+  it.each(['apprenticeship', 'commercial'])('shows manually corrected %s attendance without inventing a catch-up', async kind => {
+    learnerIdentity.kind = kind;
+    payload.lectures = [lecture({ id: 'manual', title: 'Manually confirmed lecture',
+      status: 'present' as AttendanceLecture['status'], rawStatus: 'absent', effectiveStatus: 'present',
+      effectiveAttendance: 1, finalOutcome: 'present', catchupStatus: null }),
+    lecture({ id: 'verified', title: 'Verified lecture', status: 'present' as AttendanceLecture['status'],
+      rawStatus: 'present', effectiveStatus: 'present', effectiveAttendance: 1 }),
+    lecture({ id: 'recovered', title: 'Recovered lecture', status: 'present' as AttendanceLecture['status'],
+      rawStatus: 'absent', effectiveStatus: 'made_up', effectiveAttendance: 1, catchupStatus: 'completed',
+      recovery: { method: 'alternative', date: '2026-09-02' } })];
+    mount();
+    const manual = await screen.findByRole('article', { name: 'Manually confirmed lecture' });
+    expect(within(manual).getByText('Attended')).toBeInTheDocument();
+    expect(within(manual).getByText('Attendance confirmed manually')).toBeInTheDocument();
+    expect(within(manual).queryByText('Made up')).not.toBeInTheDocument();
+    expect(within(manual).queryByRole('button', { name: 'Book Catchup Session' })).not.toBeInTheDocument();
+    expect(screen.getByText('Total Lectures').parentElement).toHaveTextContent('3');
+    expect(screen.getByText('100% attendance')).toBeInTheDocument();
+    const verified = await screen.findByRole('article', { name: 'Verified lecture' });
+    expect(within(verified).getByText('Attended')).toBeInTheDocument();
+    expect(within(verified).queryByText('Attendance confirmed manually')).not.toBeInTheDocument();
+    const recovered = await screen.findByRole('article', { name: 'Recovered lecture' });
+    expect(within(recovered).getByText('Made up')).toBeInTheDocument();
+    expect(within(recovered).getByText('Made up via alternative')).toBeInTheDocument();
+    expect(lectureCounts(peekAttendanceWorkspace(kind as 'commercial' | 'apprenticeship', '12')!.lectures))
+      .toMatchObject({ attended: 3, absent: 0, covered: 1, rate: 100 });
+  });
+
+  it('keeps corrected weeks in the register, counts, filters and activities without changing saved evidence', async () => {
+    const weeks = ['04', '05', '06', '07', '08', '09', '10'];
+    const dates = ['2026-10-09', '2026-10-16', '2026-10-23', '2026-10-30', '2026-11-06', '2026-11-13', '2026-11-20'];
+    payload.lectures = weeks.map((week, index) => {
+      const corrected = !['04', '08'].includes(week);
+      return lecture({ id: `week-${week}`, title: `Week ${week}`, date: dates[index],
+        status: corrected ? 'present' as AttendanceLecture['status'] : 'absent',
+        rawStatus: ['absent', 'pending', 'unmarked'][index % 3],
+        effectiveStatus: corrected ? 'present' : 'absent', effectiveAttendance: corrected ? 1 : 0,
+        componentHref: `/learner/component/apprenticeship/12/week-${week}`,
+      });
+    });
+    payload.lectures.push(lecture({ id: 'cancelled', title: 'Cancelled lecture', status: 'cancelled' }));
+    const before = structuredClone(payload);
+    mount();
+    await screen.findByRole('article', { name: 'Week 10' });
+    expect(screen.getAllByRole('article').map(row => within(row).getByRole('heading').textContent))
+      .toEqual([...weeks].reverse().map(week => `Week ${week}`));
+    expect(screen.queryByRole('article', { name: 'Cancelled lecture' })).not.toBeInTheDocument();
+    expect(screen.getByText('Total Lectures').parentElement).toHaveTextContent('7');
+    expect(screen.getByText('71% attendance')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Group by month' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Expand all months' }));
+    expect(screen.getAllByRole('article')).toHaveLength(7);
+    fireEvent.click(screen.getByRole('button', { name: 'Group by month' }));
+    fireEvent.click(screen.getByText('Search & filters'));
+    fireEvent.click(screen.getByRole('button', { name: /^Attended\s*5$/ }));
+    expect(screen.getAllByRole('article').map(row => within(row).getByRole('heading').textContent))
+      .toEqual(['Week 10', 'Week 09', 'Week 07', 'Week 06', 'Week 05']);
+    const corrected = screen.getByRole('article', { name: 'Week 05' });
+    fireEvent.click(within(corrected).getByRole('button', { name: 'Open Activities' }));
+    expect(screen.getByTestId('location')).toHaveTextContent('/learner/component/apprenticeship/12/week-05');
+    fireEvent.click(screen.getByRole('button', { name: /^Absent\s*2$/ }));
+    expect(screen.getAllByRole('article').map(row => within(row).getByRole('heading').textContent))
+      .toEqual(['Week 08', 'Week 04']);
+    expect(payload).toEqual(before);
+    expect(posts).toEqual([]);
+  });
+
+  it.each(['apprenticeship', 'commercial'])('keeps learning-only modules out of the %s attendance selector, default and totals', async kind => {
+    learnerIdentity.kind = kind;
+    payload.modules.push(
+      { id: 'legacy:ksb', title: 'Project Controls Professional L6 : KSBs' },
+      { id: 'native:safe', title: 'Safeguarding For Learners' },
+    );
+    payload.lectures.push(
+      lecture({ id: 'ksb-history', title: 'Historical KSB record', moduleId: 'legacy:ksb', module: 'Project Controls Professional L6 : KSBs' }),
+      lecture({ id: 'safe', title: 'Learning-only record', moduleId: 'native:safe', module: '', status: 'absent' }),
+    );
+    // A learning-only assignment must not replace the current teaching module.
+    schedulePayload.modules = [planModule('safe', 'Safeguarding For Learners'), planModule('new', 'New module')];
+    const before = structuredClone({ payload, schedulePayload });
+    mount();
+    const select = await screen.findByRole('combobox', { name: 'Module' });
+    await waitFor(() => expect(select).toHaveValue('native:new'));
+    expect(within(select).getAllByRole('option').map(option => option.textContent)).toEqual(['All modules', 'Business', 'New module']);
+    fireEvent.change(select, { target: { value: 'all' } });
+    expect(screen.getByText('Total Lectures').parentElement).toHaveTextContent('3');
+    expect(screen.getByText('50% attendance')).toBeInTheDocument();
+    expect(screen.getAllByRole('article')).toHaveLength(3);
+    expect(screen.queryByText('Historical KSB record')).not.toBeInTheDocument();
+    expect(screen.queryByText('Learning-only record')).not.toBeInTheDocument();
+    expect({ payload, schedulePayload }).toEqual(before);
+    expect(posts).toEqual([]);
+  });
+
+  it('does not reintroduce a learning-only module from the current schedule when absent from the workspace options', async () => {
+    schedulePayload.modules = [planModule('ksb', 'Marketing Manager Level 6-KSBs')];
+    mount();
+    const select = await screen.findByRole('combobox', { name: 'Module' });
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/training-plan-dashboard/'), expect.anything()));
+    expect(select).toHaveValue('all');
+    expect(within(select).queryByRole('option', { name: /KSBs/ })).not.toBeInTheDocument();
+    expect(screen.getAllByRole('article')).toHaveLength(3);
+  });
+
+  it('shows an empty attendance workspace when all assigned modules are learning-only', async () => {
+    payload.modules = [{ id: 'native:safe', title: 'Safeguarding For Learners' }];
+    payload.lectures = [];
+    schedulePayload.modules = [planModule('safe', 'Safeguarding For Learners')];
+    mount();
+    const select = await screen.findByRole('combobox', { name: 'Module' });
+    expect(select).toHaveValue('all');
+    expect(within(select).getAllByRole('option')).toHaveLength(1);
+    expect(screen.getByText('Total Lectures').parentElement).toHaveTextContent('0');
+    expect(screen.getByText('No lectures yet')).toBeInTheDocument();
+  });
+
+  it.each(['apprenticeship', 'commercial'])('keeps distinct MSP names, lectures and attendance totals separate for %s learners', async kind => {
+    learnerIdentity.kind = kind;
+    const title = 'Managing Successful Programmes: Project Controls for Transformational Change';
+    const oldTitle = 'Ray-Managing Successful Programmes (MSP) Jan 2026';
+    payload.modules = [{ id: 'legacy:msp', title: oldTitle }, { id: 'native:msp', title }];
+    payload.lectures = [
+      lecture({ id: 'msp-one', moduleId: 'legacy:msp', module: oldTitle, title: 'MSP first lecture',
+        monthlyLog: { month: '2026-09', sourceRef: 'att:msp-first' } }),
+      lecture({ id: 'msp-two', moduleId: 'legacy:msp', module: oldTitle, title: 'MSP second lecture' }),
+      ...Array.from({ length: 14 }, (_, index) => lecture({ id: `current-msp-${index}`,
+        moduleId: 'native:msp', module: title, title: `Current MSP lecture ${index + 1}`,
+        source: 'microsoft-teams', status: index < 2 ? 'completed' : index < 4 ? 'absent' : 'upcoming' })),
+    ];
+    const original = structuredClone(payload);
+    schedulePayload.modules = [planModule('msp', title)];
+    mount();
+    const select = await screen.findByRole('combobox', { name: 'Module' });
+    await waitFor(() => expect(select).toHaveValue('native:msp'));
+    expect(within(select).getAllByRole('option')).toHaveLength(3);
+    expect(within(select).getByRole('option', { name: title })).toBeInTheDocument();
+    expect(within(select).getByRole('option', { name: oldTitle })).toHaveValue('legacy:msp');
+    expect(screen.getByText('50% attendance')).toBeInTheDocument();
+    expect(screen.getByText('Total Lectures').parentElement).toHaveTextContent('14');
+    expect(screen.getByText('Attended', { selector: 'p' }).parentElement).toHaveTextContent('2');
+    expect(screen.getByText('Absent', { selector: 'p' }).parentElement).toHaveTextContent('2');
+    expect(screen.getAllByRole('article')).toHaveLength(14);
+    expect(screen.queryByRole('article', { name: 'MSP first lecture' })).not.toBeInTheDocument();
+
+    fireEvent.change(select, { target: { value: 'legacy:msp' } });
+    expect(screen.getByTitle(oldTitle)).toHaveTextContent(oldTitle);
+    expect(screen.getByText('100% attendance')).toBeInTheDocument();
+    expect(screen.getByText('Total Lectures').parentElement).toHaveTextContent('2');
+    expect(screen.getByText('Attended', { selector: 'p' }).parentElement).toHaveTextContent('2');
+    expect(screen.getByText('Absent', { selector: 'p' }).parentElement).toHaveTextContent('0');
+    expect(screen.getAllByRole('article')).toHaveLength(2);
+    expect(within(screen.getByRole('article', { name: 'MSP first lecture' })).getByRole('button', { name: 'Open Activities' })).toBeDisabled();
+    fireEvent.change(select, { target: { value: 'native:msp' } });
+    expect(screen.getByTitle(title)).toHaveTextContent(title);
+    expect(screen.getAllByRole('article')).toHaveLength(14);
+    expect(screen.queryByRole('article', { name: 'MSP first lecture' })).not.toBeInTheDocument();
+    fireEvent.change(select, { target: { value: 'all' } });
+    expect(screen.getAllByRole('article')).toHaveLength(16);
+    expect(screen.getByText('67% attendance')).toBeInTheDocument();
+    expect(payload).toEqual(original);
+    expect(posts).toEqual([]);
+  });
+
+  it.each(['apprenticeship', 'commercial'])('combines confirmed G1 aliases in the module filter and attendance counts for %s learners', async kind => {
+    learnerIdentity.kind = kind;
+    const title = 'G1- Ray - Project Management Professional - Jan 26';
+    const moduleIds = ['legacy:g1-with-dr', 'legacy:g1-without-dr', 'native:g1'];
+    payload.modules = [
+      { id: moduleIds[0], title: title.replace('Ray', 'Dr.Ray') },
+      { id: moduleIds[1], title }, { id: moduleIds[2], title },
+      { id: 'native:g2', title: title.replace('G1', 'G2') },
+    ];
+    payload.lectures = [
+      lecture({ id: 'g1-original', moduleId: moduleIds[0], module: payload.modules[0].title, title: 'Original G1 lecture',
+        monthlyLog: { month: '2026-09', sourceRef: 'att:original-g1' } }),
+      lecture({ id: 'g1-renamed', moduleId: moduleIds[1], module: title, title: 'Renamed G1 lecture', status: 'absent' }),
+      lecture({ id: 'g1-current', moduleId: moduleIds[2], module: title, title: 'Current G1 lecture', status: 'late', source: 'microsoft-teams' }),
+      lecture({ id: 'g2', moduleId: 'native:g2', module: payload.modules[3].title, title: 'Separate G2 lecture' }),
+    ];
+    const original = structuredClone(payload);
+    schedulePayload.modules = [planModule('g1', title)];
+    mount();
+    const select = await screen.findByRole('combobox', { name: 'Module' });
+    await waitFor(() => expect(select).toHaveValue('native:g1'));
+    expect(within(select).getAllByRole('option')).toHaveLength(3); // All, G1, G2.
+    expect(within(select).getAllByRole('option', { name: title })).toHaveLength(1);
+    expect(screen.getByText('67% attendance')).toBeInTheDocument();
+    expect(screen.getAllByRole('article')).toHaveLength(3);
+    expect(screen.queryByRole('article', { name: 'Separate G2 lecture' })).not.toBeInTheDocument();
+    expect(screen.getByText('Total Lectures').parentElement).toHaveTextContent('3');
+    expect(screen.getByText('Absent', { selector: 'p' }).parentElement).toHaveTextContent('1');
+
+    expect(within(screen.getByRole('article', { name: 'Original G1 lecture' })).getByRole('button', { name: 'Open Activities' })).toBeDisabled();
+    fireEvent.change(select, { target: { value: 'native:g2' } });
+    expect(screen.getAllByRole('article')).toHaveLength(1);
+    expect(screen.getByRole('article', { name: 'Separate G2 lecture' })).toBeInTheDocument();
+    fireEvent.change(select, { target: { value: 'all' } });
+    expect(screen.getAllByRole('article')).toHaveLength(4);
+    expect(payload).toEqual(original);
+    expect(posts).toEqual([]);
+  });
+
+  it.each(['apprenticeship', 'commercial'])('combines Dr variants outside G1 for %s without changing lecture actions', async kind => {
+    learnerIdentity.kind = kind;
+    payload.modules = [{ id: 'legacy:alex', title: 'Dr. Alex - Leadership - Feb 27' },
+      { id: 'native:alex', title: 'Alex - Leadership - Feb 27' }];
+    payload.lectures = [lecture({ id: 'historical', title: 'Historical lecture', moduleId: 'legacy:alex', module: payload.modules[0].title,
+      monthlyLog: { month: '2026-09', sourceRef: 'att:historical' } }),
+      lecture({ id: 'current', title: 'Current lecture', moduleId: 'native:alex', module: payload.modules[1].title, status: 'absent' })];
+    schedulePayload.modules = [planModule('alex', payload.modules[1].title)];
+    const original = structuredClone(payload);
+    mount();
+    const select = await screen.findByRole('combobox', { name: 'Module' });
+    await waitFor(() => expect(select).toHaveValue('native:alex'));
+    expect(within(select).getAllByRole('option')).toHaveLength(2);
+    expect(screen.getByText('50% attendance')).toBeInTheDocument();
+    expect(screen.getAllByRole('article')).toHaveLength(2);
+    expect(within(screen.getByRole('article', { name: 'Historical lecture' })).getByRole('button', { name: 'Open Activities' })).toBeDisabled();
+    expect(payload).toEqual(original);
+    expect(posts).toEqual([]);
+  });
+
+  it('groups historical aliases with a current module supplied only by the schedule', async () => {
+    const title = 'G1- Ray - Project Management Professional - Jan 26';
+    payload.modules = [{ id: 'legacy:g1', title: title.replace('Ray', 'Dr.Ray') }];
+    payload.lectures = [lecture({ moduleId: 'legacy:g1', module: payload.modules[0].title })];
+    schedulePayload.modules = [planModule('g1', title)];
+    mount();
+    const select = await screen.findByRole('combobox', { name: 'Module' });
+    await waitFor(() => expect(select).toHaveValue('native:g1'));
+    expect(within(select).getAllByRole('option')).toHaveLength(2);
+    expect(screen.getByRole('article', { name: 'First lecture' })).toBeInTheDocument();
+    expect(screen.getByText('100% attendance')).toBeInTheDocument();
+  });
+
+  it('shows ended unmarked attendance without changing the percentage denominator', async () => {
+    payload.lectures = [lecture(), lecture({ id: 'unmarked', title: 'Unverified lecture', status: 'unmarked' })];
+    expect(lectureCounts(payload.lectures)).toMatchObject({ attended: 1, absent: 0, rate: 100 });
+    mount();
+    expect(await screen.findByText('Unmarked')).toBeInTheDocument();
+  });
+
+  it('removes cancelled lectures from the learner UI', async () => {
+    payload.lectures = [lecture({ id: 'cancelled', title: 'Cancelled lecture', status: 'cancelled', canReportAbsence: false })];
+    payload.totals = { total: 0, attended: 0, absent: 0, covered: 0, upcoming: 0, attendanceRate: null };
+    mount();
+    await waitFor(() => expect(screen.queryByRole('article', { name: 'Cancelled lecture' })).not.toBeInTheDocument());
+  });
+
+  it.each(['apprenticeship', 'commercial'])('opens the %s lecture component without confirming attendance or crediting hours', async kind => {
+    learnerIdentity.kind = kind;
+    vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-09-14T08:00:00Z'));
+    const componentHref = `/learner/component/${kind}/12/week-one`;
+    payload.lectures = [lecture({ id: 'later', date: '2026-10-01', status: 'upcoming' }),
+      lecture({ id: 'today', title: 'Today lecture', date: '2026-09-14', status: 'upcoming', durationMinutes: 120,
+        componentHref, tutor: 'Tutor Alex', coach: 'Coach Sam', canReportAbsence: true })];
+    mount();
+    const card = await screen.findByRole('region', { name: 'Today lecture' });
+    expect(within(card).getByText('Tutor Alex')).toBeInTheDocument();
+    expect(within(card).getByText('Coach Sam')).toBeInTheDocument();
+    expect(within(card).queryByRole('button', { name: 'Attend' })).not.toBeInTheDocument();
+    expect(within(card).queryByRole('button', { name: 'Report Absence' })).not.toBeInTheDocument();
+    const view = within(card).getByRole('link', { name: 'View session' });
+    expect(view).toHaveAttribute('href', componentHref);
+    fireEvent.click(view);
+    expect(screen.getByTestId('location')).toHaveTextContent(componentHref);
+    expect(posts).toHaveLength(0);
+    expect(within(card).queryByText(/hours credited/)).not.toBeInTheDocument();
+    expect(within(screen.getByRole('article', { name: 'Today lecture' })).getByText('Upcoming')).toBeInTheDocument();
+    expect(peekAttendanceWorkspace(kind as 'commercial' | 'apprenticeship', '12')!.lectures.find(row => row.id === 'today')?.status).toBe('upcoming');
+  });
+
+  it('keeps absence reporting in the header and lecture table without duplicating it on the featured card', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-09-14T08:00:00Z'));
+    payload.lectures = [lecture({ id: 'future', title: 'Future lecture', date: '2026-10-01', status: 'upcoming', canReportAbsence: true }),
+      lecture({ id: 'distant', title: 'Distant lecture', date: '2026-12-01', status: 'upcoming', canReportAbsence: true })];
+    mount();
+    const card = await screen.findByRole('region', { name: 'Future lecture' });
+    expect(within(card).queryByRole('button', { name: 'Report Absence' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Report absence' }));
+    expect(await screen.findByRole('dialog', { name: 'Report Absence' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Lecture *')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Close absence report' }));
+    fireEvent.click(within(screen.getByRole('article', { name: 'Future lecture' })).getByRole('button', { name: 'Report Absence' }));
+    await waitFor(() => expect(screen.getByLabelText('Lecture *')).toHaveValue('future'));
+  });
+
+  it.each(['apprenticeship', 'commercial'])('opens the finished %s training-week component rather than its monthly attendance log', async kind => {
+    learnerIdentity.kind = kind;
+    vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-09-21T12:00:00Z'));
+    const componentHref = `/learner/component/${kind}/12/week-one`;
+    payload.lectures = [lecture({ id: 'week-one', title: 'This week lecture', moduleId: 'native:business', date: '2026-09-17',
+      componentHref, source: 'microsoft-teams', startsAt: '2026-09-17T09:00:00Z', endsAt: '2026-09-17T10:00:00Z' }),
+    lecture({ id: 'week-two', title: 'Next week lecture', moduleId: 'native:business', date: '2026-09-24', status: 'upcoming' })];
+    schedulePayload.modules = [planModule('business', 'Business', { curriculumSlots: ['2026-09-17', '2026-09-24'].map((date, index) => ({
+      slotNumber: index + 1, date, day: 'Thursday', type: 'live-session', sessionNumber: index + 1, holidays: [],
+    })) })];
+    mount();
+    const card = await screen.findByRole('region', { name: 'This week lecture' });
+    const view = within(card).getByRole('link', { name: 'View session' });
+    expect(view).toHaveAttribute('href', componentHref);
+    expect(within(card).queryByRole('link', { name: 'Join meeting' })).not.toBeInTheDocument();
+    expect(within(card).queryByRole('link', { name: 'View recording' })).not.toBeInTheDocument();
+    fireEvent.click(view);
+    expect(screen.getByTestId('location')).toHaveTextContent(componentHref);
+    expect(screen.getByTestId('location')).not.toHaveTextContent('monthly-logs');
+    expect(posts).toHaveLength(0);
+  });
+
+  it('shows the approved alternative session link in the attendance popup', async () => {
+    const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (!init?.method && String(input).includes('/absence-reports/')) return new Response(JSON.stringify({
+        results: [{
+          id: 29, reference: 'AR-0029', sessionTitle: 'MM21 copy — Session 8', sessionDate: '2026-09-23',
+          sessionTime: '07:00', reasonCategory: 'emergency', reason: 'Family or personal emergency',
+          status: 'approved', evidenceProvided: false, evidenceKind: '', evidenceUrl: '', evidenceText: '',
+          coachNote: '', recoveryMethod: 'alternative', catchupEventKey: 'alternative:target-occurrence',
+          alternativeSession: { id: 'target-occurrence', title: 'MM21 — Session 8', dateIso: '2026-09-25',
+            startTime: '06:00', endTime: '08:00', groupId: 'group-2', group: 'Aya Group', cohortId: 'cohort-1',
+            cohort: 'Final Cohort', status: 'scheduled', joinUrl: 'https://teams.microsoft.com/l/meetup-join/approved' },
+          attendanceRate: 0, previousAbsences: 4, createdAt: '2026-09-21T10:00:00Z', updatedAt: '2026-09-21T11:00:00Z',
+        }],
+        missedSessions: [],
+      }));
+      return originalFetch(input, init);
+    });
+
+    mount();
+    await screen.findByText('Attendance');
+    fireEvent.click(screen.getByRole('button', { name: 'Report absence' }));
+    const join = await screen.findByRole('link', { name: 'Join approved session' });
+    expect(join).toHaveAttribute('href', 'https://teams.microsoft.com/l/meetup-join/approved');
+    expect(screen.getByText('Alternative: Aya Group')).toBeInTheDocument();
+  });
+
+  it('shows the learner selected recovery plans with calendar and join actions', async () => {
+    const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (!init?.method && url.includes('/absence-reports/')) return new Response(JSON.stringify({
+        results: [{
+          id: 31, reference: 'AR-0031', sessionTitle: 'MM21 — Session 8', sessionDate: '2026-09-23',
+          sessionTime: '07:00', reasonCategory: 'emergency', reason: 'Family or personal emergency',
+          status: 'approved', evidenceProvided: false, evidenceKind: '', evidenceUrl: '', evidenceText: '',
+          coachNote: '', recoveryMethod: 'catch-up', catchupEventKey: 'catch-up:12:1', alternativeSession: null,
+          attendanceRate: 0, previousAbsences: 4, createdAt: '2026-09-21T10:00:00Z', updatedAt: '2026-09-21T11:00:00Z',
+        }], missedSessions: [],
+      }));
+      if (!init?.method && url.includes('/calendar/')) return new Response(JSON.stringify({ learner: { kind: 'apprenticeship', id: 12 }, events: [{
+        id: 'catch-up:12:1', eventKey: 'catch-up:12:1', title: 'Catch-up Session', source: 'catch-up', type: 'coaching',
+        sequence: 1, status: 'scheduled', date: '2026-09-25', targetDate: '2026-09-25', scheduledDate: '2026-09-25',
+        scheduledTime: '11:00', durationMinutes: 30, coachName: 'Coach', coachEmail: 'coach@example.test',
+        meetingProvider: 'teams', meetingLink: 'https://teams.microsoft.com/l/meetup-join/catch-up', notes: '',
+      }] }));
+      return originalFetch(input, init);
+    });
+
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: 'My recovery plans' }));
+    const dialog = await screen.findByRole('dialog', { name: 'My recovery plans' });
+    expect(within(dialog).getByText('Coach catch-up')).toBeInTheDocument();
+    expect(within(dialog).getByText('MM21 — Session 8')).toBeInTheDocument();
+    expect(within(dialog).getByText('25 Sept 2026 at 11:00')).toBeInTheDocument();
+    expect(within(dialog).getByText('Confirmed')).toBeInTheDocument();
+    expect(within(dialog).getByRole('link', { name: 'View in calendar' })).toHaveAttribute(
+      'href', '/learner/calendar?kind=apprenticeship&learner=12&event=catch-up%3A12%3A1');
+    expect(within(dialog).getByRole('link', { name: 'Join session' })).toHaveAttribute(
+      'href', 'https://teams.microsoft.com/l/meetup-join/catch-up');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close my recovery plans' }));
+    expect(screen.queryByRole('dialog', { name: 'My recovery plans' })).not.toBeInTheDocument();
+  });
+
+  it('opens catch-up booking for a missed lecture even after absence was reported', async () => {
+    payload.lectures = [lecture({ id: 'missed', title: 'Missed lecture', status: 'absent',
+      canReportAbsence: false, absenceReport: { id: 1, status: 'pending' } })];
+    mount();
+    const row = await screen.findByRole('article', { name: 'Missed lecture' });
+    expect(within(row).getByText('Missed', { exact: true })).toBeInTheDocument();
+    fireEvent.click(within(row).getByRole('button', { name: 'Book Catchup Session' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Book Catchup Session' });
+    expect(within(dialog).getByText(/Missed lecture/)).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Catch-up date')).toBeInTheDocument();
+    expect(within(dialog).queryByLabelText('Main reason')).not.toBeInTheDocument();
+  });
+
+  it('shows a missed catch-up and still lets the learner book another one', async () => {
+    payload.lectures = [lecture({ id: 'missed', title: 'Missed lecture', status: 'absent', catchupStatus: 'missed',
+      canReportAbsence: false, absenceReport: { id: 1, status: 'approved' } })];
+    mount();
+    const row = await screen.findByRole('article', { name: 'Missed lecture' });
+    expect(within(row).getByText('Catch-up missed')).toBeInTheDocument();
+    expect(within(row).queryByText('Catch-up pending')).not.toBeInTheDocument();
+    expect(within(row).getByRole('button', { name: 'Book Catchup Session' })).toBeEnabled();
+  });
+
+  it('shows one final outcome per lecture instead of stacked report badges', async () => {
+    payload.lectures = [
+      lecture({ id: 'made-up', title: 'Made up lecture', status: 'absent', catchupStatus: 'completed', effectiveAttendance: 1,
+        absenceReport: { id: 1, status: 'approved' }, recovery: { method: 'catch-up', date: '2026-09-26' } }),
+      lecture({ id: 'booked', title: 'Booked lecture', status: 'absent', catchupStatus: 'pending',
+        absenceReport: { id: 2, status: 'approved' }, recovery: { method: 'catch-up', date: '2026-09-28' } }),
+      lecture({ id: 'attended', title: 'Attended lecture', absenceReport: { id: 3, status: 'pending' },
+        recovery: { method: 'catch-up', date: '2026-09-17' } }),
+      lecture({ id: 'future', title: 'Future reported lecture', status: 'upcoming',
+        absenceReport: { id: 4, status: 'approved' }, recovery: { method: 'alternative', date: '2026-09-30',
+          startTime: '09:00', endTime: '11:00', group: 'Group B', calendarKey: 'absence-alternative:4', ended: false } }),
+      lecture({ id: 'catchup-card', title: 'Catch-up card lecture', status: 'absent', catchupStatus: 'pending',
+        absenceReport: { id: 6, status: 'approved' }, recovery: { method: 'catch-up', date: '2026-10-02',
+          startTime: '10:40', endTime: '11:10', calendarKey: 'catch-up:248:8:2026-10-02', ended: false } }),
+      lecture({ id: 'recording-card', title: 'Recording plan lecture', status: 'upcoming',
+        componentHref: '/learner/component/apprenticeship/12/COMP-LIVE-1', absenceReport: { id: 7, status: 'approved' }, recovery: { method: 'recorded', date: '2026-10-03',
+          startTime: '18:00', endTime: '19:00', calendarKey: 'absence-recording:7', ended: false,
+          watchedSeconds: 2820, recordingSeconds: 7200 } }),
+      lecture({ id: 'past-recording', title: 'Past recording plan lecture', status: 'absent', catchupStatus: 'pending',
+        componentHref: '/learner/component/apprenticeship/12/COMP-LIVE-2', absenceReport: { id: 8, status: 'approved' },
+        recovery: { method: 'recorded', date: '2026-09-10', startTime: '18:00', endTime: '19:00',
+          calendarKey: 'absence-recording:8', ended: true, watchedSeconds: 0, recordingSeconds: 0 } }),
+      lecture({ id: 'live-alt', title: 'Live alternative lecture', status: 'absent',
+        absenceReport: { id: 5, status: 'approved' }, recovery: { method: 'alternative', date: '2026-09-14',
+          startTime: '10:00', endTime: '12:00', calendarKey: 'absence-alternative:5', joinUrl: 'https://teams.example/alt', ended: false } }),
+    ];
+    mount();
+    const madeUp = await screen.findByRole('article', { name: 'Made up lecture' });
+    expect(within(madeUp).getByText('Made up')).toBeInTheDocument();
+    expect(within(madeUp).getByText('Catch-up · 26 Sept')).toBeInTheDocument();
+    expect(within(madeUp).getByText('Made up via catch-up')).toBeInTheDocument();
+    expect(within(madeUp).queryByText('Missed')).not.toBeInTheDocument();
+    expect(within(madeUp).queryByText('Absence approved')).not.toBeInTheDocument();
+
+    const booked = screen.getByRole('article', { name: 'Booked lecture' });
+    expect(within(booked).getByText('Missed')).toBeInTheDocument();
+    expect(within(booked).getByText('Catch-up booked · 28 Sept')).toBeInTheDocument();
+    expect(within(booked).getByRole('button', { name: 'Change catch-up' })).toBeEnabled();
+
+    const attended = screen.getByRole('article', { name: 'Attended lecture' });
+    expect(within(attended).getByText('Attended')).toBeInTheDocument();
+    expect(within(attended).queryByText('Absence pending')).not.toBeInTheDocument();
+    expect(within(attended).queryByText(/Catch-up booked/)).not.toBeInTheDocument();
+    expect(within(attended).queryByText('Absence reported')).not.toBeInTheDocument();
+
+    const future = screen.getByRole('article', { name: 'Future reported lecture' });
+    expect(within(future).getByText('Absence reported')).toBeInTheDocument();
+    const plan = within(future).getByRole('link', { name: /Alternative session/ });
+    expect(plan).toHaveAttribute('href', '/learner/calendar?event=absence-alternative%3A4');
+    expect(plan).toHaveTextContent('Wed 30 Sept · 09:00–11:00');
+    expect(plan).toHaveTextContent('Group B');
+
+    const catchupCard = screen.getByRole('article', { name: 'Catch-up card lecture' });
+    expect(within(catchupCard).getByRole('link', { name: /Catch-up session/ }))
+      .toHaveAttribute('href', '/learner/calendar?event=catch-up%3A248%3A8%3A2026-10-02');
+    expect(within(catchupCard).getByRole('link', { name: /Catch-up session/ })).toHaveTextContent('Fri 2 Oct · 10:40–11:10');
+    expect(within(catchupCard).getByRole('button', { name: 'Change catch-up' })).toBeEnabled();
+
+    const recordingCard = screen.getByRole('article', { name: 'Recording plan lecture' });
+    const recording = within(recordingCard).getByRole('link', { name: /Watch the recording/ });
+    expect(recording).toHaveTextContent('Planned');
+    expect(recording).toHaveTextContent('Sat 3 Oct · 18:00');
+    expect(recording).toHaveTextContent('Watched 47 min of 2h');
+    expect(recording).toHaveAttribute('href', '/learner/component/apprenticeship/12/COMP-LIVE-1');
+
+    // The planned watch time has passed, but the recording can still be watched.
+    const pastRecording = screen.getByRole('article', { name: 'Past recording plan lecture' });
+    const pastLink = within(pastRecording).getByRole('link', { name: /Watch the recording/ });
+    expect(pastLink).toHaveTextContent('Planned for');
+    expect(pastLink).toHaveTextContent('Not watched yet');
+    expect(pastLink).toHaveAttribute('href', '/learner/component/apprenticeship/12/COMP-LIVE-2');
+    expect(within(pastRecording).getByRole('button', { name: 'Book catch-up' })).toBeEnabled();
+
+    const liveAlternative = screen.getByRole('article', { name: 'Live alternative lecture' });
+    expect(within(liveAlternative).getByRole('link', { name: /Join alternative session/ })).toHaveAttribute('href', 'https://teams.example/alt');
+    expect(within(liveAlternative).queryByRole('button', { name: 'Book Catchup Session' })).not.toBeInTheDocument();
+  });
+
+  it('links a catch-up to a reported absence with the workspace request token', async () => {
+    payload.lectures = [lecture({ id: 'missed', sessionId: 'teams:missed', title: 'Reported lecture', date: '2026-09-11',
+      status: 'absent', catchupStatus: 'pending', canReportAbsence: false, absenceReport: { id: 7, status: 'approved' } })];
+    const booked = { id: 'catch-up:12:5', eventKey: 'catch-up:12:5', title: 'Catch-up Session', source: 'catch-up', type: 'coaching',
+      sequence: 5, status: 'scheduled', date: '2099-01-05', targetDate: '2099-01-05', scheduledDate: '2099-01-05', scheduledTime: '11:00',
+      durationMinutes: 30, coachName: 'Coach', coachEmail: 'coach@example.test', meetingProvider: '', meetingLink: '', notes: '' };
+    const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => String(input).includes('/calendar/') && !init?.method
+      ? new Response(JSON.stringify({ events: [booked] })) : originalFetch(input, init));
+    mount();
+    const row = await screen.findByRole('article', { name: 'Reported lecture' });
+    fireEvent.click(within(row).getByRole('button', { name: 'Book Catchup Session' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Book Catchup Session' });
+    fireEvent.change(await within(dialog).findByLabelText('Catch-up booking'), { target: { value: booked.eventKey } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Link catch-up to this absence' }));
+    await waitFor(() => expect(posts.some(post => post.url.includes('/session-catchup/'))).toBe(true));
+    const call = vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes('/session-catchup/'))!;
+    expect(new Headers(call[1]?.headers).get('X-CSRFToken')).toBe('test-csrf');
+    expect(JSON.parse(String(call[1]?.body))).toEqual({ reportId: 7, eventKey: booked.eventKey });
+    expect(screen.queryByText('Unable to initialise request verification.')).not.toBeInTheDocument();
+  });
+
+  it('books a catch-up for a reported absence and links it in the same request', async () => {
+    payload.lectures = [lecture({ id: 'missed', sessionId: 'teams:missed', title: 'Reported lecture', date: '2026-09-11',
+      status: 'absent', catchupStatus: 'missed', canReportAbsence: false, absenceReport: { id: 7, status: 'approved' } })];
+    const booked = { id: 'catch-up:12:9', eventKey: 'catch-up:12:9', title: 'Catch-up Session', source: 'catch-up', type: 'coaching',
+      sequence: 9, status: 'scheduled', date: '2099-01-05', targetDate: '2099-01-05', scheduledDate: '2099-01-05', scheduledTime: '11:00',
+      durationMinutes: 30, coachName: 'Coach', coachEmail: 'coach@example.test', meetingProvider: '', meetingLink: '', notes: '' };
+    const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.includes('/coach-availability/')) return new Response(JSON.stringify({ times: ['11:00'] }));
+      if (url.includes('/calendar/') && init?.method === 'POST') {
+        posts.push({ url, body: init.body });
+        return new Response(JSON.stringify({ event: booked, linkedReportId: 7 }), { status: 201 });
+      }
+      if (url.includes('/calendar/')) return new Response(JSON.stringify({ events: [],
+        bookingCalendar: { division: 'england-and-wales', today: '2026-09-30', coveredYears: [2099], bankHolidays: [] } }));
+      return originalFetch(input, init);
+    });
+    mount();
+    const row = await screen.findByRole('article', { name: 'Reported lecture' });
+    fireEvent.click(within(row).getByRole('button', { name: 'Book Catchup Session' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Book Catchup Session' });
+    fireEvent.change(await within(dialog).findByLabelText('Catch-up date'), { target: { value: '2099-01-05' } });
+    await within(within(dialog).getByLabelText('Catch-up time')).findByRole('option', { name: '11:00' });
+    fireEvent.change(within(dialog).getByLabelText('Catch-up time'), { target: { value: '11:00' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Book Catch-up Session' }));
+    // One booking request carries the absence; the server links it, so no separate link call.
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Book Catchup Session' })).not.toBeInTheDocument());
+    const booking = posts.find(post => post.url.includes('/calendar/') && post.url.endsWith('/book/'))!;
+    expect(JSON.parse(String(booking.body))).toMatchObject({ sessionType: 'catch-up', absenceReportId: 7 });
+    expect(posts.some(post => post.url.includes('/session-catchup/'))).toBe(false);
+  });
+
+  it('starts a linked absence report when booking recovery for an unreported missed lecture', async () => {
+    payload.lectures = [lecture({ id: 'missed', sessionId: 'teams:missed', title: 'Missed lecture',
+      date: '2026-09-01', status: 'absent', catchupStatus: null, canReportAbsence: true, absenceReport: null })];
+    const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (!init?.method && String(input).includes('/absence-reports/')) return new Response(JSON.stringify({
+        results: [], missedSessions: [{ id: 'missed', sessionId: 'teams:missed', reportId: '8000000000000000012',
+          title: 'Missed lecture', dateIso: '2026-09-01', startTime: '10:00', endTime: '11:00',
+          module: 'Business', sessionType: 'live_session', coach: 'Coach', status: 'absent' }],
+      }));
+      return originalFetch(input, init);
+    });
+
+    mount();
+    const row = await screen.findByRole('article', { name: 'Missed lecture' });
+    fireEvent.click(within(row).getByRole('button', { name: 'Book Catchup Session' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Book Catchup Session' });
+    await waitFor(() => expect(within(dialog).getByLabelText('Lecture *')).toHaveValue('missed'));
+    expect(within(dialog).getByLabelText('Main reason')).toBeInTheDocument();
+    expect(within(dialog).getByRole('radio', { name: /Coach catch-up/ })).toBeChecked();
+  });
+
+  it('does not navigate to an unrelated activity when the lecture has no mapped component', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-09-14T08:00:00Z'));
+    payload.lectures = [lecture({ title: 'Today lecture', date: '2026-09-14', status: 'upcoming',
+      activities: [{ id: 'other', title: 'Other activity', type: 'video', completed: false, href: '/learner/video/apprenticeship/12/unrelated' }] })];
+    mount();
+    const card = await screen.findByRole('region', { name: 'Today lecture' });
+    expect(within(card).getByRole('button', { name: 'View session' })).toBeDisabled();
+    expect(within(card).getByRole('status')).toHaveTextContent('Session content is not linked yet');
+    expect(within(card).queryByRole('link', { name: 'View session' })).not.toBeInTheDocument();
+    expect(posts).toHaveLength(0);
+    expect(within(card).queryByText(/hours credited/)).not.toBeInTheDocument();
+  });
+
+  it('filters by module and keeps future/catch-up separate from attendance rate', async () => {
+    expect(lectureCounts(payload.lectures)).toEqual({ all: 3, attended: 1, absent: 1, covered: 1, upcoming: 1, rate: 50 });
+    mount();
+    expect(await screen.findByText('50% attendance')).toHaveTextContent('50% attendance · includes late attendance');
+    fireEvent.change(screen.getByLabelText('Module'), { target: { value: 'native:new' } });
+    expect(screen.queryByText('First lecture')).not.toBeInTheDocument();
+    expect(screen.getByText('Future lecture')).toBeInTheDocument();
+    expect(screen.getByText('No completed attendance records yet')).toBeInTheDocument();
+  });
+
+  it('opens on the current teaching module and lets the learner choose all modules', async () => {
+    schedulePayload.modules = [
+      planModule('old', 'Old module', { start_date: '2019-01-01', end_date: '2019-12-31' }),
+      planModule('new', 'New module'),
+    ];
+    mount();
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Module' })).toHaveValue('native:new'));
+    expect(screen.getByRole('option', { name: 'New module' })).toBeInTheDocument();
+    expect(screen.getByRole('article', { name: 'Future lecture' })).toBeInTheDocument();
+    expect(screen.queryByRole('article', { name: 'First lecture' })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole('combobox', { name: 'Module' }), { target: { value: 'all' } });
+    expect(screen.getByRole('combobox', { name: 'Module' })).toHaveValue('all');
+    expect(screen.getByRole('article', { name: 'First lecture' })).toBeInTheDocument();
+  });
+
+  it('lists the current module even before any of its lectures appear', async () => {
+    schedulePayload.modules = [planModule('assigned', 'Assigned module', {
+      end_date: '2021-01-01', effectiveEndDate: '2099-12-31',
+    })];
+    mount();
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Module' })).toHaveValue('native:assigned'));
+    expect(screen.getByRole('option', { name: 'Assigned module' })).toBeInTheDocument();
+    expect(screen.getByText('No lectures match this filter')).toBeInTheDocument();
+  });
+
+  it('keeps all modules selected when the plan has no current teaching module', async () => {
+    schedulePayload.modules = [planModule('future-module', 'Future module', {
+      start_date: '2099-01-01', end_date: '2099-12-31',
+    })];
+    mount();
+    await screen.findByRole('article', { name: 'First lecture' });
+    expect(screen.getByRole('combobox', { name: 'Module' })).toHaveValue('all');
+  });
+
+  it('shows 67 percent when two of three finalised lectures were attended', () => {
+    const lectures = [lecture({ id: 'first' }), lecture({ id: 'second' }),
+      lecture({ id: 'missed', status: 'absent' })];
+    expect(lectureCounts(lectures)).toEqual({ all: 3, attended: 2, absent: 1, covered: 0, upcoming: 0, rate: 67 });
+  });
+
+  it('counts a lecture made up by catch-up or alternative session as attended', () => {
+    const lectures = [lecture({ id: 'first' }), lecture({ id: 'missed', status: 'absent' }),
+      lecture({ id: 'made-up', status: 'absent', catchupStatus: 'completed', effectiveAttendance: 1 })];
+    expect(lectureCounts(lectures)).toEqual({ all: 3, attended: 2, absent: 1, covered: 1, upcoming: 0, rate: 67 });
+  });
+
+  it('explains an unlinked lecture without navigating to a different activity or Monthly Logs and still searches KSBs', async () => {
+    mount();
+    const row = await screen.findByRole('article', { name: 'Missed lecture' });
+    const before = screen.getByTestId('location').textContent;
+    const open = within(row).getByRole('button', { name: 'Open Activities' });
+    expect(open).toBeDisabled();
+    expect(open).toHaveAccessibleDescription('Live session activity not linked yet');
+    fireEvent.click(open);
+    expect(screen.getByTestId('location').textContent).toBe(before);
+    expect(screen.queryByText('Activity content 4')).not.toBeInTheDocument();
+    expect(posts).toEqual([]);
+    fireEvent.change(screen.getByLabelText('Search lectures'), { target: { value: 'K99' } });
+    expect(screen.getByText('No lectures match this filter')).toBeInTheDocument();
+  });
+
+  it.each([
+    { source: 'microsoft-teams' as const, sessionId: 'teams:occ-8' },
+    { source: 'kbc-attendance' as const, sessionId: '92_A&B',
+      monthlyLog: { month: '2026-08', sourceRef: 'att:92_A&B' } },
+  ])('opens the exact linked component instead of the attendance record for $source', async overrides => {
+    const componentHref = '/learner/component/apprenticeship/12/live-session-9';
+    payload.lectures = [lecture({ ...overrides, componentHref })];
+    const original = structuredClone(payload);
+    mount();
+    const row = await screen.findByRole('article', { name: 'First lecture' });
+    fireEvent.click(within(row).getByRole('button', { name: 'Open Activities' }));
+    const destination = new URL(screen.getByTestId('location').textContent!, 'http://localhost');
+    expect(destination.pathname).toBe(componentHref);
+    expect(destination.searchParams.has('source')).toBe(false);
+    expect(payload).toEqual(original);
+    expect(posts).toEqual([]);
+  });
+
+  describe.each(['apprenticeship', 'commercial'] as const)('%s live-session activity navigation', kind => {
+    it.each(['upcoming', 'completed', 'late', 'absent', 'in_progress', 'pending', 'unmarked', 'awaiting_recording'] as const)(
+      'opens the same exact component for a %s lecture without changing attendance or hours', async status => {
+        learnerIdentity.kind = kind;
+        const componentHref = `/learner/component/${kind}/12/exact-live-session`;
+        payload.lectures = [lecture({ status, source: 'microsoft-teams', componentHref,
+          activities: [{ id: 'other', type: 'video', title: 'Different activity', completed: false,
+            href: `/learner/component/${kind}/12/unrelated-video` }] })];
+        const original = structuredClone(payload);
+        mount();
+        const row = await screen.findByRole('article', { name: 'First lecture' });
+        const open = within(row).getByRole('button', { name: 'Open Activities' });
+        expect(open).toBeEnabled();
+        fireEvent.click(open);
+        expect(screen.getByTestId('location').textContent).toBe(componentHref);
+        expect(payload).toEqual(original);
+        expect(posts).toEqual([]);
+      });
+
+    it('keeps identical lecture titles bound to their own session component', async () => {
+      learnerIdentity.kind = kind;
+      payload.lectures = [
+        lecture({ id: 'week-one', title: 'Weekly session', date: '2026-09-01', componentHref: `/learner/component/${kind}/12/week-one` }),
+        lecture({ id: 'week-two', title: 'Weekly session', date: '2026-09-08', componentHref: `/learner/component/${kind}/12/week-two` }),
+      ];
+      mount();
+      const rows = await screen.findAllByRole('article', { name: 'Weekly session' });
+      const secondWeek = rows.find(row => row.querySelector('time')?.dateTime === '2026-09-08');
+      expect(secondWeek).toBeDefined();
+      fireEvent.click(within(secondWeek!).getByRole('button', { name: 'Open Activities' }));
+      expect(screen.getByTestId('location').textContent).toBe(`/learner/component/${kind}/12/week-two`);
+      expect(posts).toEqual([]);
+    });
+  });
+
+  it('opens an upcoming lecture in its exact My Learning component', async () => {
+    payload.lectures = [lecture({ status: 'upcoming', date: '2027-01-10', source: 'microsoft-teams',
+      sessionId: 'teams:occ-8', componentHref: '/learner/component/apprenticeship/12/live-session-9' })];
+    mount();
+    const row = await screen.findByRole('article', { name: 'First lecture' });
+    fireEvent.click(within(row).getByRole('button', { name: 'Open Activities' }));
+    expect(screen.getByTestId('location')).toHaveTextContent('/learner/component/apprenticeship/12/live-session-9');
+    expect(screen.getByTestId('location')).not.toHaveTextContent('/monthly-logs/');
+  });
+
+  it.each([undefined, '', '   '])('does not substitute another activity or the module when a session link is missing (%s)', async componentHref => {
+    payload.lectures = [lecture({ status: 'upcoming', date: '2027-01-10', source: 'microsoft-teams',
+      sessionId: 'teams:unmapped', moduleId: 'native:test-teams', componentHref,
+      activities: [{ id: 'video', title: 'Different activity', type: 'video', completed: false,
+        href: '/learner/component/apprenticeship/12/not-this-session' }] })];
+    mount();
+    const row = await screen.findByRole('article', { name: 'First lecture' });
+    const before = screen.getByTestId('location').textContent;
+    const open = within(row).getByRole('button', { name: 'Open Activities' });
+    expect(open).toBeDisabled();
+    expect(open).toHaveAccessibleDescription('Live session activity not linked yet');
+    fireEvent.click(open);
+    expect(screen.getByTestId('location').textContent).toBe(before);
+    expect(posts).toEqual([]);
+  });
+
+  describe.each(['apprenticeship', 'commercial'])('%s attendance mode is read-only', kind => {
+    it.each<{ label: string; mode: Partial<AttendanceMode> }>([
+      { label: 'live', mode: {} },
+      { label: 'lazy', mode: { mode: 'lazy', remindersEnabled: false } },
+      { label: 'pending approval', mode: { requestedMode: 'lazy', status: 'pending', remindersEnabled: false } },
+      { label: 'no manager', mode: { managerAvailable: false } },
+      { label: 'unavailable', mode: { available: false } },
+      { label: 'expired approval', mode: { status: 'expired' } },
+    ])('disables every mode control when $label without changing saved state', async ({ mode }) => {
+      learnerIdentity.kind = kind;
+      payload.mode = { ...payload.mode, ...mode, plannedLiveHours: 4, plannedRecordedHours: 2 };
+      const savedMode = { ...payload.mode };
+      mount();
+      const controls = await screen.findByRole('group', { name: 'Attendance mode' });
+      const toggle = within(controls).getByRole('switch', { name: 'Lazy Mode' });
+      const lazy = (savedMode.requestedMode || savedMode.mode) === 'lazy';
+      expect(toggle).toHaveAttribute('aria-checked', String(lazy));
+      expect(within(controls).getByRole('button', { name: 'Live Sessions' })).toHaveAttribute('aria-pressed', String(!lazy));
+      for (const control of [toggle, ...within(controls).getAllByRole('button')]) {
+        expect(control).toBeDisabled();
+        fireEvent.click(control);
+      }
+      expect(posts).toEqual([]);
+      expect(payload.mode).toEqual(savedMode);
+      expect(screen.getByText(/Your attendance mode is managed by your learning team/)).toBeInTheDocument();
+      expect(screen.queryByText(/select Lazy Mode|Switch to Lazy Mode/i)).not.toBeInTheDocument();
+      if (savedMode.available) {
+        expect(screen.getByText('4 live')).toBeInTheDocument();
+        expect(screen.getByText('2 recorded')).toBeInTheDocument();
+        expect(screen.getByText(`Absence reminders: ${savedMode.remindersEnabled ? 'enabled' : 'paused'}`)).toBeInTheDocument();
+      }
+      if (savedMode.requestedMode) expect(screen.getByText(/Awaiting manager approval/)).toBeInTheDocument();
+    });
+  });
+
+  it('refreshes live source edits when the window regains focus', async () => {
+    mount(); await screen.findByText('First lecture');
+    payload = { ...payload, lectures: [lecture({ title: 'Updated lecture', ksbs: ['K9'] })] };
+    await act(async () => { window.dispatchEvent(new Event('focus')); });
+    expect(await screen.findByText('Updated lecture')).toBeInTheDocument();
+    expect(screen.queryByText('First lecture')).not.toBeInTheDocument();
+    expect(screen.getByText('K9')).toBeInTheDocument();
+  });
+
+  it('keeps saved lectures visible during one refresh when the connection and tab return together', async () => {
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+    mount(); await screen.findByText('First lecture');
+    const initialRequests = vi.mocked(fetch).mock.calls.length;
+    let finishRefresh!: (response: Response) => void;
+    vi.mocked(fetch).mockImplementationOnce(() => new Promise<Response>(resolve => { finishRefresh = resolve; }));
+    await act(async () => {
+      window.dispatchEvent(new Event('online'));
+      window.dispatchEvent(new Event('focus'));
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    expect(fetch).toHaveBeenCalledTimes(initialRequests + 2);
+    expect(screen.getByText('First lecture')).toBeInTheDocument();
+    await act(async () => {
+      finishRefresh(new Response(JSON.stringify({ ...payload, lectures: [lecture({ title: 'Updated lecture' })] })));
+    });
+    expect(await screen.findByText('Updated lecture')).toBeInTheDocument();
+    expect(screen.queryByText('First lecture')).not.toBeInTheDocument();
+    expect(posts).toEqual([]);
+  });
+
+  it('waits until the tab is visible before automatically refreshing saved lectures', async () => {
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+    mount(); await screen.findByText('First lecture');
+    const initialRequests = vi.mocked(fetch).mock.calls.length;
+    payload = { ...payload, lectures: [lecture({ title: 'Updated lecture' })] };
+    visibility.mockReturnValue('hidden');
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'));
+      window.dispatchEvent(new Event('online'));
+    });
+    expect(fetch).toHaveBeenCalledTimes(initialRequests);
+    expect(screen.getByText('First lecture')).toBeInTheDocument();
+    visibility.mockReturnValue('visible');
+    await act(async () => { document.dispatchEvent(new Event('visibilitychange')); });
+    expect(await screen.findByText('Updated lecture')).toBeInTheDocument();
+    expect(fetch).toHaveBeenCalledTimes(initialRequests + 2);
+    expect(posts).toEqual([]);
+  });
+
+  it('re-opens from the saved workspace without treating every render as new data', async () => {
+    const first = mount();
+    await screen.findByText('First lecture');
+    first.unmount();
+    // The page peeks on each render until its read settles; a new object each time re-rendered in a loop.
+    const saved = peekAttendanceWorkspace('apprenticeship', '12');
+    expect(saved).toBeTruthy();
+    expect(peekAttendanceWorkspace('apprenticeship', '12')).toBe(saved);
+    mount();
+    expect(await screen.findByText('First lecture')).toBeInTheDocument();
+  });
+
+  it('explains a failed Join in the tab it opened and lets the learner dismiss it', async () => {
+    render(<MemoryRouter initialEntries={['/learner/attendance/apprenticeship/12?joinError=ended&module=all']}>
+      <AttendancePage /><CurrentLocation /></MemoryRouter>);
+    expect(await screen.findByRole('alert')).toHaveTextContent('That session has already ended, so it can no longer be joined.');
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(screen.queryByText(/already ended/)).not.toBeInTheDocument();
+    expect(screen.getByTestId('location')).toHaveTextContent('/learner/attendance/apprenticeship/12?module=all');
+    cleanup();
+    render(<MemoryRouter initialEntries={['/learner/attendance?joinError=not-found']}><AttendancePage /></MemoryRouter>);
+    expect(await screen.findByText(/could not be found in your current modules/)).toBeInTheDocument();
+    cleanup();
+    render(<MemoryRouter initialEntries={['/learner/attendance?joinError=toString']}><AttendancePage /></MemoryRouter>);
+    expect(await screen.findByText(/Teams link for that session is not available/)).toBeInTheDocument();
+  });
+
+  it('offers working support and module destinations', async () => {
+    mount(); await screen.findByText('First lecture');
+    expect(screen.getByRole('link', { name: /Book a Support Session/ })).toHaveAttribute('href', '/learner/calendar?book=student-support');
+    expect(screen.getByRole('link', { name: 'Contact Support' })).toHaveAttribute('href', '/learner/support');
+    expect(screen.getByRole('link', { name: /View all modules/ })).toHaveAttribute('href', '/learner/my-learning');
+  });
+
+  it('keeps complete months together, toggles them and sorts without refetching', async () => {
+    payload.lectures = Array.from({ length: 20 }, (_, index) => lecture({
+      id: `session-${index}`, title: `Session ${index}`, date: index < 15 ? `2026-09-${String(index + 1).padStart(2, '0')}` : `2026-08-${index + 1}`,
+    }));
+    mount(); await screen.findByRole('article', { name: 'Session 14' });
+    expect(screen.getAllByRole('article')).toHaveLength(20);
+    fireEvent.click(screen.getByRole('button', { name: 'Group by month' }));
+    const calls = vi.mocked(fetch).mock.calls.length;
+    expect(screen.getAllByRole('article')).toHaveLength(15);
+    expect(screen.getAllByRole('article')[0]).toHaveAccessibleName('Session 14');
+    expect(screen.getByText('20 lectures · 2 months')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'September 2026' })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('button', { name: 'August 2026' })).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(screen.getByRole('button', { name: 'September 2026' }));
+    expect(screen.queryByRole('article')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'August 2026' }));
+    expect(screen.getAllByRole('article')).toHaveLength(5);
+    fireEvent.change(screen.getByLabelText('Sort by'), { target: { value: 'oldest' } });
+    expect(screen.getAllByRole('article')[0]).toHaveAccessibleName('Session 15');
+    fireEvent.click(screen.getByRole('button', { name: 'Expand all months' }));
+    expect(screen.getAllByRole('article')).toHaveLength(20);
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse all months' }));
+    expect(screen.queryByRole('article')).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Month'), { target: { value: '2026-08' } });
+    expect(screen.getAllByRole('article')).toHaveLength(5);
+    expect(screen.queryByRole('button', { name: 'September 2026' })).not.toBeInTheDocument();
+    expect(fetch).toHaveBeenCalledTimes(calls);
+    // Sorting must leave the shared cached response intact.
+    expect(payload.lectures[0].id).toBe('session-0');
+  });
+
+  it('reveals long KSB mappings and searches all codes even when collapsed', async () => {
+    payload.lectures = [lecture({ ksbs: ['K1', 'K2', 'S1', 'B1', 'K99'], ksbScope: 'module' })];
+    mount(); await screen.findByRole('article', { name: 'First lecture' });
+    expect(screen.getByText('Module KSBs')).toBeInTheDocument();
+    expect(screen.queryByText('K99')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Show all 5 KSBs for First lecture' }));
+    expect(screen.getByText('K99')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Show fewer KSBs for First lecture' }));
+    fireEvent.change(screen.getByLabelText('Search lectures'), { target: { value: 'K99' } });
+    expect(screen.getByRole('article', { name: 'First lecture' })).toBeInTheDocument();
+  });
+
+  it('reveals matches in collapsed months and recovers from empty filters and refreshed data', async () => {
+    payload.lectures = Array.from({ length: 15 }, (_, index) => lecture({ id: `session-${index}`, title: `Session ${index}`, date: index < 10 ? '2026-09-01' : '2026-08-01' }));
+    mount(); await screen.findByRole('article', { name: 'Session 0' });
+    fireEvent.click(screen.getByRole('button', { name: 'Group by month' }));
+    expect(screen.queryByRole('article', { name: 'Session 14' })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Search lectures'), { target: { value: 'Session 14' } });
+    expect(screen.getByRole('article', { name: 'Session 14' })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Search lectures'), { target: { value: 'missing' } });
+    expect(screen.getByText('No lectures match this filter')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Show all lectures' }));
+    expect(screen.getByText('15 lectures · 2 months')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'September 2026' }));
+    payload = { ...payload, lectures: [lecture({ title: 'Updated lecture', date: '2026-07-01' })] };
+    await act(async () => { window.dispatchEvent(new Event('focus')); });
+    expect(await screen.findByRole('article', { name: 'Updated lecture' })).toBeInTheDocument();
+    expect(screen.getByText('1 lecture · 1 month')).toBeInTheDocument();
+  });
+
+  it('submits an upcoming absence with only a reason and no optional explanation', async () => {
+    render(<MemoryRouter><AbsenceReportForm preselectMatch={{ id: 'future', dateIso: '2026-10-01', title: 'Future lecture' }} showHistory={false} /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByLabelText('Lecture *')).toHaveValue('future'));
+    fireEvent.click(screen.getByText('Illness or medical appointment'));
+    fireEvent.click(screen.getByRole('radio', { name: /Watch the recording/ }));
+    fireEvent.change(screen.getByLabelText('Recording viewing date'), { target: { value: '2026-10-02' } });
+    fireEvent.change(screen.getByLabelText('Recording viewing time'), { target: { value: '18:00' } });
+    fireEvent.click(screen.getByRole('checkbox'));
+    fireEvent.click(screen.getByRole('button', { name: /Submit absence report/ }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    const body = posts[0].body as FormData;
+    expect(body.get('sessionId')).toBe('teams:future');
+    expect(body.get('explanation')).toBe('');
+    expect(body.get('recoveryMethod')).toBe('recorded');
+    expect(body.get('recordingDate')).toBe('2026-10-02');
+    expect(body.get('recordingTime')).toBe('18:00');
+    expect(body.has('catchupEventKey')).toBe(false);
+    expect(await screen.findByText(/has been saved for your coach to review/)).toBeInTheDocument();
+  });
+});

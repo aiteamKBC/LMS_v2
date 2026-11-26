@@ -322,10 +322,14 @@ Run frontend commands from the repository root:
 | `npm --prefix frontend run dev` | Start the Vite development server |
 | `npm --prefix frontend run type-check` | Validate application TypeScript |
 | `npm --prefix frontend run lint` | Run ESLint with zero warnings allowed |
+| `npm --prefix frontend test` | Run the Vitest suite once |
+| `npm --prefix frontend run test:teams` | Run the protected Teams regression baseline |
+| `npm --prefix frontend run test:learner` | Run learner-focused regression coverage |
 | `npm --prefix frontend run build` | Produce the deployment bundle in `frontend/out` |
 
 Backend commands run from `backend/` with the virtual environment active. Check
-the command's database and external-service behaviour before execution.
+the command's database and external-service behaviour before execution. Backend
+tests that create tables or fixtures require an approved isolated test runner.
 
 ## API map
 
@@ -356,15 +360,19 @@ the command's database and external-service behaviour before execution.
 
 ### Required validation
 
-Automated test suites, test-only fixtures and their CI jobs were removed at the
-owner's request on 25 November 2026. Frontend validation uses the existing lint,
-TypeScript and production-build commands above. The mobile app retains
-`npm --prefix mobile run typecheck`.
+Every change must run the Teams baseline plus the tests for the affected feature:
 
-Backend changes should receive syntax and Django system checks in a verified
-environment. CI retains build, lint, type checks, runtime health verification,
-dependency/security scans and deployment shell syntax validation. These checks
-do not provide automated regression coverage.
+```bash
+npm --prefix frontend run test:teams
+```
+
+Frontend changes should also run type checking, relevant tests, and linting.
+Bundling, routing, or dependency changes should run the production build.
+
+Backend and browser tests require an environment review first: imports, test
+runners, fixtures, and setup hooks may connect to databases or external systems.
+Routine regression checks must mock Microsoft Graph, email, storage, and paid
+services.
 
 ### Protected behaviours
 
@@ -397,6 +405,7 @@ owner. Local AI and editor configuration remains ignored.
 | [`frontend/project_plan.md`](frontend/project_plan.md) | Product vision and workspace roadmap |
 | [`backend/AZURE_SETUP.md`](backend/AZURE_SETUP.md) | Azure mail and storage configuration |
 | [`backend/MICROSOFT_SSO_SETUP.md`](backend/MICROSOFT_SSO_SETUP.md) | Microsoft single sign-on setup |
+| [`backend/LOGIN_TESTS.md`](backend/LOGIN_TESTS.md) | Authentication test coverage |
 | [`backend/progress_reviews_api/README.md`](backend/progress_reviews_api/README.md) | Progress-review API notes |
 
 ## Ownership

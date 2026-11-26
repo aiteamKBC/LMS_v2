@@ -1,0 +1,408 @@
+import { fireEvent, render, screen, waitFor, cleanup, within } from '@testing-library/react';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ReactNode } from 'react';
+import OldOtjhPage from './page';
+import { OldOtjhGate, OldOtjhProvider } from './hooks';
+import { completeMonth, getActivityContent, getContentReview, getLearners, getMonth, getSummary, startReview, type MonthDetail, type Summary } from './api';
+import { homeRouteFor } from '@/lib/routeAccess';
+import { fetchLearnerEntry } from './entry';
+vi.mock('./entry', () => ({ fetchLearnerEntry: vi.fn() }));
+
+const signedIn = { id: 1, role: 'learner' as 'learner' | 'staff', access: 'learner', subjectId: 7, subjectType: 'learner',
+  hasLegacyRecord: true, displayName: 'Test student', email: 'student@example.org' };
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ auth: { account: signedIn, user: { fullName: 'Test student' } }, isInitialized: true }) }));
+vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => <div>{children}</div> }));
+vi.mock('./SignatureCapture', () => ({ SignatureCapture: ({ busy }: { busy: boolean }) => <fieldset disabled={busy}><legend>Signature capture</legend></fieldset> }));
+vi.mock('./api', async importOriginal => ({ ...await importOriginal<typeof import('./api')>(),
+  getSummary: vi.fn(), getMonth: vi.fn(), getLearners: vi.fn(), getActivityContent: vi.fn(), getContentReview: vi.fn(), startReview: vi.fn(), completeMonth: vi.fn() }));
+
+const month: MonthDetail = {
+  month: '2026-08', status: 'needs_review', row_count: 1, planned_hours: 2, actual_hours: 1,
+  not_accepted_hours: 0, student_signature: null, coach_signature: null, pending_revisions: 0,
+  can_complete: false, source_finalization: null, snapshot_digest: 'digest',
+  rows: [{ id: 4, category: 'video', title: 'Original learning activity', activity_date: '2026-08-10',
+    activity_time: null, planned_hours: 2, actual_hours: 1, timestamp_label: '10:00–11:00',
+    completion_note: 'Notes from the source record', accepted: true, documents: [], results: [] }],
+};
+const initial: Summary = {
+  is_legacy: true, state: 'in_progress', can_access_lms: false, needs_start: false,
+  learner: { id: 7, aptem_id: 42, name: 'Test student', programme: 'Programme', coach_name: 'Test coach' },
+  total_months: 2, completed_months: 1, months: [{ ...month, month: '2026-07', status: 'complete' }, month],
+};
+function page(path = '/old-otjh', state?: unknown) {
+  return render(<OldOtjhProvider><MemoryRouter initialEntries={[state ? { pathname: path, state } : path]}><Routes>
+    <Route path="/old-otjh" element={<OldOtjhPage />} />
+    <Route path="/old-otjh/months" element={<OldOtjhPage />} />
+    <Route path="/old-otjh/months/:month" element={<OldOtjhPage />} />
+    <Route path="/old-otjh/monitor" element={<OldOtjhPage />} />
+    <Route path="/old-otjh/coach" element={<OldOtjhPage />} />
+    <Route path="/old-otjh/coach/:aptemId" element={<OldOtjhPage />} />
+    <Route path="/old-otjh/coach/:aptemId/months" element={<OldOtjhPage />} />
+    <Route path="/old-otjh/coach/:aptemId/months/:month" element={<OldOtjhPage />} />
+    <Route path="/workspace/learner" element={<div>New LMS content</div>} />
+    <Route path="/learner/home" element={<div>New LMS content</div>} />
+  </Routes></MemoryRouter></OldOtjhProvider>);
+}
+
+beforeEach(() => { signedIn.role = 'learner'; signedIn.access = 'learner'; vi.mocked(getSummary).mockResolvedValue(structuredClone(initial)); vi.mocked(getMonth).mockResolvedValue(structuredClone(month));
+  vi.mocked(getContentReview).mockResolvedValue({ ready: true, issues: [], snapshot_digest: 'digest' });
+  vi.mocked(getActivityContent).mockResolvedValue({ id: 4, parts: [] }); });
+afterEach(() => { cleanup(); vi.clearAllMocks(); });
+
+describe('previous learning portal', () => {
+  it.each(['/old-otjh', '/old-otjh/months', '/old-otjh/months/2026-08',
+    '/old-otjh/coach', '/old-otjh/coach/999', '/old-otjh/coach/999/months',
+    '/old-otjh/coach/999/months/2026-08', '/old-otjh/monitor'])(
+    'returns a new learner home without loading records or a directory at %s', async path => {
+      vi.mocked(getSummary).mockResolvedValue({ is_legacy: false, state: 'not_required', can_access_lms: true, months: [] });
+      page(path);
+      expect(await screen.findByText('New LMS content')).toBeInTheDocument();
+      expect(getSummary).toHaveBeenCalledWith(undefined);
+      expect(getMonth).not.toHaveBeenCalled();
+      expect(getLearners).not.toHaveBeenCalled();
+      expect(startReview).not.toHaveBeenCalled();
+    },
+  );
+  it.each(['/old-otjh/coach', '/old-otjh/coach/999/months/2026-08', '/old-otjh/monitor'])(
+    'keeps an existing learner on their own months when opening %s', async path => {
+      page(path);
+      expect(await screen.findByRole('heading', { name: 'Monthly learning records' })).toBeInTheDocument();
+      expect(getSummary).toHaveBeenCalledWith(undefined);
+      expect(getSummary).not.toHaveBeenCalledWith(999);
+      expect(getLearners).not.toHaveBeenCalled();
+      expect(screen.queryByText('All learners')).not.toBeInTheDocument();
+      expect(screen.getAllByRole('link', { name: 'Review month' })[0]).toHaveAttribute('href', '/old-otjh/months/2026-07');
+    },
+  );
+  it('keeps an admin learner preview inside the selected months without the staff directory', async () => {
+    signedIn.role = 'staff'; signedIn.access = 'super-admin';
+    page('/old-otjh/coach/42/months?workspace=learner');
+    const review = (await screen.findAllByRole('link', { name: 'Review month' }))[0];
+    expect(review).toHaveAttribute('href', '/old-otjh/coach/42/months/2026-07?workspace=learner');
+    expect(screen.getByRole('link', { name: 'My learning' })).toHaveAttribute('href', '/workspace/learner');
+    expect(screen.queryByText('All learners')).not.toBeInTheDocument();
+    expect(getLearners).not.toHaveBeenCalled();
+    fireEvent.click(review);
+    const allMonths = await screen.findByRole('link', { name: 'All months' });
+    expect(allMonths).toHaveAttribute('href', '/old-otjh/coach/42/months?workspace=learner');
+    fireEvent.click(allMonths);
+    await screen.findAllByRole('link', { name: 'Review month' });
+    expect(getLearners).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+    expect(await screen.findByText('New LMS content')).toBeInTheDocument();
+  });
+  it('enables individual signing and completion without requesting a material check', async () => {
+    vi.mocked(getContentReview).mockResolvedValue({ ready: false, snapshot_digest: 'digest', issues: [
+      { id: 4, title: 'Missing source video', category: 'video', reason: 'Original material is unavailable.' },
+    ] });
+    vi.mocked(getMonth).mockResolvedValue({ ...month, can_complete: true });
+    page('/old-otjh/months/2026-08');
+    await screen.findByRole('heading', { name: 'Report sign-off' });
+    expect(screen.queryByText('Missing source video')).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Learning material check' })).not.toBeInTheDocument();
+    expect(getContentReview).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Complete month' })).toBeEnabled();
+    expect(screen.getByRole('group', { name: 'Signature capture' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Sign all months' })).toBeEnabled();
+  });
+  it('keeps the two-card portal reachable while Dashboard is the learner home', async () => {
+    expect(homeRouteFor(signedIn)).toBe('/learner/home');
+    page();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Open LMS' })).toBeEnabled());
+    expect(screen.getByRole('link', { name: 'Review previous record' })).toHaveAttribute('href', '/old-otjh/months');
+  });
+  it('opens the LMS for an incomplete student without requiring signatures', async () => {
+    page(); await waitFor(() => expect(screen.getByRole('button', { name: 'Open LMS' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Open LMS' }));
+    expect(await screen.findByText('New LMS content')).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+  it('still shows the coach contact dialog when requested', async () => {
+    page('/old-otjh', { contactCoach: true });
+    const dialog = await screen.findByRole('dialog', { name: 'Your next chapter is nearly ready' });
+    await waitFor(() => expect(dialog).toHaveTextContent('1 of 2 months complete'));
+    expect(dialog).toHaveTextContent('1 remaining');
+    expect(dialog).toHaveTextContent('Test coach');
+  });
+  it.each([0, 1, 2])('shows the actual signing status for %i signed months and still opens the LMS', async signedCount => {
+    const signature = { url: '/signature.png', signer_name: 'Test student', signed_at: '2026-09-12' };
+    vi.mocked(getSummary).mockResolvedValue({ ...initial, months: initial.months.map((item, index) => ({
+      ...item, student_signature: index < signedCount ? signature : null,
+    })) });
+    page();
+    expect(await screen.findByText(signedCount === 2 ? 'All months signed' : 'Signatures pending')).toBeInTheDocument();
+    expect(screen.queryByText(signedCount === 2 ? 'Signatures pending' : 'All months signed')).not.toBeInTheDocument();
+    expect(screen.getByText('Review in progress')).toBeInTheDocument();
+    expect(screen.getByText('LMS access available')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Open LMS' }));
+    expect(await screen.findByText('New LMS content')).toBeInTheDocument();
+  });
+  it('opens LMS directly after all reviews and signatures are complete', async () => {
+    vi.mocked(getSummary).mockResolvedValue({ ...initial, can_access_lms: true, state: 'completed', completed_months: 2 });
+    page(); await waitFor(() => expect(screen.getByRole('button', { name: 'Open LMS' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Open LMS' }));
+    expect(await screen.findByText('New LMS content')).toBeInTheDocument();
+  });
+  it('shows month statuses and calculated progress', async () => {
+    page('/old-otjh/months');
+    expect(await screen.findByText('August 2026')).toBeInTheDocument();
+    expect(screen.getAllByText('Awaiting signature').length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: 'Complete' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'July 2026' }).closest('section')).toHaveTextContent('Complete');
+    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '50');
+    expect(screen.getByRole('link', { name: 'Continue to new LMS' })).toHaveAttribute('href', '/learner/home');
+  });
+  it('lets the learner open all-month signing from the month list', async () => {
+    page('/old-otjh/months');
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign all months' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Sign all months' });
+    expect(within(dialog).getByRole('group', { name: 'Signature capture' })).toBeEnabled();
+    expect(dialog).toHaveTextContent('Your signature completes all months');
+  });
+  it('keeps the new month filters and direct review links available to learners', async () => {
+    page('/old-otjh/months');
+    await screen.findByRole('heading', { name: 'August 2026' });
+    fireEvent.click(screen.getByRole('button', { name: 'Complete' }));
+    expect(screen.getByRole('heading', { name: 'July 2026' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'August 2026' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Needs signature' }));
+    expect(screen.queryByRole('heading', { name: 'July 2026' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Review month' })).toHaveAttribute('href', '/old-otjh/months/2026-08');
+    fireEvent.click(screen.getByRole('button', { name: 'All months' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search month' }), { target: { value: 'July' } });
+    expect(screen.getByRole('link', { name: 'Review month' })).toHaveAttribute('href', '/old-otjh/months/2026-07');
+  });
+  it('shows Continue only when the server grants access', async () => {
+    vi.mocked(getSummary).mockResolvedValue({ ...initial, can_access_lms: true, state: 'completed', completed_months: 2,
+      months: initial.months.map(item => ({ ...item, status: 'complete' })) });
+    page('/old-otjh/months');
+    expect(await screen.findByRole('link', { name: 'Continue to new LMS' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Sign all months' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('link', { name: 'Continue to new LMS' }));
+    expect(await screen.findByText('New LMS content')).toBeInTheDocument();
+  });
+  it('displays source activities and notes without edit controls', async () => {
+    page('/old-otjh/months/2026-08');
+    expect(await screen.findByRole('heading', { name: 'Original learning activity' })).toBeInTheDocument();
+    expect(screen.getByText('Notes from the source record')).toBeInTheDocument();
+    expect(screen.queryAllByRole('textbox')).toHaveLength(0);
+    expect(screen.queryByRole('button', { name: /edit|delete|add activity/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Complete month' })).not.toBeInTheDocument();
+    expect(screen.getByText('The learner’s signature completes the record. Use Sign all months to sign once for every month.')).toBeInTheDocument();
+  });
+  it('opens the all-month capture without waiting for material checks', async () => {
+    vi.mocked(getContentReview).mockImplementation(() => new Promise(() => {}));
+    page('/old-otjh/months/2026-08');
+    const button = await screen.findByRole('button', { name: 'Sign all months' });
+    expect(button).toBeEnabled();
+    fireEvent.click(button);
+    const dialog = await screen.findByRole('dialog', { name: 'Sign all months' });
+    expect(within(dialog).getByText('Signature capture')).toBeInTheDocument();
+    expect(within(dialog).queryByRole('progressbar')).not.toBeInTheDocument();
+    expect(getContentReview).not.toHaveBeenCalled();
+  });
+  it('keeps both signing options available with pending revisions', async () => {
+    vi.mocked(getContentReview).mockResolvedValue({ ready: false, snapshot_digest: 'digest', issues: [
+      { id: 4, title: 'Missing source video', category: 'video', reason: 'Original material is unavailable.' },
+    ] });
+    vi.mocked(getMonth).mockResolvedValue({ ...month, pending_revisions: 2 });
+    page('/old-otjh/months/2026-08');
+    await screen.findByRole('heading', { name: 'Report sign-off' });
+    expect(screen.getByRole('group', { name: 'Signature capture' })).toBeEnabled();
+    expect(screen.queryByText('Missing source video')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Sign all months' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Sign all months' });
+    expect(within(dialog).getByRole('group', { name: 'Signature capture' })).toBeEnabled();
+  });
+  it('starts a review before loading a first-visit month bookmark', async () => {
+    vi.mocked(getSummary).mockResolvedValue({ ...initial, needs_start: true });
+    vi.mocked(startReview).mockResolvedValue(initial);
+    page('/old-otjh/months/2026-08');
+    await screen.findByRole('heading', { name: 'Original learning activity' });
+    expect(startReview).toHaveBeenCalledOnce();
+    expect(vi.mocked(startReview).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(getMonth).mock.invocationCallOrder[0]);
+  });
+  it('hides signing controls for a completed month', async () => {
+    vi.mocked(getMonth).mockResolvedValue({ ...month, status: 'complete' });
+    page('/old-otjh/months/2026-08');
+    await screen.findByText('This month has been reviewed, signed and completed.');
+    expect(screen.queryByText('Signature capture')).not.toBeInTheDocument();
+  });
+  it('shows awaiting signature and permits signing even with pending revisions and no source rows', async () => {
+    vi.mocked(getMonth).mockResolvedValue({ ...month, pending_revisions: 2, row_count: 0, rows: [] });
+    page('/old-otjh/months/2026-08');
+    await screen.findByRole('heading', { name: 'Report sign-off' });
+    expect(screen.queryByText(/Needs review|pending changes/)).not.toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Learner journal' })).toHaveTextContent('Awaiting signature');
+    expect(screen.getByText('Signature capture').closest('fieldset')).toBeEnabled();
+  });
+  it('places the capture controls in the coach row when viewing as a coach', async () => {
+    signedIn.role = 'staff';
+    signedIn.access = 'coach';
+    page('/old-otjh/coach/42/months/2026-08');
+    await screen.findByRole('heading', { name: 'Report sign-off' });
+    const table = screen.getByRole('table', { name: 'Report sign-off' });
+    const coach = within(table).getByText('Coach', { exact: true }).closest('tr')!;
+    const learner = within(table).getByText('Learner', { exact: true }).closest('tr')!;
+    expect(within(coach).getByText('Signature capture')).toBeInTheDocument();
+    expect(within(learner).queryByText('Signature capture')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Complete month' })).not.toBeInTheDocument();
+  });
+  it.each(['/old-otjh/coach/42', '/old-otjh/coach/42/months/2026-08'])(
+    'lets the coach sign all months after learner completion at %s', async path => {
+      signedIn.role = 'staff'; signedIn.access = 'coach';
+      const completed = { ...month, status: 'complete' as const,
+        student_signature: { url: '/learner-signature.png', signed_at: '2026-09-09', signer_name: 'Test student' } };
+      vi.mocked(getSummary).mockResolvedValue({ ...initial, can_access_lms: true, completed_months: 2,
+        months: [{ ...completed, month: '2026-07' }, completed] });
+      vi.mocked(getMonth).mockResolvedValue(completed);
+      page(path);
+      const button = await screen.findByRole('button', { name: 'Sign all months' });
+      expect(button).toBeEnabled();
+      if (path.includes('/months/')) expect(screen.getByRole('group', { name: 'Signature capture' })).toBeEnabled();
+      fireEvent.click(button);
+      const dialog = await screen.findByRole('dialog', { name: 'Sign all months' });
+      expect(within(dialog).getByRole('group', { name: 'Signature capture' })).toBeEnabled();
+      expect(dialog).toHaveTextContent('Your coach signature will be saved on all months.');
+    },
+  );
+  it('loads an activity only on expansion and displays all bundle parts in the embedded viewer', async () => {
+    vi.mocked(getActivityContent).mockResolvedValue({ id: 4, parts: [
+      { id: 10, title: 'Reading', category: 'reading', url: 'https://drive.google.com/file/d/reading/preview', html: null, quiz: null },
+      { id: 11, title: 'Audio', category: 'audio', url: 'https://example.org/audio-player', html: null, quiz: null },
+    ] });
+    page('/old-otjh/months/2026-08');
+    const trigger = await screen.findByRole('button', { name: 'Original learning activity' });
+    expect(getActivityContent).not.toHaveBeenCalled();
+    fireEvent.click(trigger);
+    expect(await screen.findByTitle('Reading')).toHaveAttribute('src', 'https://drive.google.com/file/d/reading/preview');
+    fireEvent.change(screen.getByLabelText('Reading, media or document'), { target: { value: 'part-11' } });
+    expect(screen.getByTitle('Audio')).toHaveAttribute('src', 'https://example.org/audio-player');
+    expect(screen.queryByTitle('Reading')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Close Original learning activity' }));
+    expect(screen.queryByTitle('Audio')).not.toBeInTheDocument();
+  });
+  it('shows both cards while the record loads and keeps LMS available', async () => {
+    vi.mocked(getSummary).mockImplementation(() => new Promise(() => {}));
+    page();
+    expect(screen.getByRole('status')).toHaveAccessibleName(expect.stringContaining('Loading your previous record'));
+    expect(screen.getByRole('link', { name: 'Review previous record' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Open LMS' }));
+    expect(await screen.findByText('New LMS content')).toBeInTheDocument();
+  });
+  it('shows an error and retry without signing the account out', async () => {
+    vi.mocked(getSummary).mockRejectedValue(new Error('Please contact support.'));
+    page(); expect(await screen.findByText('Please contact support.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Open your LMS' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Review previous record' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Open LMS' }));
+    expect(await screen.findByText('New LMS content')).toBeInTheDocument();
+  });
+  it('shows the empty state', async () => {
+    vi.mocked(getSummary).mockResolvedValue({ ...initial, months: [], total_months: 0, completed_months: 0 });
+    page('/old-otjh/months'); expect(await screen.findByText('No previous activity months are available')).toBeInTheDocument();
+  });
+  it.each([false, true])('checks previous monthly signatures on Dashboard entry (complete: %s)', async complete => {
+    vi.mocked(getSummary).mockResolvedValue({ ...initial, can_access_lms: complete });
+    vi.mocked(fetchLearnerEntry).mockResolvedValue({ classification: 'existing', required: !complete, canAccess: complete });
+    render(<OldOtjhProvider><MemoryRouter initialEntries={['/workspace/learner']}><Routes>
+      <Route path="/workspace/learner" element={<OldOtjhGate><div>New LMS content</div></OldOtjhGate>} />
+      <Route path="/old-otjh" element={<div>Choose a workspace</div>} />
+    </Routes></MemoryRouter></OldOtjhProvider>);
+    expect(await screen.findByText(complete ? 'New LMS content' : 'Review and sign your previous learning record')).toBeInTheDocument();
+    expect(screen.queryByText(complete ? 'Choose a workspace' : 'New LMS content')).not.toBeInTheDocument();
+  });
+  it('refetches on a new visit instead of serving a stored activity copy', async () => {
+    const first = page('/old-otjh/months/2026-08');
+    await screen.findByRole('heading', { name: 'Original learning activity' }); first.unmount();
+    vi.mocked(getMonth).mockResolvedValue({ ...month, rows: [{ ...month.rows[0], title: 'Updated by the other system' }] });
+    page('/old-otjh/months/2026-08');
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Updated by the other system' })).toBeInTheDocument());
+  });
+
+  it('opens the first outstanding month from the dialog', async () => {
+    page('/old-otjh', { contactCoach: true });
+    await screen.findByRole('link', { name: 'Review first month' });
+    fireEvent.click(await screen.findByRole('button', { name: 'Review outstanding months' }));
+    expect(await screen.findByRole('table', { name: 'Monthly activity log' })).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('shows an empty progress bar at zero and restores focus when closing the dialog', async () => {
+    vi.mocked(getSummary).mockResolvedValue({ ...initial, completed_months: 0 });
+    page('/old-otjh', { contactCoach: true });
+    const trigger = screen.getByRole('button', { name: 'Open LMS' });
+    const dialog = await screen.findByRole('dialog');
+    await waitFor(() => expect(within(dialog).getByText(/0 of 2 months complete/)).toBeInTheDocument());
+    const progress = within(dialog).getByRole('progressbar');
+    expect(progress).toHaveAttribute('aria-valuenow', '0');
+    expect(progress.firstElementChild).toHaveStyle({ width: '0%' });
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+  });
+
+  it('keeps protected documents inside one activity row and separates acceptance from completion', async () => {
+    vi.mocked(getMonth).mockResolvedValue({ ...month, row_count: 2, rows: [
+      { ...month.rows[0], category: 'assignment', source_ref: 'asg:77098:evidence:41641', ksb_codes: ['B2', 'K5', 'S2'],
+        documents: [{ id: 3, display_name: 'Evidence.pdf', content_type: 'application/pdf', url: '/audit_api/old-otjh/documents/3/?aptem_id=42' }] },
+      { ...month.rows[0], id: 5, category: 'reading+quiz', title: 'Apprentice Charter Agreement', accepted: false,
+        source_ref: 'la:101477:126339', ksb_codes: ['B5', 'B8', 'K1', 'K5', 'S6'] },
+    ] });
+    page('/old-otjh/months/2026-08');
+    const table = await screen.findByRole('table', { name: 'Monthly activity log' });
+    expect(within(table).getAllByRole('heading', { name: 'Original learning activity' })).toHaveLength(1);
+    expect(within(table).getByRole('rowgroup', { name: 'Assignments' })).toBeInTheDocument();
+    expect(within(table).getByRole('button', { name: 'Open Evidence.pdf' })).toBeEnabled();
+    const assignment = within(table).getByRole('rowgroup', { name: 'Assignments' });
+    for (const code of ['B2', 'K5', 'S2']) expect(within(assignment).getByText(code)).toBeInTheDocument();
+    const activity = within(table).getByRole('rowgroup', { name: 'Activities' });
+    for (const code of ['B5', 'B8', 'K1', 'K5', 'S6']) expect(within(activity).getByText(code)).toBeInTheDocument();
+    expect(within(activity).getByText('Not accepted')).toBeInTheDocument();
+    expect(within(table).queryByText('Completed')).not.toBeInTheDocument();
+  });
+
+  it('requires confirmation before completing and opens the next outstanding month', async () => {
+    const signature = { url: '/signature', signer_name: 'Signer', signed_at: '2026-09-07T12:00:00Z' };
+    const ready = { ...month, month: '2026-07', student_signature: signature, coach_signature: signature, can_complete: true };
+    vi.mocked(getMonth).mockImplementation(async selectedMonth => selectedMonth === '2026-07' ? ready : month);
+    vi.mocked(getSummary).mockResolvedValueOnce({ ...initial, months: [ready, month], completed_months: 0 }).mockResolvedValue(initial);
+    vi.mocked(completeMonth).mockResolvedValue({ ...ready, status: 'complete' });
+    page('/old-otjh/months/2026-07');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Complete month' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Complete month' }));
+    expect(completeMonth).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Keep reviewing' }));
+    expect(completeMonth).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Complete month' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm completion' }));
+    await waitFor(() => expect(completeMonth).toHaveBeenCalledExactlyOnceWith('2026-07'));
+    await screen.findByRole('heading', { name: 'August 2026' });
+  });
+
+  it('keeps every source row once in Attendance, Activities, Assignments order before sign-off', async () => {
+    const row = month.rows[0];
+    vi.mocked(getMonth).mockResolvedValue({ ...month, row_count: 4, rows: [
+      { ...row, id: 1, category: 'assignment', title: 'Submitted assignment' },
+      { ...row, id: 2, category: 'video', title: 'First activity' },
+      { ...row, id: 3, category: 'manual', source_ref: 'att:3', title: 'Recorded attendance' },
+      { ...row, id: 4, category: 'manual', title: 'Second activity' },
+    ] });
+    page('/old-otjh/months/2026-08');
+    await screen.findByRole('heading', { name: 'Recorded attendance' });
+    expect(screen.getAllByRole('table').map(table => table.getAttribute('aria-label'))).toEqual([
+      'Monthly activity log', 'Report sign-off',
+    ]);
+    const activityLog = screen.getByRole('table', { name: 'Monthly activity log' });
+    expect(within(activityLog).getAllByRole('rowgroup').map(group => group.getAttribute('aria-label')).filter(Boolean)).toEqual([
+      'Attendance', 'Activities', 'Assignments',
+    ]);
+    const activities = within(activityLog).getByRole('rowgroup', { name: 'Activities' });
+    expect(within(activities).getAllByRole('heading').slice(1).map(heading => heading.textContent)).toEqual(['First activity', 'Second activity']);
+    for (const title of ['Recorded attendance', 'First activity', 'Second activity', 'Submitted assignment']) {
+      expect(screen.getAllByRole('heading', { name: title })).toHaveLength(1);
+    }
+  });
+});

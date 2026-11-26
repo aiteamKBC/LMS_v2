@@ -1,0 +1,79 @@
+import { describe, expect, it } from 'vitest';
+import type { LearnerCalendarEvent } from '@/api/learnerCalendar';
+import type { MeetingAttendance } from '@/api/meetingAttendance';
+import { completedReviewTimelineStatus, reviewTimelineStatus } from './reviewTimelineStatus';
+
+const event = (overrides: Partial<LearnerCalendarEvent> = {}): LearnerCalendarEvent => ({
+  id: 'meeting-1', eventKey: 'meeting-1', title: 'Monthly coaching', source: 'mcr', type: 'coaching', sequence: 1,
+  status: 'scheduled', date: '2026-09-01', targetDate: '2026-09-01', scheduledDate: '2026-09-01',
+  scheduledTime: '10:00', durationMinutes: 60, coachName: '', coachEmail: '', meetingProvider: '', meetingLink: '', notes: '',
+  ...overrides,
+});
+
+const attendance = (overrides: Partial<MeetingAttendance> = {}): MeetingAttendance => ({
+  id: 'meeting-1', title: 'Monthly coaching', date: '2026-09-01', startTime: '10:00', durationMinutes: 60,
+  meetingLink: '', meetingProvider: '', canAttend: false, attendanceConfirmed: false, creditedMinutes: null,
+  canReportAbsence: false, absenceReported: false, absenceSessionId: null, missed: false, ...overrides,
+});
+
+describe('programme review timeline status', () => {
+  it('keeps missed attendance ahead of an in-progress form for Native and Imported reviews', () => {
+    for (const source of ['mcr', 'progress-review']) {
+      for (const reviewSource of ['curriculum', 'aptem'] as const) {
+        const row = event({ source, reviewSource, status: 'in-progress', reviewAttendance: 'missed' });
+        expect(completedReviewTimelineStatus(row, attendance(), 'in-progress')).toBe('missed');
+        expect(row.status).toBe('in-progress');
+      }
+    }
+    expect(completedReviewTimelineStatus(event({ status: 'in-progress' }), attendance({ missed: true }))).toBe('missed');
+  });
+
+  it('separates a pending report or future replacement from stale absence data', () => {
+    const stale = attendance({ missed: true });
+    expect(completedReviewTimelineStatus(event({ status: 'in-progress', meetingOutcome: 'ended', reviewAttendance: 'pending' }), stale)).toBe('awaiting-attendance');
+    expect(completedReviewTimelineStatus(event({ status: 'in-progress', reviewAttendance: null, scheduledDate: '2026-12-01' }), stale)).toBe('in-progress');
+    expect(completedReviewTimelineStatus(event({ status: 'in-progress', reviewAttendance: 'unavailable', meetingOutcome: 'ended' }), stale)).toBe('in-progress');
+    expect(completedReviewTimelineStatus(event({ status: 'in-progress', reviewAttendance: 'attended' }), stale)).toBe('attended');
+  });
+
+  it('keeps an elapsed booking scheduled until an attendance source identifies its outcome', () => {
+    expect(reviewTimelineStatus(event())).toBe('scheduled');
+    expect(reviewTimelineStatus(event(), attendance())).toBe('scheduled');
+    expect(reviewTimelineStatus(event({ status: 'in-progress' }))).toBe('in-progress');
+    expect(reviewTimelineStatus(event({ status: 'in-progress' }), attendance({ status: 'scheduled' }))).toBe('in-progress');
+    expect(reviewTimelineStatus(event({ status: 'in-progress', bookingStatus: 'scheduled' }))).toBe('in-progress');
+    expect(reviewTimelineStatus(event({ meetingOutcome: 'ended' }))).toBe('missed');
+    expect(reviewTimelineStatus(event({ meetingOutcome: 'completed' }))).toBe('attended');
+  });
+
+  it('uses confirmed attendance before stale missed flags and never treats a target date as a booking', () => {
+    expect(reviewTimelineStatus(event(), attendance({ missed: true }))).toBe('missed');
+    expect(reviewTimelineStatus(event(), attendance({ missed: true, attendanceConfirmed: true }))).toBe('attended');
+    expect(reviewTimelineStatus(event({ status: 'not-scheduled', scheduledDate: null }))).toBe('planned');
+    expect(reviewTimelineStatus(event({ bookingStatus: 'failed' }))).toBe('planned');
+  });
+
+  it('shows a completed review in green from any completed status without changing attendance', () => {
+    expect(completedReviewTimelineStatus(event({ status: 'completed' }), attendance({ status: 'scheduled' }))).toBe('attended');
+    expect(completedReviewTimelineStatus(event({ bookingStatus: 'completed' }))).toBe('attended');
+    expect(completedReviewTimelineStatus(event(), attendance({ status: 'completed' }))).toBe('attended');
+    expect(completedReviewTimelineStatus(event(), attendance({ missed: true }), 'completed')).toBe('attended');
+    expect(completedReviewTimelineStatus(event(), attendance({ missed: true }), 'awaiting-signature')).toBe('missed');
+    expect(completedReviewTimelineStatus(event(), attendance({ status: 'scheduled' }), 'in-progress')).toBe('in-progress');
+  });
+
+  it('separates a review waiting for signatures from one that is only booked', () => {
+    expect(reviewTimelineStatus(event({ status: 'awaiting-signature' }))).toBe('awaiting-signature');
+    expect(reviewTimelineStatus(event({ status: 'awaiting signature', scheduledDate: null }))).toBe('awaiting-signature');
+    expect(reviewTimelineStatus(event({ bookingStatus: 'awaiting-signature' }))).toBe('awaiting-signature');
+    expect(completedReviewTimelineStatus(event(), undefined, 'awaiting-signature')).toBe('awaiting-signature');
+    expect(completedReviewTimelineStatus(event({ status: 'awaiting-signature' }), attendance({ status: 'scheduled' }))).toBe('awaiting-signature');
+  });
+
+  it('keeps attendance evidence and closed bookings ahead of the signature stage', () => {
+    expect(completedReviewTimelineStatus(event(), attendance({ attendanceConfirmed: true }), 'awaiting-signature')).toBe('attended');
+    expect(completedReviewTimelineStatus(event({ status: 'awaiting-signature' }), undefined, 'completed')).toBe('attended');
+    expect(completedReviewTimelineStatus(event({ status: 'awaiting-signature' }), undefined, 'in-progress')).toBe('in-progress');
+    expect(completedReviewTimelineStatus(event({ status: 'awaiting-signature', bookingStatus: 'cancelled' }))).toBe('planned');
+  });
+});
