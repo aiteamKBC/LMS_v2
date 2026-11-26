@@ -63,20 +63,25 @@ def annotate(learner, report):
     return {**report, 'rows': rows}
 
 
-def require_open_month(owner, month):
+def require_open_month(owner, month, *, query=None):
     # Same lock/signoff sources used by the existing staff Activity Log editor.
-    if repository.query('''SELECT report_month FROM "Learner".learner_monthly_locks
-        WHERE learner_id=%s AND report_month=%s AND locked_at IS NOT NULL AND unlocked_at IS NULL''', [owner['id'], month]):
-        raise ServiceError('This monthly log is locked. No time was changed.', 'month_locked', 409)
-    if repository.query('''SELECT report_month FROM "Learner".learner_monthly_signatures
+    query = query or repository.query
+    from .finalization_locks import lock_query
+    lock_query(query, [(owner['id'], month)], vendor=connections[repository._query_alias.get() or 'enrolment'].vendor)
+    targets = query('''SELECT month_status FROM "Learner".learner_monthly_targets
+        WHERE learner_id=%s AND report_month=%s AND month_status IN ('partially_signed','locked')''', [owner['id'], month])
+    if targets:
+        raise ServiceError('This monthly log is signed or locked. No time was changed.',
+                           'month_locked' if targets[0]['month_status'] == 'locked' else 'month_signed', 409)
+    if query('''SELECT report_month FROM "Learner".learner_monthly_signatures
         WHERE learner_id=%s AND report_month=%s AND review_confirmed IS TRUE''', [owner['id'], month]):
         raise ServiceError('This monthly log is signed. No time was changed.', 'month_signed', 409)
+    events = query('''SELECT event_type FROM "Learner".manual_month_finalization_events
+        WHERE learner_id=%s AND report_month=%s ORDER BY id DESC LIMIT 1''', [owner['id'], month])
+    if events and events[0]['event_type'] == 'finalized':
+        raise ServiceError('This monthly log is finalized. No time was changed.', 'month_finalized', 409)
     if owner.get('aptem_id'):
-        events = repository.query('''SELECT event_type FROM "Learner".manual_month_finalization_events
-            WHERE aptem_id=%s AND report_month=%s ORDER BY id DESC LIMIT 1''', [owner['aptem_id'], month])
-        if events and events[0]['event_type'] == 'finalized':
-            raise ServiceError('This monthly log is finalized. No time was changed.', 'month_finalized', 409)
-        if repository.query('''SELECT report_month FROM "Learner".monthly_audit_signoffs
+        if query('''SELECT report_month FROM "Learner".monthly_audit_signoffs
             WHERE learner_id=%s AND report_month=%s AND review_confirmed IS TRUE''', [str(owner['aptem_id']), month]):
             raise ServiceError('This monthly log has an audit signature. No time was changed.', 'month_signed', 409)
 
@@ -87,10 +92,12 @@ def require_activity_time_month(owner, month, mode):
     The caller holds the learner/signing locks. Never unlock the month or
     replace its signatures/snapshots. Preserve separate administrative closure.
     """
+    from .finalization_locks import lock_query
+    lock_query(repository.query, [(owner['id'], month)], vendor=connections[repository._query_alias.get() or 'enrolment'].vendor)
     if mode not in {'add', 'retry'}:
         return require_open_month(owner, month)
-    locked = repository.query('''SELECT report_month FROM "Learner".learner_monthly_locks
-        WHERE learner_id=%s AND report_month=%s AND locked_at IS NOT NULL AND unlocked_at IS NULL''', [owner['id'], month])
+    locked = repository.query('''SELECT report_month FROM "Learner".learner_monthly_targets
+        WHERE learner_id=%s AND report_month=%s AND month_status='locked' ''', [owner['id'], month])
     if locked:
         # Monthly Logs automatically locks after both people sign. That lock
         # still protects corrections, but it must not prohibit a new attempt.
@@ -99,11 +106,10 @@ def require_activity_time_month(owner, month, mode):
               AND signer_role IN ('learner','coach')''', [owner['id'], month])
         if {row['signer_role'] for row in signs} != {'learner', 'coach'}:
             raise ServiceError('This monthly log is locked. No time was changed.', 'month_locked', 409)
-    if owner.get('aptem_id'):
-        events = repository.query('''SELECT event_type FROM "Learner".manual_month_finalization_events
-            WHERE aptem_id=%s AND report_month=%s ORDER BY id DESC LIMIT 1''', [owner['aptem_id'], month])
-        if events and events[0]['event_type'] == 'finalized':
-            raise ServiceError('This monthly log is finalized. No time was changed.', 'month_finalized', 409)
+    events = repository.query('''SELECT event_type FROM "Learner".manual_month_finalization_events
+        WHERE learner_id=%s AND report_month=%s ORDER BY id DESC LIMIT 1''', [owner['id'], month])
+    if events and events[0]['event_type'] == 'finalized':
+        raise ServiceError('This monthly log is finalized. No time was changed.', 'month_finalized', 409)
 
 
 def queue_refresh(owner):
@@ -138,7 +144,12 @@ def correct(learner, role, actor, month, progress_id, payload, *, authorize=None
         raise ServiceError('The learner identity needs review.', 'identity_review_required', 409)
     query = repository.query
     lock = ' FOR UPDATE' if connections['enrolment'].vendor == 'postgresql' else ''
-    # Same first lock as monthly signing, so a signature cannot race this save.
+    from .finalization_locks import lock_query
+    prospective = query('''SELECT reporting_month FROM "Learner".learner_progress_entries
+        WHERE id=%s AND learner_id=%s AND deleted_at IS NULL''', [progress_id, owner['id']])
+    scoped_months = {month} | {r['reporting_month'] for r in prospective if r.get('reporting_month')}
+    lock_query(query, [(owner['id'], target) for target in scoped_months], vendor=connections['enrolment'].vendor)
+    # Same first row lock as monthly signing, after the canonical scope lock.
     query('SELECT id FROM enrolment."Created_users" WHERE id=%s' + lock, [owner['enrolment_id']])
     query('SELECT id FROM "Learner".learners WHERE id=%s' + lock, [owner['id']])
     if authorize is not None:
@@ -162,7 +173,10 @@ def correct(learner, role, actor, month, progress_id, payload, *, authorize=None
     allocated = canonical.allocations({**before, 'reporting_month': original_month})[0]
     if allocated.get('reporting_month') != month:
         raise ServiceError('Activity not found in this month.', 'not_found', 404)
-    for target_month in {month, before.get('reporting_month')} - {None, ''}:
+    target_months = sorted({month, before.get('reporting_month')} - {None, ''})
+    if not set(target_months).issubset(scoped_months):
+        raise ServiceError('Activity month changed. Reload before correcting it.', 'record_changed', 409)
+    for target_month in target_months:
         require_open_month(owner, target_month)
     retained = query('''SELECT id FROM "Learner".learner_progress_entries
         WHERE learner_id=%s AND deleted_at IS NULL AND coalesce(source_system,'')<>''

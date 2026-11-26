@@ -1,0 +1,78 @@
+{
+  "database": "neondb",
+  "branch": "br-raspy-sky-abvs8lq9",
+  "captured": "2026-11-26",
+  "triggers": [
+    {
+      "database_name": "neondb",
+      "branch": "br-raspy-sky-abvs8lq9",
+      "relname": "manual_activity_documents",
+      "tgname": "trg_guard_finalized_manual_docs",
+      "tgenabled": "O",
+      "definition": "CREATE TRIGGER trg_guard_finalized_manual_docs BEFORE INSERT OR DELETE OR UPDATE ON \"Learner\".manual_activity_documents FOR EACH ROW EXECUTE FUNCTION \"Learner\".guard_finalized_journal_month()",
+      "function_definition": "\"Learner\".guard_finalized_journal_month()"
+    },
+    {
+      "database_name": "neondb",
+      "branch": "br-raspy-sky-abvs8lq9",
+      "relname": "manual_activity_documents",
+      "tgname": "trg_guard_manual_document_identity",
+      "tgenabled": "O",
+      "definition": "CREATE TRIGGER trg_guard_manual_document_identity BEFORE DELETE OR UPDATE ON \"Learner\".manual_activity_documents FOR EACH ROW EXECUTE FUNCTION \"Learner\".guard_manual_document_identity()",
+      "function_definition": "\"Learner\".guard_manual_document_identity()"
+    },
+    {
+      "database_name": "neondb",
+      "branch": "br-raspy-sky-abvs8lq9",
+      "relname": "manual_activity_documents",
+      "tgname": "trg_sync_journal_document_to_activity_ssot",
+      "tgenabled": "O",
+      "definition": "CREATE TRIGGER trg_sync_journal_document_to_activity_ssot AFTER INSERT OR UPDATE ON \"Learner\".manual_activity_documents FOR EACH ROW EXECUTE FUNCTION \"Learner\".sync_journal_document_to_activity_ssot()",
+      "function_definition": "\"Learner\".sync_journal_document_to_activity_ssot()"
+    },
+    {
+      "database_name": "neondb",
+      "branch": "br-raspy-sky-abvs8lq9",
+      "relname": "manual_month_finalization_events",
+      "tgname": "monthly_actual_event_16_delete",
+      "tgenabled": "O",
+      "definition": "CREATE TRIGGER monthly_actual_event_16_delete AFTER DELETE ON \"Learner\".manual_month_finalization_events REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION \"Learner\".monthly_actual_event_16()",
+      "function_definition": "\"Learner\".monthly_actual_event_16()"
+    },
+    {
+      "database_name": "neondb",
+      "branch": "br-raspy-sky-abvs8lq9",
+      "relname": "manual_month_finalization_events",
+      "tgname": "monthly_actual_event_16_insert",
+      "tgenabled": "O",
+      "definition": "CREATE TRIGGER monthly_actual_event_16_insert AFTER INSERT ON \"Learner\".manual_month_finalization_events REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION \"Learner\".monthly_actual_event_16()",
+      "function_definition": "\"Learner\".monthly_actual_event_16()"
+    },
+    {
+      "database_name": "neondb",
+      "branch": "br-raspy-sky-abvs8lq9",
+      "relname": "manual_month_finalization_events",
+      "tgname": "monthly_actual_event_16_update",
+      "tgenabled": "O",
+      "definition": "CREATE TRIGGER monthly_actual_event_16_update AFTER UPDATE ON \"Learner\".manual_month_finalization_events REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION \"Learner\".monthly_actual_event_16()",
+      "function_definition": "\"Learner\".monthly_actual_event_16()"
+    },
+    {
+      "database_name": "neondb",
+      "branch": "br-raspy-sky-abvs8lq9",
+      "relname": "manual_month_finalization_events",
+      "tgname": "trg_lock_manual_finalization_event_scope",
+      "tgenabled": "O",
+      "definition": "CREATE TRIGGER trg_lock_manual_finalization_event_scope BEFORE INSERT ON \"Learner\".manual_month_finalization_events FOR EACH ROW EXECUTE FUNCTION \"Learner\".lock_manual_finalization_event_scope()",
+      "function_definition": "\"Learner\".lock_manual_finalization_event_scope()"
+    }
+  ],
+  "invalidate": "CREATE OR REPLACE FUNCTION \"Learner\".invalidate_monthly_actuals(owner_ids bigint[])\n RETURNS void\n LANGUAGE plpgsql\nAS $function$\nDECLARE\n    offset_index integer;\nBEGIN\n    IF COALESCE(cardinality(owner_ids), 0) = 0 THEN\n        RETURN;\n    END IF;\n\n    UPDATE \"Learner\".learner_monthly_targets t\n    SET\n        actual_seconds_total = NULL,\n        actual_updated_at = NULL,\n        actual_summary = NULL\n    WHERE t.learner_id = ANY(owner_ids)\n\n      AND t.month_status = 'open'\n\n      AND NOT EXISTS (\n          SELECT 1\n          FROM \"Learner\".learner_monthly_signatures s\n          WHERE s.learner_id = t.learner_id\n            AND s.report_month = t.report_month\n            AND s.review_confirmed IS TRUE\n            AND s.source_system = 'lms'\n            AND s.source_ref LIKE 'lms-monthly:%'\n      )\n\n      AND (\n          SELECT e.event_type\n          FROM \"Learner\".manual_month_finalization_events e\n          WHERE e.learner_id = t.learner_id\n            AND e.report_month = t.report_month\n          ORDER BY e.id DESC\n          LIMIT 1\n      ) IS DISTINCT FROM 'finalized'\n\n      AND (\n          t.actual_seconds_total IS NOT NULL\n          OR t.actual_updated_at IS NOT NULL\n          OR t.actual_summary IS NOT NULL\n      );\n\n    FOR offset_index IN 1..cardinality(owner_ids) BY 200\n    LOOP\n        PERFORM pg_notify(\n            'lms_monthly_actuals_changed',\n            to_json(\n                owner_ids[offset_index:offset_index+199]\n            )::text\n        );\n    END LOOP;\nEND;\n$function$\n",
+  "functions": {
+    "\"Learner\".guard_finalized_journal_month()": "CREATE OR REPLACE FUNCTION \"Learner\".guard_finalized_journal_month()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nDECLARE\n    old_learner_id BIGINT;\n    old_month TEXT;\n    new_learner_id BIGINT;\n    new_month TEXT;\n    scope RECORD;\n    latest_event TEXT;\nBEGIN\n    IF TG_TABLE_NAME = 'manual_activity_documents' THEN\n\n        IF TG_OP <> 'INSERT' THEN\n            SELECT j.learner_id, j.month\n            INTO STRICT old_learner_id, old_month\n            FROM \"Learner\".learner_journal_rows j\n            WHERE j.id = OLD.manual_activity_id\n              AND j.learner_id = OLD.learner_id;\n        END IF;\n\n        IF TG_OP <> 'DELETE' THEN\n            SELECT j.learner_id, j.month\n            INTO STRICT new_learner_id, new_month\n            FROM \"Learner\".learner_journal_rows j\n            WHERE j.id = NEW.manual_activity_id\n              AND j.learner_id = NEW.learner_id;\n        END IF;\n\n    ELSE\n\n        IF TG_OP <> 'INSERT' THEN\n            old_learner_id := OLD.learner_id;\n            old_month := OLD.month;\n        END IF;\n\n        IF TG_OP <> 'DELETE' THEN\n            new_learner_id := NEW.learner_id;\n            new_month := NEW.month;\n        END IF;\n\n    END IF;\n\n    IF TG_OP <> 'INSERT'\n       AND (old_learner_id IS NULL OR old_month IS NULL)\n    THEN\n        RAISE EXCEPTION 'Invalid old journal scope';\n    END IF;\n\n    IF TG_OP <> 'DELETE'\n       AND (new_learner_id IS NULL OR new_month IS NULL)\n    THEN\n        RAISE EXCEPTION 'Invalid new journal scope';\n    END IF;\n\n    FOR scope IN\n        SELECT DISTINCT\n            v.learner_id,\n            v.report_month\n        FROM (\n            VALUES\n                (old_learner_id, old_month),\n                (new_learner_id, new_month)\n        ) AS v(learner_id, report_month)\n        JOIN \"Learner\".learners l\n            ON l.id = v.learner_id\n        ORDER BY v.learner_id, v.report_month\n    LOOP\n\n        PERFORM pg_advisory_xact_lock(hashtextextended(\n            'canonical-journal-finalization:' || scope.learner_id::text || ':' || scope.report_month, 0));\n\n        SELECT e.event_type\n        INTO latest_event\n        FROM \"Learner\".manual_month_finalization_events e\n        WHERE e.learner_id = scope.learner_id\n          AND e.report_month = scope.report_month\n        ORDER BY e.id DESC\n        LIMIT 1;\n\n        IF latest_event = 'finalized' THEN\n            RAISE EXCEPTION USING\n                ERRCODE = '55000',\n                MESSAGE =\n                    'Journal month is finalized and read-only: '\n                    || scope.learner_id::TEXT\n                    || '/'\n                    || scope.report_month;\n        END IF;\n\n    END LOOP;\n\n    IF TG_OP = 'DELETE' THEN\n        RETURN OLD;\n    END IF;\n\n    RETURN NEW;\nEND;\n$function$\n",
+    "\"Learner\".guard_manual_document_identity()": "CREATE OR REPLACE FUNCTION \"Learner\".guard_manual_document_identity()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    IF TG_OP = 'DELETE' THEN\n        RAISE EXCEPTION\n            'Hard delete is not allowed. Use soft delete.';\n    END IF;\n\n    IF NEW.id IS DISTINCT FROM OLD.id\n       OR NEW.learner_id IS DISTINCT FROM OLD.learner_id\n       OR NEW.manual_activity_id\n          IS DISTINCT FROM OLD.manual_activity_id\n    THEN\n        RAISE EXCEPTION\n            'Manual document identity cannot be changed.';\n    END IF;\n\n    RETURN NEW;\nEND;\n$function$\n",
+    "\"Learner\".sync_journal_document_to_activity_ssot()": "CREATE OR REPLACE FUNCTION \"Learner\".sync_journal_document_to_activity_ssot()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nDECLARE\n    linked_progress_id BIGINT;\nBEGIN\n    SELECT j.progress_id\n    INTO STRICT linked_progress_id\n    FROM \"Learner\".learner_journal_rows j\n    WHERE j.id = NEW.manual_activity_id\n      AND j.learner_id = NEW.learner_id;\n\n    IF TG_OP = 'UPDATE' THEN\n        UPDATE \"Learner\".learner_activity_documents s\n        SET\n            container = NEW.container,\n            blob_name = NEW.blob_name,\n            display_name = NEW.display_name,\n            content_type = COALESCE(NEW.content_type, ''),\n            size_bytes = NEW.size_bytes,\n            uploaded_by = COALESCE(NEW.uploaded_by, ''),\n            uploaded_at = NEW.uploaded_at,\n            deleted_at = CASE\n                WHEN OLD.deleted_at IS NULL\n                 AND NEW.deleted_at IS NOT NULL\n                THEN COALESCE(s.deleted_at, NEW.deleted_at)\n                ELSE s.deleted_at\n            END,\n            updated_at = NOW()\n        WHERE s.source_system = 'journal'\n          AND s.source_document_id =\n              'manual-document:' || NEW.id::TEXT\n          AND s.learner_id = NEW.learner_id;\n\n        IF FOUND THEN\n            RETURN NEW;\n        END IF;\n    END IF;\n\n    INSERT INTO \"Learner\".learner_activity_documents (\n        learner_id,\n        progress_id,\n        source_system,\n        source_document_id,\n        container,\n        blob_name,\n        display_name,\n        content_type,\n        size_bytes,\n        uploaded_by,\n        uploaded_at,\n        deleted_at,\n        created_at,\n        updated_at\n    )\n    VALUES (\n        NEW.learner_id,\n        linked_progress_id,\n        'journal',\n        'manual-document:' || NEW.id::TEXT,\n        NEW.container,\n        NEW.blob_name,\n        NEW.display_name,\n        COALESCE(NEW.content_type, ''),\n        NEW.size_bytes,\n        COALESCE(NEW.uploaded_by, ''),\n        NEW.uploaded_at,\n        NEW.deleted_at,\n        COALESCE(NEW.uploaded_at, NOW()),\n        NOW()\n    )\n    ON CONFLICT (source_system, source_document_id)\n    DO NOTHING;\n\n    RETURN NEW;\nEND;\n$function$\n",
+    "\"Learner\".monthly_actual_event_16()": "CREATE OR REPLACE FUNCTION \"Learner\".monthly_actual_event_16()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nDECLARE\n    owner_ids bigint[];\nBEGIN\n\n    IF TG_OP = 'INSERT' THEN\n\n        SELECT ARRAY_AGG(DISTINCT learner_id ORDER BY learner_id)\n        INTO owner_ids\n        FROM new_rows\n        WHERE learner_id IS NOT NULL;\n\n    ELSIF TG_OP = 'DELETE' THEN\n\n        SELECT ARRAY_AGG(DISTINCT learner_id ORDER BY learner_id)\n        INTO owner_ids\n        FROM old_rows\n        WHERE learner_id IS NOT NULL;\n\n    ELSIF TG_OP = 'UPDATE' THEN\n\n        WITH changed AS (\n            (\n                SELECT id, learner_id, report_month, event_type\n                FROM new_rows\n\n                EXCEPT\n\n                SELECT id, learner_id, report_month, event_type\n                FROM old_rows\n            )\n            UNION\n            (\n                SELECT id, learner_id, report_month, event_type\n                FROM old_rows\n\n                EXCEPT\n\n                SELECT id, learner_id, report_month, event_type\n                FROM new_rows\n            )\n        )\n        SELECT ARRAY_AGG(DISTINCT learner_id ORDER BY learner_id)\n        INTO owner_ids\n        FROM changed\n        WHERE learner_id IS NOT NULL;\n\n    END IF;\n\n    PERFORM \"Learner\".invalidate_monthly_actuals(owner_ids);\n\n    RETURN NULL;\nEND;\n$function$\n",
+    "\"Learner\".lock_manual_finalization_event_scope()": "CREATE OR REPLACE FUNCTION \"Learner\".lock_manual_finalization_event_scope()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    PERFORM pg_advisory_xact_lock(hashtextextended(\n        'canonical-journal-finalization:' || NEW.learner_id::text || ':' || NEW.report_month, 0));\n    RETURN NEW;\nEND;\n$function$\n"
+  }
+}

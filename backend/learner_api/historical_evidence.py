@@ -14,12 +14,13 @@ from audit_api.evidence_explorer_views import (
 )
 from audit_api.manual_ledger_views import _report_display_name
 from old_otjh.repository import ksb_codes
-from . import evidence_storage, journal_sources
+from . import evidence_storage, journal_sources, journal_documents
+from .canonical_learning import profile_by_aptem
+from old_otjh.service import ServiceError
 
-# Retain the legacy identifiers exposed to existing callers. Request reads
-# resolve their tables through journal_sources, including coach isolation.
-MANUAL_ROWS = 'structured_manual_activities.manual_learner_activities'
-MANUAL_DOCS = 'structured_manual_activities.manual_activity_documents'
+# Document-bearing journals use the same canonical ownership for both roles.
+MANUAL_ROWS = journal_documents.JOURNAL
+MANUAL_DOCS = journal_documents.DOCUMENTS
 CLASSIFICATIONS = 'structured_manual_activities.evidence_content_classification'
 EVIDENCE_OVERRIDES = 'structured_manual_activities.evidence_overrides'
 EVIDENCE_REPLACEMENTS = 'structured_manual_activities.evidence_replacements'
@@ -69,6 +70,8 @@ def resolve_aptem(cursor, kind, pk):
     rows = dict_rows(cursor)
     if not rows or rows[0]['kind'] != kind:
         raise EvidenceError('Learner not found.')
+    if len(rows) != 1:
+        raise EvidenceError('The link to your previous evidence needs checking.', 409)
     row = rows[0]
     if not str(row['aptem_id'] or '').strip():
         return None
@@ -78,7 +81,7 @@ def resolve_aptem(cursor, kind, pk):
 
 
 def available_tables(cursor):
-    tables = [EVIDENCE_ITEMS, journal_sources.table('evidence_content_classification'), journal_sources.table('evidence_overrides'), journal_sources.table('evidence_replacements'), journal_sources.table('manual_learner_activities'), journal_sources.table('manual_activity_documents'), ARCHIVES]
+    tables = [EVIDENCE_ITEMS, journal_sources.table('evidence_content_classification'), journal_sources.table('evidence_overrides'), journal_sources.table('evidence_replacements'), MANUAL_ROWS, MANUAL_DOCS, ARCHIVES]
     cursor.execute('SELECT ' + ', '.join('to_regclass(%s)' for _ in tables), tables)
     return {table for table, found in zip(tables, cursor.fetchone()) if found}
 
@@ -132,21 +135,26 @@ def source_rows(cursor, aptem_id, tables, source_id=None):
 
 
 def manual_documents(cursor, aptem_id, tables, row_id=None, *, include_mirrored=False):
-    if not {journal_sources.table('manual_learner_activities'), journal_sources.table('manual_activity_documents')}.issubset(tables):
+    if not {MANUAL_ROWS, MANUAL_DOCS}.issubset(tables):
         return []
-    params = [aptem_id]
+    try:
+        owner = profile_by_aptem(aptem_id, cursor=cursor)
+    except ServiceError as error:
+        raise EvidenceError(str(error), error.status) from error
+    params = [owner['id']]
     target = ''
     if row_id is not None:
         target = 'AND r.id=%s'
         params.append(row_id)
     # Auto-attached copies of the Aptem file/report are already represented by
     # the evidence item. Keep only additional journal documents here.
-    dedup = f'''AND NOT EXISTS (SELECT 1 FROM {EVIDENCE_ITEMS} e WHERE e.learner_id=d.aptem_id
+    dedup = f'''AND NOT EXISTS (SELECT 1 FROM {EVIDENCE_ITEMS} e WHERE e.learner_id=l.aptem_id
         AND d.container='fetch-aptem-evidences' AND d.blob_name IN (e.file_blob,e.report_blob,e.note_blob))''' if EVIDENCE_ITEMS in tables and not include_mirrored else ''
     cursor.execute(f'''SELECT d.id,d.manual_activity_id,d.display_name,d.content_type,d.size_bytes,
         d.container,d.blob_name,d.uploaded_at,r.title,r.category,r.activity_date,r.month
-        FROM {journal_sources.table('manual_activity_documents')} d JOIN {journal_sources.table('manual_learner_activities')} r ON r.id=d.manual_activity_id AND r.aptem_id=d.aptem_id
-        WHERE d.aptem_id=%s AND d.deleted_at IS NULL AND r.deleted_at IS NULL {target} {dedup}
+        FROM {MANUAL_DOCS} d JOIN {MANUAL_ROWS} r ON r.id=d.manual_activity_id AND r.learner_id=d.learner_id
+        JOIN "Learner".learners l ON l.id=d.learner_id
+        WHERE d.learner_id=%s AND {journal_documents.visible()} AND r.deleted_at IS NULL {target} {dedup}
         ORDER BY r.activity_date DESC NULLS LAST,r.id,d.id''', params)
     return dict_rows(cursor)
 
@@ -163,8 +171,8 @@ def uploaded_rows(cursor, aptem_id, tables, source_id=None):
               'o.evidence_date', 'o.azure_container', 'o.azure_blob_name', 'o.source_activity_id',
               'o.source_activity_month', 'o.source_activity_category']
     activity_fields = ['id', 'title', 'category', 'month', 'activity_date', 'completion_note', 'actual_hours', 'planned_hours', 'accepted']
-    fields += [f'r.{key} AS activity_{key}' if journal_sources.table('manual_learner_activities') in tables else f'NULL AS activity_{key}' for key in activity_fields]
-    join = f'LEFT JOIN {journal_sources.table('manual_learner_activities')} r ON r.id=o.source_activity_id AND r.aptem_id=o.learner_id AND r.deleted_at IS NULL' if journal_sources.table('manual_learner_activities') in tables else ''
+    fields += [f'r.{key} AS activity_{key}' if MANUAL_ROWS in tables else f'NULL AS activity_{key}' for key in activity_fields]
+    join = f'LEFT JOIN {MANUAL_ROWS} r ON r.id=o.source_activity_id AND r.aptem_id=o.learner_id AND r.deleted_at IS NULL' if MANUAL_ROWS in tables else ''
     cursor.execute(f'''SELECT {', '.join(fields)} FROM {ARCHIVES} o {join}
         WHERE o.learner_id=%s AND o.is_uploaded AND o.deleted_at IS NULL AND o.archived_at IS NULL {target}
         ORDER BY o.evidence_date DESC,o.evidence_id''', params)

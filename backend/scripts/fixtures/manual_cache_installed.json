@@ -1,0 +1,1762 @@
+{
+  "captured": "2026-11-26",
+  "database": "neondb",
+  "branch": "br-raspy-sky-abvs8lq9",
+  "columns": [
+    {
+      "schema": "Learner",
+      "name": "learner_activity_documents",
+      "columns": [
+        {
+          "name": "id",
+          "type": "bigint"
+        },
+        {
+          "name": "learner_id",
+          "type": "bigint"
+        },
+        {
+          "name": "progress_id",
+          "type": "bigint"
+        },
+        {
+          "name": "source_system",
+          "type": "text"
+        },
+        {
+          "name": "source_document_id",
+          "type": "text"
+        },
+        {
+          "name": "container",
+          "type": "text"
+        },
+        {
+          "name": "blob_name",
+          "type": "text"
+        },
+        {
+          "name": "display_name",
+          "type": "text"
+        },
+        {
+          "name": "content_type",
+          "type": "text"
+        },
+        {
+          "name": "size_bytes",
+          "type": "bigint"
+        },
+        {
+          "name": "uploaded_by",
+          "type": "text"
+        },
+        {
+          "name": "uploaded_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "deleted_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "updated_at",
+          "type": "timestamp with time zone"
+        }
+      ]
+    },
+    {
+      "schema": "Learner",
+      "name": "learner_activity_reporting_segments",
+      "columns": [
+        {
+          "name": "id",
+          "type": "bigint"
+        },
+        {
+          "name": "progress_id",
+          "type": "bigint"
+        },
+        {
+          "name": "learner_id",
+          "type": "bigint"
+        },
+        {
+          "name": "segment_order",
+          "type": "integer"
+        },
+        {
+          "name": "actual_seconds",
+          "type": "bigint"
+        },
+        {
+          "name": "reporting_started_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "reporting_ended_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "reporting_month",
+          "type": "character varying(7)"
+        },
+        {
+          "name": "sync_run_id",
+          "type": "bigint"
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "updated_at",
+          "type": "timestamp with time zone"
+        }
+      ]
+    },
+    {
+      "schema": "Learner",
+      "name": "learner_activity_sources",
+      "columns": [
+        {
+          "name": "id",
+          "type": "bigint"
+        },
+        {
+          "name": "learner_id",
+          "type": "bigint"
+        },
+        {
+          "name": "programme_id",
+          "type": "text"
+        },
+        {
+          "name": "source_system",
+          "type": "text"
+        },
+        {
+          "name": "source_activity_id",
+          "type": "text"
+        },
+        {
+          "name": "source_attempt_key",
+          "type": "text"
+        },
+        {
+          "name": "curriculum_component_id",
+          "type": "bigint"
+        },
+        {
+          "name": "canonical_activity_key",
+          "type": "text"
+        },
+        {
+          "name": "activity_type",
+          "type": "text"
+        },
+        {
+          "name": "title",
+          "type": "text"
+        },
+        {
+          "name": "activity_status",
+          "type": "text"
+        },
+        {
+          "name": "completed",
+          "type": "boolean"
+        },
+        {
+          "name": "accepted",
+          "type": "boolean"
+        },
+        {
+          "name": "actual_seconds",
+          "type": "bigint"
+        },
+        {
+          "name": "actual_basis",
+          "type": "text"
+        },
+        {
+          "name": "source_started_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "source_ended_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "reporting_started_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "reporting_ended_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "reporting_month",
+          "type": "character varying(7)"
+        },
+        {
+          "name": "ksb_codes",
+          "type": "jsonb"
+        },
+        {
+          "name": "source_payload",
+          "type": "jsonb"
+        },
+        {
+          "name": "source_updated_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "sync_run_id",
+          "type": "bigint"
+        },
+        {
+          "name": "canonical_progress_id",
+          "type": "bigint"
+        },
+        {
+          "name": "first_seen_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "last_seen_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "deleted_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "source_fingerprint",
+          "type": "text"
+        },
+        {
+          "name": "curriculum_component_ref",
+          "type": "text"
+        },
+        {
+          "name": "source_course_ref",
+          "type": "text"
+        },
+        {
+          "name": "source_catalog_activity_id",
+          "type": "bigint"
+        },
+        {
+          "name": "legacy_actual_learner_id",
+          "type": "bigint"
+        },
+        {
+          "name": "legacy_actual_kind",
+          "type": "text"
+        },
+        {
+          "name": "legacy_actual_ref",
+          "type": "text"
+        },
+        {
+          "name": "legacy_actual_aptem_id",
+          "type": "bigint"
+        }
+      ]
+    },
+    {
+      "schema": "Learner",
+      "name": "learner_journal_rows",
+      "columns": [
+        {
+          "name": "id",
+          "type": "bigint"
+        },
+        {
+          "name": "aptem_id",
+          "type": "bigint"
+        },
+        {
+          "name": "month",
+          "type": "text"
+        },
+        {
+          "name": "category",
+          "type": "text"
+        },
+        {
+          "name": "source_ref",
+          "type": "text"
+        },
+        {
+          "name": "group_id",
+          "type": "bigint"
+        },
+        {
+          "name": "activity_id",
+          "type": "bigint"
+        },
+        {
+          "name": "title",
+          "type": "text"
+        },
+        {
+          "name": "activity_date",
+          "type": "date"
+        },
+        {
+          "name": "planned_hours",
+          "type": "numeric"
+        },
+        {
+          "name": "actual_hours",
+          "type": "numeric"
+        },
+        {
+          "name": "timestamp_label",
+          "type": "text"
+        },
+        {
+          "name": "completion_note",
+          "type": "text"
+        },
+        {
+          "name": "accepted",
+          "type": "boolean"
+        },
+        {
+          "name": "created_by",
+          "type": "text"
+        },
+        {
+          "name": "updated_by",
+          "type": "text"
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "updated_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "deleted_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "activity_time",
+          "type": "time without time zone"
+        },
+        {
+          "name": "activity_date_manual_override",
+          "type": "boolean"
+        },
+        {
+          "name": "merge_source_snapshot",
+          "type": "jsonb"
+        },
+        {
+          "name": "programme_profile_id",
+          "type": "text"
+        },
+        {
+          "name": "learner_id",
+          "type": "bigint"
+        },
+        {
+          "name": "source_id",
+          "type": "bigint"
+        },
+        {
+          "name": "progress_id",
+          "type": "bigint"
+        },
+        {
+          "name": "ksb_snapshot",
+          "type": "jsonb"
+        },
+        {
+          "name": "ksb_metadata",
+          "type": "jsonb"
+        }
+      ]
+    },
+    {
+      "schema": "Learner",
+      "name": "learner_monthly_signatures",
+      "columns": [
+        {
+          "name": "id",
+          "type": "bigint"
+        },
+        {
+          "name": "learner_id",
+          "type": "bigint"
+        },
+        {
+          "name": "report_month",
+          "type": "character varying(7)"
+        },
+        {
+          "name": "signer_role",
+          "type": "text"
+        },
+        {
+          "name": "signer_name",
+          "type": "text"
+        },
+        {
+          "name": "signature_data",
+          "type": "text"
+        },
+        {
+          "name": "signature_url",
+          "type": "text"
+        },
+        {
+          "name": "capture_method",
+          "type": "text"
+        },
+        {
+          "name": "review_confirmed",
+          "type": "boolean"
+        },
+        {
+          "name": "snapshot_digest",
+          "type": "text"
+        },
+        {
+          "name": "signed_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "source_system",
+          "type": "text"
+        },
+        {
+          "name": "source_ref",
+          "type": "text"
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "updated_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "source_learner_id",
+          "type": "text"
+        },
+        {
+          "name": "programme_key",
+          "type": "text"
+        },
+        {
+          "name": "signature_source_type",
+          "type": "text"
+        },
+        {
+          "name": "signature_source_document_id",
+          "type": "text"
+        },
+        {
+          "name": "signature_source_document_name",
+          "type": "text"
+        },
+        {
+          "name": "signature_source_review_date",
+          "type": "text"
+        },
+        {
+          "name": "signature_extraction_method",
+          "type": "text"
+        },
+        {
+          "name": "audit_version",
+          "type": "text"
+        },
+        {
+          "name": "monthly_target_id",
+          "type": "bigint"
+        }
+      ]
+    },
+    {
+      "schema": "Learner",
+      "name": "learner_monthly_targets",
+      "columns": [
+        {
+          "name": "learner_id",
+          "type": "bigint"
+        },
+        {
+          "name": "report_month",
+          "type": "character varying(7)"
+        },
+        {
+          "name": "target_hours",
+          "type": "numeric(12,4)"
+        },
+        {
+          "name": "source_system",
+          "type": "text"
+        },
+        {
+          "name": "source_ref",
+          "type": "text"
+        },
+        {
+          "name": "basis",
+          "type": "text"
+        },
+        {
+          "name": "programme_id",
+          "type": "text"
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "updated_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "id",
+          "type": "bigint"
+        },
+        {
+          "name": "programme_profile_id",
+          "type": "text"
+        },
+        {
+          "name": "updated_by",
+          "type": "text"
+        },
+        {
+          "name": "actual_seconds_total",
+          "type": "bigint"
+        },
+        {
+          "name": "actual_updated_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "actual_summary",
+          "type": "jsonb"
+        },
+        {
+          "name": "month_status",
+          "type": "text"
+        }
+      ]
+    },
+    {
+      "schema": "Learner",
+      "name": "learner_progress_entries",
+      "columns": [
+        {
+          "name": "id",
+          "type": "bigint"
+        },
+        {
+          "name": "learner_id",
+          "type": "bigint"
+        },
+        {
+          "name": "entry_order",
+          "type": "integer"
+        },
+        {
+          "name": "kind",
+          "type": "character varying(30)"
+        },
+        {
+          "name": "module_ref",
+          "type": "text"
+        },
+        {
+          "name": "module_title",
+          "type": "text"
+        },
+        {
+          "name": "week_ref",
+          "type": "text"
+        },
+        {
+          "name": "week_title",
+          "type": "text"
+        },
+        {
+          "name": "component_ref",
+          "type": "text"
+        },
+        {
+          "name": "component_title",
+          "type": "text"
+        },
+        {
+          "name": "component_type",
+          "type": "character varying(100)"
+        },
+        {
+          "name": "quiz_ref",
+          "type": "text"
+        },
+        {
+          "name": "attempt",
+          "type": "integer"
+        },
+        {
+          "name": "grade",
+          "type": "numeric(10,4)"
+        },
+        {
+          "name": "achieved_score",
+          "type": "numeric(12,2)"
+        },
+        {
+          "name": "total_score",
+          "type": "numeric(12,2)"
+        },
+        {
+          "name": "passed",
+          "type": "boolean"
+        },
+        {
+          "name": "feedback",
+          "type": "text"
+        },
+        {
+          "name": "reported_time",
+          "type": "text"
+        },
+        {
+          "name": "started_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "submitted_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "time_taken",
+          "type": "text"
+        },
+        {
+          "name": "feed_kind",
+          "type": "character varying(30)"
+        },
+        {
+          "name": "feed_action",
+          "type": "text"
+        },
+        {
+          "name": "feed_title",
+          "type": "text"
+        },
+        {
+          "name": "feed_detail",
+          "type": "text"
+        },
+        {
+          "name": "feed_occurred_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "plan_component_id",
+          "type": "bigint"
+        },
+        {
+          "name": "programme_ref",
+          "type": "text"
+        },
+        {
+          "name": "programme_title",
+          "type": "text"
+        },
+        {
+          "name": "cohort_ref",
+          "type": "text"
+        },
+        {
+          "name": "cohort_title",
+          "type": "text"
+        },
+        {
+          "name": "group_ref",
+          "type": "text"
+        },
+        {
+          "name": "group_title",
+          "type": "text"
+        },
+        {
+          "name": "expected_otjh",
+          "type": "numeric(8,2)"
+        },
+        {
+          "name": "points",
+          "type": "integer"
+        },
+        {
+          "name": "component_link_status",
+          "type": "text"
+        },
+        {
+          "name": "legacy_component_ref",
+          "type": "text"
+        },
+        {
+          "name": "component_link_source",
+          "type": "text"
+        },
+        {
+          "name": "time_tracking_source",
+          "type": "text"
+        },
+        {
+          "name": "time_tracking_calculation",
+          "type": "text"
+        },
+        {
+          "name": "time_tracking_session_ref",
+          "type": "text"
+        },
+        {
+          "name": "claimed_seconds",
+          "type": "integer"
+        },
+        {
+          "name": "server_session_seconds",
+          "type": "integer"
+        },
+        {
+          "name": "verified_seconds",
+          "type": "integer"
+        },
+        {
+          "name": "outside_working_hours",
+          "type": "boolean"
+        },
+        {
+          "name": "outside_working_hours_confirmed",
+          "type": "boolean"
+        },
+        {
+          "name": "outside_working_hours_confirmed_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "programme_id",
+          "type": "text"
+        },
+        {
+          "name": "curriculum_component_id",
+          "type": "bigint"
+        },
+        {
+          "name": "source_system",
+          "type": "text"
+        },
+        {
+          "name": "source_activity_id",
+          "type": "text"
+        },
+        {
+          "name": "source_attempt_key",
+          "type": "text"
+        },
+        {
+          "name": "canonical_activity_key",
+          "type": "text"
+        },
+        {
+          "name": "activity_status",
+          "type": "text"
+        },
+        {
+          "name": "accepted",
+          "type": "boolean"
+        },
+        {
+          "name": "actual_seconds",
+          "type": "bigint"
+        },
+        {
+          "name": "actual_basis",
+          "type": "text"
+        },
+        {
+          "name": "reporting_started_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "reporting_ended_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "reporting_month",
+          "type": "character varying(7)"
+        },
+        {
+          "name": "reporting_timestamp_label",
+          "type": "text"
+        },
+        {
+          "name": "source_payload",
+          "type": "jsonb"
+        },
+        {
+          "name": "sync_run_id",
+          "type": "bigint"
+        },
+        {
+          "name": "deleted_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "ssot_created_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "ssot_updated_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "curriculum_component_ref",
+          "type": "text"
+        },
+        {
+          "name": "inside_working_hours_confirmed",
+          "type": "boolean"
+        },
+        {
+          "name": "inside_working_hours_confirmed_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "reflection_skipped",
+          "type": "boolean"
+        },
+        {
+          "name": "declared_completed_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "submission_validation_reason",
+          "type": "character varying(32)"
+        },
+        {
+          "name": "kbc_attendance_key",
+          "type": "text"
+        },
+        {
+          "name": "curriculum_component_fk",
+          "type": "character varying(128)"
+        },
+        {
+          "name": "monthly_target_id",
+          "type": "bigint"
+        },
+        {
+          "name": "free_course_ref",
+          "type": "character varying(128)"
+        },
+        {
+          "name": "free_component_ref",
+          "type": "character varying(128)"
+        }
+      ]
+    },
+    {
+      "schema": "Learner",
+      "name": "learner_progress_historical_components",
+      "columns": [
+        {
+          "name": "progress_id",
+          "type": "bigint"
+        },
+        {
+          "name": "historical_component_ref",
+          "type": "character varying(128)"
+        },
+        {
+          "name": "source_row_id",
+          "type": "bigint"
+        },
+        {
+          "name": "relationship",
+          "type": "text"
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "updated_at",
+          "type": "timestamp with time zone"
+        }
+      ]
+    },
+    {
+      "schema": "Learner",
+      "name": "learners",
+      "columns": [
+        {
+          "name": "id",
+          "type": "bigint"
+        },
+        {
+          "name": "full_name",
+          "type": "text"
+        },
+        {
+          "name": "email",
+          "type": "character varying(320)"
+        },
+        {
+          "name": "email_normalized",
+          "type": "text"
+        },
+        {
+          "name": "phone_number",
+          "type": "text"
+        },
+        {
+          "name": "lifecycle_status",
+          "type": "character varying(50)"
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "updated_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "programme_status",
+          "type": "character varying(100)"
+        },
+        {
+          "name": "completed_hours",
+          "type": "numeric(12,2)"
+        },
+        {
+          "name": "target_hours",
+          "type": "numeric(12,2)"
+        },
+        {
+          "name": "minimum_hours",
+          "type": "numeric(12,2)"
+        },
+        {
+          "name": "maximum_hours",
+          "type": "numeric(12,2)"
+        },
+        {
+          "name": "planned_hours",
+          "type": "numeric(12,2)"
+        },
+        {
+          "name": "progress_hours",
+          "type": "numeric(12,2)"
+        },
+        {
+          "name": "progress_variance",
+          "type": "numeric(10,4)"
+        },
+        {
+          "name": "otjh_status",
+          "type": "character varying(50)"
+        },
+        {
+          "name": "gateway_review_date",
+          "type": "date"
+        },
+        {
+          "name": "alert_notify_for_epa",
+          "type": "date"
+        },
+        {
+          "name": "enter_epa",
+          "type": "date"
+        },
+        {
+          "name": "enrolment_id",
+          "type": "bigint"
+        },
+        {
+          "name": "programme_id",
+          "type": "character varying(64)"
+        },
+        {
+          "name": "learner_type",
+          "type": "character varying(32)"
+        },
+        {
+          "name": "uuid",
+          "type": "uuid"
+        },
+        {
+          "name": "cohort_id",
+          "type": "character varying(64)"
+        },
+        {
+          "name": "group_id",
+          "type": "character varying(64)"
+        },
+        {
+          "name": "accepted_assignments",
+          "type": "integer"
+        },
+        {
+          "name": "rejected_assignments",
+          "type": "integer"
+        },
+        {
+          "name": "accepted_reflections",
+          "type": "integer"
+        },
+        {
+          "name": "rejected_reflections",
+          "type": "integer"
+        },
+        {
+          "name": "aptem_id",
+          "type": "bigint"
+        },
+        {
+          "name": "secondary_email",
+          "type": "character varying(320)"
+        },
+        {
+          "name": "start_date",
+          "type": "date"
+        },
+        {
+          "name": "end_date",
+          "type": "date"
+        },
+        {
+          "name": "learner_start_date",
+          "type": "date"
+        },
+        {
+          "name": "learner_end_date",
+          "type": "date"
+        },
+        {
+          "name": "coach_id",
+          "type": "character varying(255)"
+        },
+        {
+          "name": "standard_ref",
+          "type": "text"
+        },
+        {
+          "name": "standard_version",
+          "type": "text"
+        }
+      ]
+    },
+    {
+      "schema": "curriculum",
+      "name": "coaches",
+      "columns": [
+        {
+          "name": "id",
+          "type": "character varying(128)"
+        },
+        {
+          "name": "name",
+          "type": "character varying(255)"
+        },
+        {
+          "name": "email",
+          "type": "character varying(255)"
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp without time zone"
+        },
+        {
+          "name": "updated_at",
+          "type": "timestamp without time zone"
+        },
+        {
+          "name": "status",
+          "type": "character varying(20)"
+        }
+      ]
+    },
+    {
+      "schema": "curriculum",
+      "name": "historical_components",
+      "columns": [
+        {
+          "name": "id",
+          "type": "character varying(128)"
+        },
+        {
+          "name": "source_catalog_activity_id",
+          "type": "bigint"
+        },
+        {
+          "name": "source_course_id",
+          "type": "bigint"
+        },
+        {
+          "name": "source_system",
+          "type": "text"
+        },
+        {
+          "name": "source_course_ref",
+          "type": "text"
+        },
+        {
+          "name": "source_activity_id",
+          "type": "text"
+        },
+        {
+          "name": "activity_type",
+          "type": "text"
+        },
+        {
+          "name": "title",
+          "type": "text"
+        },
+        {
+          "name": "curriculum_programme_ref",
+          "type": "character varying(128)"
+        },
+        {
+          "name": "curriculum_module_ref",
+          "type": "character varying(128)"
+        },
+        {
+          "name": "curriculum_week_ref",
+          "type": "character varying(128)"
+        },
+        {
+          "name": "source_section_ref",
+          "type": "text"
+        },
+        {
+          "name": "source_section_title",
+          "type": "text"
+        },
+        {
+          "name": "placement_status",
+          "type": "text"
+        },
+        {
+          "name": "historical_only",
+          "type": "boolean"
+        },
+        {
+          "name": "source_payload",
+          "type": "jsonb"
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "updated_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "deleted_at",
+          "type": "timestamp with time zone"
+        }
+      ]
+    },
+    {
+      "schema": "curriculum",
+      "name": "modules",
+      "columns": [
+        {
+          "name": "module_catalogue_id",
+          "type": "character varying(128)"
+        },
+        {
+          "name": "programme_id",
+          "type": "character varying(255)"
+        },
+        {
+          "name": "title",
+          "type": "text"
+        },
+        {
+          "name": "description",
+          "type": "text"
+        },
+        {
+          "name": "quality_score",
+          "type": "integer"
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp without time zone"
+        },
+        {
+          "name": "updated_at",
+          "type": "timestamp without time zone"
+        },
+        {
+          "name": "sessions_number",
+          "type": "integer"
+        },
+        {
+          "name": "start_date",
+          "type": "date"
+        },
+        {
+          "name": "end_date",
+          "type": "date"
+        },
+        {
+          "name": "cohort_id",
+          "type": "character varying(255)"
+        },
+        {
+          "name": "group_id",
+          "type": "character varying(255)"
+        },
+        {
+          "name": "color",
+          "type": "character varying(32)"
+        },
+        {
+          "name": "session_week_day",
+          "type": "character varying(255)"
+        },
+        {
+          "name": "session_start_time",
+          "type": "character varying(32)"
+        },
+        {
+          "name": "session_end_time",
+          "type": "character varying(32)"
+        },
+        {
+          "name": "source_type",
+          "type": "character varying(64)"
+        },
+        {
+          "name": "source_id",
+          "type": "character varying(128)"
+        },
+        {
+          "name": "cover_image_url",
+          "type": "text"
+        },
+        {
+          "name": "weekly_schedule",
+          "type": "jsonb"
+        },
+        {
+          "name": "session_overrides",
+          "type": "jsonb"
+        },
+        {
+          "name": "learner_roster_mode",
+          "type": "character varying(32)"
+        },
+        {
+          "name": "teams_shared_source_module_id",
+          "type": "character varying(128)"
+        },
+        {
+          "name": "ksb_remap_report",
+          "type": "text"
+        },
+        {
+          "name": "status",
+          "type": "character varying(20)"
+        },
+        {
+          "name": "tutor_id",
+          "type": "character varying(128)"
+        },
+        {
+          "name": "is_for_sale",
+          "type": "boolean"
+        },
+        {
+          "name": "price",
+          "type": "numeric(10,2)"
+        },
+        {
+          "name": "currency",
+          "type": "character varying(3)"
+        },
+        {
+          "name": "schedule_mode",
+          "type": "character varying(16)"
+        },
+        {
+          "name": "week_starts_on",
+          "type": "character varying(9)"
+        },
+        {
+          "name": "week_boundary_mode",
+          "type": "character varying(16)"
+        },
+        {
+          "name": "calendar_country_code",
+          "type": "character varying(2)"
+        },
+        {
+          "name": "observe_public_holidays",
+          "type": "boolean"
+        },
+        {
+          "name": "weekend_days_mode",
+          "type": "character varying(10)"
+        },
+        {
+          "name": "weekend_days",
+          "type": "text[]"
+        }
+      ]
+    },
+    {
+      "schema": "curriculum",
+      "name": "programmes",
+      "columns": [
+        {
+          "name": "programme_id",
+          "type": "character varying(150)"
+        },
+        {
+          "name": "name",
+          "type": "character varying(255)"
+        },
+        {
+          "name": "color",
+          "type": "character varying(32)"
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "updated_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "level",
+          "type": "character varying(64)"
+        },
+        {
+          "name": "description",
+          "type": "text"
+        },
+        {
+          "name": "standard",
+          "type": "character varying(255)"
+        },
+        {
+          "name": "owner",
+          "type": "character varying(255)"
+        },
+        {
+          "name": "created_by",
+          "type": "character varying(255)"
+        },
+        {
+          "name": "structure_type",
+          "type": "character varying(32)"
+        },
+        {
+          "name": "status",
+          "type": "character varying(32)"
+        },
+        {
+          "name": "required_otjh",
+          "type": "numeric(8,2)"
+        },
+        {
+          "name": "display_order",
+          "type": "integer"
+        },
+        {
+          "name": "standard_ref",
+          "type": "text"
+        },
+        {
+          "name": "standard_version",
+          "type": "text"
+        }
+      ]
+    },
+    {
+      "schema": "curriculum",
+      "name": "source_activities",
+      "columns": [
+        {
+          "name": "id",
+          "type": "bigint"
+        },
+        {
+          "name": "source_course_id",
+          "type": "bigint"
+        },
+        {
+          "name": "source_system",
+          "type": "text"
+        },
+        {
+          "name": "source_activity_id",
+          "type": "text"
+        },
+        {
+          "name": "source_activity_kind",
+          "type": "text"
+        },
+        {
+          "name": "source_activity_title",
+          "type": "text"
+        },
+        {
+          "name": "source_activity_type",
+          "type": "text"
+        },
+        {
+          "name": "source_section_ref",
+          "type": "text"
+        },
+        {
+          "name": "source_section_title",
+          "type": "text"
+        },
+        {
+          "name": "curriculum_component_ref",
+          "type": "character varying(128)"
+        },
+        {
+          "name": "mapping_status",
+          "type": "text"
+        },
+        {
+          "name": "mapping_method",
+          "type": "text"
+        },
+        {
+          "name": "match_confidence",
+          "type": "numeric(6,5)"
+        },
+        {
+          "name": "source_payload",
+          "type": "jsonb"
+        },
+        {
+          "name": "first_seen_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "last_seen_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "mapped_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "mapped_by",
+          "type": "text"
+        },
+        {
+          "name": "deleted_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "source_material_id",
+          "type": "bigint"
+        },
+        {
+          "name": "source_position",
+          "type": "integer"
+        }
+      ]
+    },
+    {
+      "schema": "curriculum",
+      "name": "source_courses",
+      "columns": [
+        {
+          "name": "id",
+          "type": "bigint"
+        },
+        {
+          "name": "source_system",
+          "type": "text"
+        },
+        {
+          "name": "source_course_ref",
+          "type": "text"
+        },
+        {
+          "name": "source_course_title",
+          "type": "text"
+        },
+        {
+          "name": "curriculum_programme_ref",
+          "type": "character varying(128)"
+        },
+        {
+          "name": "curriculum_module_ref",
+          "type": "character varying(128)"
+        },
+        {
+          "name": "curriculum_group_ref",
+          "type": "character varying(128)"
+        },
+        {
+          "name": "mapping_status",
+          "type": "text"
+        },
+        {
+          "name": "mapping_method",
+          "type": "text"
+        },
+        {
+          "name": "source_payload",
+          "type": "jsonb"
+        },
+        {
+          "name": "first_seen_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "last_seen_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "mapped_at",
+          "type": "timestamp with time zone"
+        },
+        {
+          "name": "mapped_by",
+          "type": "text"
+        },
+        {
+          "name": "deleted_at",
+          "type": "timestamp with time zone"
+        }
+      ]
+    }
+  ],
+  "triggers": [
+    {
+      "relname": "learner_activity_reporting_segments",
+      "tgname": "monthly_actual_event_5_delete",
+      "tgenabled": "O",
+      "ddl": "CREATE TRIGGER monthly_actual_event_5_delete AFTER DELETE ON \"Learner\".learner_activity_reporting_segments REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION \"Learner\".monthly_actual_event_5()",
+      "proname": "monthly_actual_event_5",
+      "function": "\"Learner\".monthly_actual_event_5()"
+    },
+    {
+      "relname": "learner_activity_reporting_segments",
+      "tgname": "monthly_actual_event_5_insert",
+      "tgenabled": "O",
+      "ddl": "CREATE TRIGGER monthly_actual_event_5_insert AFTER INSERT ON \"Learner\".learner_activity_reporting_segments REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION \"Learner\".monthly_actual_event_5()",
+      "proname": "monthly_actual_event_5",
+      "function": "\"Learner\".monthly_actual_event_5()"
+    },
+    {
+      "relname": "learner_activity_reporting_segments",
+      "tgname": "monthly_actual_event_5_update",
+      "tgenabled": "O",
+      "ddl": "CREATE TRIGGER monthly_actual_event_5_update AFTER UPDATE ON \"Learner\".learner_activity_reporting_segments REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION \"Learner\".monthly_actual_event_5()",
+      "proname": "monthly_actual_event_5",
+      "function": "\"Learner\".monthly_actual_event_5()"
+    },
+    {
+      "relname": "learner_journal_rows",
+      "tgname": "monthly_actual_event_6_delete",
+      "tgenabled": "O",
+      "ddl": "CREATE TRIGGER monthly_actual_event_6_delete AFTER DELETE ON \"Learner\".learner_journal_rows REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION \"Learner\".monthly_actual_event_6()",
+      "proname": "monthly_actual_event_6",
+      "function": "\"Learner\".monthly_actual_event_6()"
+    },
+    {
+      "relname": "learner_journal_rows",
+      "tgname": "monthly_actual_event_6_insert",
+      "tgenabled": "O",
+      "ddl": "CREATE TRIGGER monthly_actual_event_6_insert AFTER INSERT ON \"Learner\".learner_journal_rows REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION \"Learner\".monthly_actual_event_6()",
+      "proname": "monthly_actual_event_6",
+      "function": "\"Learner\".monthly_actual_event_6()"
+    },
+    {
+      "relname": "learner_journal_rows",
+      "tgname": "monthly_actual_event_6_update",
+      "tgenabled": "O",
+      "ddl": "CREATE TRIGGER monthly_actual_event_6_update AFTER UPDATE ON \"Learner\".learner_journal_rows REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION \"Learner\".monthly_actual_event_6()",
+      "proname": "monthly_actual_event_6",
+      "function": "\"Learner\".monthly_actual_event_6()"
+    },
+    {
+      "relname": "learner_journal_rows",
+      "tgname": "trg_guard_finalized_manual_rows",
+      "tgenabled": "O",
+      "ddl": "CREATE TRIGGER trg_guard_finalized_manual_rows BEFORE INSERT OR DELETE OR UPDATE ON \"Learner\".learner_journal_rows FOR EACH ROW EXECUTE FUNCTION \"Learner\".guard_finalized_journal_month()",
+      "proname": "guard_finalized_journal_month",
+      "function": "\"Learner\".guard_finalized_journal_month()"
+    },
+    {
+      "relname": "learner_journal_rows",
+      "tgname": "trg_link_journal_kbc_progress",
+      "tgenabled": "O",
+      "ddl": "CREATE TRIGGER trg_link_journal_kbc_progress BEFORE INSERT OR UPDATE ON \"Learner\".learner_journal_rows FOR EACH ROW EXECUTE FUNCTION \"Learner\".link_journal_kbc_progress()",
+      "proname": "link_journal_kbc_progress",
+      "function": "\"Learner\".link_journal_kbc_progress()"
+    },
+    {
+      "relname": "learner_journal_rows",
+      "tgname": "trg_sync_journal_row_to_activity_ssot",
+      "tgenabled": "O",
+      "ddl": "CREATE TRIGGER trg_sync_journal_row_to_activity_ssot BEFORE INSERT OR UPDATE ON \"Learner\".learner_journal_rows FOR EACH ROW EXECUTE FUNCTION \"Learner\".sync_journal_row_to_activity_ssot()",
+      "proname": "sync_journal_row_to_activity_ssot",
+      "function": "\"Learner\".sync_journal_row_to_activity_ssot()"
+    },
+    {
+      "relname": "learner_journal_rows",
+      "tgname": "trg_unique_learner_lms_activity",
+      "tgenabled": "O",
+      "ddl": "CREATE TRIGGER trg_unique_learner_lms_activity BEFORE INSERT OR UPDATE ON \"Learner\".learner_journal_rows FOR EACH ROW EXECUTE FUNCTION \"Learner\".guard_unique_learner_lms_activity()",
+      "proname": "guard_unique_learner_lms_activity",
+      "function": "\"Learner\".guard_unique_learner_lms_activity()"
+    },
+    {
+      "relname": "learner_monthly_targets",
+      "tgname": "monthly_actual_event_1_delete",
+      "tgenabled": "O",
+      "ddl": "CREATE TRIGGER monthly_actual_event_1_delete AFTER DELETE ON \"Learner\".learner_monthly_targets REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION \"Learner\".monthly_actual_event_1()",
+      "proname": "monthly_actual_event_1",
+      "function": "\"Learner\".monthly_actual_event_1()"
+    },
+    {
+      "relname": "learner_monthly_targets",
+      "tgname": "monthly_actual_event_1_insert",
+      "tgenabled": "O",
+      "ddl": "CREATE TRIGGER monthly_actual_event_1_insert AFTER INSERT ON \"Learner\".learner_monthly_targets REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION \"Learner\".monthly_actual_event_1()",
+      "proname": "monthly_actual_event_1",
+      "function": "\"Learner\".monthly_actual_event_1()"
+    },
+    {
+      "relname": "learner_monthly_targets",
+      "tgname": "monthly_actual_event_1_update",
+      "tgenabled": "O",
+      "ddl": "CREATE TRIGGER monthly_actual_event_1_update AFTER UPDATE ON \"Learner\".learner_monthly_targets REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION \"Learner\".monthly_actual_event_1()",
+      "proname": "monthly_actual_event_1",
+      "function": "\"Learner\".monthly_actual_event_1()"
+    },
+    {
+      "relname": "learner_monthly_targets",
+      "tgname": "trg_guard_monthly_log_status",
+      "tgenabled": "O",
+      "ddl": "CREATE TRIGGER trg_guard_monthly_log_status BEFORE UPDATE OF month_status ON \"Learner\".learner_monthly_targets FOR EACH ROW EXECUTE FUNCTION \"Learner\".guard_monthly_log_status()",
+      "proname": "guard_monthly_log_status",
+      "function": "\"Learner\".guard_monthly_log_status()"
+    },
+    {
+      "relname": "learner_monthly_targets",
+      "tgname": "trg_guard_new_month_status",
+      "tgenabled": "O",
+      "ddl": "CREATE TRIGGER trg_guard_new_month_status BEFORE INSERT ON \"Learner\".learner_monthly_targets FOR EACH ROW EXECUTE FUNCTION \"Learner\".guard_new_month_status()",
+      "proname": "guard_new_month_status",
+      "function": "\"Learner\".guard_new_month_status()"
+    },
+    {
+      "relname": "learner_monthly_targets",
+      "tgname": "trg_link_existing_monthly_signatures",
+      "tgenabled": "O",
+      "ddl": "CREATE TRIGGER trg_link_existing_monthly_signatures AFTER INSERT ON \"Learner\".learner_monthly_targets FOR EACH ROW EXECUTE FUNCTION \"Learner\".link_existing_monthly_signatures()",
+      "proname": "link_existing_monthly_signatures",
+      "function": "\"Learner\".link_existing_monthly_signatures()"
+    },
+    {
+      "relname": "learner_progress_entries",
+      "tgname": "monthly_actual_event_0_delete",
+      "tgenabled": "O",
+      "ddl": "CREATE TRIGGER monthly_actual_event_0_delete AFTER DELETE ON \"Learner\".learner_progress_entries REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION \"Learner\".monthly_actual_event_0()",
+      "proname": "monthly_actual_event_0",
+      "function": "\"Learner\".monthly_actual_event_0()"
+    },
+    {
+      "relname": "learner_progress_entries",
+      "tgname": "monthly_actual_event_0_insert",
+      "tgenabled": "O",
+      "ddl": "CREATE TRIGGER monthly_actual_event_0_insert AFTER INSERT ON \"Learner\".learner_progress_entries REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION \"Learner\".monthly_actual_event_0()",
+      "proname": "monthly_actual_event_0",
+      "function": "\"Learner\".monthly_actual_event_0()"
+    },
+    {
+      "relname": "learner_progress_entries",
+      "tgname": "monthly_actual_event_0_update",
+      "tgenabled": "O",
+      "ddl": "CREATE TRIGGER monthly_actual_event_0_update AFTER UPDATE ON \"Learner\".learner_progress_entries REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION \"Learner\".monthly_actual_event_0()",
+      "proname": "monthly_actual_event_0",
+      "function": "\"Learner\".monthly_actual_event_0()"
+    },
+    {
+      "relname": "learner_progress_entries",
+      "tgname": "trg_link_progress_kbc_attendance",
+      "tgenabled": "O",
+      "ddl": "CREATE TRIGGER trg_link_progress_kbc_attendance BEFORE INSERT OR UPDATE ON \"Learner\".learner_progress_entries FOR EACH ROW EXECUTE FUNCTION \"Learner\".link_progress_kbc_attendance()",
+      "proname": "link_progress_kbc_attendance",
+      "function": "\"Learner\".link_progress_kbc_attendance()"
+    },
+    {
+      "relname": "learner_activity_sources",
+      "tgname": "monthly_actual_event_4_delete",
+      "tgenabled": "O",
+      "ddl": "CREATE TRIGGER monthly_actual_event_4_delete AFTER DELETE ON \"Learner\".learner_activity_sources REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT EXECUTE FUNCTION \"Learner\".monthly_actual_event_4()",
+      "proname": "monthly_actual_event_4",
+      "function": "\"Learner\".monthly_actual_event_4()"
+    },
+    {
+      "relname": "learner_activity_sources",
+      "tgname": "monthly_actual_event_4_insert",
+      "tgenabled": "O",
+      "ddl": "CREATE TRIGGER monthly_actual_event_4_insert AFTER INSERT ON \"Learner\".learner_activity_sources REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION \"Learner\".monthly_actual_event_4()",
+      "proname": "monthly_actual_event_4",
+      "function": "\"Learner\".monthly_actual_event_4()"
+    },
+    {
+      "relname": "learner_activity_sources",
+      "tgname": "monthly_actual_event_4_update",
+      "tgenabled": "O",
+      "ddl": "CREATE TRIGGER monthly_actual_event_4_update AFTER UPDATE ON \"Learner\".learner_activity_sources REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows FOR EACH STATEMENT EXECUTE FUNCTION \"Learner\".monthly_actual_event_4()",
+      "proname": "monthly_actual_event_4",
+      "function": "\"Learner\".monthly_actual_event_4()"
+    }
+  ],
+  "functions": {
+    "\"Learner\".monthly_actual_event_5()": "CREATE OR REPLACE FUNCTION \"Learner\".monthly_actual_event_5()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\n        DECLARE owner_ids bigint[];\n        BEGIN IF TG_OP='INSERT' THEN\n            WITH changed AS (SELECT jsonb_build_object('id',r.\"id\",'learner_id',r.\"learner_id\",'progress_id',r.\"progress_id\") AS row FROM new_rows r), owners AS (SELECT (c.row->>'learner_id')::bigint AS learner_id FROM changed c)\n            SELECT array_agg(DISTINCT learner_id ORDER BY learner_id)\n            INTO owner_ids FROM owners WHERE learner_id IS NOT NULL; ELSIF TG_OP='DELETE' THEN\n            WITH changed AS (SELECT jsonb_build_object('id',r.\"id\",'learner_id',r.\"learner_id\",'progress_id',r.\"progress_id\") AS row FROM old_rows r), owners AS (SELECT (c.row->>'learner_id')::bigint AS learner_id FROM changed c)\n            SELECT array_agg(DISTINCT learner_id ORDER BY learner_id)\n            INTO owner_ids FROM owners WHERE learner_id IS NOT NULL; ELSIF TG_OP='UPDATE' THEN\n            WITH changed AS ((SELECT jsonb_build_object('id',r.\"id\",'learner_id',r.\"learner_id\",'progress_id',r.\"progress_id\") AS row FROM new_rows r EXCEPT SELECT jsonb_build_object('id',r.\"id\",'learner_id',r.\"learner_id\",'progress_id',r.\"progress_id\") AS row FROM old_rows r) UNION (SELECT jsonb_build_object('id',r.\"id\",'learner_id',r.\"learner_id\",'progress_id',r.\"progress_id\") AS row FROM old_rows r EXCEPT SELECT jsonb_build_object('id',r.\"id\",'learner_id',r.\"learner_id\",'progress_id',r.\"progress_id\") AS row FROM new_rows r)), owners AS (SELECT (c.row->>'learner_id')::bigint AS learner_id FROM changed c)\n            SELECT array_agg(DISTINCT learner_id ORDER BY learner_id)\n            INTO owner_ids FROM owners WHERE learner_id IS NOT NULL; END IF;\n            PERFORM \"Learner\".invalidate_monthly_actuals(owner_ids);\n            RETURN NULL;\n        END $function$\n",
+    "\"Learner\".monthly_actual_event_6()": "CREATE OR REPLACE FUNCTION \"Learner\".monthly_actual_event_6()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\n        DECLARE owner_ids bigint[];\n        BEGIN IF TG_OP='INSERT' THEN\n            WITH changed AS (SELECT jsonb_build_object('id',r.\"id\",'learner_id',r.\"learner_id\",'progress_id',r.\"progress_id\",'source_id',r.\"source_id\",'group_id',r.\"group_id\",'activity_id',r.\"activity_id\",'source_ref',r.\"source_ref\",'month',r.\"month\",'activity_date',r.\"activity_date\",'planned_hours',r.\"planned_hours\",'deleted_at',r.\"deleted_at\") AS row FROM new_rows r), owners AS (SELECT (c.row->>'learner_id')::bigint AS learner_id FROM changed c)\n            SELECT array_agg(DISTINCT learner_id ORDER BY learner_id)\n            INTO owner_ids FROM owners WHERE learner_id IS NOT NULL; ELSIF TG_OP='DELETE' THEN\n            WITH changed AS (SELECT jsonb_build_object('id',r.\"id\",'learner_id',r.\"learner_id\",'progress_id',r.\"progress_id\",'source_id',r.\"source_id\",'group_id',r.\"group_id\",'activity_id',r.\"activity_id\",'source_ref',r.\"source_ref\",'month',r.\"month\",'activity_date',r.\"activity_date\",'planned_hours',r.\"planned_hours\",'deleted_at',r.\"deleted_at\") AS row FROM old_rows r), owners AS (SELECT (c.row->>'learner_id')::bigint AS learner_id FROM changed c)\n            SELECT array_agg(DISTINCT learner_id ORDER BY learner_id)\n            INTO owner_ids FROM owners WHERE learner_id IS NOT NULL; ELSIF TG_OP='UPDATE' THEN\n            WITH changed AS ((SELECT jsonb_build_object('id',r.\"id\",'learner_id',r.\"learner_id\",'progress_id',r.\"progress_id\",'source_id',r.\"source_id\",'group_id',r.\"group_id\",'activity_id',r.\"activity_id\",'source_ref',r.\"source_ref\",'month',r.\"month\",'activity_date',r.\"activity_date\",'planned_hours',r.\"planned_hours\",'deleted_at',r.\"deleted_at\") AS row FROM new_rows r EXCEPT SELECT jsonb_build_object('id',r.\"id\",'learner_id',r.\"learner_id\",'progress_id',r.\"progress_id\",'source_id',r.\"source_id\",'group_id',r.\"group_id\",'activity_id',r.\"activity_id\",'source_ref',r.\"source_ref\",'month',r.\"month\",'activity_date',r.\"activity_date\",'planned_hours',r.\"planned_hours\",'deleted_at',r.\"deleted_at\") AS row FROM old_rows r) UNION (SELECT jsonb_build_object('id',r.\"id\",'learner_id',r.\"learner_id\",'progress_id',r.\"progress_id\",'source_id',r.\"source_id\",'group_id',r.\"group_id\",'activity_id',r.\"activity_id\",'source_ref',r.\"source_ref\",'month',r.\"month\",'activity_date',r.\"activity_date\",'planned_hours',r.\"planned_hours\",'deleted_at',r.\"deleted_at\") AS row FROM old_rows r EXCEPT SELECT jsonb_build_object('id',r.\"id\",'learner_id',r.\"learner_id\",'progress_id',r.\"progress_id\",'source_id',r.\"source_id\",'group_id',r.\"group_id\",'activity_id',r.\"activity_id\",'source_ref',r.\"source_ref\",'month',r.\"month\",'activity_date',r.\"activity_date\",'planned_hours',r.\"planned_hours\",'deleted_at',r.\"deleted_at\") AS row FROM new_rows r)), owners AS (SELECT (c.row->>'learner_id')::bigint AS learner_id FROM changed c)\n            SELECT array_agg(DISTINCT learner_id ORDER BY learner_id)\n            INTO owner_ids FROM owners WHERE learner_id IS NOT NULL; END IF;\n            PERFORM \"Learner\".invalidate_monthly_actuals(owner_ids);\n            RETURN NULL;\n        END $function$\n",
+    "\"Learner\".guard_finalized_journal_month()": "CREATE OR REPLACE FUNCTION \"Learner\".guard_finalized_journal_month()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nDECLARE\n    old_learner_id BIGINT;\n    old_month TEXT;\n    new_learner_id BIGINT;\n    new_month TEXT;\n    scope RECORD;\n    latest_event TEXT;\nBEGIN\n    IF TG_TABLE_NAME = 'manual_activity_documents' THEN\n\n        IF TG_OP <> 'INSERT' THEN\n            SELECT j.learner_id, j.month\n            INTO STRICT old_learner_id, old_month\n            FROM \"Learner\".learner_journal_rows j\n            WHERE j.id = OLD.manual_activity_id\n              AND j.learner_id = OLD.learner_id;\n        END IF;\n\n        IF TG_OP <> 'DELETE' THEN\n            SELECT j.learner_id, j.month\n            INTO STRICT new_learner_id, new_month\n            FROM \"Learner\".learner_journal_rows j\n            WHERE j.id = NEW.manual_activity_id\n              AND j.learner_id = NEW.learner_id;\n        END IF;\n\n    ELSE\n\n        IF TG_OP <> 'INSERT' THEN\n            old_learner_id := OLD.learner_id;\n            old_month := OLD.month;\n        END IF;\n\n        IF TG_OP <> 'DELETE' THEN\n            new_learner_id := NEW.learner_id;\n            new_month := NEW.month;\n        END IF;\n\n    END IF;\n\n    IF TG_OP <> 'INSERT'\n       AND (old_learner_id IS NULL OR old_month IS NULL)\n    THEN\n        RAISE EXCEPTION 'Invalid old journal scope';\n    END IF;\n\n    IF TG_OP <> 'DELETE'\n       AND (new_learner_id IS NULL OR new_month IS NULL)\n    THEN\n        RAISE EXCEPTION 'Invalid new journal scope';\n    END IF;\n\n    FOR scope IN\n        SELECT DISTINCT\n            v.learner_id,\n            v.report_month\n        FROM (\n            VALUES\n                (old_learner_id, old_month),\n                (new_learner_id, new_month)\n        ) AS v(learner_id, report_month)\n        JOIN \"Learner\".learners l\n            ON l.id = v.learner_id\n        ORDER BY v.learner_id, v.report_month\n    LOOP\n\n        PERFORM pg_advisory_xact_lock(hashtextextended(\n            'canonical-journal-finalization:' || scope.learner_id::text || ':' || scope.report_month, 0));\n\n        SELECT e.event_type\n        INTO latest_event\n        FROM \"Learner\".manual_month_finalization_events e\n        WHERE e.learner_id = scope.learner_id\n          AND e.report_month = scope.report_month\n        ORDER BY e.id DESC\n        LIMIT 1;\n\n        IF latest_event = 'finalized' THEN\n            RAISE EXCEPTION USING\n                ERRCODE = '55000',\n                MESSAGE =\n                    'Journal month is finalized and read-only: '\n                    || scope.learner_id::TEXT\n                    || '/'\n                    || scope.report_month;\n        END IF;\n\n    END LOOP;\n\n    IF TG_OP = 'DELETE' THEN\n        RETURN OLD;\n    END IF;\n\n    RETURN NEW;\nEND;\n$function$\n",
+    "\"Learner\".link_journal_kbc_progress()": "CREATE OR REPLACE FUNCTION \"Learner\".link_journal_kbc_progress()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nDECLARE\n    owner_id bigint;\n    existing_deleted_at timestamptz;\nBEGIN\n    IF NEW.progress_id IS NOT NULL OR coalesce(NEW.source_ref, '') NOT LIKE 'att:%' THEN\n        RETURN NEW;\n    END IF;\n    SELECT id INTO owner_id FROM \"Learner\".learners WHERE aptem_id=NEW.aptem_id;\n    IF owner_id IS NULL THEN RETURN NEW; END IF;\n    PERFORM pg_advisory_xact_lock(hashtext('learner-journal-progress'), owner_id::integer);\n    SELECT p.id, p.deleted_at INTO NEW.progress_id, existing_deleted_at\n    FROM \"Learner\".learner_progress_entries p\n    WHERE p.learner_id=owner_id AND (\n        p.kbc_attendance_key=substring(NEW.source_ref FROM 5) OR\n        p.source_payload->>'original_source_ref'=NEW.source_ref)\n    ORDER BY (p.deleted_at IS NULL) DESC, p.id LIMIT 1;\n    IF NEW.progress_id IS NOT NULL THEN\n        NEW.learner_id := owner_id;\n        NEW.deleted_at := existing_deleted_at;\n    END IF;\n    RETURN NEW;\nEND\n$function$\n",
+    "\"Learner\".sync_journal_row_to_activity_ssot()": "CREATE OR REPLACE FUNCTION \"Learner\".sync_journal_row_to_activity_ssot()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nDECLARE\n    linked_learner_id bigint;\n    linked_source_id bigint;\n    linked_progress_id bigint;\n    next_entry_order integer;\n    catalog_activity_id bigint;\n    catalog_component_ref text;\n    catalogue_course_ref text;\n    catalogue_module_ref text;\n    catalogue_module_title text;\n    journal_kind text;\n    journal_seconds bigint;\n    journal_status text;\n    journal_completed boolean;\n    created_progress boolean := false;\n    actual_changed boolean := true;\nBEGIN\n    linked_learner_id := NEW.learner_id;\n    IF linked_learner_id IS NULL THEN\n        SELECT learner.id INTO linked_learner_id\n        FROM \"Learner\".learners learner\n        WHERE learner.aptem_id = NEW.aptem_id\n        LIMIT 1;\n        NEW.learner_id := linked_learner_id;\n    END IF;\n    IF linked_learner_id IS NULL THEN\n        RETURN NEW;\n    END IF;\n\n    -- A migration insert already carries the canonical links and must not\n    -- rewrite AI-generated timestamps or second-level duration evidence.\n    IF TG_OP = 'INSERT' AND NEW.progress_id IS NOT NULL\n       AND NEW.source_id IS NOT NULL THEN\n        RETURN NEW;\n    END IF;\n    IF TG_OP = 'UPDATE' THEN\n        actual_changed := OLD.actual_hours IS DISTINCT FROM NEW.actual_hours;\n    END IF;\n\n    journal_kind := CASE WHEN NEW.category = 'reading+quiz'\n                         THEN 'reading_quiz'\n                         ELSE NEW.category END;\n    journal_seconds := round(NEW.actual_hours * 3600)::bigint;\n    journal_status := coalesce(nullif(NEW.completion_note, ''),\n                               CASE WHEN NEW.accepted\n                                    THEN 'completed' ELSE '' END);\n    journal_completed := lower(journal_status) NOT IN (\n        '', 'not_completed', 'not completed', 'not attended'\n    );\n\n    SELECT activity.id, activity.curriculum_component_ref,\n           course.source_course_ref, course.curriculum_module_ref,\n           module.title\n    INTO catalog_activity_id, catalog_component_ref,\n         catalogue_course_ref, catalogue_module_ref,\n         catalogue_module_title\n    FROM curriculum.source_courses course\n    JOIN curriculum.source_activities activity\n      ON activity.source_course_id = course.id\n     AND activity.source_activity_id = NEW.activity_id::text\n     AND activity.deleted_at IS NULL\n    LEFT JOIN curriculum.modules module\n      ON module.module_catalogue_id = course.curriculum_module_ref\n    WHERE course.source_system = 'old_lms'\n      AND course.source_course_ref = NEW.group_id::text\n      AND course.deleted_at IS NULL\n    ORDER BY activity.id\n    LIMIT 1;\n\n    linked_progress_id := NEW.progress_id;\n    IF linked_progress_id IS NULL THEN\n        SELECT source.canonical_progress_id, source.id\n        INTO linked_progress_id, linked_source_id\n        FROM \"Learner\".learner_activity_sources source\n        WHERE source.learner_id = linked_learner_id\n          AND source.source_system = 'journal'\n          AND source.source_activity_id = 'journal:' || NEW.id::text\n        ORDER BY (source.deleted_at IS NULL) DESC, source.id\n        LIMIT 1;\n        NEW.source_id := coalesce(NEW.source_id, linked_source_id);\n    END IF;\n    IF linked_progress_id IS NULL THEN\n        PERFORM pg_advisory_xact_lock(\n            hashtext('learner-journal-progress'), linked_learner_id::integer\n        );\n        SELECT coalesce(max(entry_order), 0) + 1\n        INTO next_entry_order\n        FROM \"Learner\".learner_progress_entries\n        WHERE learner_id = linked_learner_id;\n        INSERT INTO \"Learner\".learner_progress_entries (\n            learner_id, entry_order, kind,\n            module_ref, module_title,\n            component_ref, component_title, component_type,\n            feed_kind, feed_action, feed_title, feed_detail,\n            feed_occurred_at, enrolment_id, programme_id, aptem_id,\n            curriculum_component_ref, source_system,\n            source_activity_id, canonical_activity_key,\n            activity_status, accepted, actual_seconds, actual_basis,\n            reporting_month, reporting_timestamp_label,\n            source_payload, deleted_at\n        )\n        SELECT linked_learner_id, next_entry_order, journal_kind,\n               catalogue_module_ref, coalesce(catalogue_module_title, ''),\n               coalesce(catalog_component_ref, 'journal:' || NEW.id::text),\n               NEW.title, journal_kind,\n               journal_kind, 'Completed activity', NEW.title,\n               coalesce(NEW.completion_note, ''), NEW.updated_at,\n               learner.enrolment_id,\n               coalesce(nullif(NEW.programme_profile_id, ''),\n                        learner.programme_id),\n               NEW.aptem_id, catalog_component_ref,\n               'journal', 'journal:' || NEW.id::text,\n               'journal:row:' || NEW.id::text,\n               journal_status, NEW.accepted, journal_seconds,\n               CASE WHEN NEW.accepted\n                    THEN 'journal:accepted-manual-hours'\n                    ELSE 'journal:not-accepted' END,\n               NEW.month, NEW.timestamp_label,\n               jsonb_build_object(\n                   'journal_row_id', NEW.id,\n                   'original_source_ref', NEW.source_ref,\n                   'planned_hours', NEW.planned_hours::text\n               ), NEW.deleted_at\n        FROM \"Learner\".learners learner\n        WHERE learner.id = linked_learner_id\n        RETURNING id INTO linked_progress_id;\n        NEW.progress_id := linked_progress_id;\n        created_progress := true;\n    ELSE\n        NEW.progress_id := linked_progress_id;\n    END IF;\n\n    linked_source_id := NEW.source_id;\n    IF linked_source_id IS NULL THEN\n        INSERT INTO \"Learner\".learner_activity_sources (\n            learner_id, programme_id,\n            source_system, source_activity_id, canonical_activity_key,\n            activity_type, title, activity_status, completed, accepted,\n            actual_seconds, actual_basis, reporting_month,\n            source_payload, source_updated_at, canonical_progress_id,\n            source_course_ref, source_catalog_activity_id, deleted_at\n        )\n        SELECT linked_learner_id,\n               coalesce(nullif(NEW.programme_profile_id, ''),\n                        learner.programme_id),\n               'journal', 'journal:' || NEW.id::text,\n               'journal:row:' || NEW.id::text,\n               NEW.category, NEW.title, journal_status,\n               journal_completed, NEW.accepted, journal_seconds,\n               CASE WHEN NEW.accepted\n                    THEN 'journal:accepted-manual-hours'\n                    ELSE 'journal:not-accepted' END,\n               NEW.month,\n               jsonb_build_object(\n                   'journal_row_id', NEW.id,\n                   'original_source_ref', NEW.source_ref,\n                   'planned_hours', NEW.planned_hours::text\n               ), NEW.updated_at, linked_progress_id,\n               coalesce(catalogue_course_ref, NEW.group_id::text, ''),\n               catalog_activity_id, NEW.deleted_at\n        FROM \"Learner\".learners learner\n        WHERE learner.id = linked_learner_id\n        RETURNING id INTO linked_source_id;\n        NEW.source_id := linked_source_id;\n    END IF;\n\n    IF NOT created_progress THEN\n        UPDATE \"Learner\".learner_progress_entries progress\n        SET component_title = NEW.title,\n            feed_title = NEW.title,\n            feed_detail = coalesce(NEW.completion_note, ''),\n            activity_status = journal_status,\n            accepted = NEW.accepted,\n            actual_seconds = CASE WHEN actual_changed\n                THEN journal_seconds ELSE progress.actual_seconds END,\n            actual_basis = CASE\n                WHEN actual_changed\n                THEN CASE WHEN NEW.accepted\n                          THEN 'journal:accepted-manual-hours'\n                          ELSE 'journal:not-accepted' END\n                ELSE progress.actual_basis END,\n            reporting_month = NEW.month,\n            reporting_timestamp_label = NEW.timestamp_label,\n            source_payload = progress.source_payload || jsonb_build_object(\n                'journal_row_id', NEW.id,\n                'original_source_ref', NEW.source_ref,\n                'planned_hours', NEW.planned_hours::text\n            ),\n            deleted_at = NEW.deleted_at,\n            ssot_updated_at = now()\n        WHERE progress.id = linked_progress_id;\n    END IF;\n\n    UPDATE \"Learner\".learner_activity_sources source\n    SET title = NEW.title,\n        activity_status = journal_status,\n        completed = journal_completed,\n        accepted = NEW.accepted,\n        actual_seconds = CASE WHEN actual_changed\n            THEN journal_seconds ELSE source.actual_seconds END,\n        actual_basis = CASE\n            WHEN actual_changed\n            THEN CASE WHEN NEW.accepted\n                      THEN 'journal:accepted-manual-hours'\n                      ELSE 'journal:not-accepted' END\n            ELSE source.actual_basis END,\n        reporting_month = NEW.month,\n        source_payload = source.source_payload || jsonb_build_object(\n            'journal_row_id', NEW.id,\n            'original_source_ref', NEW.source_ref,\n            'planned_hours', NEW.planned_hours::text\n        ),\n        source_updated_at = NEW.updated_at,\n        canonical_progress_id = linked_progress_id,\n        source_course_ref = coalesce(\n            nullif(catalogue_course_ref, ''), NEW.group_id::text,\n            source.source_course_ref\n        ),\n        source_catalog_activity_id = coalesce(\n            catalog_activity_id, source.source_catalog_activity_id\n        ),\n        curriculum_component_ref = coalesce(\n            catalog_component_ref, source.curriculum_component_ref\n        ),\n        deleted_at = NEW.deleted_at,\n        last_seen_at = now()\n    WHERE source.id = linked_source_id;\n\n    RETURN NEW;\nEND\n$function$\n",
+    "\"Learner\".guard_unique_learner_lms_activity()": "CREATE OR REPLACE FUNCTION \"Learner\".guard_unique_learner_lms_activity()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\n        DECLARE\n            new_material_ids bigint[];\n        BEGIN\n            IF NEW.deleted_at IS NOT NULL\n               OR NEW.activity_id IS NULL\n               OR NEW.category NOT IN ('video', 'audio', 'reading+quiz') THEN\n                RETURN NEW;\n            END IF;\n            IF TG_OP = 'UPDATE'\n               AND OLD.aptem_id IS NOT DISTINCT FROM NEW.aptem_id\n               AND OLD.activity_id IS NOT DISTINCT FROM NEW.activity_id\n               AND OLD.source_ref IS NOT DISTINCT FROM NEW.source_ref\n               AND OLD.category IS NOT DISTINCT FROM NEW.category\n               AND OLD.deleted_at IS NULL THEN\n                RETURN NEW;\n            END IF;\n\n            new_material_ids :=\n                \"Learner\".\"lms_material_activity_ids\"(\n                    NEW.source_ref, NEW.activity_id\n                );\n            -- Lock each material separately and in stable order. A bundle\n            -- (55,56) and a standalone row (56) must serialize on the same\n            -- key even though their complete material arrays differ.\n            PERFORM pg_advisory_xact_lock(\n                hashtext('manual-learner-lms-activity'),\n                hashtext(NEW.aptem_id::text || ':' || material_id::text)\n            )\n            FROM unnest(new_material_ids) AS material_id\n            ORDER BY material_id;\n            IF EXISTS (\n                SELECT 1\n                FROM \"Learner\".\"learner_journal_rows\" existing\n                WHERE existing.aptem_id = NEW.aptem_id\n                  AND existing.deleted_at IS NULL\n                  AND existing.activity_id IS NOT NULL\n                  AND existing.category IN ('video', 'audio', 'reading+quiz')\n                  AND existing.id IS DISTINCT FROM NEW.id\n                  AND \"Learner\".\"lms_material_activity_ids\"(\n                        existing.source_ref, existing.activity_id\n                      ) && new_material_ids\n            ) THEN\n                RAISE unique_violation\n                    USING CONSTRAINT = 'uq_manual_learner_lms_activity_live',\n                          MESSAGE = 'learner already has this LMS activity';\n            END IF;\n            RETURN NEW;\n        END\n        $function$\n",
+    "\"Learner\".monthly_actual_event_1()": "CREATE OR REPLACE FUNCTION \"Learner\".monthly_actual_event_1()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\n        DECLARE owner_ids bigint[];\n        BEGIN IF TG_OP='INSERT' THEN\n            WITH changed AS (SELECT jsonb_build_object('id',r.\"id\",'learner_id',r.\"learner_id\",'programme_id',r.\"programme_id\",'programme_profile_id',r.\"programme_profile_id\",'report_month',r.\"report_month\",'target_hours',r.\"target_hours\",'updated_at',r.\"updated_at\") AS row FROM new_rows r), owners AS (SELECT (c.row->>'learner_id')::bigint AS learner_id FROM changed c)\n            SELECT array_agg(DISTINCT learner_id ORDER BY learner_id)\n            INTO owner_ids FROM owners WHERE learner_id IS NOT NULL; ELSIF TG_OP='DELETE' THEN\n            WITH changed AS (SELECT jsonb_build_object('id',r.\"id\",'learner_id',r.\"learner_id\",'programme_id',r.\"programme_id\",'programme_profile_id',r.\"programme_profile_id\",'report_month',r.\"report_month\",'target_hours',r.\"target_hours\",'updated_at',r.\"updated_at\") AS row FROM old_rows r), owners AS (SELECT (c.row->>'learner_id')::bigint AS learner_id FROM changed c)\n            SELECT array_agg(DISTINCT learner_id ORDER BY learner_id)\n            INTO owner_ids FROM owners WHERE learner_id IS NOT NULL; ELSIF TG_OP='UPDATE' THEN\n            WITH changed AS ((SELECT jsonb_build_object('id',r.\"id\",'learner_id',r.\"learner_id\",'programme_id',r.\"programme_id\",'programme_profile_id',r.\"programme_profile_id\",'report_month',r.\"report_month\",'target_hours',r.\"target_hours\",'updated_at',r.\"updated_at\") AS row FROM new_rows r EXCEPT SELECT jsonb_build_object('id',r.\"id\",'learner_id',r.\"learner_id\",'programme_id',r.\"programme_id\",'programme_profile_id',r.\"programme_profile_id\",'report_month',r.\"report_month\",'target_hours',r.\"target_hours\",'updated_at',r.\"updated_at\") AS row FROM old_rows r) UNION (SELECT jsonb_build_object('id',r.\"id\",'learner_id',r.\"learner_id\",'programme_id',r.\"programme_id\",'programme_profile_id',r.\"programme_profile_id\",'report_month',r.\"report_month\",'target_hours',r.\"target_hours\",'updated_at',r.\"updated_at\") AS row FROM old_rows r EXCEPT SELECT jsonb_build_object('id',r.\"id\",'learner_id',r.\"learner_id\",'programme_id',r.\"programme_id\",'programme_profile_id',r.\"programme_profile_id\",'report_month',r.\"report_month\",'target_hours',r.\"target_hours\",'updated_at',r.\"updated_at\") AS row FROM new_rows r)), owners AS (SELECT (c.row->>'learner_id')::bigint AS learner_id FROM changed c)\n            SELECT array_agg(DISTINCT learner_id ORDER BY learner_id)\n            INTO owner_ids FROM owners WHERE learner_id IS NOT NULL; END IF;\n            PERFORM \"Learner\".invalidate_monthly_actuals(owner_ids);\n            RETURN NULL;\n        END $function$\n",
+    "\"Learner\".guard_monthly_log_status()": "CREATE OR REPLACE FUNCTION \"Learner\".guard_monthly_log_status()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nDECLARE\n    expected_status TEXT;\nBEGIN\n    IF OLD.month_status = NEW.month_status THEN\n        RETURN NEW;\n    END IF;\n\n    IF OLD.month_status = 'locked' THEN\n        RAISE EXCEPTION\n            'A locked monthly log cannot be reopened';\n    END IF;\n\n    SELECT CASE\n        WHEN BOOL_OR(signer_role = 'learner')\n         AND BOOL_OR(signer_role = 'coach')\n            THEN 'locked'\n        WHEN COUNT(*) > 0\n            THEN 'partially_signed'\n        ELSE 'open'\n    END\n    INTO expected_status\n    FROM \"Learner\".learner_monthly_signatures\n    WHERE monthly_target_id = NEW.id\n      AND review_confirmed IS TRUE\n      AND source_system = 'lms'\n      AND source_ref LIKE 'lms-monthly:%';\n\n    IF NEW.month_status IS DISTINCT FROM expected_status THEN\n        RAISE EXCEPTION\n            'Invalid month status: expected %, received %',\n            expected_status, NEW.month_status;\n    END IF;\n\n    RETURN NEW;\nEND;\n$function$\n",
+    "\"Learner\".guard_new_month_status()": "CREATE OR REPLACE FUNCTION \"Learner\".guard_new_month_status()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    IF NEW.month_status IS DISTINCT FROM 'open' THEN\n        RAISE EXCEPTION\n            'New monthly targets must start with open status';\n    END IF;\n\n    RETURN NEW;\nEND;\n$function$\n",
+    "\"Learner\".link_existing_monthly_signatures()": "CREATE OR REPLACE FUNCTION \"Learner\".link_existing_monthly_signatures()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nDECLARE\n    target_ids BIGINT[];\nBEGIN\n    PERFORM pg_advisory_xact_lock(\n        hashtextextended(\n            NEW.learner_id::text\n            || ':' || NEW.report_month,\n            0\n        )\n    );\n\n    SELECT ARRAY_AGG(id ORDER BY id)\n    INTO target_ids\n    FROM \"Learner\".learner_monthly_targets\n    WHERE learner_id = NEW.learner_id\n      AND report_month = NEW.report_month;\n\n    IF COALESCE(CARDINALITY(target_ids), 0) > 1 THEN\n        RAISE EXCEPTION\n            'Multiple monthly targets found';\n    END IF;\n\n    UPDATE \"Learner\".learner_monthly_signatures\n    SET monthly_target_id = NEW.id\n    WHERE learner_id = NEW.learner_id\n      AND report_month = NEW.report_month\n      AND monthly_target_id IS NULL\n      AND source_system = 'lms'\n      AND source_ref LIKE 'lms-monthly:%';\n\n    RETURN NEW;\nEND;\n$function$\n",
+    "\"Learner\".monthly_actual_event_0()": "CREATE OR REPLACE FUNCTION \"Learner\".monthly_actual_event_0()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\n        DECLARE owner_ids bigint[];\n        BEGIN IF TG_OP='INSERT' THEN\n            WITH changed AS (SELECT jsonb_build_object('id',r.\"id\",'learner_id',r.\"learner_id\",'kind',r.\"kind\",'module_ref',r.\"module_ref\",'module_title',r.\"module_title\",'component_ref',r.\"component_ref\",'component_title',r.\"component_title\",'component_type',r.\"component_type\",'quiz_ref',r.\"quiz_ref\",'passed',r.\"passed\",'reported_time',r.\"reported_time\",'submitted_at',r.\"submitted_at\",'declared_completed_at',r.\"declared_completed_at\",'started_at',r.\"started_at\",'time_tracking_source',r.\"time_tracking_source\",'time_tracking_session_ref',r.\"time_tracking_session_ref\",'claimed_seconds',r.\"claimed_seconds\",'verified_seconds',r.\"verified_seconds\",'expected_otjh',r.\"expected_otjh\",'source_system',r.\"source_system\",'component_link_source',r.\"component_link_source\",'actual_seconds',r.\"actual_seconds\",'accepted',r.\"accepted\",'reporting_started_at',r.\"reporting_started_at\",'reporting_ended_at',r.\"reporting_ended_at\",'reporting_month',r.\"reporting_month\",'achieved_score',r.\"achieved_score\",'total_score',r.\"total_score\",'activity_status',r.\"activity_status\",'source_payload',r.\"source_payload\",'feed_kind',r.\"feed_kind\",'actual_basis',r.\"actual_basis\",'feedback',r.\"feedback\",'group_title',r.\"group_title\",'reporting_timestamp_label',r.\"reporting_timestamp_label\",'curriculum_component_ref',r.\"curriculum_component_ref\",'deleted_at',r.\"deleted_at\",'kbc_attendance_key',r.\"kbc_attendance_key\") AS row FROM new_rows r), owners AS (SELECT (c.row->>'learner_id')::bigint AS learner_id FROM changed c)\n            SELECT array_agg(DISTINCT learner_id ORDER BY learner_id)\n            INTO owner_ids FROM owners WHERE learner_id IS NOT NULL; ELSIF TG_OP='DELETE' THEN\n            WITH changed AS (SELECT jsonb_build_object('id',r.\"id\",'learner_id',r.\"learner_id\",'kind',r.\"kind\",'module_ref',r.\"module_ref\",'module_title',r.\"module_title\",'component_ref',r.\"component_ref\",'component_title',r.\"component_title\",'component_type',r.\"component_type\",'quiz_ref',r.\"quiz_ref\",'passed',r.\"passed\",'reported_time',r.\"reported_time\",'submitted_at',r.\"submitted_at\",'declared_completed_at',r.\"declared_completed_at\",'started_at',r.\"started_at\",'time_tracking_source',r.\"time_tracking_source\",'time_tracking_session_ref',r.\"time_tracking_session_ref\",'claimed_seconds',r.\"claimed_seconds\",'verified_seconds',r.\"verified_seconds\",'expected_otjh',r.\"expected_otjh\",'source_system',r.\"source_system\",'component_link_source',r.\"component_link_source\",'actual_seconds',r.\"actual_seconds\",'accepted',r.\"accepted\",'reporting_started_at',r.\"reporting_started_at\",'reporting_ended_at',r.\"reporting_ended_at\",'reporting_month',r.\"reporting_month\",'achieved_score',r.\"achieved_score\",'total_score',r.\"total_score\",'activity_status',r.\"activity_status\",'source_payload',r.\"source_payload\",'feed_kind',r.\"feed_kind\",'actual_basis',r.\"actual_basis\",'feedback',r.\"feedback\",'group_title',r.\"group_title\",'reporting_timestamp_label',r.\"reporting_timestamp_label\",'curriculum_component_ref',r.\"curriculum_component_ref\",'deleted_at',r.\"deleted_at\",'kbc_attendance_key',r.\"kbc_attendance_key\") AS row FROM old_rows r), owners AS (SELECT (c.row->>'learner_id')::bigint AS learner_id FROM changed c)\n            SELECT array_agg(DISTINCT learner_id ORDER BY learner_id)\n            INTO owner_ids FROM owners WHERE learner_id IS NOT NULL; ELSIF TG_OP='UPDATE' THEN\n            WITH changed AS ((SELECT jsonb_build_object('id',r.\"id\",'learner_id',r.\"learner_id\",'kind',r.\"kind\",'module_ref',r.\"module_ref\",'module_title',r.\"module_title\",'component_ref',r.\"component_ref\",'component_title',r.\"component_title\",'component_type',r.\"component_type\",'quiz_ref',r.\"quiz_ref\",'passed',r.\"passed\",'reported_time',r.\"reported_time\",'submitted_at',r.\"submitted_at\",'declared_completed_at',r.\"declared_completed_at\",'started_at',r.\"started_at\",'time_tracking_source',r.\"time_tracking_source\",'time_tracking_session_ref',r.\"time_tracking_session_ref\",'claimed_seconds',r.\"claimed_seconds\",'verified_seconds',r.\"verified_seconds\",'expected_otjh',r.\"expected_otjh\",'source_system',r.\"source_system\",'component_link_source',r.\"component_link_source\",'actual_seconds',r.\"actual_seconds\",'accepted',r.\"accepted\",'reporting_started_at',r.\"reporting_started_at\",'reporting_ended_at',r.\"reporting_ended_at\",'reporting_month',r.\"reporting_month\",'achieved_score',r.\"achieved_score\",'total_score',r.\"total_score\",'activity_status',r.\"activity_status\",'source_payload',r.\"source_payload\",'feed_kind',r.\"feed_kind\",'actual_basis',r.\"actual_basis\",'feedback',r.\"feedback\",'group_title',r.\"group_title\",'reporting_timestamp_label',r.\"reporting_timestamp_label\",'curriculum_component_ref',r.\"curriculum_component_ref\",'deleted_at',r.\"deleted_at\",'kbc_attendance_key',r.\"kbc_attendance_key\") AS row FROM new_rows r EXCEPT SELECT jsonb_build_object('id',r.\"id\",'learner_id',r.\"learner_id\",'kind',r.\"kind\",'module_ref',r.\"module_ref\",'module_title',r.\"module_title\",'component_ref',r.\"component_ref\",'component_title',r.\"component_title\",'component_type',r.\"component_type\",'quiz_ref',r.\"quiz_ref\",'passed',r.\"passed\",'reported_time',r.\"reported_time\",'submitted_at',r.\"submitted_at\",'declared_completed_at',r.\"declared_completed_at\",'started_at',r.\"started_at\",'time_tracking_source',r.\"time_tracking_source\",'time_tracking_session_ref',r.\"time_tracking_session_ref\",'claimed_seconds',r.\"claimed_seconds\",'verified_seconds',r.\"verified_seconds\",'expected_otjh',r.\"expected_otjh\",'source_system',r.\"source_system\",'component_link_source',r.\"component_link_source\",'actual_seconds',r.\"actual_seconds\",'accepted',r.\"accepted\",'reporting_started_at',r.\"reporting_started_at\",'reporting_ended_at',r.\"reporting_ended_at\",'reporting_month',r.\"reporting_month\",'achieved_score',r.\"achieved_score\",'total_score',r.\"total_score\",'activity_status',r.\"activity_status\",'source_payload',r.\"source_payload\",'feed_kind',r.\"feed_kind\",'actual_basis',r.\"actual_basis\",'feedback',r.\"feedback\",'group_title',r.\"group_title\",'reporting_timestamp_label',r.\"reporting_timestamp_label\",'curriculum_component_ref',r.\"curriculum_component_ref\",'deleted_at',r.\"deleted_at\",'kbc_attendance_key',r.\"kbc_attendance_key\") AS row FROM old_rows r) UNION (SELECT jsonb_build_object('id',r.\"id\",'learner_id',r.\"learner_id\",'kind',r.\"kind\",'module_ref',r.\"module_ref\",'module_title',r.\"module_title\",'component_ref',r.\"component_ref\",'component_title',r.\"component_title\",'component_type',r.\"component_type\",'quiz_ref',r.\"quiz_ref\",'passed',r.\"passed\",'reported_time',r.\"reported_time\",'submitted_at',r.\"submitted_at\",'declared_completed_at',r.\"declared_completed_at\",'started_at',r.\"started_at\",'time_tracking_source',r.\"time_tracking_source\",'time_tracking_session_ref',r.\"time_tracking_session_ref\",'claimed_seconds',r.\"claimed_seconds\",'verified_seconds',r.\"verified_seconds\",'expected_otjh',r.\"expected_otjh\",'source_system',r.\"source_system\",'component_link_source',r.\"component_link_source\",'actual_seconds',r.\"actual_seconds\",'accepted',r.\"accepted\",'reporting_started_at',r.\"reporting_started_at\",'reporting_ended_at',r.\"reporting_ended_at\",'reporting_month',r.\"reporting_month\",'achieved_score',r.\"achieved_score\",'total_score',r.\"total_score\",'activity_status',r.\"activity_status\",'source_payload',r.\"source_payload\",'feed_kind',r.\"feed_kind\",'actual_basis',r.\"actual_basis\",'feedback',r.\"feedback\",'group_title',r.\"group_title\",'reporting_timestamp_label',r.\"reporting_timestamp_label\",'curriculum_component_ref',r.\"curriculum_component_ref\",'deleted_at',r.\"deleted_at\",'kbc_attendance_key',r.\"kbc_attendance_key\") AS row FROM old_rows r EXCEPT SELECT jsonb_build_object('id',r.\"id\",'learner_id',r.\"learner_id\",'kind',r.\"kind\",'module_ref',r.\"module_ref\",'module_title',r.\"module_title\",'component_ref',r.\"component_ref\",'component_title',r.\"component_title\",'component_type',r.\"component_type\",'quiz_ref',r.\"quiz_ref\",'passed',r.\"passed\",'reported_time',r.\"reported_time\",'submitted_at',r.\"submitted_at\",'declared_completed_at',r.\"declared_completed_at\",'started_at',r.\"started_at\",'time_tracking_source',r.\"time_tracking_source\",'time_tracking_session_ref',r.\"time_tracking_session_ref\",'claimed_seconds',r.\"claimed_seconds\",'verified_seconds',r.\"verified_seconds\",'expected_otjh',r.\"expected_otjh\",'source_system',r.\"source_system\",'component_link_source',r.\"component_link_source\",'actual_seconds',r.\"actual_seconds\",'accepted',r.\"accepted\",'reporting_started_at',r.\"reporting_started_at\",'reporting_ended_at',r.\"reporting_ended_at\",'reporting_month',r.\"reporting_month\",'achieved_score',r.\"achieved_score\",'total_score',r.\"total_score\",'activity_status',r.\"activity_status\",'source_payload',r.\"source_payload\",'feed_kind',r.\"feed_kind\",'actual_basis',r.\"actual_basis\",'feedback',r.\"feedback\",'group_title',r.\"group_title\",'reporting_timestamp_label',r.\"reporting_timestamp_label\",'curriculum_component_ref',r.\"curriculum_component_ref\",'deleted_at',r.\"deleted_at\",'kbc_attendance_key',r.\"kbc_attendance_key\") AS row FROM new_rows r)), owners AS (SELECT (c.row->>'learner_id')::bigint AS learner_id FROM changed c)\n            SELECT array_agg(DISTINCT learner_id ORDER BY learner_id)\n            INTO owner_ids FROM owners WHERE learner_id IS NOT NULL; END IF;\n            PERFORM \"Learner\".invalidate_monthly_actuals(owner_ids);\n            RETURN NULL;\n        END $function$\n",
+    "\"Learner\".link_progress_kbc_attendance()": "CREATE OR REPLACE FUNCTION \"Learner\".link_progress_kbc_attendance()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nDECLARE\n    owner_aptem_id bigint;\n    candidate_key text;\nBEGIN\n    IF NEW.kbc_attendance_key IS NULL\n       AND coalesce(\n           NEW.source_payload->>'original_source_ref', ''\n       ) NOT LIKE 'att:%'\n    THEN\n        RETURN NEW;\n    END IF;\n\n    SELECT aptem_id INTO owner_aptem_id\n    FROM \"Learner\".learners\n    WHERE id = NEW.learner_id;\n\n    IF NEW.kbc_attendance_key IS NOT NULL THEN\n\n        IF NOT EXISTS (\n            SELECT 1\n            FROM \"Learner\".source_lms_attendance a\n            WHERE a.source_key = NEW.kbc_attendance_key\n              AND a.learner_id = NEW.learner_id\n              AND a.aptem_id = owner_aptem_id\n        )\n        THEN\n            RAISE EXCEPTION\n                'Attendance key does not belong to this learner'\n                USING ERRCODE = '23503';\n        END IF;\n\n    ELSIF NEW.source_payload->>'original_source_ref'\n          LIKE 'att:%' THEN\n\n        candidate_key := substring(\n            NEW.source_payload->>'original_source_ref'\n            FROM 5\n        );\n\n        SELECT a.source_key INTO NEW.kbc_attendance_key\n        FROM \"Learner\".source_lms_attendance a\n        WHERE a.source_key = candidate_key\n          AND a.learner_id = NEW.learner_id\n          AND a.aptem_id = owner_aptem_id;\n\n    END IF;\n\n    RETURN NEW;\nEND;\n$function$\n",
+    "\"Learner\".monthly_actual_event_4()": "CREATE OR REPLACE FUNCTION \"Learner\".monthly_actual_event_4()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\n        DECLARE owner_ids bigint[];\n        BEGIN IF TG_OP='INSERT' THEN\n            WITH changed AS (SELECT jsonb_build_object('id',r.\"id\",'learner_id',r.\"learner_id\",'canonical_progress_id',r.\"canonical_progress_id\",'source_system',r.\"source_system\",'source_activity_id',r.\"source_activity_id\",'completed',r.\"completed\",'activity_status',r.\"activity_status\",'source_catalog_activity_id',r.\"source_catalog_activity_id\",'deleted_at',r.\"deleted_at\") AS row FROM new_rows r), owners AS (SELECT (c.row->>'learner_id')::bigint AS learner_id FROM changed c)\n            SELECT array_agg(DISTINCT learner_id ORDER BY learner_id)\n            INTO owner_ids FROM owners WHERE learner_id IS NOT NULL; ELSIF TG_OP='DELETE' THEN\n            WITH changed AS (SELECT jsonb_build_object('id',r.\"id\",'learner_id',r.\"learner_id\",'canonical_progress_id',r.\"canonical_progress_id\",'source_system',r.\"source_system\",'source_activity_id',r.\"source_activity_id\",'completed',r.\"completed\",'activity_status',r.\"activity_status\",'source_catalog_activity_id',r.\"source_catalog_activity_id\",'deleted_at',r.\"deleted_at\") AS row FROM old_rows r), owners AS (SELECT (c.row->>'learner_id')::bigint AS learner_id FROM changed c)\n            SELECT array_agg(DISTINCT learner_id ORDER BY learner_id)\n            INTO owner_ids FROM owners WHERE learner_id IS NOT NULL; ELSIF TG_OP='UPDATE' THEN\n            WITH changed AS ((SELECT jsonb_build_object('id',r.\"id\",'learner_id',r.\"learner_id\",'canonical_progress_id',r.\"canonical_progress_id\",'source_system',r.\"source_system\",'source_activity_id',r.\"source_activity_id\",'completed',r.\"completed\",'activity_status',r.\"activity_status\",'source_catalog_activity_id',r.\"source_catalog_activity_id\",'deleted_at',r.\"deleted_at\") AS row FROM new_rows r EXCEPT SELECT jsonb_build_object('id',r.\"id\",'learner_id',r.\"learner_id\",'canonical_progress_id',r.\"canonical_progress_id\",'source_system',r.\"source_system\",'source_activity_id',r.\"source_activity_id\",'completed',r.\"completed\",'activity_status',r.\"activity_status\",'source_catalog_activity_id',r.\"source_catalog_activity_id\",'deleted_at',r.\"deleted_at\") AS row FROM old_rows r) UNION (SELECT jsonb_build_object('id',r.\"id\",'learner_id',r.\"learner_id\",'canonical_progress_id',r.\"canonical_progress_id\",'source_system',r.\"source_system\",'source_activity_id',r.\"source_activity_id\",'completed',r.\"completed\",'activity_status',r.\"activity_status\",'source_catalog_activity_id',r.\"source_catalog_activity_id\",'deleted_at',r.\"deleted_at\") AS row FROM old_rows r EXCEPT SELECT jsonb_build_object('id',r.\"id\",'learner_id',r.\"learner_id\",'canonical_progress_id',r.\"canonical_progress_id\",'source_system',r.\"source_system\",'source_activity_id',r.\"source_activity_id\",'completed',r.\"completed\",'activity_status',r.\"activity_status\",'source_catalog_activity_id',r.\"source_catalog_activity_id\",'deleted_at',r.\"deleted_at\") AS row FROM new_rows r)), owners AS (SELECT (c.row->>'learner_id')::bigint AS learner_id FROM changed c)\n            SELECT array_agg(DISTINCT learner_id ORDER BY learner_id)\n            INTO owner_ids FROM owners WHERE learner_id IS NOT NULL; END IF;\n            PERFORM \"Learner\".invalidate_monthly_actuals(owner_ids);\n            RETURN NULL;\n        END $function$\n"
+  }
+}

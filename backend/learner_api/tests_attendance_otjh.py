@@ -71,7 +71,7 @@ class AttendanceOtjhTests(SimpleTestCase):
                 return [owner]
             if 'SUM(CASE WHEN actual_seconds' in sql:
                 return [{'learner_id': 70, 'actual_seconds': 4517}]
-            if 'learner_monthly_targets' in sql:
+            if 'learner_monthly_targets' in sql and 'month_status' not in sql:
                 return [{'learner_id': 70, 'report_month': '2026-10', 'target_hours': 10}]
             return self.read(sql, params)
         with patch.object(canonical, 'query', side_effect=read), \
@@ -223,8 +223,8 @@ class AttendanceOtjhTests(SimpleTestCase):
         self.db.execute("UPDATE Learner.learner_progress_entries SET reporting_month='2026-10'")
         cases = [
             ('learner_monthly_signatures', "INSERT INTO Learner.learner_monthly_signatures VALUES (1,70,'2026-10','{}',1,'2026-11-01')"),
-            ('learner_monthly_locks', "INSERT INTO Learner.learner_monthly_locks VALUES (70,'2026-10','2026-11-01',NULL)"),
-            ('manual_month_finalization_events', "INSERT INTO Learner.manual_month_finalization_events VALUES (1,7001,'2026-10','finalized')"),
+            ('learner_monthly_targets', "INSERT INTO Learner.learner_monthly_targets VALUES (70,'2026-10','locked')"),
+            ('manual_month_finalization_events', "INSERT INTO Learner.manual_month_finalization_events VALUES (1,70,'2026-10','finalized')"),
             ('monthly_audit_signoffs', "INSERT INTO Learner.monthly_audit_signoffs VALUES ('7001','2026-10',1)"),
         ]
         for table, sql in cases:
@@ -256,8 +256,8 @@ class AttendanceOtjhTests(SimpleTestCase):
 
     def test_unlocked_and_reopened_months_use_current_policy(self):
         self.lecture()
-        self.db.execute("INSERT INTO Learner.learner_monthly_locks VALUES (70,'2026-10','2026-11-01','2026-11-02')")
-        self.db.execute("INSERT INTO Learner.manual_month_finalization_events VALUES (1,7001,'2026-10','finalized'),(2,7001,'2026-10','reopened')")
+        self.db.execute("INSERT INTO Learner.learner_monthly_targets VALUES (70,'2026-10','open')")
+        self.db.execute("INSERT INTO Learner.manual_month_finalization_events VALUES (1,70,'2026-10','finalized'),(2,70,'2026-10','reopened')")
         self.assertEqual(self.hours(policy.projection([], self.facts())), 2.5)
 
     def test_an_allocation_in_a_signed_other_month_is_never_replaced_or_counted_twice(self):

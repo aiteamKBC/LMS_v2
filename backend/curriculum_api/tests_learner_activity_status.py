@@ -38,9 +38,9 @@ class ActivityStatusTests(SimpleTestCase):
             CREATE TABLE live_session_occurrences (id text,live_session_id text,scheduled_start text,scheduled_end text,status text);
             CREATE TABLE live_session_learner_attendance (occurrence_id text,learner_profile_id integer,attendance_status text);
             CREATE TABLE live_session_attendance (occurrence_id text,email text,total_attendance_seconds integer);
-            CREATE TABLE learner_monthly_locks (learner_id integer,report_month text,locked_at text,unlocked_at text);
+            CREATE TABLE learner_monthly_targets(learner_id bigint,report_month text,month_status text);
             CREATE TABLE learner_monthly_signatures (learner_id integer,report_month text,review_confirmed boolean);
-            CREATE TABLE manual_month_finalization_events (id integer,aptem_id integer,report_month text,event_type text);
+            CREATE TABLE manual_month_finalization_events (id integer,learner_id integer,report_month text,event_type text);
             CREATE TABLE monthly_audit_signoffs (learner_id text,report_month text,review_confirmed boolean);
         ''')
         migration = importlib.import_module('curriculum_api.migrations.0070_learner_activity_display_overrides')
@@ -189,11 +189,11 @@ class ActivityStatusTests(SimpleTestCase):
         self.assertEqual(error.exception.code, 'month_signed')
         self.save(self.payload('not_started'))
         self.db.execute('DELETE FROM learner_monthly_signatures')
-        self.db.execute("INSERT INTO learner_monthly_locks VALUES (1,'2026-10','2026-10-02',NULL)"); self.db.commit()
+        self.db.execute("INSERT INTO learner_monthly_targets VALUES (1,'2026-10','locked')"); self.db.commit()
         with self.assertRaises(ServiceError) as error: self.save(self.payload())
         self.assertEqual(error.exception.code, 'month_locked')
-        self.db.execute('DELETE FROM learner_monthly_locks')
-        self.db.execute("INSERT INTO manual_month_finalization_events VALUES (1,100,'2026-10','finalized')"); self.db.commit()
+        self.db.execute('DELETE FROM learner_monthly_targets')
+        self.db.execute("INSERT INTO manual_month_finalization_events VALUES (1,1,'2026-10','finalized')"); self.db.commit()
         with self.assertRaises(ServiceError) as error: self.save(self.payload())
         self.assertEqual(error.exception.code, 'month_finalized')
 
@@ -716,7 +716,7 @@ class ActivityStatusTests(SimpleTestCase):
 
     def test_attendance_locked_month_is_rejected_before_confirmation_or_override(self):
         payload = self.attendance_payload()
-        self.db.execute("INSERT INTO learner_monthly_locks VALUES (1,'2026-10','2026-10-02',NULL)"); self.db.commit()
+        self.db.execute("INSERT INTO learner_monthly_targets VALUES (1,'2026-10','locked')"); self.db.commit()
         with self.assertRaises(ServiceError) as error: self.save(payload)
         self.assertEqual(error.exception.code, 'month_locked')
         self.assertEqual(self.query('SELECT * FROM learner_progress_entries'), [])
@@ -726,7 +726,7 @@ class ActivityStatusTests(SimpleTestCase):
         payload = {'identifier': 'MOD-1', 'learnerActivityPlan': [
             {'learnerId': 1, 'componentId': f'c{i}', 'componentType': 'live_session'} for i in range(100)]}
         def bulk(sql, params=()):
-            if 'learner_monthly_signatures' in sql or 'learner_monthly_locks' in sql: return []
+            if 'learner_monthly_signatures' in sql or 'learner_monthly_targets' in sql: return []
             if 'components' in sql: return [{'id': f'c{i}', 'type': 'live_session', 'settings_json': {'sessionDate': '2026-10-01'}} for i in range(100)]
             if 'learners' in sql: return [{'id': 1, 'coach_email': 'another@example.com'}]
             return []

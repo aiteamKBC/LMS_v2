@@ -31,7 +31,7 @@ class CanonicalMetricsBulkTests(TestCase):
         self.executed_queries = []
         def load(sql, params):
             self.executed_queries.append((sql, params))
-            if any(name in sql for name in ('learner_monthly_signatures', 'learner_monthly_locks', 'live_session_learner_attendance')):
+            if any(name in sql for name in ('learner_monthly_signatures', 'SELECT learner_id,report_month FROM "Learner".learner_monthly_targets', 'live_session_learner_attendance')):
                 return []
             if 'FROM "Learner".learners l' in sql:
                 return owners

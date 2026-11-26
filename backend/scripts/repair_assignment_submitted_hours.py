@@ -41,15 +41,15 @@ SELECT to_jsonb(s) AS submission,l.id AS profile_id,l.full_name AS learner_name,
     coalesce((SELECT jsonb_agg(to_jsonb(p) ORDER BY p.id)
       FROM "Learner".learner_progress_entries p WHERE p.learner_id=l.id
         AND p.component_ref=s.activity_id AND p.deleted_at IS NULL),'[]'::jsonb) AS progress,
-    ARRAY(SELECT report_month FROM "Learner".learner_monthly_signatures
+    ARRAY(SELECT report_month FROM "Learner".learner_monthly_targets
+          WHERE learner_id=l.id AND month_status IN ('partially_signed','locked')
+      UNION SELECT report_month FROM "Learner".learner_monthly_signatures
           WHERE learner_id=l.id AND review_confirmed IS TRUE
-      UNION SELECT report_month FROM "Learner".learner_monthly_locks
-          WHERE learner_id=l.id AND locked_at IS NOT NULL AND unlocked_at IS NULL
       UNION SELECT report_month FROM "Learner".monthly_audit_signoffs
           WHERE learner_id=l.aptem_id::text AND review_confirmed IS TRUE
       UNION SELECT report_month FROM (
           SELECT DISTINCT ON (report_month) report_month,event_type
-          FROM "Learner".manual_month_finalization_events WHERE aptem_id=l.aptem_id
+          FROM "Learner".manual_month_finalization_events WHERE learner_id=l.id
           ORDER BY report_month,id DESC) f WHERE event_type='finalized') AS protected_months
 FROM "Learner".learning_reflection_submissions s
 LEFT JOIN "Learner".learners l ON l.enrolment_id::text=s.learner_id AND l.learner_type=s.learner_kind
@@ -234,7 +234,7 @@ def main():
     options = {'hostaddr': args.hostaddr} if args.hostaddr else {}
     with psycopg.connect(dsn, connect_timeout=15, row_factory=dict_row, **options) as connection:
         connection.read_only = not args.apply
-        connection.isolation_level = psycopg.IsolationLevel.SERIALIZABLE
+        connection.isolation_level = psycopg.IsolationLevel.READ_COMMITTED
         connection.execute("SET LOCAL statement_timeout='30s'")
         connection.execute("SET LOCAL lock_timeout='3s'")
         actual = connection.execute('SELECT current_database() AS name').fetchone()['name']
@@ -247,6 +247,17 @@ def main():
             return
         if args.expect_plan != plan['fingerprint'] or len(plan['changes']) != args.expected_count:
             raise ValueError('The proposed correction changed; review a new dry run.')
+        from learner_api.finalization_locks import lock_scopes
+        # Lock all reporting months of the scoped candidate profiles before any
+        # row locks. Reread the full plan after those locks, including signatures.
+        profile_ids = sorted({c['profile_id'] for c in plan['changes']})
+        scopes = connection.execute('''SELECT learner_id,reporting_month FROM "Learner".learner_progress_entries
+            WHERE learner_id=ANY(%s) AND reporting_month IS NOT NULL
+            UNION SELECT learner_id,report_month FROM "Learner".learner_monthly_targets
+            WHERE learner_id=ANY(%s)''', [profile_ids,profile_ids]).fetchall()
+        with connection.cursor() as cursor:
+            lock_scopes(cursor, [(int(row['learner_id']),row['reporting_month']) for row in scopes]
+                        + [(int(c['profile_id']), c['month']) for c in plan['changes']])
         for table, ids in (
             ('learners', [c['profile_id'] for c in plan['changes']]),
             ('learning_reflection_submissions', [c['submission_id'] for c in plan['changes']]),
@@ -254,6 +265,10 @@ def main():
         ):
             # Table names are fixed above, never supplied by the operator.
             connection.execute(f'SELECT id FROM "Learner".{table} WHERE id=ANY(%s) ORDER BY id FOR UPDATE', [ids]).fetchall()
+        fresh_rows = connection.execute(READ_SQL, [args.component]).fetchall()
+        if build_plan(fresh_rows, args.component, args.cohort)['fingerprint'] != plan['fingerprint']:
+            raise ValueError('Evidence or month protection changed after locking; review a fresh plan.')
+        rows = fresh_rows
         backup = {'database': actual, 'host': target.hostname, 'component': args.component, 'cohort': args.cohort,
                   'plan': plan, 'rows': rows}
         with args.backup_file.open('x', encoding='utf-8') as handle:

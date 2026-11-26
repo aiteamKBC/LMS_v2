@@ -1,5 +1,6 @@
 """Real scoped correction SQL in private in-memory SQLite; no live services."""
 import json
+import re
 import sqlite3
 from copy import deepcopy
 from datetime import date, datetime
@@ -19,6 +20,8 @@ class ManualTimeCorrectionTests(SimpleTestCase):
     def setUp(self):
         self.db = sqlite3.connect(':memory:')
         self.db.row_factory = sqlite3.Row
+        self.db.create_function('btrim', 1, lambda value: value.strip() if value is not None else None)
+        self.db.create_function('regexp', 2, lambda pattern, value: bool(re.search(pattern, value or '')))
         self.addCleanup(self.db.close)
         self.db.executescript('''
             ATTACH DATABASE ':memory:' AS Learner;
@@ -36,9 +39,9 @@ class ManualTimeCorrectionTests(SimpleTestCase):
                 started_at,accepted,passed,achieved_score,total_score,feedback);
             CREATE TABLE Learner.learner_activity_reporting_segments(id,progress_id,learner_id,reporting_month,actual_seconds);
             CREATE TABLE Learner.learning_reflection_submissions(id,progress_entry_id,learner_id,learner_kind,status,activity_type,actual_time_hours,full_submission,coach_feedback);
-            CREATE TABLE Learner.learner_monthly_locks(learner_id,report_month,locked_at,unlocked_at);
+            CREATE TABLE Learner.learner_monthly_targets(learner_id bigint,report_month text,month_status text);
             CREATE TABLE Learner.learner_monthly_signatures(learner_id,report_month,review_confirmed);
-            CREATE TABLE Learner.manual_month_finalization_events(id,aptem_id,report_month,event_type);
+            CREATE TABLE Learner.manual_month_finalization_events(id,learner_id,report_month,event_type);
             CREATE TABLE Learner.monthly_audit_signoffs(learner_id,report_month,review_confirmed);
         ''')
         row = dict(id=1, learner_id=70, component_ref='C1', component_type='reading', kind='component',
@@ -65,6 +68,7 @@ class ManualTimeCorrectionTests(SimpleTestCase):
         sql = sql.replace('actual_seconds::text', 'CAST(actual_seconds AS TEXT)')
         sql = sql.replace('s.id::text', 'CAST(s.id AS TEXT)')
         sql = sql.replace('jsonb_build_object', 'json_object')
+        sql = sql.replace("source_document_id ~ ':part[0-9]+$'", "regexp(':part[0-9]+$', source_document_id)")
         sql = sql.replace('jsonb_agg(', 'json_group_array(').replace(' ORDER BY id)\n          FILTER', ')\n          FILTER')
         sql = sql.replace("to_char(submitted_at AT TIME ZONE 'Europe/London','YYYY-MM')", 'uk_month(submitted_at)')
         sql = sql.replace("to_char(coalesce(declared_completed_at,submitted_at)\n                 AT TIME ZONE 'Europe/London','YYYY-MM')",
@@ -130,7 +134,7 @@ class ManualTimeCorrectionTests(SimpleTestCase):
         for column in ('component_ref', 'submitted_at', 'activity_title', 'module_title', 'ksb_codes'):
             self.db.execute(f'ALTER TABLE Learner.learning_reflection_submissions ADD COLUMN {column}')
         self.db.execute('ALTER TABLE Learner.learner_monthly_signatures ADD COLUMN signer_role')
-        self.db.execute('CREATE TABLE Learner.learner_activity_documents(id,learner_id,progress_id,display_name,content_type,deleted_at)')
+        self.db.execute('CREATE TABLE Learner.learner_activity_documents(id,learner_id,progress_id,display_name,content_type,deleted_at,container,blob_name,source_system,source_document_id)')
         self.db.create_function('GREATEST', 2, max)
         self.db.create_function('uk_month', 1, lambda value:
             datetime.fromisoformat(value.replace('Z', '+00:00')).astimezone(ZoneInfo('Europe/London')).strftime('%Y-%m')
@@ -236,9 +240,9 @@ class ManualTimeCorrectionTests(SimpleTestCase):
 
     def test_signed_locked_and_finalized_months_reject_without_changes(self):
         checks = [
-            ("INSERT INTO Learner.learner_monthly_locks VALUES(70,'2026-10','locked',NULL)", 'learner_monthly_locks'),
+            ("INSERT INTO Learner.learner_monthly_targets VALUES(70,'2026-10','locked')", 'learner_monthly_targets'),
             ("INSERT INTO Learner.learner_monthly_signatures VALUES(70,'2026-10',true)", 'learner_monthly_signatures'),
-            ("INSERT INTO Learner.manual_month_finalization_events VALUES(1,42,'2026-10','finalized')", 'manual_month_finalization_events'),
+            ("INSERT INTO Learner.manual_month_finalization_events VALUES(1,70,'2026-10','finalized')", 'manual_month_finalization_events'),
             ("INSERT INTO Learner.monthly_audit_signoffs VALUES('42','2026-10',true)", 'monthly_audit_signoffs'),
         ]
         for statement, table in checks:

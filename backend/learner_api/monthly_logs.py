@@ -11,7 +11,7 @@ from collections import defaultdict
 from functools import wraps
 from types import SimpleNamespace
 
-from django.db import DatabaseError, transaction
+from django.db import connections, DatabaseError, transaction
 from django.conf import settings
 from django.http import HttpResponse, JsonResponse, HttpResponseRedirect
 from django.utils.http import content_disposition_header
@@ -182,16 +182,10 @@ def signatures(learner):
 
 
 def lock_state(learner_id, month):
-    """Return the explicit lock without making old deployments unusable."""
+    """Canonical status is authoritative; retain the legacy reader separately."""
     if canonical.enabled(learner_id):
         owner = canonical.profile(learner_id)
-        records = old_repo.query('''SELECT locked_at,unlocked_at,unlocked_by
-            FROM "Learner".learner_monthly_locks WHERE learner_id=%s AND report_month=%s''', [owner['id'], month])
-        record = records[0] if records else {}
-        return {'locked': bool(record.get('locked_at') and not record.get('unlocked_at')),
-                'locked_at': record['locked_at'].isoformat() if record.get('locked_at') else None,
-                'unlocked_at': record['unlocked_at'].isoformat() if record.get('unlocked_at') else None,
-                'unlocked_by': record.get('unlocked_by')}
+        return lock_states(learner_id, [month], canonical_owner=owner)[month]
     try:
         rows = old_repo.query(
             f'''SELECT locked_at, unlocked_at, unlocked_by FROM {MONTH_LOCKS}
@@ -217,15 +211,16 @@ def lock_states(learner_id, months, *, canonical_owner=None):
     result = {month: empty() for month in month_keys}
     if not month_keys:
         return result
-    if canonical_owner is not None:
-        records = old_repo.query('''SELECT report_month,locked_at,unlocked_at,unlocked_by
-            FROM "Learner".learner_monthly_locks
-            WHERE learner_id=%s AND report_month=ANY(%s)''', [canonical_owner['id'], month_keys])
-    elif canonical.enabled(learner_id):
-        owner = canonical.profile(learner_id)
-        records = old_repo.query('''SELECT report_month,locked_at,unlocked_at,unlocked_by
-            FROM "Learner".learner_monthly_locks
+    if canonical_owner is not None or canonical.enabled(learner_id):
+        owner = canonical_owner or canonical.profile(learner_id)
+        records = old_repo.query('''SELECT report_month,month_status
+            FROM "Learner".learner_monthly_targets
             WHERE learner_id=%s AND report_month=ANY(%s)''', [owner['id'], month_keys])
+        for record in records:
+            if record['report_month'] in result:
+                result[record['report_month']]['locked'] |= record['month_status'] == 'locked'
+        # The normalized schema has no independent lock/unlock timestamps.
+        return result
     else:
         try:
             records = old_repo.query(f'''SELECT report_month,locked_at,unlocked_at,unlocked_by
@@ -248,13 +243,8 @@ def lock_states(learner_id, months, *, canonical_owner=None):
 def lock_if_fully_signed(learner_id, month):
     """Lock only after both independent signatures exist; never overwrite either."""
     if canonical.enabled(learner_id):
-        signs = canonical.signatures(learner_id)
-        if {s['signer_role'] for s in signs if s['report_month'] == month} >= {'learner', 'coach'}:
-            old_repo.query('''INSERT INTO "Learner".learner_monthly_locks
-                (learner_id,report_month,locked_at,source_system) VALUES (%s,%s,now(),'lms')
-                ON CONFLICT (learner_id,report_month) DO UPDATE
-                SET locked_at=now(),unlocked_at=NULL,unlocked_by=NULL,updated_at=now()''',
-                [canonical.profile(learner_id)['id'], month])
+        # Installed signature triggers derive learner_monthly_targets.month_status.
+        # Do not create a parallel lock record or overwrite historical signatures.
         return
     try:
         rows = old_repo.query(
@@ -520,6 +510,17 @@ def mirror_mcm_learner_signature(learner, month, signature, name):
     if not canonical.enabled(learner['id']) and learner.get('aptem_id') and month <= old_repo.CUTOFF:
         return {'status': 'skipped', 'reason': 'legacy_month', 'month': month}
 
+    with transaction.atomic(using='enrolment'):
+        from .finalization_locks import lock_query
+        owner = learner.get('_profile') or canonical.profile(learner['id'])
+        if owner:
+            lock_query(old_repo.query, [(owner['id'], month)], vendor=connections['enrolment'].vendor)
+        old_repo.query('SELECT id FROM enrolment."Created_users" WHERE id=%s FOR UPDATE', [learner['id']])
+        return _mirror_mcm_signature_locked(learner, month, signature, name)
+
+
+def _mirror_mcm_signature_locked(learner, month, signature, name):
+    """The caller holds the month and signing locks before capturing the rows."""
     try:
         report = detail_data(learner, month, include_open=True, include_future=True, ensure_month=month)
     except old.ServiceError as error:
@@ -546,9 +547,8 @@ def mirror_mcm_learner_signature(learner, month, signature, name):
     source_ref = f'lms-mcm:{learner["id"]}:{month}:{snapshot_digest}'
 
     with transaction.atomic(using='enrolment'):
-        # The learner row lock serializes this copy with an ordinary monthly
-        # sign request, so a coach/learner race cannot overwrite history.
-        old_repo.query('SELECT id FROM enrolment."Created_users" WHERE id=%s FOR UPDATE', [learner['id']])
+        # The outer transaction holds the month and learner locks from before
+        # detail_data captured the signature snapshot.
         if canonical.enabled(learner['id']):
             owner = canonical.profile(learner['id'])
             source_learner_id, programme_key = _canonical_signature_scope(learner, owner)
@@ -557,6 +557,8 @@ def mirror_mcm_learner_signature(learner, month, signature, name):
                   AND review_confirmed IS TRUE LIMIT 1''', [owner['id'], month])
             if existing:
                 return {'status': 'already-synced', 'month': month}
+            from .monthly_actual_cache import require_actuals_for_signing
+            require_actuals_for_signing(owner['id'], month)
             inserted = old_repo.query('''INSERT INTO "Learner".learner_monthly_signatures
                 (learner_id,report_month,signer_role,signer_name,review_confirmed,
                  signature_url,signature_data,capture_method,signed_at,snapshot_digest,
@@ -768,7 +770,10 @@ def sign(request, learner_id, month):
             role, image, data.get('snapshot_digest'), {'capture_method': data['capture_method']})), 'source': 'legacy'})
     require_closed_month(month)
     with transaction.atomic(using='enrolment'):
-        # Serialize concurrent sign requests for this learner, including first signatures.
+        from .finalization_locks import lock_query
+        owner = learner.get('_profile') or canonical.require_profile(learner_id)
+        lock_query(old_repo.query, [(owner['id'], month)], vendor=connections['enrolment'].vendor)
+        # Serialize concurrent sign requests after locking the month scope.
         old_repo.query('SELECT id FROM enrolment."Created_users" WHERE id=%s FOR UPDATE', [learner_id])
         include_open = request.GET.get('workflow') == 'mcm'
         report = detail_data(learner, month, include_open=include_open)
@@ -788,6 +793,8 @@ def sign(request, learner_id, month):
             'actor_account_id': request.login_account.id, 'capture_method': data['capture_method']}, default=str)
         if canonical.enabled(learner_id):
             owner = canonical.profile(learner_id)
+            from .monthly_actual_cache import require_actuals_for_signing
+            require_actuals_for_signing(owner['id'], month)
             source_learner_id, programme_key = _canonical_signature_scope(learner, owner)
             old_repo.query('''INSERT INTO "Learner".learner_monthly_signatures
                 (learner_id,report_month,signer_role,signer_name,review_confirmed,signature_url,

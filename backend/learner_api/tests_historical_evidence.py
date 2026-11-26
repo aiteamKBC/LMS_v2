@@ -129,10 +129,15 @@ class HistoricalEvidenceTests(SimpleTestCase):
         cursor = MagicMock()
         cursor.description = []
         cursor.fetchall.return_value = []
-        history.manual_documents(cursor, 42, {history.MANUAL_ROWS, history.MANUAL_DOCS, history.EVIDENCE_ITEMS}, 19)
+        # The public Aptem ID resolves once; document ownership uses its
+        # different canonical PK, never the removed document aptem_id column.
+        with patch.object(history, 'profile_by_aptem', return_value={'id': 142}) as owner:
+            history.manual_documents(cursor, 42, {history.MANUAL_ROWS, history.MANUAL_DOCS, history.EVIDENCE_ITEMS}, 19)
+        owner.assert_called_once_with(42, cursor=cursor)
         sql, params = cursor.execute.call_args.args
-        self.assertEqual(params, [42, 19])
-        self.assertIn('r.aptem_id=d.aptem_id', sql)
+        self.assertEqual(params, [142, 19])
+        self.assertIn('r.learner_id=d.learner_id', sql)
+        self.assertNotIn('d.aptem_id', sql)
         self.assertIn('NOT EXISTS', sql)
         self.assertIn('d.deleted_at IS NULL', sql)
         self.assertIn('r.deleted_at IS NULL', sql)

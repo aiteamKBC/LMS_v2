@@ -45,15 +45,15 @@ SELECT p.id,p.learner_id,p.kind,p.component_ref,p.component_type,p.quiz_ref,p.pa
     CASE WHEN marking.id IS NULL THEN NULL ELSE jsonb_build_object(
       'id',marking.id,'status',marking.status,'actual_time_hours',marking.actual_time_hours,
       'dated_entries',marking.full_submission #> '{monthlyAssignment,timeEntries}') END AS marking,
-    ARRAY(SELECT report_month FROM "Learner".learner_monthly_signatures
+    ARRAY(SELECT report_month FROM "Learner".learner_monthly_targets
+          WHERE learner_id=l.id AND month_status IN ('partially_signed','locked')
+      UNION SELECT report_month FROM "Learner".learner_monthly_signatures
           WHERE learner_id=l.id AND review_confirmed IS TRUE
-      UNION SELECT report_month FROM "Learner".learner_monthly_locks
-          WHERE learner_id=l.id AND locked_at IS NOT NULL AND unlocked_at IS NULL
       UNION SELECT report_month FROM "Learner".monthly_audit_signoffs
           WHERE learner_id=l.aptem_id::text AND review_confirmed IS TRUE
       UNION SELECT report_month FROM (
           SELECT DISTINCT ON (report_month) report_month,event_type
-          FROM "Learner".manual_month_finalization_events WHERE aptem_id=l.aptem_id
+          FROM "Learner".manual_month_finalization_events WHERE learner_id=l.id
           ORDER BY report_month,id DESC) finalization WHERE event_type='finalized') AS protected_months
 FROM "Learner".learner_progress_entries p
 JOIN "Learner".learners l ON l.id=p.learner_id AND l.enrolment_id IS NOT NULL
@@ -148,7 +148,7 @@ def main():
     options = {'hostaddr': args.hostaddr} if args.hostaddr else {}
     with psycopg.connect(dsn, connect_timeout=15, row_factory=dict_row, **options) as connection:
         connection.read_only = not args.apply
-        connection.isolation_level = psycopg.IsolationLevel.SERIALIZABLE
+        connection.isolation_level = psycopg.IsolationLevel.READ_COMMITTED
         connection.execute("SET LOCAL statement_timeout='30s'")
         connection.execute("SET LOCAL lock_timeout='3s'")
         actual = connection.execute('SELECT current_database() AS name').fetchone()['name']
@@ -161,6 +161,14 @@ def main():
             return
         if args.expect_plan != plan['fingerprint']:
             raise ValueError('Evidence changed since dry run; review a fresh plan before applying.')
+        from learner_api.finalization_locks import lock_scopes
+        originals = {row['id']: row for row in rows}
+        scopes = set()
+        for item in plan['changes']:
+            for value in (item['month'], originals[item['id']].get('reporting_month'), item['after'].get('reporting_month')):
+                if value: scopes.add((int(item['learner_id']), value))
+        with connection.cursor() as cursor:
+            lock_scopes(cursor, scopes)
         if plan['changes']:
             connection.execute('SELECT id FROM "Learner".learners WHERE id=ANY(%s) ORDER BY id FOR UPDATE',
                                [sorted({item['learner_id'] for item in plan['changes']})]).fetchall()
@@ -170,6 +178,10 @@ def main():
                                [sorted({ident for item in plan['changes'] for ident in item['source_ids']})]).fetchall()
             connection.execute('SELECT id FROM "Learner".learning_reflection_submissions WHERE id=ANY(%s) ORDER BY id FOR SHARE',
                                [sorted({item['marking_id'] for item in plan['changes'] if item['marking_id'] is not None})]).fetchall()
+        fresh_rows = connection.execute(READ_SQL).fetchall()
+        if build_plan(fresh_rows)['fingerprint'] != plan['fingerprint']:
+            raise ValueError('Evidence or month protection changed after locking; review a fresh plan.')
+        rows = fresh_rows
         originals = {row['id']: row for row in rows}
         backup = {'database': actual, 'host': target.hostname, 'plan': plan,
                   'before': [{key: originals[item['id']].get(key)

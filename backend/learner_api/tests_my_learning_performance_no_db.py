@@ -113,7 +113,7 @@ class CataloguePerformanceTests(SimpleTestCase):
         # Keep the ledger's one-read budget and check the added attendance reads separately.
         for table, expected in (
             ('learner_monthly_signatures', [9]),
-            ('learner_monthly_locks', [9, 9, 9]),
+            ('SELECT learner_id,report_month FROM "Learner".learner_monthly_targets', [9, 9, 9]),
             ('live_session_learner_attendance', [9]),
         ):
             calls=[call for call in query.call_args_list if table in call.args[0]]

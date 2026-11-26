@@ -21,8 +21,8 @@ def protected_months(profile_ids, read, table=None):
     original_read = read
     if table is not None:
         def read(sql, params):
-            for name in ('learner_monthly_signatures', 'learner_monthly_locks', 'learners',
-                         'manual_month_finalization_events', 'monthly_audit_signoffs'):
+            for name in ('learner_monthly_signatures', 'learners',
+                         'manual_month_finalization_events', 'monthly_audit_signoffs', 'learner_monthly_targets'):
                 sql = sql.replace(f'"Learner".{name}', table(name))
             return original_read(sql, params)
     rows = read(f'''SELECT learner_id,report_month,signature_data
@@ -32,14 +32,14 @@ def protected_months(profile_ids, read, table=None):
     result = defaultdict(dict)
     for item in rows:
         result[int(item['learner_id'])].setdefault(item['report_month'], metadata(item.get('signature_data')))
-    locks = read(f'''SELECT learner_id,report_month FROM "Learner".learner_monthly_locks
-        WHERE learner_id IN ({slots}) AND locked_at IS NOT NULL AND unlocked_at IS NULL
+    locks = read(f'''SELECT learner_id,report_month FROM "Learner".learner_monthly_targets
+        WHERE learner_id IN ({slots}) AND month_status IN ('partially_signed','locked')
         UNION
         SELECT l.id AS learner_id,e.report_month FROM "Learner".learners l
-        JOIN "Learner".manual_month_finalization_events e ON e.aptem_id=l.aptem_id
+        JOIN "Learner".manual_month_finalization_events e ON e.learner_id=l.id
         WHERE l.id IN ({slots}) AND e.event_type='finalized'
           AND NOT EXISTS(SELECT 1 FROM "Learner".manual_month_finalization_events newer
-            WHERE newer.aptem_id=e.aptem_id AND newer.report_month=e.report_month AND newer.id>e.id)
+            WHERE newer.learner_id=e.learner_id AND newer.report_month=e.report_month AND newer.id>e.id)
         UNION
         SELECT l.id AS learner_id,s.report_month FROM "Learner".learners l
         JOIN "Learner".monthly_audit_signoffs s ON s.learner_id=CAST(l.aptem_id AS text)

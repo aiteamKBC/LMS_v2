@@ -87,7 +87,12 @@ class JournalSourceTests(unittest.TestCase):
         sql = '''SELECT * FROM structured_manual_activities.manual_learner_activities j
           JOIN "structured_manual_activities"."manual_activity_documents" d ON d.manual_activity_id=j.id
           JOIN "Audit".monthly_audit_signoffs s ON s.month=j.month'''
-        self.assertEqual(sources.retained_journal_sql(sql), sql)
+        # Document migration applies to both roles. Other retained-report
+        # relations keep their existing context-specific routing.
+        coach = sources.retained_journal_sql(sql)
+        self.assertIn('"Learner".manual_activity_documents', coach)
+        self.assertIn('structured_manual_activities.manual_learner_activities', coach)
+        self.assertIn('"Audit".monthly_audit_signoffs', coach)
         token = sources._current.set(True)
         try:
             migrated = sources.retained_journal_sql(sql)

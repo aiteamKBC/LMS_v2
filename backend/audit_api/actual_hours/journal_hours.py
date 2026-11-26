@@ -219,10 +219,33 @@ def _reference_seconds(row, offset_minutes: int = 0):
     return seconds, basis, None
 
 
+def require_writable_month(cursor, learner_id: int, month: str):
+    """Serialize revisions with finalization before taking journal row locks."""
+    from learner_api.finalization_locks import lock_scopes
+    from learner_api.manual_time_corrections import require_open_month
+    from old_otjh.service import ServiceError as MonthError
+
+    lock_scopes(cursor, [(learner_id, month)])
+    cursor.execute('SELECT id,aptem_id FROM "Learner".learners WHERE id=%s', [learner_id])
+    owner = cursor.fetchone()
+    if owner is None:
+        raise ServiceError('Learner not found.', status=404, code='not_found')
+
+    def query(sql, params):
+        cursor.execute(sql, params)
+        return _dict_rows(cursor)
+
+    try:
+        require_open_month({'id': owner[0], 'aptem_id': owner[1]}, month, query=query)
+    except MonthError as error:
+        raise ServiceError('This monthly log is protected; no revision was changed.',
+                           status=error.status, code=error.code) from error
+
+
 def scope_rows(cursor, learner_id: int, month: str) -> list[dict]:
     cursor.execute(
         f"""
-        select m.id, m.aptem_id, m.learner_id, m.month, m.category, m.title,
+        select m.id, m.learner_id, m.month, m.category, m.title,
                m.activity_id, m.planned_hours, m.actual_hours, m.timestamp_label,
                m.accepted, a.configured_duration_min,
                a.quiz_id, a.reading_type, a.reading_iframe_url, a.reading_text_body
@@ -357,6 +380,7 @@ def calculate(cursor, *, learner_id: int, aptem_id: int, month: str, actor,
     wants_actual = fields in (FIELD_BOTH, FIELD_ACTUAL)
     wants_planned = fields in (FIELD_BOTH, FIELD_PLANNED)
 
+    require_writable_month(cursor, learner_id, month)
     rows = scope_rows(cursor, learner_id, month)
     summary = {
         "fields": fields,
@@ -606,6 +630,7 @@ def decide(cursor, *, learner_id: int, month: str, actor, approve: bool,
 
     # Match calculation's lock order: parent rows before pending revisions.
     # This also serializes calculate/approve races for the same learner-month.
+    require_writable_month(cursor, learner_id, month)
     scope_rows(cursor, learner_id, month)
 
     conditions = ["learner_id = %s", "selected_month = %s", "status = 'pending'"]

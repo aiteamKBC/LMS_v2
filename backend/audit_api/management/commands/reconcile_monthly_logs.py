@@ -222,6 +222,18 @@ class Command(BaseCommand):
                 data = self._load(cursor, aptem_ids)
                 plan = self._plan(data, aptem_ids, run_id)
                 if apply:
+                    from learner_api.finalization_locks import lock_scopes
+                    actions = plan['actions']
+                    cursor.execute(f'SELECT id,learner_id,month FROM {MANUAL} WHERE id=ANY(%s)',
+                                   [[a['row_id'] for a in actions]])
+                    owners = {row[0]: (row[1], row[2]) for row in cursor.fetchall()}
+                    scopes = list(owners.values())
+                    scopes.extend((owners[a['row_id']][0], a['new']) for a in actions if a['op']=='month')
+                    lock_scopes(cursor, scopes)
+                    fresh = self._plan(self._load(cursor, aptem_ids), aptem_ids, run_id)
+                    if fresh['actions'] != actions:
+                        raise CommandError('Reconciliation changed after locking; retry the whole command.')
+                    plan = fresh
                     self._ensure_audit_table(cursor)
                     self._apply(cursor, plan, run_id)
             if not apply:

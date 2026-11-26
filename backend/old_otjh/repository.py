@@ -12,6 +12,7 @@ from threading import RLock
 from django.db import DatabaseError, connections, transaction
 
 from audit_api.db_source import resolve
+from learner_api.journal_sources import archived_document_reads
 
 DB = 'enrolment'
 SOURCE_DB = 'audit'
@@ -20,8 +21,9 @@ CUTOFF = '2026-08'
 TRANSITIONS = '"Audit".learner_transitions'
 EVENTS = '"Audit".learner_transition_events'
 SIGNOFFS = '"Audit".monthly_audit_signoffs'
-FINALIZATIONS = 'structured_manual_activities.manual_month_finalization_events'
+FINALIZATIONS = '"Learner".manual_month_finalization_events'
 ROWS = 'structured_manual_activities.manual_learner_activities'
+# Explicit Previous Record archive only; canonical readers use journal_documents.
 DOCS = 'structured_manual_activities.manual_activity_documents'
 PROVISIONAL_ROWS = 'structured_manual_activities.monthly_log_provisional_rows'
 
@@ -228,19 +230,24 @@ def signatures(learner):
 
 
 def finalizations(aptem_id):
+    from learner_api.canonical_learning import profile_by_aptem
+    with connections[_query_alias.get() or DB].cursor() as cursor:
+        owner = profile_by_aptem(aptem_id, cursor=cursor)
     return query(f'''SELECT DISTINCT ON (report_month)
         id, report_month, event_type, snapshot_hash, row_count, created_at
-        FROM {FINALIZATIONS} WHERE aptem_id=%s AND report_month<=%s
-        ORDER BY report_month, id DESC''', [aptem_id, CUTOFF])
+        FROM {FINALIZATIONS} WHERE learner_id=%s AND report_month<=%s
+        ORDER BY report_month, id DESC''', [owner['id'], CUTOFF])
 
 
 def pending_revisions(aptem_id):
+    from learner_api.canonical_learning import profile_by_aptem
+    with connections[_query_alias.get() or DB].cursor() as cursor:
+        owner = profile_by_aptem(aptem_id, cursor=cursor)
     return query('''SELECT selected_month AS month, count(*) AS count
         FROM "Learner".manual_activity_hours_revision r
-        JOIN "Learner".learners l ON l.id=r.learner_id
         JOIN "Learner".learner_journal_rows j ON j.id=r.row_id AND j.learner_id=r.learner_id
-        WHERE l.aptem_id=%s AND r.status='pending' AND j.deleted_at IS NULL
-        GROUP BY selected_month''', [aptem_id])
+        WHERE r.learner_id=%s AND r.status='pending' AND j.deleted_at IS NULL
+        GROUP BY selected_month''', [owner['id']])
 
 
 def _demo_lms_rows(rows, learner, month, *, formula_note='FORMULA PREVIEW ONLY — calculated value',
@@ -405,6 +412,7 @@ def _apply_provisional_rows(rows, learner, month):
     return merged
 
 
+@archived_document_reads()
 def month_rows(learner, month, *, demo=False):
     import mimetypes
     from audit_api.last_audit_ledger_views import _duration_min_sql
@@ -646,6 +654,7 @@ def provisional_month_totals(learner):
                            'planned_hours': float(row['planned_hours'] or 0)} for row in rows}
 
 
+@archived_document_reads()
 def source_documents(learner, row_ids):
     import mimetypes
     if not row_ids:
@@ -772,6 +781,7 @@ def report_profile(learner):
     return profile
 
 
+@archived_document_reads()
 def document(learner, doc_id):
     result = source_query(f'''SELECT d.id, d.container, d.blob_name, d.display_name,
         d.content_type, r.month FROM {DOCS} d JOIN {ROWS} r
@@ -782,6 +792,9 @@ def document(learner, doc_id):
 
 
 def save_signature(learner, month, role, name, file_id, digest):
+    from learner_api.monthly_actual_cache import require_actuals_for_signing
+    owner = lock_finalization_scopes(learner, [month])
+    require_actuals_for_signing(owner['id'], month, database=_query_alias.get() or DB)
     url = f'/audit_api/old-otjh/signatures/{file_id}/'
     query(f'''INSERT INTO {SIGNOFFS} (learner_id, programme_key, report_month,
         signer_role, signer_name, review_confirmed, signature_data, signed_at,
@@ -834,15 +847,36 @@ def event(transition_id, month, kind, account, actor_role, metadata=None):
         [transition_id, month, kind, account.id, actor_role, json.dumps(metadata or {}, default=str)])
 
 
+def lock_finalization_scopes(learner, months):
+    from learner_api.canonical_learning import profile_by_aptem
+    from learner_api.finalization_locks import lock_scopes
+    connection = connections[_query_alias.get() or DB]
+    if not connection.in_atomic_block:
+        raise RuntimeError('Finalization requires the caller transaction.')
+    with connection.cursor() as cursor:
+        if learner.get('aptem_id') is not None:
+            owner = profile_by_aptem(learner['aptem_id'], cursor=cursor)
+        else:
+            from learner_api.canonical_learning import require_profile
+            owner = require_profile(learner['id'])
+        lock_scopes(cursor, [(owner['id'], month) for month in months])
+        cursor.execute('SELECT aptem_id,enrolment_id FROM "Learner".learners WHERE id=%s FOR SHARE', [owner['id']])
+        fresh = cursor.fetchone()
+        if not fresh or fresh != (owner.get('aptem_id'), owner.get('enrolment_id')):
+            raise RuntimeError('Learner ownership changed; retry the entire transaction.')
+    return owner
+
+
 def finalize(learner, month, digest, row_count, account, reason=None, metadata=None):
+    owner = lock_finalization_scopes(learner, [month])
     # The existing table requires snapshot for finalized events. Only a digest
     # and scope metadata are stored: never copies of the source records.
-    snapshot = {'schema': VERSION, 'aptem_id': learner['aptem_id'], 'month': month,
+    snapshot = {'schema': VERSION, 'aptem_id': learner.get('aptem_id'), 'month': month,
                 'digest': digest, **(metadata or {})}
-    query(f'''INSERT INTO {FINALIZATIONS} (aptem_id,report_month,event_type,
+    query(f'''INSERT INTO {FINALIZATIONS} (learner_id,report_month,event_type,
         snapshot_hash,snapshot,row_count,actor,reason)
         VALUES (%s,%s,%s,%s,%s::jsonb,%s,%s,%s)''',
-        [learner['aptem_id'], month, 'reopened' if reason else 'finalized', digest,
+        [owner['id'], month, 'reopened' if reason else 'finalized', digest,
          json.dumps(snapshot), row_count, f'login:{account.id}', reason])
 
 

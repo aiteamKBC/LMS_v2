@@ -14,6 +14,8 @@ from django.utils import timezone
 
 from . import canonical_learning as canonical
 from . import journal_sources, monthly_logs
+from .monthly_actual_policy import eligible, MISSING
+from .finalization_locks import lock_scopes
 
 log = logging.getLogger(__name__)
 
@@ -103,7 +105,7 @@ def _canonical_summaries(enrolment_id, owner):
     return standard, journal
 
 
-def refresh_learner(profile_id, *, database='enrolment'):
+def refresh_learner(profile_id, *, database='enrolment', target_ids=None, only_missing=True):
     """Refresh one profile's existing target rows; never create or alter targets."""
     profile_id = int(profile_id)
     computed_at = timezone.now()
@@ -113,9 +115,14 @@ def refresh_learner(profile_id, *, database='enrolment'):
         if not cursor.fetchone()[0]:
             return {'profile_id': profile_id, 'status': 'busy', 'updated': 0}
         enrolment_id, owner = _owner_for_profile(profile_id, cursor)
-        standard, journal = _canonical_summaries(enrolment_id, owner)
-        payloads = build_payloads(standard, journal, computed_at=computed_at)
-        cursor.execute('''SELECT chosen.id,chosen.report_month
+        cursor.execute('SELECT id,report_month FROM "Learner".learner_monthly_targets WHERE learner_id=%s ORDER BY report_month,id', [profile_id])
+        discovered = cursor.fetchall()
+        selected_ids = set(target_ids) if target_ids is not None else None
+        if selected_ids is not None and not selected_ids.issubset({row[0] for row in discovered}):
+            raise ValueError('Target IDs do not belong to the requested canonical learner.')
+        lock_scopes(cursor, [(profile_id,month) for ident,month in discovered
+                             if selected_ids is None or ident in selected_ids])
+        cursor.execute(f'''SELECT chosen.id,chosen.report_month
             FROM "Learner".learner_monthly_targets chosen
             JOIN (
                 SELECT DISTINCT ON (report_month) id
@@ -126,22 +133,36 @@ def refresh_learner(profile_id, *, database='enrolment'):
                   (programme_id IS NOT DISTINCT FROM %s) DESC,
                   updated_at DESC,id DESC
             ) selected ON selected.id=chosen.id
-            FOR UPDATE OF chosen''', [profile_id, owner.get('programme_id'), owner.get('programme_id')])
-        targets = cursor.fetchall()
+            WHERE chosen.id=ANY(%s) AND {eligible('chosen')}
+            ORDER BY chosen.report_month,chosen.id
+            FOR UPDATE OF chosen''', [profile_id, owner.get('programme_id'), owner.get('programme_id'),
+                [ident for ident, month in discovered if selected_ids is None or ident in selected_ids]])
+        targets = [row for row in cursor.fetchall() if selected_ids is None or row[0] in selected_ids]
+        if not targets:
+            return {'profile_id': profile_id, 'status': 'protected', 'updated': 0, 'target_ids': []}
+        # Snapshot reads follow the complete canonical scope and target row locks.
+        standard, journal = _canonical_summaries(enrolment_id, owner)
+        payloads = build_payloads(standard, journal, computed_at=computed_at)
         updated = 0
+        written = []
         for target_id, month in targets:
             payload = payloads.get(month)
             if payload is None:
                 continue
-            cursor.execute('''UPDATE "Learner".learner_monthly_targets
+            cursor.execute(f'''UPDATE "Learner".learner_monthly_targets t
                 SET actual_seconds_total=%s,actual_updated_at=%s,actual_summary=%s::jsonb
-                WHERE id=%s AND learner_id=%s''', [
+                WHERE t.id=%s AND t.learner_id=%s AND {eligible()}
+                  {('AND ' + MISSING) if only_missing else ''}''', [
                     payload['seconds'], computed_at, json.dumps(payload['summary']),
                     target_id, profile_id,
                 ])
             updated += cursor.rowcount
+            if cursor.rowcount:
+                written.append(target_id)
     return {'profile_id': profile_id, 'status': 'refreshed', 'updated': updated,
-            'months': {month: payload['seconds'] for month, payload in payloads.items()}}
+            'target_ids': written,
+            'months': {month: payloads[month]['seconds'] for ident,month in targets
+                       if ident in written}}
 
 
 def sync_completed_hours(profile_id, *, database='enrolment'):
@@ -173,11 +194,44 @@ def sync_completed_hours(profile_id, *, database='enrolment'):
 
 def invalidated_profile_ids(*, limit=25, database='enrolment'):
     with connections[database].cursor() as cursor:
-        cursor.execute('''SELECT learner_id
-            FROM "Learner".learner_monthly_targets
-            WHERE actual_updated_at IS NULL
+        cursor.execute(f'''SELECT learner_id
+            FROM "Learner".learner_monthly_targets t
+            WHERE {MISSING} AND {eligible()}
             GROUP BY learner_id ORDER BY min(id) LIMIT %s''', [max(1, int(limit))])
         return [int(row[0]) for row in cursor.fetchall()]
+
+
+def require_actuals_for_signing(profile_id, month, *, database='enrolment'):
+    """Refresh open targets, then require an existing complete cache before signing.
+
+    Caller holds the signature transaction; protected historical caches are never
+    recomputed. Failure aborts signing, not merely a background refresh request.
+    """
+    from old_otjh.service import ServiceError
+    with connections[database].cursor() as cursor:
+        lock_scopes(cursor, [(int(profile_id),month)])
+        cursor.execute(f'SELECT id,({eligible()}) FROM "Learner".learner_monthly_targets t WHERE learner_id=%s AND report_month=%s', [profile_id,month])
+        targets = cursor.fetchall()
+        ids = [row[0] for row in targets]
+    if len(ids) != 1:
+        raise ServiceError('A unique monthly target is required before signing.', 'actuals_target_required', 409)
+    result = refresh_learner(profile_id, database=database, target_ids=ids, only_missing=False)
+    if result['status'] == 'busy':
+        raise ServiceError('Monthly Actuals are being refreshed; retry signing.', 'actuals_busy', 409)
+    if targets[0][1] and ids[0] not in result.get('target_ids', []):
+        raise ServiceError('Canonical Monthly Actuals could not be refreshed.', 'actuals_incomplete', 409)
+    with connections[database].cursor() as cursor:
+        cursor.execute('''SELECT actual_seconds_total,actual_updated_at,actual_summary
+            FROM "Learner".learner_monthly_targets WHERE id=%s AND learner_id=%s''', [ids[0],profile_id])
+        record = cursor.fetchone()
+    summary = record[2] if record else None
+    if isinstance(summary, str):
+        try:
+            summary = json.loads(summary)
+        except (TypeError, ValueError):
+            summary = None
+    if not record or any(value is None for value in record) or not isinstance(summary, dict) or summary.get('complete') is not True:
+        raise ServiceError('Complete Monthly Actuals are required before signing. Protected history needs review.', 'actuals_incomplete', 409)
 
 
 def refresh_invalidated(*, limit=25, database='enrolment'):

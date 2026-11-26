@@ -4,7 +4,8 @@ Run from the repo root: python backend/scripts/test_manual_revision_postgres.py
 Never reads application DB credentials or connects to Development/Production.
 The fixture models the supplied 28-column contract, not a production snapshot.
 """
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from threading import Event
 from decimal import Decimal, ROUND_HALF_UP
 import importlib
 import json
@@ -32,6 +33,12 @@ CREATE TABLE curriculum.coaches(id text PRIMARY KEY, name text, email text);
 CREATE TABLE "Learner".learners(
  id bigint PRIMARY KEY, aptem_id bigint, enrolment_id bigint, programme_id text,
  full_name text, email text, start_date date, end_date date, learner_type text, coach_id text);
+CREATE TABLE "Learner".manual_month_finalization_events(
+ id bigserial PRIMARY KEY, learner_id bigint NOT NULL REFERENCES "Learner".learners(id),
+ report_month text NOT NULL, event_type text NOT NULL);
+CREATE TABLE "Learner".learner_monthly_targets(learner_id bigint,report_month text,month_status text);
+CREATE TABLE "Learner".learner_monthly_signatures(learner_id bigint,report_month text,review_confirmed boolean);
+CREATE TABLE "Learner".monthly_audit_signoffs(learner_id text,report_month text,review_confirmed boolean);
 CREATE TABLE "Last_audit".activities(
  activity_id bigint PRIMARY KEY, configured_duration_min numeric, quiz_id bigint,
  reading_type text, reading_iframe_url text, reading_text_body text);
@@ -95,6 +102,9 @@ class RevisionContractTests(unittest.TestCase):
         self.db = psycopg.connect(**CONFIG, autocommit=True)
         self.addCleanup(self.db.close)
         self.db.execute('TRUNCATE "Learner".manual_activity_hours_revision, "Learner".learner_journal_rows RESTART IDENTITY')
+        self.db.execute('''TRUNCATE "Learner".manual_month_finalization_events,
+            "Learner".learner_monthly_targets,"Learner".learner_monthly_signatures,
+            "Learner".monthly_audit_signoffs''')
         self.db.execute('''INSERT INTO "Learner".learner_journal_rows
             (id,learner_id,aptem_id,month,category,activity_id,planned_hours,actual_hours,timestamp_label)
             VALUES(11,1,101,'2026-01','reading+quiz',10,0,0,''),
@@ -143,6 +153,66 @@ class RevisionContractTests(unittest.TestCase):
         self.assertEqual(self.pending()[0]['revision_id'], 1)
         self.assertEqual(self.db.execute('SELECT learner_id FROM "Learner".manual_activity_hours_revision').fetchone()[0], 1)
 
+    def test_closed_month_blocks_all_revision_writes_preserving_history(self):
+        self.calculate()
+        before = self.history()
+        closures = [
+            ('manual_month_finalization_events', "learner_id,report_month,event_type", "1,'2026-01','finalized'"),
+            ('learner_monthly_targets', "learner_id,report_month,month_status", "1,'2026-01','locked'"),
+            ('learner_monthly_targets', "learner_id,report_month,month_status", "1,'2026-01','partially_signed'"),
+            ('learner_monthly_signatures', "learner_id,report_month,review_confirmed", "1,'2026-01',true"),
+            ('monthly_audit_signoffs', "learner_id,report_month,review_confirmed", "'101','2026-01',true"),
+        ]
+        for table, columns, values in closures:
+            with self.subTest(table=table, values=values):
+                self.db.execute(f'INSERT INTO "Learner".{table}({columns}) VALUES({values})')
+                for operation in (lambda: self.calculate(offset_minutes=5),
+                                  lambda: self.decide(approve=True), lambda: self.decide(approve=False)):
+                    with self.assertRaises(ServiceError) as error:
+                        operation()
+                    self.assertEqual(error.exception.status, 409)
+                self.assertEqual(self.history(), before)
+                self.assertEqual(self.db.execute('SELECT actual_hours FROM "Learner".learner_journal_rows WHERE id=11').fetchone()[0], 0)
+                self.db.execute(f'TRUNCATE "Learner".{table}')
+
+    def test_finalization_scope_and_latest_reopen(self):
+        self.db.execute('''INSERT INTO "Learner".manual_month_finalization_events
+            (learner_id,report_month,event_type) VALUES(2,'2026-01','finalized'),(1,'2026-02','finalized')''')
+        self.calculate()
+        self.db.execute('''INSERT INTO "Learner".manual_month_finalization_events
+            (learner_id,report_month,event_type) VALUES(1,'2026-01','finalized'),(1,'2026-01','reopened')''')
+        self.assertEqual(self.decide(approve=True)['decided'], 1)
+        self.assertEqual(self.db.execute('SELECT count(*) FROM "Learner".manual_month_finalization_events').fetchone()[0], 4)
+
+    def test_finalization_race_rechecks_before_proposal_or_decision(self):
+        from learner_api.finalization_locks import lock_scopes
+        self.calculate()
+        for action in ('propose', 'approve', 'reject'):
+            started = Event()
+            def worker():
+                with psycopg.connect(**CONFIG, autocommit=True) as other:
+                    other.execute("SET statement_timeout='5s'")
+                    started.set()
+                    try:
+                        if action == 'propose':
+                            self.calculate(db=other, offset_minutes=5)
+                        else:
+                            self.decide(db=other, approve=action == 'approve')
+                    except ServiceError as error:
+                        return error.code
+                    return 'unexpected_write'
+            before = self.history()
+            with self.subTest(action=action), ThreadPoolExecutor(max_workers=1) as pool:
+                with self.db.transaction(), self.db.cursor() as cursor:
+                    lock_scopes(cursor, [(1,'2026-01')])
+                    cursor.execute('''INSERT INTO "Learner".manual_month_finalization_events
+                        (learner_id,report_month,event_type) VALUES(1,'2026-01','finalized')''')
+                    future = pool.submit(worker)
+                    self.assertTrue(started.wait(2))
+                    with self.assertRaises(TimeoutError): future.result(timeout=.2)
+                self.assertEqual(future.result(timeout=5), 'month_finalized')
+            self.assertEqual(self.history(), before)
+            self.db.execute('TRUNCATE "Learner".manual_month_finalization_events')
     def test_fk_missing_and_cross_owner_and_parent_restrictions(self):
         insert = '''INSERT INTO "Learner".manual_activity_hours_revision
             (row_id,learner_id,selected_month,category,proposed_actual_hours,proposed_by,base_fingerprint,rule_version)
@@ -358,6 +428,20 @@ class RevisionContractTests(unittest.TestCase):
                 self.assertEqual(repository.pending_revisions(101),[dict(month='2026-01',count=1)])
         self.db.execute('UPDATE "Learner".learner_journal_rows SET deleted_at=now() WHERE id=11')
         self.assertEqual(repository.pending_revisions(101),[])
+
+    def test_pending_boundary_rejects_ambiguous_external_identity(self):
+        from old_otjh import repository
+        from old_otjh.service import ServiceError as IdentityError
+        self.calculate()
+        self.calculate(owner=2)
+        self.db.execute('UPDATE "Learner".learners SET aptem_id=101 WHERE id=2')
+        try:
+            with self.assertRaises(IdentityError) as error:
+                repository.pending_revisions(101)
+            self.assertEqual(error.exception.code, 'identity_review_required')
+        finally:
+            self.db.execute('UPDATE "Learner".learners SET aptem_id=202 WHERE id=2')
+        self.assertEqual(repository.pending_revisions(101), [dict(month='2026-01',count=1)])
 
     def test_bulk_monitoring_pending_query(self):
         from old_otjh import monitoring, repository

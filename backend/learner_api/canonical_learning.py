@@ -6,6 +6,8 @@ repair data, or create records. Route identities are verified before reading.
 from datetime import datetime
 from html import escape
 from zoneinfo import ZoneInfo
+from .activity_document_projection import active_relation as active_document_relation
+
 import re
 
 from old_otjh import repository
@@ -270,10 +272,10 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
         'source_course_ref',c.source_course_ref,'activity_status',s.activity_status)'''
         if monthly_log_summary else fact_sql(SOURCE_FIELDS, compact=catalogue_summary))
     journal_payload = fact_sql(JOURNAL_FIELDS, compact=catalogue_summary)
-    document_cte = ''' , activity_documents AS (
+    document_cte = f''' , activity_documents AS (
             SELECT d.progress_id,jsonb_agg(jsonb_build_object(
                 'id',d.id,'display_name',d.display_name,'content_type',d.content_type) ORDER BY d.id) AS payload
-            FROM "Learner".learner_activity_documents d
+            FROM {active_document_relation()} d
             JOIN canonical p ON p.id=d.progress_id AND p.learner_id=d.learner_id
             WHERE d.deleted_at IS NULL
             GROUP BY d.progress_id
@@ -670,8 +672,8 @@ def rows_for(owner, records=None):
     for item in result:
         if item.get('progress_id') is not None:
             by_id.setdefault(item['progress_id'], []).append(item)
-    documents = query('''SELECT id,progress_id,display_name,content_type
-        FROM "Learner".learner_activity_documents
+    documents = query(f'''SELECT id,progress_id,display_name,content_type
+        FROM {active_document_relation()} active_documents
         WHERE learner_id=%s AND deleted_at IS NULL ORDER BY id''', [owner['id']])
     for document in documents:
         for item in by_id.get(document['progress_id'], []):

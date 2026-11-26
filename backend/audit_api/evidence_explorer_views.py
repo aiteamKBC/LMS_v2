@@ -17,11 +17,16 @@ Classification is deliberately tiered and deterministic:
            service's tables — classification happens per request.
 """
 
+from login.permissions import staff_only
+from old_otjh.service import ServiceError
+from learner_api import journal_documents
+from learner_api.canonical_learning import profile_by_aptem
+
 import datetime
 import json
 import re
 
-from django.db import DatabaseError
+from django.db import transaction, DatabaseError
 from django.http import HttpRequest, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
@@ -31,10 +36,8 @@ from learner_api import evidence_storage
 from .evidence_classifier import CLASSIFICATIONS, classify_by_hints, ensure_classification_table
 from .last_audit_ledger_views import _connection, _dict_rows
 from .manual_ledger_views import (
-    MANUAL_DOCS,
     MANUAL_ROWS,
     _ensure_manual_tables,
-    _load_learner,
     _month_is_signed_off,
     _report_display_name,
 )
@@ -524,6 +527,7 @@ def evidence_replace(request: HttpRequest) -> JsonResponse:
 
 
 @csrf_exempt
+@staff_only()
 def evidence_transfer(request: HttpRequest) -> JsonResponse:
     """File one evidence item onto the learner's monthly report as a
     document-backed activity row (assignment category, so its files show),
@@ -538,10 +542,9 @@ def evidence_transfer(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"error": "evidence_id (int) is required"}, status=400)
     actor = str(body.get("created_by") or "").strip()[:100] or "evidence-transfer"
     try:
-        with _connection().cursor() as cursor:
-            ensure_classification_table(cursor)
+        connection = _connection()
+        with transaction.atomic(using=connection.alias), connection.cursor() as cursor:
             _ensure_manual_tables(cursor)
-            ensure_override_tables(cursor)
             cursor.execute(
                 f"""
                 SELECT e.evidence_id, e.learner_id, e.evidence_name, e.evidence_status,
@@ -569,7 +572,10 @@ def evidence_transfer(request: HttpRequest) -> JsonResponse:
             month = evidence_date.isoformat()[:7]
             if _month_is_signed_off(aptem_id, month):
                 return JsonResponse({"error": f"{month} is signed off — remove the signatures first."}, status=409)
-            learner = _load_learner(cursor, aptem_id)
+            learner = profile_by_aptem(aptem_id, cursor=cursor)
+            owner = {**learner, 'learner_id': learner['id']}
+            journal_documents.lock_owner(cursor, owner)
+            journal_documents.require_writable_month(cursor, owner, month)
             minutes = float(item.get("spent_time") or 0)
             actual_hours = round(min(50.0, max(0.0, minutes / 60)), 2)
             name = (item.get("override_name") or item.get("evidence_name") or f"Evidence {evidence_id}")[:500]
@@ -588,7 +594,7 @@ def evidence_transfer(request: HttpRequest) -> JsonResponse:
                 RETURNING id
                 """,
                 [
-                    aptem_id, (learner or {}).get("learner_id"), month, f"ev:{evidence_id}",
+                    aptem_id, learner["id"], month, f"ev:{evidence_id}",
                     name, evidence_date.isoformat()[:10], actual_hours,
                     "completed" if accepted_status else None, actor,
                 ],
@@ -614,20 +620,11 @@ def evidence_transfer(request: HttpRequest) -> JsonResponse:
             ):
                 if not blob:
                     continue
-                cursor.execute(
-                    f"""
-                    INSERT INTO {MANUAL_DOCS} (
-                        manual_activity_id, aptem_id, month, container,
-                        blob_name, display_name, uploaded_by
-                    )
-                    SELECT %s, %s, %s, %s, %s, %s, %s
-                    WHERE NOT EXISTS (
-                        SELECT 1 FROM {MANUAL_DOCS}
-                        WHERE manual_activity_id = %s AND blob_name = %s AND deleted_at IS NULL
-                    )
-                    """,
-                    [row_id, aptem_id, month, container, blob, label[:200], actor, row_id, blob],
-                )
+                journal_documents.create(cursor, row_id, learner_id=learner["id"],
+                    container=container, blob_name=blob, display_name=label[:200],
+                    uploaded_by=actor, mirrored=True)
+    except ServiceError as error:
+        return JsonResponse({"error": str(error), "code": error.code}, status=error.status)
     except DatabaseError as error:
         return JsonResponse(
             {"error": "Could not transfer the evidence.", "details": str(error)},

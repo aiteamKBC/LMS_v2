@@ -17,12 +17,12 @@ class SignedActivityTimeMonthsTests(SimpleTestCase):
         self.addCleanup(self.db.close)
         self.db.executescript('''
             ATTACH DATABASE ':memory:' AS Learner;
-            CREATE TABLE Learner.learner_monthly_locks(learner_id,report_month,locked_at,unlocked_at);
+            CREATE TABLE Learner.learner_monthly_targets(learner_id bigint,report_month text,month_status text);
             CREATE TABLE Learner.learner_monthly_signatures(
                 learner_id,report_month,review_confirmed,signer_role,signer_name,
                 signature_data,signed_at,snapshot_digest,reviewed_rows);
             CREATE TABLE Learner.monthly_audit_signoffs(learner_id,report_month,review_confirmed);
-            CREATE TABLE Learner.manual_month_finalization_events(id,aptem_id,report_month,event_type);
+            CREATE TABLE Learner.manual_month_finalization_events(id,learner_id,report_month,event_type);
             CREATE TABLE Learner.learner_progress_entries(id,learner_id,claimed_seconds,source_payload);
             INSERT INTO Learner.learner_progress_entries VALUES(1,70,7200,'{"original":"keep"}');
         ''')
@@ -44,7 +44,7 @@ class SignedActivityTimeMonthsTests(SimpleTestCase):
         return [tuple(row) for row in self.db.execute('SELECT * FROM Learner.learner_monthly_signatures')]
 
     def lock(self):
-        self.db.execute("INSERT INTO Learner.learner_monthly_locks VALUES(70,'2026-10','locked',NULL)")
+        self.db.execute("INSERT INTO Learner.learner_monthly_targets VALUES(70,'2026-10','locked')")
 
     def test_one_signature_allows_new_attempts_but_not_a_correction(self):
         self.sign()
@@ -65,7 +65,7 @@ class SignedActivityTimeMonthsTests(SimpleTestCase):
             guards.require_activity_time_month(self.owner, '2026-10', 'correct')
         self.assertEqual(self.snapshots(), before)
         self.assertEqual(self.db.total_changes, changes)
-        self.assertEqual(self.db.execute('SELECT locked_at FROM Learner.learner_monthly_locks').fetchone()[0], 'locked')
+        self.assertEqual(self.db.execute('SELECT month_status FROM Learner.learner_monthly_targets').fetchone()[0], 'locked')
 
     def test_other_learners_or_unconfirmed_signatures_cannot_bypass_a_lock(self):
         self.sign(); self.sign('coach', owner=71); self.sign('coach', confirmed=False); self.lock()
@@ -75,7 +75,7 @@ class SignedActivityTimeMonthsTests(SimpleTestCase):
 
     def test_separate_administrative_finalization_stays_protected(self):
         self.sign(); self.sign('coach'); self.lock()
-        self.db.execute("INSERT INTO Learner.manual_month_finalization_events VALUES(1,42,'2026-10','finalized')")
+        self.db.execute("INSERT INTO Learner.manual_month_finalization_events VALUES(1,70,'2026-10','finalized')")
         for mode in ('add', 'retry'):
             with self.assertRaisesRegex(ServiceError, 'finalized'):
                 guards.require_activity_time_month(self.owner, '2026-10', mode)

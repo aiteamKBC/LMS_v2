@@ -7,24 +7,44 @@ import json
 from .ksb_definition_links import assigned_definition_ids
 
 
-def fill_missing_snapshot(cursor, row_id, aptem_id, mappings, *, actor):
+def fill_missing_snapshot(cursor, row_id, aptem_id, mappings, *, actor, learner_id=None):
+    if learner_id is None and aptem_id is None:
+        raise ValueError('Canonical learner identity is required without an Aptem ID.')
     cursor.execute('''SELECT j.learner_id,j.progress_id,j.month,j.activity_id,j.ksb_snapshot,
             coalesce(j.ksb_metadata,'{}'::jsonb),p.reporting_month
         FROM "Learner".learner_journal_rows j
-        JOIN "Learner".learners l ON l.id=j.learner_id AND l.aptem_id=j.aptem_id
+        JOIN "Learner".learners l ON l.id=j.learner_id
         LEFT JOIN "Learner".learner_progress_entries p ON p.id=j.progress_id AND p.learner_id=j.learner_id
-        WHERE j.id=%s AND j.aptem_id=%s AND j.deleted_at IS NULL
-          AND NOT EXISTS(SELECT 1 FROM "Learner".learners other WHERE other.aptem_id=j.aptem_id AND other.id<>j.learner_id)
-        FOR UPDATE OF j''', [row_id, aptem_id])
+        WHERE j.id=%s AND j.deleted_at IS NULL
+          AND ((%s::bigint IS NOT NULL AND j.learner_id=%s)
+            OR (%s::bigint IS NULL AND j.aptem_id=%s AND l.aptem_id=j.aptem_id
+              AND NOT EXISTS(SELECT 1 FROM "Learner".learners other WHERE other.aptem_id=j.aptem_id AND other.id<>j.learner_id)))
+''', [row_id, learner_id, learner_id, learner_id, aptem_id])
     row = cursor.fetchone()
     if not row or row[4]:
         return None
     learner_id, progress_id, month, activity_id, _, metadata, progress_month = row
     months = sorted({value for value in (month, progress_month) if value})
+    from .finalization_locks import lock_scopes
+    lock_scopes(cursor, [(learner_id, target) for target in months])
+    cursor.execute('SELECT learner_id,month,progress_id,ksb_snapshot,ksb_metadata,deleted_at FROM "Learner".learner_journal_rows WHERE id=%s FOR UPDATE', [row_id])
+    fresh = cursor.fetchone()
+    if not fresh or fresh[:3] != (learner_id, month, progress_id) or fresh[5] is not None:
+        raise ValueError('Journal scope changed; retry the transaction.')
+    if fresh[3]:
+        return None
+    metadata = fresh[4] or {}
+    if progress_id is not None:
+        cursor.execute('''SELECT reporting_month FROM "Learner".learner_progress_entries
+            WHERE id=%s AND learner_id=%s AND deleted_at IS NULL FOR UPDATE''', [progress_id,learner_id])
+        if cursor.fetchone() != (progress_month,):
+            raise ValueError('Progress scope changed; retry the entire transaction.')
+    from .finalization_locks import signed_scopes
+    if signed_scopes(cursor, [(learner_id, target) for target in months]):
+        raise ValueError('Cannot change KSBs in a signed or locked journal month.')
     for target in months:
-        cursor.execute('SELECT pg_advisory_xact_lock(hashtext(%s))', [f'manual-journal-finalization:{aptem_id}:{target}'])
         cursor.execute('''SELECT event_type FROM "Learner".manual_month_finalization_events
-            WHERE aptem_id=%s AND report_month=%s ORDER BY id DESC LIMIT 1''', [aptem_id,target])
+            WHERE learner_id=%s AND report_month=%s ORDER BY id DESC LIMIT 1''', [learner_id,target])
         event = cursor.fetchone()
         if event and event[0] == 'finalized':
             raise ValueError('Cannot change KSBs in a finalized journal month.')
