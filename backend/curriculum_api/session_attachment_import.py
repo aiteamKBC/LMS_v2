@@ -12,7 +12,7 @@ from urllib.parse import quote, urlencode
 
 import requests
 
-from .session_attachment_policy import AttachmentError, MAX_FILE_BYTES, instant, message_files, sharepoint_url, import_enabled, settings_payload
+from .session_attachment_policy import AttachmentError, MAX_FILE_BYTES, instant, message_files, microsoft_download_url, import_enabled, settings_payload
 from .session_graph import graph_path
 
 
@@ -57,7 +57,7 @@ def staff_addresses(series):
 
 def download_file(url, size):
     """A fresh preauthenticated Microsoft URL, no Graph bearer forwarded to storage."""
-    if not sharepoint_url(url) or type(size) is not int or not 0 < size <= MAX_FILE_BYTES:
+    if not microsoft_download_url(url) or type(size) is not int or not 0 < size <= MAX_FILE_BYTES:
         raise AttachmentError('Microsoft returned an unsupported session file.')
     stream = tempfile.TemporaryFile()
     try:

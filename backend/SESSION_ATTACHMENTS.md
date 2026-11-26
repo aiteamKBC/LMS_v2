@@ -56,6 +56,10 @@ scheduled start to four hours after its scheduled end. Ambiguous/outside-window
 files require a staff upload to the intended session; the worker never guesses.
 Chat pagination is bounded and incomplete pages are not published. File links are
 resolved afresh; expiring Microsoft download URLs are never saved or logged.
+The fresh download URL has a separate allowlist for SharePoint and
+`*.files.1drv.com`, as documented by [Microsoft Graph](https://learn.microsoft.com/en-us/graph/api/driveitem-get-content?view=graph-rest-1.0).
+Downloads do not forward the Graph bearer token or follow redirects. This does
+not expand the SharePoint-only policy for references posted in meeting chat.
 
 No existing files, Microsoft meetings, schedules, invitations or historical
 learner evidence are rewritten by activation. Older session files can be added

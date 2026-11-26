@@ -89,6 +89,17 @@ def sharepoint_url(value):
         return False
 
 
+def microsoft_download_url(value):
+    """Only fresh Graph-resolved file URLs; chat references keep the narrower policy."""
+    try:
+        url = urlsplit(str(value or ''))
+        return (url.scheme == 'https' and bool(url.hostname)
+                and url.hostname.endswith(('.sharepoint.com', '.files.1drv.com'))
+                and not url.username and not url.password and url.port in (None, 443) and not url.fragment)
+    except ValueError:
+        return False
+
+
 def message_files(messages, occurrences, presenter_ids):
     """Never publish learner uploads, cards, arbitrary URLs, or another week's files."""
     output, seen = [], set()

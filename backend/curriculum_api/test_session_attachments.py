@@ -56,6 +56,12 @@ class SelectionTests(unittest.TestCase):
     def test_repeat_messages_are_deduplicated(self):
         self.assertEqual(len(policy.message_files([message(), message()], [OCCURRENCE], {'TUTOR'})), 1)
 
+    def test_preauthenticated_hosts_are_only_for_graph_resolved_downloads(self):
+        url = 'https://b0mpua-by3301.files.1drv.com/synthetic-file?temporary=opaque'
+        self.assertTrue(policy.microsoft_download_url(url))
+        self.assertFalse(policy.sharepoint_url(url))
+        self.assertEqual(policy.message_files([message(url=url)], [OCCURRENCE], {'TUTOR'}), [])
+
     def test_identity_is_stable_but_isolated_between_sessions(self):
         self.assertEqual(policy.artifact_id('O1', 'abc'), policy.artifact_id('O1', 'abc'))
         self.assertNotEqual(policy.artifact_id('O1', 'abc'), policy.artifact_id('O2', 'abc'))
@@ -185,9 +191,22 @@ class TransferTests(unittest.TestCase):
 
     def test_download_rejects_untrusted_hosts_before_network(self):
         with patch.object(importer.requests, 'get') as get:
-            for url in ('http://college.sharepoint.com/x', 'https://localhost/x', 'https://evil.invalid/x'):
+            for url in ('http://college.sharepoint.com/x', 'https://localhost/x', 'https://evil.invalid/x',
+                        'https://fake.files.1drv.com.evil.invalid/x', 'https://user:pass@real.files.1drv.com/x',
+                        'https://real.files.1drv.com:444/x', 'http://real.files.1drv.com/x',
+                        'https://real.files.1drv.com/x#fragment'):
                 with self.assertRaises(policy.AttachmentError): importer.download_file(url, 1)
         get.assert_not_called()
+
+    def test_graph_downloads_accept_sharepoint_and_onedrive_hosts_without_bearer_or_redirects(self):
+        for url in ('https://college.sharepoint.com/synthetic-file',
+                    'https://b0mpua-by3301.files.1drv.com/synthetic-file?temporary=opaque'):
+            response = Mock(status_code=200); response.iter_content.return_value = [b'%PDF-test']
+            with patch.object(importer.requests, 'get', return_value=nullcontext(response)) as get:
+                with importer.download_file(url, 9) as stream:
+                    self.assertEqual(stream.read(), b'%PDF-test')
+            self.assertFalse(get.call_args.kwargs['allow_redirects'])
+            self.assertNotIn('Authorization', get.call_args.kwargs.get('headers', {}))
 
     def test_expired_or_changed_microsoft_download_cannot_publish(self):
         response = Mock(status_code=200); response.iter_content.return_value = [b'too-long']
