@@ -61,7 +61,8 @@ beforeEach(() => {
       year, years: [year], unallocatedActivities: data.unallocated_activities, summary: { coachSignatures: { completed: data.months.filter(item => !item.is_open && item.coach_signature).length, total: data.months.filter(item => !item.is_open).length },
         acceptedOtjhHours: data.training_plan_totals!.accepted_hours, trainingPlanHours: data.training_plan_totals!.planned_hours },
       months: data.months.map(item => ({ month: item.month, activities: item.row_count, acceptedOtjhHours: Number(item.actual_hours),
-        targetHours: item.training_plan_target == null ? null : Number(item.training_plan_target), isOpen: !!item.is_open, learnerSigned: !!item.student_signature, coachSigned: !!item.coach_signature })) };
+        targetHours: item.training_plan_target == null ? null : Number(item.training_plan_target), isOpen: !!item.is_open,
+        learnerSigned: !!item.student_signature, coachSigned: !!item.coach_signature, monthStatus: item.month_status ?? 'open' })) };
   });
   vi.mocked(getCoachLogDetail).mockImplementation(async (id, month) => ({
     summary: await getLogSummary(id, new AbortController().signal, 'coach'),

@@ -445,9 +445,10 @@ def validate_date(activity_date, owner):
 def require_open_month(owner, month):
     # Fail closed on missing signoff schema. Never invalidate a signature or
     # reopen a finalized month from this screen.
-    if query(f'''SELECT report_month FROM {table('learner_monthly_locks')}
-        WHERE learner_id=%s AND report_month=%s AND locked_at IS NOT NULL AND unlocked_at IS NULL''', [owner['id'], month]):
-        raise ServiceError('This Activity Log month is locked.', 'month_locked', 409)
+    if query(f'''SELECT report_month FROM {table('learner_monthly_targets')}
+        WHERE learner_id=%s AND report_month=%s
+          AND month_status IN ('partially_signed','locked')''', [owner['id'], month]):
+        raise ServiceError('This Activity Log month is signed.', 'month_signed', 409)
     if query(f'''SELECT report_month FROM {table('learner_monthly_signatures')}
         WHERE learner_id=%s AND report_month=%s AND review_confirmed IS TRUE''', [owner['id'], month]):
         raise ServiceError('This Activity Log month is signed.', 'month_signed', 409)

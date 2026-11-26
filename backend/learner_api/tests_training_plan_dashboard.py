@@ -46,8 +46,21 @@ def contract_pdf(total=30, review_on_same_page=False, joined_provider=False, spl
 
 class TrainingPlanDashboardTests(SimpleTestCase):
     def setUp(self):
-        self.effective_plan = self.enterContext(
-            patch('learner_api.training_plan_dashboard._effective_plan_ids', return_value=['M1']),
+        self.plan_ids = ['M1']
+        self.enterContext(patch(
+            'learner_api.training_plan_dashboard.canonical_learning.require_profile',
+            side_effect=lambda learner_id: {'id': 70, 'enrolment_id': learner_id},
+        ))
+        self.canonical_plan = self.enterContext(
+            patch(
+                'learner_api.training_plan_dashboard.install_canonical_training_plan_module_ids',
+                side_effect=lambda source, _owner: (
+                    setattr(source, '_canonical_training_plan', [
+                        {'moduleId': module_id} for module_id in self.plan_ids
+                    ])
+                    or source._canonical_training_plan
+                ),
+            ),
         )
 
     def test_educational_session_count_excludes_onboarding_but_keeps_teaching_introductions(self):
@@ -145,11 +158,12 @@ class TrainingPlanDashboardTests(SimpleTestCase):
         sql = ' '.join(str(call.args[0]) for call in cursor.execute.call_args_list)
         self.assertNotIn('manual_learner_activities', sql)
         self.assertNotIn('live_sessions', sql)
-        self.effective_plan.assert_called_with(source, {})
+        self.canonical_plan.assert_called_once()
+        self.assertIs(self.canonical_plan.call_args.args[0], source)
 
     def test_learning_section_requests_saved_and_inherited_module_metadata(self):
         source = SimpleNamespace(pk=125, aptem_id=None, email='learner@example.com')
-        self.effective_plan.return_value = ['SAVED', 'GROUP-NEW']
+        self.plan_ids[:] = ['SAVED', 'GROUP-NEW']
         connection = MagicMock()
         builder = MagicMock(return_value=({}, {}))
         with patch('learner_api.training_plan_dashboard.connections', {'enrolment': connection}), \
@@ -303,7 +317,7 @@ class TrainingPlanDashboardTests(SimpleTestCase):
              'reviewTemplateId': None, 'reviewInstanceId': 'pr-instance'},
             {'id': 'legacy-event', 'eventKey': 'legacy-event', 'source': 'mcr'},
         ]
-        self.effective_plan.return_value = []
+        self.plan_ids.clear()
         with patch('learner_api.training_plan_dashboard.connections', {'enrolment': connection}), \
              patch('learner_api.training_plan_dashboard.LearnerProfile') as profiles, \
              patch('learner_api.training_plan_dashboard._builder_subject_metadata', return_value=({}, {})), \

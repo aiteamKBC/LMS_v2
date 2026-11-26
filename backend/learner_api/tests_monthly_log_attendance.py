@@ -41,7 +41,7 @@ class MonthlyLogAttendanceTests(SimpleTestCase):
                 id integer PRIMARY KEY,reporting_month text,declared_completed_at text,component_type text);
             CREATE TABLE Learner.learner_monthly_signatures (
                 id integer,learner_id integer,report_month text,signature_data text,review_confirmed boolean,signed_at text);
-            CREATE TABLE Learner.learner_monthly_locks (learner_id integer,report_month text,locked_at text,unlocked_at text);
+            CREATE TABLE Learner.learner_monthly_targets (learner_id integer,report_month text,month_status text);
             CREATE TABLE Learner.manual_month_finalization_events (id integer,aptem_id integer,report_month text,event_type text);
             CREATE TABLE Learner.monthly_audit_signoffs (learner_id text,report_month text,review_confirmed boolean);
         ''')

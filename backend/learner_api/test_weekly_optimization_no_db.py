@@ -72,7 +72,7 @@ class WeeklyHoursProjectionTests(SimpleTestCase):
         def query(sql, params):
             for table, copies in (
                 ('learner_monthly_signatures', 1),
-                ('learner_monthly_locks', 3),
+                ('learner_monthly_targets', 3),
                 ('live_session_learner_attendance', 1),
             ):
                 if table in sql:
@@ -161,7 +161,7 @@ class WeeklyHoursProjectionTests(SimpleTestCase):
         self.assertEqual(ledger.call_args_list[1].args[1], [17, 'commercial'])
         self.assertEqual(query.call_count, 5)
         for call, table, expected in zip(attendance.call_args_list,
-                ('learner_monthly_signatures', 'learner_monthly_locks', 'live_session_learner_attendance'),
+                ('learner_monthly_signatures', 'learner_monthly_targets', 'live_session_learner_attendance'),
                 ([17], [17, 17, 17], [17])):
             self.assertIn(table, call.args[0])
             self.assertEqual(call.args[1], expected)

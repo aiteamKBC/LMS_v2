@@ -28,7 +28,7 @@ class SourceCompletionTests(unittest.TestCase):
             # Attendance and protected-month reads have their own row shapes.
             for table, expected in (
                 ('learner_monthly_signatures', [7]),
-                ('learner_monthly_locks', [7, 7, 7]),
+                ('learner_monthly_targets', [7, 7, 7]),
                 ('live_session_learner_attendance', [7]),
             ):
                 if table in sql:

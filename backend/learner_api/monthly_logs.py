@@ -32,7 +32,54 @@ from .subject_content import ContentUnavailable
 
 logger = logging.getLogger(__name__)
 VERSION = 'lms-monthly-log-v1'
-MONTH_LOCKS = '"Audit".monthly_log_locks'
+MONTH_STATUS_RANK = {'open': 0, 'partially_signed': 1, 'locked': 2}
+
+
+def _effective_month_status(target_status, signer_roles):
+    """Return the most protective persisted/signature-derived month state."""
+    roles = {role for role in signer_roles if role in {'learner', 'coach'}}
+    signature_status = 'locked' if roles == {'learner', 'coach'} else 'partially_signed' if roles else 'open'
+    target_status = target_status if target_status in MONTH_STATUS_RANK else 'open'
+    return max((target_status, signature_status), key=MONTH_STATUS_RANK.get)
+
+
+def _status_state(target_status='open', signer_roles=()):
+    month_status = _effective_month_status(target_status, signer_roles)
+    return {'month_status': month_status, 'locked': month_status == 'locked',
+            'locked_at': None, 'unlocked_at': None, 'unlocked_by': None}
+
+
+def _canonical_status_rows(owner, months):
+    """Read selected target status and confirmed signature roles per owner/month."""
+    month_keys = sorted(set(months or []))
+    if not month_keys:
+        return []
+    return old_repo.query('''WITH requested AS (
+            SELECT unnest(%s::text[]) AS report_month
+        ), selected_targets AS (
+            SELECT DISTINCT ON (report_month) report_month,month_status
+            FROM "Learner".learner_monthly_targets
+            WHERE learner_id=%s AND report_month=ANY(%s)
+              AND coalesce(programme_profile_id,'')=''
+              AND (programme_id IS NULL OR programme_id IS NOT DISTINCT FROM %s)
+            ORDER BY report_month,(programme_id IS NOT DISTINCT FROM %s) DESC,updated_at DESC,id DESC
+        ), confirmed AS (
+            SELECT report_month,
+                   bool_or(signer_role='learner') AS learner_signed,
+                   bool_or(signer_role='coach') AS coach_signed
+            FROM "Learner".learner_monthly_signatures
+            WHERE learner_id=%s AND report_month=ANY(%s) AND review_confirmed IS TRUE
+              AND signer_role IN ('learner','coach')
+            GROUP BY report_month
+        )
+        SELECT r.report_month,t.month_status,
+               coalesce(s.learner_signed,false) AS learner_signed,
+               coalesce(s.coach_signed,false) AS coach_signed
+        FROM requested r
+        LEFT JOIN selected_targets t USING (report_month)
+        LEFT JOIN confirmed s USING (report_month)''',
+        [month_keys, owner['id'], month_keys, owner.get('programme_id'), owner.get('programme_id'),
+         owner['id'], month_keys])
 
 
 def endpoint(*methods):
@@ -182,98 +229,48 @@ def signatures(learner):
 
 
 def lock_state(learner_id, month):
-    """Return the explicit lock without making old deployments unusable."""
+    """Return the stored/signature-derived protection state for one month."""
     if canonical.enabled(learner_id):
         owner = canonical.profile(learner_id)
-        records = old_repo.query('''SELECT locked_at,unlocked_at,unlocked_by
-            FROM "Learner".learner_monthly_locks WHERE learner_id=%s AND report_month=%s''', [owner['id'], month])
+        records = _canonical_status_rows(owner, [month])
         record = records[0] if records else {}
-        return {'locked': bool(record.get('locked_at') and not record.get('unlocked_at')),
-                'locked_at': record['locked_at'].isoformat() if record.get('locked_at') else None,
-                'unlocked_at': record['unlocked_at'].isoformat() if record.get('unlocked_at') else None,
-                'unlocked_by': record.get('unlocked_by')}
-    try:
-        rows = old_repo.query(
-            f'''SELECT locked_at, unlocked_at, unlocked_by FROM {MONTH_LOCKS}
-                WHERE learner_id=%s AND report_month=%s LIMIT 1''',
-            [str(learner_id), month],
-        )
-    except DatabaseError:
-        return {'locked': False, 'locked_at': None, 'unlocked_at': None, 'unlocked_by': None}
-    row = rows[0] if rows else None
-    return {
-        'locked': bool(row and row.get('locked_at') and not row.get('unlocked_at')),
-        'locked_at': row.get('locked_at').isoformat() if row and row.get('locked_at') else None,
-        'unlocked_at': row.get('unlocked_at').isoformat() if row and row.get('unlocked_at') else None,
-        'unlocked_by': row.get('unlocked_by') if row else None,
-    }
+        roles = [role for role, present in (('learner', record.get('learner_signed')),
+                                            ('coach', record.get('coach_signed'))) if present]
+        return _status_state(record.get('month_status'), roles)
+    rows = old_repo.query(f'''SELECT signer_role FROM {old_repo.SIGNOFFS}
+        WHERE learner_id=%s AND report_month=%s AND audit_version=%s
+          AND review_confirmed IS TRUE AND signer_role IN ('learner','coach')''',
+        [f'lms:{learner_id}', month, VERSION])
+    return _status_state('open', [row['signer_role'] for row in rows])
 
 
 def lock_states(learner_id, months, *, canonical_owner=None):
-    """Read summary lock state in one round trip instead of once per month."""
+    """Read summary protection state in one round trip instead of once per month."""
     month_keys = sorted(set(months or []))
     def empty():
         return {'locked': False, 'locked_at': None, 'unlocked_at': None, 'unlocked_by': None}
     result = {month: empty() for month in month_keys}
     if not month_keys:
         return result
-    if canonical_owner is not None:
-        records = old_repo.query('''SELECT report_month,locked_at,unlocked_at,unlocked_by
-            FROM "Learner".learner_monthly_locks
-            WHERE learner_id=%s AND report_month=ANY(%s)''', [canonical_owner['id'], month_keys])
-    elif canonical.enabled(learner_id):
-        owner = canonical.profile(learner_id)
-        records = old_repo.query('''SELECT report_month,locked_at,unlocked_at,unlocked_by
-            FROM "Learner".learner_monthly_locks
-            WHERE learner_id=%s AND report_month=ANY(%s)''', [owner['id'], month_keys])
-    else:
-        try:
-            records = old_repo.query(f'''SELECT report_month,locked_at,unlocked_at,unlocked_by
-                FROM {MONTH_LOCKS} WHERE learner_id=%s AND report_month=ANY(%s)''',
-                [str(learner_id), month_keys])
-        except DatabaseError:
-            return result
+    owner = canonical_owner or (canonical.profile(learner_id) if canonical.enabled(learner_id) else None)
+    if owner is not None:
+        records = _canonical_status_rows(owner, month_keys)
+        for record in records:
+            roles = [role for role, present in (('learner', record.get('learner_signed')),
+                                                ('coach', record.get('coach_signed'))) if present]
+            result[record['report_month']] = _status_state(record.get('month_status'), roles)
+        return result
+    records = old_repo.query(f'''SELECT report_month,signer_role FROM {old_repo.SIGNOFFS}
+        WHERE learner_id=%s AND report_month=ANY(%s) AND audit_version=%s
+          AND review_confirmed IS TRUE AND signer_role IN ('learner','coach')''',
+        [f'lms:{learner_id}', month_keys, VERSION])
+    roles_by_month = defaultdict(list)
     for record in records:
-        month = record.get('report_month')
+        roles_by_month[record['report_month']].append(record['signer_role'])
+    for month, roles in roles_by_month.items():
         if month in result:
-            result[month] = {
-                'locked': bool(record.get('locked_at') and not record.get('unlocked_at')),
-                'locked_at': record['locked_at'].isoformat() if record.get('locked_at') else None,
-                'unlocked_at': record['unlocked_at'].isoformat() if record.get('unlocked_at') else None,
-                'unlocked_by': record.get('unlocked_by'),
-            }
+            result[month] = _status_state('open', roles)
     return result
-
-
-def lock_if_fully_signed(learner_id, month):
-    """Lock only after both independent signatures exist; never overwrite either."""
-    if canonical.enabled(learner_id):
-        signs = canonical.signatures(learner_id)
-        if {s['signer_role'] for s in signs if s['report_month'] == month} >= {'learner', 'coach'}:
-            old_repo.query('''INSERT INTO "Learner".learner_monthly_locks
-                (learner_id,report_month,locked_at,source_system) VALUES (%s,%s,now(),'lms')
-                ON CONFLICT (learner_id,report_month) DO UPDATE
-                SET locked_at=now(),unlocked_at=NULL,unlocked_by=NULL,updated_at=now()''',
-                [canonical.profile(learner_id)['id'], month])
-        return
-    try:
-        rows = old_repo.query(
-            f'''SELECT signer_role FROM {old_repo.SIGNOFFS}
-                WHERE learner_id=%s AND report_month=%s AND audit_version=%s
-                  AND review_confirmed IS TRUE AND signer_role IN ('learner','coach')''',
-            [f'lms:{learner_id}', month, VERSION],
-        )
-        if {row['signer_role'] for row in rows} != {'learner', 'coach'}:
-            return
-        old_repo.query(
-            f'''INSERT INTO {MONTH_LOCKS} (learner_id, report_month, locked_at)
-                VALUES (%s,%s,now())
-                ON CONFLICT (learner_id, report_month) DO UPDATE
-                SET locked_at=now(), unlocked_at=NULL, unlocked_by=NULL''',
-            [str(learner_id), month],
-        )
-    except DatabaseError:
-        logger.warning('Monthly log lock table is unavailable; signatures remain valid.')
 
 
 def month_state(month, rows, signs, training_plan_target=None, *, learner_id=None, lock=None):
@@ -295,6 +292,8 @@ def month_state(month, rows, signs, training_plan_target=None, *, learner_id=Non
         lock_state(learner_id, month) if learner_id is not None
         else {'locked': False, 'locked_at': None, 'unlocked_at': None, 'unlocked_by': None}
     )
+    month_status = lock.get('month_status') or _effective_month_status(
+        'locked' if lock.get('locked') else 'open', [s.get('signer_role') for s in matching])
     return {'month': month, 'source': 'lms', 'is_required': False,
             'is_open': month == timezone.localdate().strftime('%Y-%m'),
             'status': 'complete' if student else 'awaiting_signature',
@@ -309,7 +308,8 @@ def month_state(month, rows, signs, training_plan_target=None, *, learner_id=Non
                                       if r.get('actual_estimated') is not True),
             'training_plan_target': training_plan_target, 'pending_revisions': 0, 'can_complete': False,
             'source_finalization': None, 'snapshot_digest': digest,
-            'locked': lock['locked'], 'locked_at': lock['locked_at'],
+            'month_status': month_status, 'locked': month_status == 'locked',
+            'locked_at': lock['locked_at'],
             'can_unlock': False}
 
 
@@ -773,10 +773,10 @@ def sign(request, learner_id, month):
         include_open = request.GET.get('workflow') == 'mcm'
         report = detail_data(learner, month, include_open=include_open)
         signer_role = 'learner' if role == 'learner' else 'coach'
-        if lock_state(learner_id, month)['locked']:
-            raise old.ServiceError('This monthly log is locked. An administrator must unlock it first.', 'month_locked', 409)
         if report['student_signature' if signer_role == 'learner' else 'coach_signature']:
             return JsonResponse(report)
+        if report.get('month_status') == 'locked':
+            raise old.ServiceError('This monthly log is permanently locked.', 'month_locked', 409)
         if report['snapshot_digest'] != data.get('snapshot_digest'):
             raise old.ServiceError('Activities have changed. Review the updated month before signing.', 'record_changed', 409)
         name = request.login_account.display_name or request.login_account.email
@@ -804,7 +804,6 @@ def sign(request, learner_id, month):
             VALUES (%s,%s,%s,%s,%s,true,%s,now(),%s,%s)
             ON CONFLICT (learner_id,programme_key,report_month,signer_role) DO NOTHING''',
             [f'lms:{learner_id}', key, month, signer_role, name, capture, report['snapshot_digest'], VERSION])
-        lock_if_fully_signed(learner_id, month)
         return JsonResponse(detail_data(learner, month, include_open=include_open))
 
 
@@ -822,28 +821,6 @@ def complete(request, learner_id, month):
     if report['status'] != 'complete':
         raise old.ServiceError('The learner signature is required.', 'signatures_required', 409)
     return JsonResponse(report)
-
-
-@endpoint('POST')
-def unlock(request, learner_id, month):
-    """Admin-only unlock; existing learner/coach signatures are retained."""
-    learner, _ = scope(request, learner_id)
-    account = getattr(request, 'login_account', None)
-    if getattr(account, 'role', None) != 'admin' or request.GET.get('perspective') != 'learner':
-        raise old.ServiceError('Only an administrator in the learner workspace can unlock this log.', 'forbidden', 403)
-    valid_month(month)
-    if canonical.enabled(learner_id):
-        old_repo.query('''UPDATE "Learner".learner_monthly_locks
-            SET unlocked_at=now(),unlocked_by=%s,updated_at=now()
-            WHERE learner_id=%s AND report_month=%s''',
-            [str(account.id), canonical.profile(learner_id)['id'], month])
-        return JsonResponse(detail_data(learner, month, include_open=request.GET.get('workflow') == 'mcm'))
-    old_repo.query(
-        f'''UPDATE {MONTH_LOCKS} SET unlocked_at=now(), unlocked_by=%s
-            WHERE learner_id=%s AND report_month=%s''',
-        [str(account.id), str(learner_id), month],
-    )
-    return JsonResponse(detail_data(learner, month, include_open=request.GET.get('workflow') == 'mcm'))
 
 
 @endpoint('GET')

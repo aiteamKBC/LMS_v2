@@ -17,7 +17,9 @@ class SignedActivityTimeMonthsTests(SimpleTestCase):
         self.addCleanup(self.db.close)
         self.db.executescript('''
             ATTACH DATABASE ':memory:' AS Learner;
-            CREATE TABLE Learner.learner_monthly_locks(learner_id,report_month,locked_at,unlocked_at);
+            CREATE TABLE Learner.learner_monthly_targets(
+                id integer primary key,learner_id,report_month,programme_profile_id,
+                programme_id,month_status,updated_at);
             CREATE TABLE Learner.learner_monthly_signatures(
                 learner_id,report_month,review_confirmed,signer_role,signer_name,
                 signature_data,signed_at,snapshot_digest,reviewed_rows);
@@ -44,7 +46,8 @@ class SignedActivityTimeMonthsTests(SimpleTestCase):
         return [tuple(row) for row in self.db.execute('SELECT * FROM Learner.learner_monthly_signatures')]
 
     def lock(self):
-        self.db.execute("INSERT INTO Learner.learner_monthly_locks VALUES(70,'2026-10','locked',NULL)")
+        self.db.execute("""INSERT INTO Learner.learner_monthly_targets
+            VALUES(1,70,'2026-10','',NULL,'locked','2026-10-20')""")
 
     def test_one_signature_allows_new_attempts_but_not_a_correction(self):
         self.sign()
@@ -61,17 +64,16 @@ class SignedActivityTimeMonthsTests(SimpleTestCase):
         before, changes = self.snapshots(), self.db.total_changes
         for mode in ('add', 'retry'):
             guards.require_activity_time_month(self.owner, '2026-10', mode)
-        with self.assertRaisesRegex(ServiceError, 'locked'):
+        with self.assertRaisesRegex(ServiceError, 'signed'):
             guards.require_activity_time_month(self.owner, '2026-10', 'correct')
         self.assertEqual(self.snapshots(), before)
         self.assertEqual(self.db.total_changes, changes)
-        self.assertEqual(self.db.execute('SELECT locked_at FROM Learner.learner_monthly_locks').fetchone()[0], 'locked')
+        self.assertEqual(self.db.execute('SELECT month_status FROM Learner.learner_monthly_targets').fetchone()[0], 'locked')
 
-    def test_other_learners_or_unconfirmed_signatures_cannot_bypass_a_lock(self):
+    def test_other_learners_and_unconfirmed_signatures_do_not_block_new_attempts(self):
         self.sign(); self.sign('coach', owner=71); self.sign('coach', confirmed=False); self.lock()
         for mode in ('add', 'retry'):
-            with self.assertRaisesRegex(ServiceError, 'locked'):
-                guards.require_activity_time_month(self.owner, '2026-10', mode)
+            guards.require_activity_time_month(self.owner, '2026-10', mode)
 
     def test_separate_administrative_finalization_stays_protected(self):
         self.sign(); self.sign('coach'); self.lock()

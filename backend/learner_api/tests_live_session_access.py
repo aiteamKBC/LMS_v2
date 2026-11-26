@@ -20,6 +20,19 @@ COMPONENT = {'componentId': 'C1', 'moduleId': 'M1', 'type': 'live_session',
 
 
 class LiveSessionAccessTests(SimpleTestCase):
+    def setUp(self):
+        self.profile = SimpleNamespace(id=248, pk=248, enrolment_id=7)
+        self.enterContext(patch(
+            'learner_api.identity.learner_profile_for_source', return_value=self.profile,
+        ))
+        self.enterContext(patch(
+            'learner_api.learning_plan.install_canonical_training_plan_module_ids',
+            side_effect=lambda source, _profile: (
+                setattr(source, '_canonical_training_plan', [{'moduleId': 'M1'}])
+                or source._canonical_training_plan
+            ),
+        ))
+
     def test_future_current_missing_and_cancelled_never_open_even_with_a_recording(self):
         for row, status in [
             (None, 'unlinked'),

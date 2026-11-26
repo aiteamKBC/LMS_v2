@@ -3,14 +3,28 @@ from types import SimpleNamespace
 
 from django.db import connections
 
-from .learning_plan import _effective_plan_ids, request_preset_cache
+from .identity import learner_profile_for_source
+from .learning_plan import (
+    _effective_plan_ids,
+    install_canonical_training_plan_module_ids,
+    request_preset_cache,
+)
 from .models import LearnerProfile
 from .weekly_read_cache import reuse_weekly_read
 
 
 def assigned_module_ids(source):
-    # A saved [] and explicit selections remain authoritative. Never repair a
-    # stale mirror by writing from a GET or resurrecting a cleared assignment.
+    # Attendance is a current-ownership decision. Resolve the exact enrolment
+    # bridge without repairing it, and never fall through to Created_users JSON
+    # when the canonical owner is absent or has an empty plan.
+    if not hasattr(source, '_canonical_training_plan'):
+        source_id = getattr(source, 'pk', None) or getattr(source, 'id', None)
+        profile = learner_profile_for_source(
+            source, source_id, heal=False, fields=('id', 'enrolment_id'),
+        )
+        if profile is None:
+            return []
+        install_canonical_training_plan_module_ids(source, profile)
     return list(dict.fromkeys(_effective_plan_ids(source, request_preset_cache(source))))
 
 

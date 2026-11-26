@@ -57,15 +57,18 @@ class VisibilityPredicateTests(SimpleTestCase):
 class CurrentListTests(SimpleTestCase):
     def test_current_subjects_hide_inactive_and_keep_the_assignment_scope(self):
         sql = student_activity.CURRENT_SUBJECTS_SQL
-        self.assertTrue(sql.startswith(student_activity.ASSIGNED_SUBJECTS_SQL))     # same placement/assignment
-        self.assertIn(f'WHERE {PREDICATE}', sql)
-        self.assertIn('FROM enrolment."Created_users" WHERE id=%s', sql)
+        self.assertIn(PREDICATE, sql)
         self.assertIn('"Learner".learner_training_plan_modules', sql)
+        self.assertIn('l.enrolment_id=%s', sql)
+        self.assertNotIn('"Training_plan"', sql)
+        self.assertNotIn('"Learning_plan"', sql)
         self.assertIsNone(REMOVED_MODULE_DELETION.search(sql))
 
     def test_home_current_flag_hides_inactive_without_dropping_rows(self):
         sql = overview_week.HOME_SUBJECTS_SQL
         self.assertIn(f'bool_or(assigned.current_plan) AND bool_or({PREDICATE})', sql)
+        self.assertIn("entry->>'moduleId' AS module_id, false AS current_plan", sql)
+        self.assertIn('m.curriculum_module_id, true AS current_plan', sql)
         self.assertNotRegex(sql, r'WHERE[^)]*status')                    # every assigned row returned
         self.assertIsNone(REMOVED_MODULE_DELETION.search(sql))
         # Upcoming assignments follow the current flag.
@@ -89,6 +92,10 @@ class HistoricalReadTests(SimpleTestCase):
     def test_assignment_scope_used_for_history_has_no_status_filter(self):
         sql = student_activity.ASSIGNED_SUBJECTS_SQL
         self.assertNotIn('status', sql)
+        self.assertIn('"Training_plan"', sql)
+        self.assertIn('"Learning_plan"', sql)
+        self.assertIn('"Learner".learner_training_plan_modules', sql)
+        self.assertNotIn("jsonb_typeof(source.plan) IS DISTINCT FROM 'array'", sql)
         self.assertIsNone(REMOVED_MODULE_DELETION.search(sql))
 
     def test_exported_activity_lineage_reads_assigned_not_current_modules(self):

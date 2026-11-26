@@ -65,9 +65,15 @@ def annotate(learner, report):
 
 def require_open_month(owner, month):
     # Same lock/signoff sources used by the existing staff Activity Log editor.
-    if repository.query('''SELECT report_month FROM "Learner".learner_monthly_locks
-        WHERE learner_id=%s AND report_month=%s AND locked_at IS NOT NULL AND unlocked_at IS NULL''', [owner['id'], month]):
-        raise ServiceError('This monthly log is locked. No time was changed.', 'month_locked', 409)
+    status = repository.query('''SELECT month_status
+        FROM "Learner".learner_monthly_targets
+        WHERE learner_id=%s AND report_month=%s
+          AND coalesce(programme_profile_id,'')=''
+          AND (programme_id IS NULL OR programme_id IS NOT DISTINCT FROM %s)
+        ORDER BY (programme_id IS NOT DISTINCT FROM %s) DESC,updated_at DESC,id DESC LIMIT 1''',
+        [owner['id'], month, owner.get('programme_id'), owner.get('programme_id')])
+    if status and status[0].get('month_status') in {'partially_signed', 'locked'}:
+        raise ServiceError('This monthly log is signed. No time was changed.', 'month_signed', 409)
     if repository.query('''SELECT report_month FROM "Learner".learner_monthly_signatures
         WHERE learner_id=%s AND report_month=%s AND review_confirmed IS TRUE''', [owner['id'], month]):
         raise ServiceError('This monthly log is signed. No time was changed.', 'month_signed', 409)
@@ -89,16 +95,6 @@ def require_activity_time_month(owner, month, mode):
     """
     if mode not in {'add', 'retry'}:
         return require_open_month(owner, month)
-    locked = repository.query('''SELECT report_month FROM "Learner".learner_monthly_locks
-        WHERE learner_id=%s AND report_month=%s AND locked_at IS NOT NULL AND unlocked_at IS NULL''', [owner['id'], month])
-    if locked:
-        # Monthly Logs automatically locks after both people sign. That lock
-        # still protects corrections, but it must not prohibit a new attempt.
-        signs = repository.query('''SELECT signer_role FROM "Learner".learner_monthly_signatures
-            WHERE learner_id=%s AND report_month=%s AND review_confirmed IS TRUE
-              AND signer_role IN ('learner','coach')''', [owner['id'], month])
-        if {row['signer_role'] for row in signs} != {'learner', 'coach'}:
-            raise ServiceError('This monthly log is locked. No time was changed.', 'month_locked', 409)
     if owner.get('aptem_id'):
         events = repository.query('''SELECT event_type FROM "Learner".manual_month_finalization_events
             WHERE aptem_id=%s AND report_month=%s ORDER BY id DESC LIMIT 1''', [owner['aptem_id'], month])

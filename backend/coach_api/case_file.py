@@ -238,9 +238,17 @@ def build_tab(context, section, month=None):
 
 def read_assignment_detail(context, *, include_progress=True):
     """Reuse authored plan/marking rules without running detail's repair writes."""
-    from learner_api.mappers import flatten_training_plan, get_training_plan, _component_marking_statuses
-    from learner_api.learning_plan import effective_training_plan
     from learner_api.learner_detail import _resolve_from_master
+    from learner_api.learning_plan import (
+        effective_training_plan,
+        install_canonical_training_plan_module_ids,
+    )
+    from learner_api.mappers import (
+        _component_marking_statuses,
+        flatten_training_plan,
+        get_training_plan,
+    )
+    install_canonical_training_plan_module_ids(context.source, context.profile)
     modules, weeks, components = flatten_training_plan(get_training_plan(context.source))
     modules, weeks, components = _resolve_from_master(modules, weeks, components,
                                            assigned_modules=effective_training_plan(context.source), compact=True)

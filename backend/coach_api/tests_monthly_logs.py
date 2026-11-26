@@ -22,6 +22,9 @@ class MonthlyLogsProjectionTests(SimpleTestCase):
                         '_canonical_profile': {'id': 70, 'enrolment_id': 7, 'programme_id': 'P'}}
         self.pending_read = self.enterContext(patch.object(logs, 'pending_hour_records', return_value={70: []}))
         self.attendance_read = self.enterContext(patch.object(existing, 'attendance_rows', return_value=[]))
+        self.status_read = self.enterContext(patch.object(existing, 'lock_states', side_effect=lambda _id, months, **_kw: {
+            month: {'month_status': 'open', 'locked': False} for month in months
+        }))
 
     def project(self, count):
         activities = [{'month': f'2026-{index:02}', 'activities': 2, 'accepted_hours': 1.5}
@@ -59,7 +62,7 @@ class MonthlyLogsProjectionTests(SimpleTestCase):
         self.assertTrue(result['months'][0]['learnerSigned'])
         self.assertFalse(result['months'][0]['coachSigned'])
         self.assertEqual(set(result['months'][0]), {'month', 'activities', 'acceptedOtjhHours', 'targetHours',
-                                                  'isOpen', 'learnerSigned', 'coachSigned'})
+                                                  'isOpen', 'learnerSigned', 'coachSigned', 'monthStatus'})
 
     def test_corrected_retakes_and_frozen_history_match_learner_months_and_coach_totals(self):
         from coach_api.otjh_ksb import read_hour_totals

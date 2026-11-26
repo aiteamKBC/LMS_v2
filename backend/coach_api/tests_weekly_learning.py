@@ -123,7 +123,12 @@ class WeeklyLearningTests(SimpleTestCase):
     def projection(self, selection='M1:1', kind='commercial', future_report=False, records=None, duration='60', reader_options=None, session_only=False, canonical_ksbs=None, live_evidence=None,
                    display_policy=None, cohort_id='COHORT1', detail_week=None, empty_future=False, second_module=False):
         context = MagicMock()
-        context.source = SimpleNamespace(pk=201, email='learner@example.test', learner_type=kind, cohort_id=cohort_id)
+        context.source = SimpleNamespace(
+            pk=201, email='learner@example.test', learner_type=kind, cohort_id=cohort_id,
+            _canonical_training_plan=[{'moduleId': 'M1'}, *(
+                [{'moduleId': 'M2'}] if second_module else []
+            )],
+        )
         context.profile.progress_entries.filter.return_value.values.return_value = [
             {'kind': 'component', 'component_ref': 'C1', 'quiz_ref': None, 'passed': None, 'submitted_at': None}]
         cursor = MagicMock()

@@ -96,13 +96,16 @@ class OptionalPointTests(SimpleTestCase):
                 'commercial': model, 'apprenticeship': model,
              }), patch('coach_api.weekly_learning.assignment_projection', side_effect=lambda value: value), \
              patch('learner_api.learning_plan._effective_plan_ids', return_value=['M1']), \
-             patch('learner_api.canonical_learning.require_profile', return_value=object()), \
+             patch('learner_api.learning_plan.install_canonical_training_plan_module_ids') as install, \
+             patch('learner_api.canonical_learning.require_profile', return_value={'id': 248, 'enrolment_id': 7}), \
              patch('learner_api.canonical_learning.curriculum_module_ids_for', return_value=[]), \
              patch.object(learner, 'connections', {'enrolment': connection}), \
              patch.object(learner, 'read_configurations', return_value=config):
             for kind in ('commercial', 'apprenticeship'):
                 result = learner.learner_plan(kind, 7)
                 self.assertEqual(result['weeks']['W1']['points'][0]['componentIds'], ['R1'])
+
+        self.assertEqual(install.call_count, 2)
 
         self.assertEqual(
             [call.args for call in query.only.call_args_list],

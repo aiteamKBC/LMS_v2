@@ -22,7 +22,8 @@ function response(path: string) {
   return { learner: learners[0], year: requestedYear, years: [year - 1, year],
     summary: { coachSignatures: { completed: 0, total: 12 }, acceptedOtjhHours: 12, trainingPlanHours: 24 },
     months: Array.from({ length: 12 }, (_, index) => ({ month: `${requestedYear}-${String(index + 1).padStart(2, '0')}`,
-      activities: 1, acceptedOtjhHours: 1, targetHours: 2, isOpen: false, learnerSigned: false, coachSigned: false })) };
+      activities: 1, acceptedOtjhHours: 1, targetHours: 2, isOpen: false, learnerSigned: false, coachSigned: false,
+      monthStatus: 'open' as const })) };
 }
 function Workspace() {
   const { id, month } = useParams();

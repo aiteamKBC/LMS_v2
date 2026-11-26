@@ -50,18 +50,13 @@ def group_contracts(profiles):
         if source_id in sources:
             records[source_id].append({**row, 'learner_id': source_id, 'source': 'microsoft-teams'})
 
-    # Same assignment union and native query as the individual register, expanded
-    # across source IDs. The attendance predicate remains scoped to each email.
+    # Current schedule eligibility comes only from normalized plan ownership,
+    # expanded across source IDs. The attendance predicate remains scoped to
+    # each email; stale enrolment JSON cannot grant or deny a session.
     assignment_sql = '''WITH source AS (
-        SELECT id, lower(btrim("Email")) AS email,
-            CASE WHEN jsonb_typeof("Training_plan"::jsonb)='array'
-            THEN "Training_plan"::jsonb ELSE "Learning_plan"::jsonb END AS plan
+        SELECT id, lower(btrim("Email")) AS email
         FROM enrolment."Created_users" WHERE id=ANY(%s)
     ), assigned AS (
-        SELECT id, email, entry->>'moduleId' AS module_id FROM source
-        CROSS JOIN LATERAL jsonb_array_elements(
-            CASE WHEN jsonb_typeof(plan)='array' THEN plan ELSE '[]'::jsonb END) entry
-        UNION
         SELECT source.id, source.email, m.curriculum_module_id
         FROM source JOIN "Learner".learners l ON l.enrolment_id=source.id
         JOIN "Learner".learner_training_plan_modules m ON m.learner_id=l.id
