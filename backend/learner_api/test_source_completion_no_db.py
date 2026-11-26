@@ -3,6 +3,7 @@ import copy
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -10,6 +11,9 @@ from learner_api import journal_sources
 from learner_api.test_canonical_learning_no_db import adapter
 
 
+# The injected reader owns all I/O; only its SQL dialect needs a stand-in.
+@patch('learner_api.attendance_otjh.connections',
+       {'enrolment': SimpleNamespace(vendor='postgresql')})
 class SourceCompletionTests(unittest.TestCase):
     def setUp(self):
         self.rows = [

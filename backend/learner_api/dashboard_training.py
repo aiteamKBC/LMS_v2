@@ -16,6 +16,7 @@ from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 from . import canonical_learning as canonical, training_plan_dashboard as schedule
 from .dashboard_monthly import day, display_subjects, review_day
 from .progress_rules import progress_counts_as_achieved
+from .subject_origins import read_imported_courses, read_replacement_courses
 
 
 def percentage(done, total):
@@ -32,6 +33,24 @@ def requested_date(request, key):
     except ValueError:
         pass
     raise ServiceError('Programme dates must use YYYY-MM-DD.', 'invalid_date', 400)
+
+
+def training_subjects(learning, replacements, *, subject_id=None):
+    """A verified successor uses its own activities on the current timeline.
+
+    Imported copies still use canonical history. Keep that shared rule intact
+    for Monthly/Overview, and keep explicit previous-course detail accessible.
+    A replacement relationship alone never transfers completion.
+    """
+    activity = learning.get('activity') or {}
+    if activity.get('progress_basis') not in ('recorded_activities', 'catalogue_activities'):
+        return display_subjects(learning)
+    counts = Counter(replacements.values())
+    previous = {old for old in replacements.values() if counts[old] == 1 and old != subject_id}
+    projected = {**activity,
+        'subjects': [s for s in activity.get('subjects', []) if f"legacy:{s['id']}" not in previous],
+        'activities': [a for a in activity.get('activities', []) if f"legacy:{a['group_id']}" not in previous]}
+    return display_subjects({**learning, 'activity': projected})
 
 
 def learning_facts(source, owner, profile, records, ids, *, selected=False, subject_id=None):
@@ -90,6 +109,14 @@ def learning_facts(source, owner, profile, records, ids, *, selected=False, subj
     with connections['enrolment'].cursor() as cur:
         # Timeline, selected-module and plan reads share this request's title cache.
         builder = builder_subject_links(cur, source, refs)
+        origin_scope = frozenset(context_ids)
+        origins = getattr(source, '_training_replacements', None)
+        if origins is None or origins[0] != origin_scope:
+            current = [{'id': mid} for mid in context_ids]
+            imported = read_imported_courses(cur, current)
+            replacements = read_replacement_courses(cur, current, source.pk)
+            origins = (origin_scope, {key: value for key, value in replacements.items() if key not in imported})
+            source._training_replacements = origins
         # These facts are reused when the initial timeline also selects a module.
         # Keep scope exact: a different module population must be read independently.
         cached_dates = getattr(source, '_training_activity_dates', None)
@@ -102,7 +129,7 @@ def learning_facts(source, owner, profile, records, ids, *, selected=False, subj
         'builder_subjects': builder, 'activity_dates': dates,
         'current_subjects': [{'id': mid, 'title': builder.get(f'current:{mid}', {}).get('title') or ''}
                              for mid in context_ids]}}
-    subjects = display_subjects(learning)
+    subjects = training_subjects(learning, origins[1], subject_id=subject_id)
     completed = {str(r['componentId']) for bucket in ('videoProgress', 'componentProgress')
                  for r in native.get(bucket, []) if r.get('componentId')
                  and progress_counts_as_achieved(r.get('kind'), r.get('passed'))}
@@ -113,7 +140,9 @@ def learning_facts(source, owner, profile, records, ids, *, selected=False, subj
     legacy_done = {(f"legacy:{a['group_id']}", a['activity_id']): bool(a.get('completed'))
                    for a in (activity or {}).get('activities', [])}
     passed_attempts = [a for a in native.get('quizAttempts', []) if a.get('passed')]
-    passed_quizzes = {str(a.get('quizId')) for a in passed_attempts}
+    # Match My Learning: a saved component identity is authoritative. Reusing
+    # that quiz elsewhere must not lend completion to a different component.
+    passed_quizzes = {str(a.get('quizId')) for a in passed_attempts if not a.get('componentId')}
     passed_components = {a.get('componentId') for a in passed_attempts}
     for subject in subjects:
         for item in subject['activities']:
@@ -331,7 +360,7 @@ def read_training(source, kind, owner, profile, request, module_id=None):
         bound_rows = schedule._plan_session_rows(cur, str(source.email or '').strip().casefold(), ids,
             rail_only=True, navigation_only=True) if ids else []
     bounds = {r['module_id']: r for r in bound_rows}
-    subjects, _ = learning_facts(source, owner, profile, records, ids)
+    subjects, _ = learning_facts(source, owner, profile, records, ids, subject_id=request.GET.get('subject') or None)
     displayed = display_modules(subjects, modules, links, bounds)
     requested = module_id if module_id is not None else request.GET.get('subject')
     reviews = schedule.plan_reviews(source, profile, ('mcr', 'progress-review', 'student-support'), header_only=True)
@@ -342,16 +371,21 @@ def read_training(source, kind, owner, profile, request, module_id=None):
                    *(m + '-28' for m in payload_months if len(m) == 7)], default='')
     current = timezone.localdate(timezone=schedule.UK).strftime('%Y-%m')
     month = requested_month or min(max(current, minimum[:7] or current), maximum[:7] or current)
-    selected = next((m for m in displayed if m['id'] == requested), None) or next((m for m in displayed if m['start'] and m['start'][:7] <= month <= m['end'][:7]), None)
+    active = [m for m in displayed if m['start'] and m['start'][:7] <= month <= m['end'][:7]]
+    selected = (next((m for m in displayed if m['id'] == requested), None)
+                or next((m for m in active if m['id'].startswith('current:')), None)
+                or next(iter(active), None))
     coach = schedule.current_coach(source, profile, None)
     coach_name = coach['coach_name']
     if not coach_name and not coach['coach_email'] and schedule.source_coach(source) is None:
         coach_name = schedule.assigned_group_coach(source, list(modules.values()))
+    defer_selected = request.GET.get('deferSelected') == '1' and selected is not None
     return {'timeline': {'start': minimum[:7], 'end': maximum[:7], 'programmeStartDate': minimum,
         'monthKeys': list(targets), 'modules': [timeline_module(m) for m in displayed],
         'reviews': reviews, 'coachName': coach_name},
         'selectedModuleId': selected['id'] if selected else None,
-        'selectedModule': selected_detail(source, owner, profile, records, selected, modules, links) if selected else None}
+        'selectedModule': selected_detail(source, owner, profile, records, selected, modules, links) if selected and not defer_selected else None,
+        **({'selectedModuleDeferred': True} if defer_selected else {})}
 
 
 def read_selected(source, owner, profile, records, ids, links, subject_id, cur):

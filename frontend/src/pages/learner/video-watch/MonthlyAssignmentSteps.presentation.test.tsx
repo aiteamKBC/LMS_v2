@@ -40,7 +40,7 @@ it('generates a branded draft with editable source notes, preserving hours, temp
   const initial = { ...source, timeEntries: [{ topic: 'Research', hours: '2', date: '2026-10-12' }],
     uploadedPresentation: { id: 'own', name: 'own.pptx' }, presentationDesign: { name: 'My reference', evidenceId: 'ref', font: 'Calibri', accent: '51258B', ratio: 16 / 9 } };
   render(<Harness initial={initial} />);
-  fireEvent.click(screen.getByRole('button', { name: 'Generate full-month presentation' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Generate concise presentation' }));
   await screen.findByText(/8 slides in this presentation/);
   expect(saved()).toMatchObject({ timeEntries: initial.timeEntries, presentationDesign: initial.presentationDesign, uploadedPresentation: initial.uploadedPresentation, presentationFormat: 'kbc-mcm-v2' });
   expect(saved().slides).toHaveLength(8);
@@ -62,7 +62,7 @@ it('cancelled regeneration retains manual content, notes and reviewed token', ()
   vi.spyOn(window, 'confirm').mockReturnValue(false);
   const initial: MonthlyAssignment = { ...source, presentationFormat: 'kbc-mcm-v1', slides: [{ title: 'My edit', body: 'My content', notes: 'My notes' }], presentationReviewed: true, presentationToken: 'saved-token' };
   render(<Harness initial={initial} />);
-  fireEvent.click(screen.getByRole('button', { name: 'Generate full-month presentation' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Generate concise presentation' }));
   expect(saved()).toEqual(initial);
   expect(fetchLearnerDetail).not.toHaveBeenCalled();
 });
@@ -98,9 +98,9 @@ it('uses the completed records shown in Full-month reflection when generating th
     feedback: 'Full completed reading reflection.', ksbs: ['K1'], reportedTime: '20 minutes',
   }] } as unknown as LearnerDetail);
   render(<Harness />);
-  fireEvent.click(screen.getByRole('button', { name: 'Generate full-month presentation' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Generate concise presentation' }));
   await waitFor(() => expect(saved().slides.length).toBeGreaterThan(0));
-  expect(saved().slides.map(s => s.body).join(' ').replace(/\s+/g, ' ')).toContain('Full completed reading reflection.');
+  expect(saved().slides.map(s => s.notes).join('\n')).toContain('Full completed reading reflection.');
   expect(fetchExtraActivities).toHaveBeenCalledWith('commercial', '1', '2026-10');
 });
 
@@ -109,7 +109,7 @@ it('preserves the existing deck if the current month extra activities cannot be 
   vi.mocked(fetchExtraActivities).mockRejectedValueOnce(new Error('Monthly activities unavailable'));
   const initial: MonthlyAssignment = { ...source, presentationFormat: 'kbc-mcm-v2', slides: [{ title: 'Saved', body: 'Keep my content' }], presentationReviewed: true, presentationToken: 'saved' };
   render(<Harness initial={initial} />);
-  fireEvent.click(screen.getByRole('button', { name: 'Generate full-month presentation' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Generate concise presentation' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('Monthly activities unavailable');
   expect(saved()).toEqual(initial);
 });
@@ -124,4 +124,27 @@ it('does not show the previous learner activities while another learner is loadi
   view.rerender(<Harness step={3} learnerId="2" />);
   expect(screen.queryByText('First learner reading')).not.toBeInTheDocument();
   expect(fetchLearnerDetail).toHaveBeenLastCalledWith('commercial', '2', { revalidate: true });
+});
+
+it('replaces a saved 157-slide deck only on request, preserving sources and requiring one new review', async () => {
+  const initial: MonthlyAssignment = { ...source, presentationFormat: 'kbc-mcm-v2',
+    slides: Array.from({ length: 157 }, (_, i) => ({ title: `Saved slide ${i + 1}`, body: 'Saved content', notes: 'Manual detail' })),
+    lmsReflection: 'My complete reflection. '.repeat(100), presentationReviewed: true, presentationToken: 'saved-export',
+  };
+  render(<Harness initial={initial} />);
+  expect(saved()).toEqual(initial);
+  expect(fetchLearnerDetail).not.toHaveBeenCalled();
+  vi.spyOn(window, 'confirm').mockReturnValue(true);
+  fireEvent.click(screen.getByRole('button', { name: 'Generate concise presentation' }));
+  await screen.findByText(/8 slides in this presentation/);
+  expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining('manual slide edits'));
+  expect(saved()).toMatchObject({ lmsReflection: initial.lmsReflection, presentationReviewed: false, presentationToken: '' });
+  expect(saved().slides).toHaveLength(8);
+  expect(saved().slides.at(-1)?.notes).toContain(initial.lmsReflection);
+  const review = screen.getByRole('checkbox', { name: 'I have reviewed the slides and they accurately represent my own work.' });
+  expect(screen.getAllByRole('checkbox')).toHaveLength(1);
+  expect(review).not.toBeChecked();
+  fireEvent.click(review);
+  expect(saved().presentationReviewed).toBe(true);
+  expect(saved().presentationToken).toBe('');
 });

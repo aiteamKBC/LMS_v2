@@ -310,10 +310,12 @@ describe('quiz recovery', () => {
   });
 
   it('does not label an unresolved imported result as failed', () => {
-    render(<QuizzesTab real={quizLearner([{ quizId: 7, passed: null, grade: null }])} loading={false} loadError={null} canTake={false} navigate={vi.fn()} />);
+    render(<QuizzesTab real={quizLearner([{ quizId: 7, passed: null, grade: null }])} loading={false} loadError={null} canTake navigate={vi.fn()} />);
     const row = within(screen.getByRole('row', { name: /Synthetic quiz/ }));
     expect(row.getByText('Result unavailable')).toBeVisible();
     expect(row.queryByText('Failed')).not.toBeInTheDocument();
+    expect(row.getByRole('button', { name: 'Open quiz' })).toBeVisible();
+    expect(row.queryByRole('button', { name: 'Retake' })).not.toBeInTheDocument();
   });
 
   it('displays a recorded zero score instead of replacing it with an absent score', () => {
@@ -951,7 +953,8 @@ describe('subject months, weeks and completion', () => {
     expect(requests.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(2);
     fireEvent.click(screen.getByRole('button', { name: 'All subjects' }));
     expect(screen.getByRole('region', { name: 'Previous learning progress' })).toHaveTextContent('2 of 3 previous activities completed');
-    expect(screen.queryByText('2 of 3 completed')).not.toBeInTheDocument();
+    expect(screen.getByText('2 of 3 completed')).toBeVisible();
+    expect(screen.getByRole('progressbar', { name: 'Leadership previous learning activities progress' })).toHaveAttribute('aria-valuenow', '66.67');
     expect(screen.getByRole('progressbar', { name: 'Leadership KSBs achieved' })).not.toHaveAttribute('aria-valuenow');
   });
 

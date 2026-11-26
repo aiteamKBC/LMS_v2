@@ -10,12 +10,23 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-import repair_legacy_course_catalogue as catalogue
 from reconcile_aptem_evidence import digest, ids, insert
 from reconcile_old_lms_missing_ssot import database_url
-from repair_live_legacy_progress import fetch_courses, export_for, verify_identity
+from repair_live_legacy_progress import fetch_courses, verify_identity
+from recover_live_legacy_completions import read_state as read_learner_state
 
 RUN_KIND = 'verified-legacy-quiz-pass-flags-v1'
+
+
+def course_states(state, course_ids):
+    """Reuse one identified learner's snapshot, never read other course members."""
+    courses = {int(course['source_course_ref']): course for course in state['courses']
+               if course['source_system'] == 'old_lms' and str(course['source_course_ref']).isdigit()}
+    if not set(course_ids) <= courses.keys():
+        raise ValueError('Selected course is not assigned to this learner.')
+    return {cid: {**state, 'course': courses[cid],
+                  'definitions': [d for d in state['definitions'] if d['source_course_id'] == courses[cid]['id']]}
+            for cid in course_ids}
 
 
 def plan_flags(state, source):
@@ -70,8 +81,7 @@ def run(args, sources):
         target = digest({'database': conn.info.dbname, 'host': conn.info.host})
         if args.apply and args.expected_target != target:
             raise ValueError('Database target differs from preview.')
-        states = {cid: catalogue.read_state(cur, cid, args.aptem_id, catalogue_only=True,
-                  verified_export=export_for(sources[cid])) for cid in args.course_ids}
+        states = course_states(read_learner_state(cur, args.aptem_id), args.course_ids)
         owners = sorted({s['owner']['id'] for s in states.values()})
         if args.apply:
             cur.execute("SELECT pg_advisory_xact_lock(hashtext('learner-journal-progress'),id::integer) FROM unnest(%s::bigint[]) owner(id) ORDER BY id", [owners])
@@ -93,8 +103,7 @@ def run(args, sources):
         cur.execute('UPDATE "Learner".learner_progress_entries SET passed=true WHERE id=ANY(%s) AND learner_id=ANY(%s) AND passed IS NULL AND deleted_at IS NULL', [sorted(changes), owners])
         if cur.rowcount != len(changes):
             raise ValueError('Concurrent pass flag change.')
-        refreshed = {cid: catalogue.read_state(cur, cid, args.aptem_id, catalogue_only=True,
-                    verified_export=export_for(sources[cid])) for cid in args.course_ids}
+        refreshed = course_states(read_learner_state(cur, args.aptem_id), args.course_ids)
         after = {p['id']: p for s in refreshed.values() for p in s['progress']}
         verify_preserved(before, after, set(changes))
         for cid, state in refreshed.items():

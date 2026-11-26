@@ -64,6 +64,9 @@ class WeeklyCompactContractTests(SimpleTestCase):
         self.assertIn('attended', selected)  # serializer never mutates legacy contracts
 
 
+# The injected reader owns all I/O; only its SQL dialect needs a stand-in.
+@patch('learner_api.attendance_otjh.connections',
+       {'enrolment': SimpleNamespace(vendor='postgresql')})
 class WeeklyHoursProjectionTests(SimpleTestCase):
     def query_with_attendance(self, owner, responses):
         ledger = Mock(side_effect=responses)

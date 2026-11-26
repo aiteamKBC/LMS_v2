@@ -4,7 +4,7 @@ import { emptyMonthlyAssignment } from '@/api/monthlyAssignment';
 import { standardMonthlyPresentation, STANDARD_PRESENTATION_FORMAT } from './standardMonthlyPresentation';
 import { fillEmptyPresentationSlides, slideIssue } from './monthlyPresentation';
 
-it.each([0, 5, 15, 250])('keeps all %i activities visible with continuation slides and original notes', count => {
+it.each([0, 5, 15, 250])('keeps eight review slides and preserves all %i activity accounts in notes', count => {
   const monthly = emptyMonthlyAssignment([], '2026-10');
   monthly.extraActivities = 'External training account that must stay intact.';
   monthly.claims = [{ code: 'K1', explanation: 'My original understanding.', evidenceIds: ['file'] }];
@@ -15,10 +15,10 @@ it.each([0, 5, 15, 250])('keeps all %i activities visible with continuation slid
   } as unknown as LearnerDetail;
   const before = JSON.stringify({ monthly, detail });
   const slides = standardMonthlyPresentation('Assignment', 'My complete assignment answer.', 'My own learning.', 'My original impact.', monthly, detail, 'Original question');
-  expect(slides.length).toBeGreaterThanOrEqual(8);
+  expect(slides).toHaveLength(8);
   const visible = slides.map(s => s.body).join(" ").replace(/\s+/g, " ");
-  expect(visible).not.toContain("\u2026");
-  for (let i = 0; i < count; i++) expect(visible).toContain(`Full original reflection ${i}.`);
+  if (count) expect(visible).toContain(`${count} completed or submitted activities`);
+  expect(visible).not.toContain('Wrong month');
   expect(slides[0].templateSlide).toBe(1);
   expect(slides.at(-1)?.templateSlide).toBe(7);
   expect(slides.every(s => !slideIssue(s, STANDARD_PRESENTATION_FORMAT))).toBe(true);
@@ -35,16 +35,16 @@ it('never converts a saved standard deck or refills deliberately cleared manual 
   expect(slideIssue(monthly.slides[0], STANDARD_PRESENTATION_FORMAT)).toContain('Add content');
 });
 
-it('shows long accounts beyond the former twelve-slide ceiling without losing the final words', () => {
+it('keeps long answers and reflections intact in notes without adding review slides', () => {
   const monthly = emptyMonthlyAssignment([], '2026-10');
   monthly.lmsReflection = 'Full reflection. '.repeat(100) + 'Final reflection marker.';
   const slides = standardMonthlyPresentation('Assignment', 'Complete answer. '.repeat(120) + 'Final answer marker.', 'Learning', '', monthly, {} as LearnerDetail, 'Question');
-  expect(slides.length).toBeGreaterThan(12);
+  expect(slides).toHaveLength(8);
   const visible = slides.map(s => s.body).join(" ").replace(/\s+/g, " ");
-  const approach = slides.filter(s => s.templateSlide === 3).flatMap(s => s.body.split('\n\n')).filter(card => card.startsWith('My approach\n') || card.startsWith('My approach (continued)\n')).map(card => card.split('\n').slice(1).join(' ')).join(' ').replace(/\s+/g, ' ');
-  expect(approach).toBe('Complete answer. '.repeat(120) + 'Final answer marker.');
-  expect(visible).toContain("Final reflection marker.");
-  expect(visible).not.toContain("\u2026");
+  expect(visible).toContain('Complete answer.');
+  expect(visible).toContain('\u2026');
+  expect(visible).not.toContain('Final answer marker.');
+  expect(slides[2].notes).toContain('Complete answer. '.repeat(120) + 'Final answer marker.');
   expect(slides.map(s => s.notes).join('\n')).toContain(monthly.lmsReflection);
 });
 
@@ -54,24 +54,26 @@ it('includes completed progress missing from the feed and submitted extra activi
   const detail = { activityFeed: [], componentProgress: [{ componentId: 'reading', componentTitle: 'October reading', submittedAt: '2026-10-10T10:00:00Z', feedback: 'My completed reading reflection.', ksbs: ['K1'] }] } as unknown as LearnerDetail;
   const extra = { activityId: 'extra', title: 'Workplace training', month: '2026-10', status: 'submitted_for_tutor_review', submittedAt: '2026-11-02', answer: 'Full extra account.', reflection: 'My extra learning.', ksbs: ['S1'], hours: '2', coachFeedback: null, reviewedAt: null, reviewedBy: null };
   const slides = standardMonthlyPresentation('Assignment', 'Answer', 'Learning', '', monthly, detail, 'Question', [extra]);
-  const visible = slides.map(s => s.body).join(' ').replace(/\s+/g, ' ');
-  for (const text of ['October reading', 'My completed reading reflection.', 'Workplace training', 'My extra learning.', 'S1', '2 claimed hours']) expect(visible).toContain(text);
+  expect(slides).toHaveLength(8);
+  const notes = slides.map(s => s.notes).join('\n');
+  for (const text of ['October reading', 'My completed reading reflection.', 'Workplace training', 'My extra learning.', 'S1', '2 claimed hours']) expect(notes).toContain(text);
 });
 
-it('fills continuation cards for a large month instead of exhausting the slide budget with empty columns', () => {
+it('keeps a large month concise while retaining every original activity and answer', () => {
   const monthly = emptyMonthlyAssignment([], '2026-10');
   monthly.lmsReflection = 'Monthly reflection with a complete account. '.repeat(35);
   const answer = 'I applied the learning to an assignment and reviewed the complete results. '.repeat(210);
   const records = Array.from({ length: 47 }, (_, i) => ({ componentId: `activity-${i}`, componentTitle: `Activity ${i}`, submittedAt: new Date(Date.UTC(2026, 9, 12, 10, i)).toISOString(), feedback: `Complete learning account ${i}. ` + 'Full activity reflection. '.repeat(20) }));
   const slides = standardMonthlyPresentation('Assignment', answer, 'Learning', '', monthly, { componentProgress: records } as unknown as LearnerDetail, 'Question');
-  expect(slides.length).toBeLessThanOrEqual(200);
-  const continuation = slides.find(s => s.title === 'Applying my learning at work (continued 2)')!;
-  expect(continuation.body.split('\n\n')).toHaveLength(3);
-  expect(continuation.body.split('\n\n').every(card => card.startsWith('My approach\n'))).toBe(true);
-  const approach = slides.filter(s => s.templateSlide === 3).flatMap(s => s.body.split('\n\n')).filter(card => card.startsWith('My approach')).map(card => card.split('\n').slice(1).join(' ')).join(' ').replace(/\s+/g, ' ').trim();
-  expect(approach).toBe(answer.trim());
-  const visible = slides.map(s => s.body).join(' ').replace(/\s+/g, ' ');
-  for (let i = 0; i < 47; i++) expect(visible).toContain(`Complete learning account ${i}.`);
+  expect(slides).toHaveLength(8);
+  expect(slides[2].body.split('\n\n')).toHaveLength(3);
+  expect(slides[2].notes).toContain(answer);
+  const notes = slides.map(s => s.notes).join('\n');
+  expect(notes).toContain(monthly.lmsReflection);
+  for (const record of records) expect(notes).toContain(record.feedback);
+  for (const slide of slides.slice(1)) {
+    for (const card of slide.body.split('\n\n')) expect(card.split('\n').length).toBeLessThanOrEqual(8);
+  }
 });
 
 it('accepts edited full text above the old highlight limit while retaining the export size bound', () => {
@@ -79,10 +81,35 @@ it('accepts edited full text above the old highlight limit while retaining the e
   expect(slideIssue({ title: 'My full account', body: 'x'.repeat(12001) }, STANDARD_PRESENTATION_FORMAT)).toContain('12,000');
 });
 
-it('reports the existing deck size bound without truncating or mutating an oversized account', () => {
+it('retains accounts that previously needed more than 200 slides without mutating answers', () => {
   const monthly = emptyMonthlyAssignment([], '2026-10');
   monthly.lmsReflection = 'Full reflection. '.repeat(6000);
   const before = JSON.stringify(monthly);
-  expect(() => standardMonthlyPresentation('Assignment', 'Complete answer. '.repeat(6000), 'Learning', '', monthly, {} as LearnerDetail, 'Question')).toThrow('more than 200 slides');
+  const answer = 'Complete answer. '.repeat(6000);
+  const slides = standardMonthlyPresentation('Assignment', answer, 'Learning', '', monthly, {} as LearnerDetail, 'Question');
+  expect(slides).toHaveLength(8);
+  expect(slides[2].notes).toContain(answer);
+  expect(slides.at(-1)?.notes).toContain(monthly.lmsReflection);
   expect(JSON.stringify(monthly)).toBe(before);
+});
+
+it('rejects oversized notes without silently losing detail or modifying an existing deck', () => {
+  const monthly = { ...emptyMonthlyAssignment([], '2026-10'), slides: [{ title: 'Saved', body: 'My edit' }] };
+  const before = JSON.stringify(monthly);
+  expect(() => standardMonthlyPresentation('Assignment', 'x'.repeat(2000001), '', '', monthly, {} as LearnerDetail, 'Question')).toThrow('speaker-notes limit');
+  expect(JSON.stringify(monthly)).toBe(before);
+});
+
+it('bounds long identifiers and multiline excerpts while keeping their complete source in notes', () => {
+  const monthly = emptyMonthlyAssignment([], '2026-10');
+  const answer = 'https://example.test/' + 'a'.repeat(3000);
+  const slides = standardMonthlyPresentation('Long title '.repeat(40), answer, '\n\nLearning\n'.repeat(100), '', monthly, { name: 'Long name '.repeat(30) } as LearnerDetail, 'Question');
+  expect(slides).toHaveLength(8);
+  expect(slides[2].notes).toContain(answer);
+  for (const slide of slides) {
+    const maxWidth = slide.templateSlide === 1 ? 32 : slide.templateSlide === 3 ? 20 : slide.templateSlide === 5 ? 23 : slide.templateSlide === 7 ? 36 : 24;
+    for (const card of slide.body.split('\n\n')) {
+      for (const line of card.split('\n').slice(1)) expect(line.length).toBeLessThanOrEqual(maxWidth);
+    }
+  }
 });

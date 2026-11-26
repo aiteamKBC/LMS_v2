@@ -22,6 +22,73 @@ beforeEach(() => { clearAllCachedResources(); vi.stubGlobal('fetch', vi.fn()); }
 afterEach(() => { clearAllCachedResources(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe('learner data transport', () => {
+  it.each(['commercial', 'apprenticeship'])('allows a deferred training module to finish and bounds a stuck detail (%s)', async kind => {
+    vi.useFakeTimers();
+    const network = pending<Response>();
+    vi.mocked(fetch).mockReturnValueOnce(network.promise);
+    const request = readLearnerJson(`/learner_api/dashboard/${kind}/125/training/modules/current%3AM1/`);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(vi.mocked(fetch).mock.calls[0][1]?.signal?.aborted).toBe(false);
+    network.resolve(reply({ id: 'current:M1' }));
+    await expect(request).resolves.toEqual({ id: 'current:M1' });
+    vi.mocked(fetch).mockReturnValueOnce(new Promise(() => {}));
+    const stuck = expect(readLearnerJson(`/learner_api/dashboard/${kind}/125/training/modules/current%3AM2/`)).rejects.toMatchObject({ code: 'timeout' });
+    await vi.advanceTimersByTimeAsync(120_000);
+    await stuck;
+    expect(vi.mocked(fetch).mock.calls[1][1]?.signal?.aborted).toBe(true);
+  });
+
+  it.each(['commercial', 'apprenticeship'].flatMap(kind => [
+    `/learner_api/dashboard/${kind}/125/training/`,
+    `/learner_api/dashboard/${kind}/125/training/?deferSelected=1&month=2026-11`,
+  ]))('lets a slow training timeline finish, bounds a stalled read and supports manual retry (%s)', async url => {
+    vi.useFakeTimers();
+    const network = pending<Response>();
+    vi.mocked(fetch).mockReturnValueOnce(network.promise);
+    const request = readLearnerJson(url);
+    const settled = request.then(value => value, error => error);
+    await vi.advanceTimersByTimeAsync(85_000);
+    expect(vi.mocked(fetch).mock.calls[0][1]?.signal?.aborted).toBe(false);
+    expect(fetch).toHaveBeenCalledOnce();
+    network.resolve(reply({ timeline: { modules: [], reviews: [] } }));
+    await expect(settled).resolves.toEqual({ timeline: { modules: [], reviews: [] } });
+    vi.mocked(fetch).mockReturnValueOnce(new Promise(() => {}));
+    const stuck = expect(readLearnerJson(url)).rejects.toMatchObject({ code: 'timeout' });
+    await vi.advanceTimersByTimeAsync(120_000);
+    await stuck;
+    expect(vi.mocked(fetch).mock.calls[1][1]?.signal?.aborted).toBe(true);
+    vi.mocked(fetch).mockResolvedValueOnce(reply({ recovered: true }));
+    await expect(readLearnerJson(url)).resolves.toEqual({ recovered: true });
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each(['commercial', 'apprenticeship'].flatMap(kind => ['', 'plan/'].flatMap(contract => [
+    `/learner_api/dashboard/${kind}/125/monthly/${contract}`,
+    `/learner_api/dashboard/${kind}/125/monthly/${contract}?month=2026-11`,
+  ])))('lets a monthly plan finish after slow checkout and bounds/manual-retries a stalled read (%s)', async url => {
+    vi.useFakeTimers();
+    const network = pending<Response>();
+    vi.mocked(fetch).mockReturnValueOnce(network.promise);
+    const request = readLearnerJson(url);
+    const settled = request.then(value => value, error => error);
+    await vi.advanceTimersByTimeAsync(85_000);
+    expect(vi.mocked(fetch).mock.calls[0][1]?.signal?.aborted).toBe(false);
+    expect(fetch).toHaveBeenCalledOnce();
+    network.resolve(reply({ month: '2026-11', lectures: [] }));
+    await expect(settled).resolves.toEqual({ month: '2026-11', lectures: [] });
+
+    vi.mocked(fetch).mockReturnValueOnce(new Promise(() => {}));
+    const stuck = expect(readLearnerJson(url)).rejects.toMatchObject({ code: 'timeout' });
+    await vi.advanceTimersByTimeAsync(120_000);
+    await stuck;
+    expect(vi.mocked(fetch).mock.calls[1][1]?.signal?.aborted).toBe(true);
+    vi.mocked(fetch).mockResolvedValueOnce(reply({ month: '2026-11', lectures: [] }));
+    await expect(readLearnerJson(url)).resolves.toMatchObject({ month: '2026-11' });
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it.each(['commercial', 'apprenticeship'] as const)('allows a slow evidence list to finish and bounds a stuck list (%s)', async kind => {
     vi.useFakeTimers();
     const network = pending<Response>();
@@ -43,11 +110,11 @@ describe('learner data transport', () => {
   });
 
   it.each([
-    '/learner_api/dashboard/commercial/125/training/',
-    '/learner_api/dashboard/apprenticeship/125/monthly/',
+    '/learner_api/dashboard/apprenticeship/125/monthly/unrelated/',
     '/learner_api/calendar/commercial/125/first-session/',
     '/learner_api/learner-summary/commercial/125/',
     '/learner_api/learner-detail/commercial/125/?content=quiz',
+    '/learner_api/learner-detail/commercial/125/?content=quiz-list',
     '/learner_api/learner-detail/commercial/125/?content=reading&component_id=C1',
     '/learner_api/learner-detail/commercial/125/',
     '/learner_api/calendar/commercial/125/first-session/?content=activity',

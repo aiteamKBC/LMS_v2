@@ -21,6 +21,8 @@ export type DashboardTrainingPayload = {
   };
   selectedModuleId: string | null;
   selectedModule: TrainingModule | null;
+  /** The timeline is ready; load this module through its existing detail route. */
+  selectedModuleDeferred?: boolean;
 };
 const root = (kind: LearnerKind, id: string) => `/learner_api/dashboard/${kind}/${encodeURIComponent(id)}/training/`;
 const key = (kind: LearnerKind, id: string, moduleId: string) => `${root(kind, id)}modules/${encodeURIComponent(moduleId)}/`;
@@ -36,6 +38,7 @@ subscribeLearnerReadInvalidation(() => { generation += 1; details.invalidate(); 
 
 function trainingPath(kind: LearnerKind, id: string, subject = '', month = '', programmeStartDate = '', programmeEndDate = '') {
   const query = new URLSearchParams();
+  query.set('deferSelected', '1');
   if (subject) query.set('subject', subject);
   if (month) query.set('month', month);
   if (programmeStartDate) query.set('programmeStartDate', programmeStartDate);
@@ -44,7 +47,9 @@ function trainingPath(kind: LearnerKind, id: string, subject = '', month = '', p
 }
 const validTraining = (data: DashboardTrainingPayload | undefined) => !!data?.timeline
   && Array.isArray(data.timeline.modules) && Array.isArray(data.timeline.reviews)
-  && (!data.selectedModuleId || data.selectedModule?.id === data.selectedModuleId);
+  && (!data.selectedModuleId || data.selectedModule?.id === data.selectedModuleId
+    || (data.selectedModuleDeferred === true && data.selectedModule === null
+      && data.timeline.modules.some(module => module.id === data.selectedModuleId)));
 
 export const dashboardTraining = {
   read: async (kind: LearnerKind, id: string, signal?: AbortSignal, fresh = false, subject = '', month = '', programmeStartDate = '', programmeEndDate = '') => {

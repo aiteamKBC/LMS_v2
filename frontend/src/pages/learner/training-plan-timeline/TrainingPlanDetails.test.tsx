@@ -114,6 +114,20 @@ afterEach(() => {
 });
 
 describe('Dashboard training plan controls', () => {
+  it('defaults to the active current plan and still lets the learner select its history', () => {
+    const data = fixture();
+    data.moduleLinks['current:M10'] = { id: 'M10', title: 'Marketing' };
+    renderBoard(data, [summarySubjects[0], { ...summarySubjects[0], id: 'current:M10', source: 'current', completed: 6, total: 8 }]);
+    const programme = within(screen.getByRole('region', { name: 'Programme module progress' }));
+    const current = programme.getByRole('button', { name: 'Marketing (Current plan): 75% overall progress' });
+    const previous = programme.getByRole('button', { name: 'Marketing (Previous learning): 42.86% overall progress' });
+    expect(current).toHaveAttribute('aria-pressed', 'true');
+    expect(previous).toHaveAttribute('aria-pressed', 'false');
+    fireEvent.click(previous);
+    expect(previous).toHaveAttribute('aria-pressed', 'true');
+    expect(current).toHaveAttribute('aria-pressed', 'false');
+  });
+
   it('keeps progress in employer Overview and only the timeline and module details in Learning plan', () => {
     const data = fixture();
     const panel = (overview: boolean) => <MemoryRouter><TrainingPlanDetails

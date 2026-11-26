@@ -191,6 +191,15 @@ def display_subjects(learning, *, deduplicate=True):
 
 
 def read_monthly(source, kind, owner, profile, request, *, canonical_contract=False):
+    # Canonical hours and the display supplement consult the same frozen
+    # attendance. Reuse those SELECTs only within this request, with copies.
+    from old_otjh.repository import request_read_scope
+    with request_read_scope():
+        return _read_monthly(source, kind, owner, profile, request,
+                             canonical_contract=canonical_contract)
+
+
+def _read_monthly(source, kind, owner, profile, request, *, canonical_contract=False):
     from .dashboard_tabs import learning_projection
     from .attendance_lectures import read_workspace
     v2 = canonical_contract or request.GET.get('version') == '2'

@@ -47,8 +47,8 @@ function TrainingPlanContent({ kind, learnerId, programmeStartDate, programmeEnd
   const handledRevision = useRef(0);
   const retryDetail = () => setRevision(value => value + 1);
   useEffect(() => {
-    // Refresh the timeline first: it already returns and primes its selected
-    // detail. A cleared snapshot must not launch a duplicate detail request.
+    // Refresh the timeline first, then load its selected detail. Older combined
+    // responses prime the detail cache, so they still avoid a duplicate read.
     if (!active || !payload || payload !== peekReader(kind, learnerId) || !selectedId) return;
     const controller = new AbortController();
     setDetailState({ identity, id: selectedId });
