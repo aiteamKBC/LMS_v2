@@ -46,15 +46,15 @@ function expectSection(label: string, href: string) {
 }
 
 it.each([
-  ['/employers/7', 'Home', '/employers/7'],
+  ['/employers/7', 'Overview', '/employers/7'],
   ['/employers/7/learners', 'My learners', '/employers/7/learners'],
-  ['/employers/7/reviews', 'Progress & Gateway reviews', '/employers/7/reviews'],
+  ['/employers/7/reviews', 'Reviews', '/employers/7/reviews'],
   ['/employers/7/documents', 'Documents', '/employers/7/documents'],
   ['/employers/7/feedback', 'Feedback', '/employers/7/feedback'],
   ['/employers/7/feedback/501', 'Feedback', '/employers/7/feedback'],
   ...['commercial', 'apprenticeship'].flatMap(kind => [
-    [`/employers/7/learner/${kind}/101?tab=reviews`, 'Progress & Gateway reviews', '/employers/7/reviews'],
-    [`/employers/7/learner/${kind}/101/?reviewId=example&tab=reviews`, 'Progress & Gateway reviews', '/employers/7/reviews'],
+    [`/employers/7/learner/${kind}/101?tab=reviews`, 'Reviews', '/employers/7/reviews'],
+    [`/employers/7/learner/${kind}/101/?reviewId=example&tab=reviews`, 'Reviews', '/employers/7/reviews'],
     [`/employers/7/learner/${kind}/101?tab=documents`, 'Documents', '/employers/7/documents'],
     [`/employers/7/learner/${kind}/101`, 'My learners', '/employers/7/learners'],
     [`/employers/7/learner/${kind}/101?tab=unknown`, 'My learners', '/employers/7/learners'],
@@ -71,21 +71,21 @@ it.each(['employer', 'staff', 'admin'])('tracks tabs and browser history for %s 
   const destinations = () => sidebar.getAllByRole('link').map(link => link.getAttribute('href'));
   const original = destinations();
   fireEvent.click(screen.getByRole('link', { name: 'Open learner reviews' }));
-  expectSection('Progress & Gateway reviews', '/employers/7/reviews');
+  expectSection('Reviews', '/employers/7/reviews');
   fireEvent.click(screen.getByRole('link', { name: 'Open learner documents' }));
   expectSection('Documents', '/employers/7/documents');
   fireEvent.click(screen.getByRole('button', { name: 'Browser back' }));
-  expectSection('Progress & Gateway reviews', '/employers/7/reviews');
+  expectSection('Reviews', '/employers/7/reviews');
   fireEvent.click(screen.getByRole('button', { name: 'Browser forward' }));
   expectSection('Documents', '/employers/7/documents');
   fireEvent.click(screen.getByRole('link', { name: 'Open learning plan' }));
   expectSection('My learners', '/employers/7/learners');
   expect(destinations()).toEqual(original);
-  fireEvent.click(sidebar.getByRole('link', { name: 'Progress & Gateway reviews' }));
+  fireEvent.click(sidebar.getByRole('link', { name: 'Reviews' }));
   expect(screen.getByTestId('route')).toHaveTextContent('/employers/7/reviews');
-  expectSection('Progress & Gateway reviews', '/employers/7/reviews');
-  fireEvent.click(sidebar.getByRole('link', { name: 'Home' }));
-  expectSection('Home', '/employers/7');
+  expectSection('Reviews', '/employers/7/reviews');
+  fireEvent.click(sidebar.getByRole('link', { name: 'Overview' }));
+  expectSection('Overview', '/employers/7');
 });
 
 it('preserves the staff return destination when switching Employer sections from the sidebar', () => {

@@ -13,6 +13,7 @@ from learner_api.test_canonical_learning_no_db import adapter
 class CourseCatalogueTests(unittest.TestCase):
     def setUp(self):
         self.scope = adapter(Mock())
+        self.enterContext(patch('coach_api.migrated_otjh.planned_hours_bulk', return_value={}))
         self.courses = [
             {'source_course_ref': '50', 'source_course_title': 'Course A'},
             {'source_course_ref': '60', 'source_course_title': 'Course B'},
@@ -201,7 +202,7 @@ class CourseCatalogueTests(unittest.TestCase):
                   'verified_catalogue_scope': json.dumps(self.verified_scope('material:20'))}
         records = [self.record(), self.record(2, sources=[{
             'source_system': 'old_lms', 'source_course_ref': '50', 'source_activity_id': 'quiz:10'}])]
-        owner = {'id': 7, 'name': 'Synthetic learner', 'aptem_id': 70}
+        owner = {'id': 7, 'enrolment_id': 17, 'name': 'Synthetic learner', 'aptem_id': 70}
         self.scope['targets_for'] = Mock(return_value={})
         for overview in (False, True):
             with self.subTest(overview=overview):
@@ -251,7 +252,7 @@ class CourseCatalogueTests(unittest.TestCase):
         self.assertEqual(query.call_args_list[0].args[1], [7])
 
     def test_subject_endpoint_projects_the_owned_catalogue_without_any_progress(self):
-        self.scope['profile'] = Mock(return_value={'id': 7, 'name': 'Synthetic learner', 'aptem_id': 70})
+        self.scope['profile'] = Mock(return_value={'id': 7, 'enrolment_id': 17, 'name': 'Synthetic learner', 'aptem_id': 70})
         self.scope['entries_for'] = Mock(return_value=[])
         self.scope['targets_for'] = Mock(return_value={})
         self.scope['query'].side_effect = [

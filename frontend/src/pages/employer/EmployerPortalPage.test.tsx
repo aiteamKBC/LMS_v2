@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EmployerPortal, EmployerDashboardMetrics } from '@/api/employerPortal';
 import type { LearnerCalendarEvent } from '@/api/learnerCalendar';
@@ -10,6 +11,7 @@ import { londonToday } from './employerDashboardData';
 
 const api = vi.hoisted(() => ({
   portal: vi.fn(), metrics: vi.fn(), reviews: vi.fn(), reviewSummary: vi.fn(), attendance: vi.fn(),
+  documents: vi.fn(), learning: vi.fn(), schedule: vi.fn(), meetings: vi.fn(), mcm: vi.fn(),
 }));
 const session = vi.hoisted(() => ({ role: 'employer' }));
 vi.mock('@/api/employerPortal', () => ({
@@ -18,10 +20,18 @@ vi.mock('@/api/employerPortal', () => ({
   fetchEmployerProgressReviews: (...args: unknown[]) => api.reviews(...args),
   fetchEmployerProgressReviewSummary: (...args: unknown[]) => api.reviewSummary(...args),
   fetchEmployerLearnerAttendance: (...args: unknown[]) => api.attendance(...args),
+  fetchEmployerDocuments: (...args: unknown[]) => api.documents(...args),
+  fetchEmployerLearningOverview: (...args: unknown[]) => api.learning(...args),
+  fetchEmployerScheduleOverview: (...args: unknown[]) => api.schedule(...args),
+  fetchEmployerMcmTimeline: (...args: unknown[]) => api.mcm(...args),
+}));
+vi.mock('@/api/employerMeetings', () => ({
+  fetchEmployerTeamsMeetings: (...args: unknown[]) => api.meetings(...args),
 }));
 vi.mock("@/hooks/useAuth", () => ({
   useAuth: () => ({ auth: { account: { role: session.role, displayName: 'Test Employer' } } }),
 }));
+vi.mock('@/hooks/useToast', () => ({ useToast: () => ({ success: vi.fn() }) }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({
   WorkspaceShell: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
@@ -32,10 +42,11 @@ function CurrentPath() {
 }
 function showPage(path = '/employers/8', state?: unknown) {
   const entry = new URL(path, 'http://localhost');
-  return render(<MemoryRouter initialEntries={[{ pathname: entry.pathname, search: entry.search, state }]}><Routes>
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+  return render(<QueryClientProvider client={client}><MemoryRouter initialEntries={[{ pathname: entry.pathname, search: entry.search, state }]}><Routes>
     <Route path="/employers/:employerId/*" element={<><EmployerPortalPage /><CurrentPath /></>} />
     <Route path="*" element={<CurrentPath />} />
-  </Routes></MemoryRouter>);
+  </Routes></MemoryRouter></QueryClientProvider>);
 }
 let portal: EmployerPortal;
 let metrics: EmployerDashboardMetrics;
@@ -67,6 +78,11 @@ beforeEach(() => {
       otjh: { actual: 70, planned: 400, percent: 17.5 }, attendance: { present: 2, sessions: 3, late: 1, absent: 1, attendanceRate: 67 } },
   } };
   api.portal.mockImplementation(async () => structuredClone(portal));
+  api.documents.mockImplementation(async () => ({ employer: portal.employer, items: [] }));
+  api.learning.mockResolvedValue({ programme: [], modules: [], metrics: { ksb: { completed: null, total: null } }, reviews: { completed: null, total: null } });
+  api.schedule.mockResolvedValue({ modules: [], holidayCalendar: { available: false, holidays: [] } });
+  api.meetings.mockResolvedValue({ status: 'ready', meetings: [] });
+  api.mcm.mockResolvedValue({ events: [] });
   api.metrics.mockImplementation(async () => structuredClone(metrics));
   api.attendance.mockImplementation(async (_employer, _kind, id) => ({ attendance: structuredClone(metrics.learners[id]?.attendance ?? null) }));
   api.reviews.mockImplementation(async (_employer, _kind, id) => ({ events: [

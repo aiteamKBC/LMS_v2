@@ -1,3 +1,4 @@
+import learnerStyles from './EmployerLearnerPage.module.css';
 import type { ReactNode } from 'react';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -323,7 +324,7 @@ describe('EmployerLearnerPage content and review signing', () => {
     renderPage();
     const documentsTab = await screen.findByRole('button', { name: /Documents/ });
     const dot = within(documentsTab).getByTestId('documents-unsigned-dot');
-    expect(dot).toHaveClass('bg-red-500');
+    expect(dot).toHaveClass(learnerStyles.unsignedDot);
     expect(dot).toHaveAttribute('title', '1 not signed yet');
     expect(documentsTab).toHaveAccessibleName(/1 not signed yet/);
   });

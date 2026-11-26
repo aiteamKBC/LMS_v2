@@ -243,7 +243,7 @@ class DashboardSourceMetadataTests(SimpleTestCase):
         with patch.object(canonical, 'query', return_value=[]) as query, \
              patch.object(canonical, 'current_records', return_value=[]):
             canonical.entries_for({'id': 15}, lineage_only=True, dashboard_metadata=True, monthly_summary=True)
-        sql, params = query.call_args.args
+        sql, params = next(call.args for call in query.call_args_list if 'progress.learner_id=%s' in call.args[0])
         self.assertEqual(params, [15])
         self.assertNotIn('SELECT progress.*', sql)
         for field in ('feedback', 'feed_detail', 'feed_action', 'feed_title', 'time_tracking_calculation'):
@@ -263,7 +263,7 @@ class DashboardSourceMetadataTests(SimpleTestCase):
         with patch.object(canonical, 'query', return_value=[]) as query, \
              patch.object(canonical, 'current_records', return_value=[]):
             canonical.entries_for({'id': 15}, lineage_only=True, dashboard_metadata=True)
-        sql, params = query.call_args.args
+        sql, params = next(call.args for call in query.call_args_list if 'progress.learner_id=%s' in call.args[0])
         self.assertEqual(params, [15])
         self.assertIn("CASE WHEN jsonb_typeof(p.source_payload)='object'", sql)
         self.assertIn("THEN to_jsonb(p)-'source_payload'||jsonb_build_object", sql)
@@ -281,7 +281,7 @@ class DashboardSourceMetadataTests(SimpleTestCase):
         with patch.object(canonical, 'query', return_value=[]) as query, \
              patch.object(canonical, 'current_records', return_value=[]):
             canonical.entries_for({'id': 15}, lineage_only=True)
-        sql = query.call_args.args[0]
+        sql = next(call.args[0] for call in query.call_args_list if 'progress.learner_id=%s' in call.args[0])
         self.assertNotIn('course_display_placement', sql)
         self.assertIn("jsonb_typeof(p.source_payload)='object'", sql)
 

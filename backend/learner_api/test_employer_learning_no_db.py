@@ -15,6 +15,14 @@ from .journal_sources import learner_journal_reads, enabled
 from old_otjh.service import ServiceError
 
 
+def catalogue_connection(rows=()):
+    cursor = MagicMock()
+    cursor.db = SimpleNamespace(vendor='sqlite')
+    cursor.__enter__.return_value = cursor
+    cursor.fetchall.return_value = list(rows)
+    return SimpleNamespace(cursor=lambda: cursor)
+
+
 class EmployerLearningParityTests(SimpleTestCase):
     @contextmanager
     def fixture(self, plan=None, planned=None, today=date(2026, 10, 15), imported=False):
@@ -54,7 +62,7 @@ class EmployerLearningParityTests(SimpleTestCase):
         cursor = MagicMock()
         cursor.__enter__.return_value = cursor
         cursor.fetchone.return_value = (100,)
-        connection = SimpleNamespace(cursor=lambda: cursor)
+        connection = SimpleNamespace(cursor=lambda: cursor, vendor='sqlite')
         with ExitStack() as stack:
             for target, value in (
                 ('learner_api.canonical_learning.require_profile', owner),
@@ -71,6 +79,7 @@ class EmployerLearningParityTests(SimpleTestCase):
                 ('learner_api.overview_week.read_week', {}),
                 ('learner_api.attendance_lectures.lecture_register', []),
                 ('learner_api.dashboard_overview.saved_attendance_rows', ([], [])),
+                ('learner_api.dashboard_overview.saved_attendance_hours', []),
                 ('learner_api.attendance._summarize_attendance', None),
                 ('django.utils.timezone.localdate', today),
             ):
@@ -78,6 +87,7 @@ class EmployerLearningParityTests(SimpleTestCase):
             stack.enter_context(patch.object(schedule, 'connections', {'enrolment': connection}))
             stack.enter_context(patch.object(dashboard_overview, 'connections', {'enrolment': connection}))
             stack.enter_context(patch.object(dashboard_training, 'connections', {'enrolment': connection}))
+            stack.enter_context(patch.object(employer_learning, 'connections', {'enrolment': catalogue_connection()}))
             for target in ('learner_api.dashboard_overview.module_rows', 'learner_api.dashboard_training.module_rows'):
                 stack.enter_context(patch(target, side_effect=lambda cur, ids: {mid: module_data[mid] for mid in ids}))
             stack.enter_context(patch.object(canonical, 'metrics_bulk', side_effect=metrics))
@@ -154,7 +164,7 @@ class EmployerLearningParityTests(SimpleTestCase):
     def test_header_schedule_receives_verified_owner_and_learner_perspective(self):
         source = SimpleNamespace(pk=265)
         owner = {'id': 17, 'enrolment_id': 265}
-        profile = SimpleNamespace(pk=17, enrolment_id=265)
+        profile = SimpleNamespace(pk=17, enrolment_id=265, cohort_id=None)
         def read(prepared, *, section):
             self.assertTrue(enabled())
             self.assertIs(prepared._canonical_profile, owner)
@@ -163,12 +173,27 @@ class EmployerLearningParityTests(SimpleTestCase):
             return {'modules': [{'id': 'imported-module'}], 'sessions': [{'joinUrl': 'private'}]}
         with patch.object(canonical, 'require_profile', return_value=owner), \
                 patch.object(employer_learning, 'learner_profile_for_source', return_value=profile) as lookup, \
+                patch.object(employer_learning, 'connections', {'enrolment': catalogue_connection()}), \
+                patch('curriculum_api.views.cohort_selected_holidays_by_cohort', return_value={}), \
                 patch.object(schedule, 'read_dashboard', side_effect=read):
             result = employer_learning.read_schedule(source, 'overview')
         lookup.assert_called_once_with(source, 265, heal=False)
         self.assertEqual(result['modules'], [{'id': 'imported-module'}])
         self.assertIsNone(result['sessions'][0]['joinUrl'])
         self.assertFalse(enabled())
+
+    def test_employer_filter_excludes_free_courses_without_mutating_learner_data(self):
+        baseline = {'modules': [{'id': 'M1'}, {'id': 'FREE'}],
+                    'programme': [{'id': 'current:FREE'}, {'id': 'legacy:8'}],
+                    'freeCourses': [{'id': 'FREE'}], 'standaloneCourses': [{'id': 'FREE'}]}
+        before = deepcopy(baseline)
+        rows = [('M1', 'Assigned', False, 'native', None),
+                ('FREE', 'Free', True, 'mba-legacy', '8')]
+        with patch.object(employer_learning, 'connections', {'enrolment': catalogue_connection(rows)}):
+            result = employer_learning.without_free_courses(baseline)
+        self.assertEqual(baseline, before)
+        self.assertEqual(result, {'modules': [{'id': 'M1'}], 'programme': [],
+                                  'freeCourses': [], 'standaloneCourses': []})
 
 
 class EmployerLearningSecurityTests(SimpleTestCase):
@@ -235,6 +260,7 @@ class EmployerLearningSecurityTests(SimpleTestCase):
             stack.enter_context(patch.object(learner_detail, '_annotate_otjh', return_value=([], 0)))
             stack.enter_context(patch.object(learner_detail, '_live_otjh_snapshot', return_value={}))
             stack.enter_context(patch.object(learner_detail, '_apply_live_otjh_snapshot'))
+            stack.enter_context(patch.object(employer_learning, 'connections', {'enrolment': catalogue_connection()}))
             response = self.response('plan')
             self.assertEqual(response.status_code, 200)
             self.assertEqual(json.loads(response.content)['modules'], ['M1'])
