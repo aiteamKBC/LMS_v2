@@ -5,7 +5,10 @@ The agreed boundary is the **meeting start**, from **26 November 2026, 00:00 in
 existing Microsoft/SharePoint route even if its recording appears after that
 date. No historical coach migration is scheduled.
 
-The separate **Coaches** library is `821960`. Configure its server-only settings:
+The separate **Coaches** library is `822010`, with one primary storage region in
+Frankfurt (DE) and no extra replicas. The previously empty library `821960` was
+replaced with the owner's approval before any recordings were uploaded.
+Configure its server-only settings:
 
 ```
 BUNNY_COACH_STREAM_LIBRARY_ID
@@ -15,7 +18,7 @@ BUNNY_COACH_STREAM_TOKEN_KEY
 
 Keep values out of Git, logs and PRs. The library must have one standard H.264
 resolution, **720p**, premium encoding and paid transcription disabled, and
-original-file retention disabled on Bunny. Microsoft retains the original under
+original-file retention and MP4 fallback disabled on Bunny. Microsoft retains the original under
 its own retention policy. The worker accepts one lower rendition if the input
 cannot provide 720p; it refuses to publish multiple or higher renditions.
 
