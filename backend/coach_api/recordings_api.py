@@ -671,6 +671,16 @@ def coaching_recording_content(request):
         anchors=[artifact_metadata(row) for row in job.result.get('artifacts',[])]
         if not occurrence_parts([artifact_metadata(artifact)],window,anchors=anchors):
             return _response({'error': 'Recording occurrence changed.', 'code': 'recording_session_mismatch'}, 409)
+        if request.GET.get('format') == 'playback':
+            from .recordings_bunny import playback
+            from curriculum_api.bunny_stream import VideoImportError
+            try:
+                manifest = playback(job, artifact)
+            except VideoImportError:
+                return _response({'error': 'This recording is still being prepared.', 'code': 'recording_pending'}, 409)
+            response = _response(manifest or {'kind': 'microsoft'})
+            response['Cache-Control'] = 'private, no-store'
+            return response
         from .views import get_graph_settings, microsoft_graph_request
         from .recordings_cache import recent_read
         from .recordings_transport import valid_range, recording_response

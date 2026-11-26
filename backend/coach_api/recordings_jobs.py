@@ -104,6 +104,15 @@ def cached_results(rows, field):
     return {row['key']: saved.get(keys.get(row['key']), {} if field == 'media' else []) for row in rows}
 
 
+def evict_media(row):
+    namespace = sha256(json.dumps(settings.DATABASES, sort_keys=True, default=str).encode()).hexdigest()[:24]
+    if row.last_success_at:
+        try:
+            cache.delete(f'coach-snapshot:v2:{namespace}:media:{row.key}:{row.last_success_at.isoformat()}')
+        except Exception:
+            log.warning('Coaching media cache invalidation failed; the durable result remains saved.')
+
+
 def calendar_snapshots(coaches, start, end, *, refresh=False):
     # A saved month also serves its day/week views, without another Graph scan.
     covering = {}
@@ -158,7 +167,7 @@ def evidence_jobs(contexts):
 
 
 def source_summary(job):
-    """Microsoft is the only playback source for the coaching workspace."""
+    """Retain historical Microsoft playback and project new verified Bunny media."""
     files = {}
     for artifact in (job.result.get('artifacts', []) if job else []):
         if artifact.get('artifact_type', 'recording') != 'recording':
@@ -167,9 +176,14 @@ def source_summary(job):
         available = artifact.get('sourceAvailable') is True
         files[identity] = {'id': identity, 'startsAt': artifact.get('created_datetime'), 'endsAt': artifact.get('end_datetime'),
             'state': 'ready' if available else 'unavailable', 'source': 'microsoft'}
+        saved = artifact.get('lmsBunnyRecording')
+        if saved:
+            files[identity].update(state=saved.get('state', 'pending'), source='bunny')
     rows = list(files.values())
     ready = sum(row['state'] == 'ready' for row in rows)
-    state = 'ready' if ready else 'unavailable' if rows or (job and job.error_code) else 'pending'
+    state = ('ready' if ready else 'pending' if any(row['state'] == 'pending' for row in rows)
+             else 'failed' if any(row['state'] == 'failed' for row in rows)
+             else 'unavailable' if rows or (job and job.error_code) else 'pending')
     checked = getattr(job, 'last_success_at', None)
     check = {'state': 'failed' if job and job.error_code else 'complete' if checked else 'pending',
              'checkedAt': checked.isoformat() if checked else None}
@@ -250,6 +264,23 @@ def complete(row, result, *, seconds=None):
     now = timezone.now()
     database = router.db_for_write(CoachingRecordingJob) or 'default'
     with transaction.atomic(using=database):
+        if row.kind == 'evidence':
+            current = CoachingRecordingJob.objects.using(database).select_for_update().filter(pk=row.pk, claim=row.claim).first()
+            if current is None:
+                return 0
+            saved = {item['graph_artifact_id']: item.get('lmsBunnyRecording')
+                     for item in current.result.get('artifacts', [])}
+            files = []
+            for artifact in result.get('artifacts', []):
+                before = saved.get(artifact['graph_artifact_id']) or {}
+                incoming = artifact.get('lmsBunnyRecording') or {}
+                previous_time, incoming_time = _instant(before.get('updatedAt')), _instant(incoming.get('updatedAt'))
+                if (before.get('importId') and before.get('importId') == incoming.get('importId')
+                        and previous_time and incoming_time and previous_time > incoming_time):
+                    artifact = {**artifact, 'lmsBunnyRecording': before}
+                files.append(artifact)
+            if 'artifacts' in result:
+                result = {**result, 'artifacts': files}
         changed = CoachingRecordingJob.objects.using(database).filter(pk=row.pk, claim=row.claim).update(
             result=result, state='idle', claim=None, lease_until=None, last_success_at=now,
             next_run_at=now + timedelta(seconds=seconds) if seconds else None,
@@ -299,6 +330,8 @@ def execute_job(row):
         except CalendarMeetingWithoutTeams:
             complete(row, {'event': event, 'artifacts': [], 'reports': [], 'noTeams': True}, seconds=86400)
             return
+        from .recordings_bunny import retain_ready
+        artifacts = retain_ready(row, artifacts)
         previous = {item['graph_artifact_id']: item for item in row.result.get('artifacts', [])}
         for artifact in artifacts:
             try:
@@ -313,6 +346,9 @@ def execute_job(row):
                 artifact['sourceAvailable'] = False
         age = timezone.now() - _instant(context['end'])
         delay = 300 if age < timedelta(days=2) else 3600 if age < timedelta(days=7) else 86400
+        from .recordings_bunny import enqueue_evidence
+        row.result = {**row.result, 'base': base, 'organizer': organizer}
+        artifacts = enqueue_evidence(row, artifacts)
         complete(row, {**row.result, 'event': event, 'base': base, 'organizer': organizer, 'artifacts': artifacts}, seconds=delay)
         return
     if row.kind == 'attendance':

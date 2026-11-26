@@ -288,6 +288,25 @@ class CoachingRecordingsApiTests(SimpleTestCase):
             self.assertEqual(api.coaching_recording_content(request).status_code, 409)
         deliver.assert_not_called()
 
+    def test_bunny_manifest_keeps_occurrence_authorization_and_never_proxies_video(self):
+        context = api.calendar_context(OWNER, 'external', '2026-11-26T09:00:00Z', '2026-11-26T10:00:00Z')
+        artifact = {'graph_artifact_id': 'file', 'created_datetime': context['start'], 'end_datetime': context['end']}
+        job = SimpleNamespace(context=context, result={'artifacts': [artifact]})
+        self.source_details.return_value = job
+        manifest = {'kind': 'bunny', 'url': 'https://iframe.mediadelivery.net/embed/999001/synthetic'}
+        with patch('coach_api.recordings_bunny.playback', return_value=manifest) as player, \
+                patch('coach_api.recordings_transport.recording_response') as deliver:
+            request = self.factory.get('/recording', {'reference': api.calendar_reference(context), 'recordingId': 'file', 'format': 'playback'})
+            response = api.coaching_recording_content(request)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(json.loads(response.content), manifest)
+            self.assertEqual(response['Cache-Control'], 'private, no-store')
+            self.staff.email = OTHER
+            self.assertEqual(api.coaching_recording_content(request).status_code, 404)
+            player.assert_called_once_with(job, artifact)
+            deliver.assert_not_called()
+        self.graph.assert_not_called()
+
     def test_source_details_are_reviewable_without_any_azure_dependency(self):
         context = api.calendar_context(OWNER, 'external', '2026-10-20T09:00:00Z', '2026-10-20T10:00:00Z')
         self.source_details.return_value = SimpleNamespace(error_code='', result={'artifacts': [
