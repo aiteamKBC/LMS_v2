@@ -12,12 +12,22 @@ import styles from './EmployerJourneyTimeline.module.css';
 type Props = {
   employerId: string; learners: EmployerLearnerCard[]; filtered: EmployerLearnerCard[];
   records: EmployerLearningRecords; moduleId?: string; onRetry: () => void;
+  variant?: 'straight' | 'curved';
 };
 const number = (value: number) => new Intl.NumberFormat('en-GB', { maximumFractionDigits: 1 }).format(value);
 const percent = (value: number | null) => value == null ? 'Unavailable' : `${number(value)}%`;
 const dateRange = (start: string, end: string) => start && end ? `${formatReviewDate(start)} – ${formatReviewDate(end)}`
   : start ? `From ${formatReviewDate(start)}` : end ? `Until ${formatReviewDate(end)}` : 'Schedule unavailable';
 const initials = (name: string) => name.trim().split(/\s+/).slice(0, 2).map(part => part[0]).join('').toUpperCase();
+// Each third is a cubic with linear X and smooth Y; joins stay horizontal
+// even when neighbouring modules have different widths.
+const curveHeights = [125, 95, 155, 125];
+function curveY(percent: number) {
+  const position = Math.max(0, Math.min(100, percent)) / 100 * 3;
+  const segment = Math.min(2, Math.floor(position));
+  const t = position - segment;
+  return curveHeights[segment] + (curveHeights[segment + 1] - curveHeights[segment]) * t * t * (3 - 2 * t);
+}
 type LearnerPosition = { pin: JourneyPin; learner: EmployerLearnerCard };
 const sortPins = (a: LearnerPosition, b: LearnerPosition) => (a.pin.percent ?? 0) - (b.pin.percent ?? 0)
   || a.learner.name.localeCompare(b.learner.name) || learnerKey(a.learner).localeCompare(learnerKey(b.learner));
@@ -30,7 +40,7 @@ function pinPositions(pins: LearnerPosition[], width: number) {
   return positions;
 }
 
-function LearnerPin({ pin, learner, left }: { pin: JourneyPin; learner: EmployerLearnerCard; left: number }) {
+function LearnerPin({ pin, learner, left, top }: { pin: JourneyPin; learner: EmployerLearnerCard; left: number; top?: number }) {
   const id = useId();
   const trigger = useRef<HTMLButtonElement>(null);
   const [position, setPosition] = useState<{ left: number; top: number; above: boolean; maxHeight: number } | null>(null);
@@ -68,13 +78,13 @@ function LearnerPin({ pin, learner, left }: { pin: JourneyPin; learner: Employer
   const facts = pin.facts;
   return <>
     <button ref={trigger} type="button" className={styles.pin} data-state={pin.state}
-      style={{ left: `${left}%` }}
+      style={{ left: `${left}%`, top }}
       aria-label={`${learner.name}, ${pin.title}, ${percent(pin.percent)}, ${pin.label}`}
       aria-describedby={position ? id : undefined} onMouseEnter={show} onMouseLeave={hide} onFocus={show} onBlur={hide} onClick={show}>
       <span className={styles.pinName}><span>{learner.name}</span></span>
       <span className={styles.pinHead}><span>{initials(learner.name) || '?'}</span></span>
       <span className={styles.pinCaption}>{pin.state === 'skipped' && <SkipForward size={10} aria-hidden="true" />}
-        {pin.percent == null ? '?' : `${number(pin.percent)}%`}{pin.state === 'skipped' ? ' · Skipped' : pin.state === 'next' ? ' · Next' : pin.state === 'parallel' ? ' · Parallel' : ''}</span>
+        {pin.percent == null ? '?' : `${number(pin.percent)}%`}{pin.state === 'next' ? ' · Next' : pin.state === 'parallel' ? ' · Parallel' : ''}</span>
     </button>
     {position && createPortal(<div id={id} role="tooltip" className={styles.tooltip}
       style={{ left: position.left, top: position.top, maxHeight: position.maxHeight, transform: position.above ? 'translateY(-100%)' : undefined }}
@@ -99,23 +109,33 @@ function LearnerPin({ pin, learner, left }: { pin: JourneyPin; learner: Employer
   </>;
 }
 
-function JourneyPinField({ title, pins, width, positions, parallel = false }: {
-  title: string; pins: LearnerPosition[]; width: number; positions: number[]; parallel?: boolean;
+function JourneyPinField({ title, pins, width, positions, parallel = false, curved = false }: {
+  title: string; pins: LearnerPosition[]; width: number; positions: number[]; parallel?: boolean; curved?: boolean;
 }) {
   return <div className={styles.pinField} role="group" aria-label={`${title} ${parallel ? 'parallel learner' : 'learner'} pins`}>
-    <div className={styles.sharedRail} aria-hidden="true" />
+    {curved ? <svg className={styles.curvedRail} viewBox="0 0 100 250" preserveAspectRatio="none" aria-hidden="true">
+      <path d="M0 125 C11.111111 125 22.222222 95 33.333333 95 C44.444444 95 55.555556 155 66.666667 155 C77.777778 155 88.888889 125 100 125" vectorEffect="non-scaling-stroke" />
+    </svg> : <div className={styles.sharedRail} aria-hidden="true" />}
     <div className={styles.scale} aria-hidden="true"><span>0%</span><span>50%</span><span>100%</span></div>
     <svg className={styles.connectors} aria-hidden="true" width="100%" height="100%">
-      {pins.map(({ pin, learner }, index) => <line key={learnerKey(learner)}
-        x1={`${positions[index] / width * 100}%`} y1="58" x2={`${(48 + (pin.percent ?? 0) / 100 * (width - 96)) / width * 100}%`} y2="75" />)}
+      {pins.map(({ pin, learner }, index) => {
+        const marker = positions[index] / width * 100;
+        const progress = (48 + (pin.percent ?? 0) / 100 * (width - 96)) / width * 100;
+        return <line key={learnerKey(learner)} x1={`${marker}%`} y1={curved ? curveY(marker) - 17 : 58}
+          x2={`${progress}%`} y2={curved ? curveY(progress) : 75} />;
+      })}
     </svg>
-    {pins.map(({ pin, learner }, index) => <LearnerPin key={learnerKey(learner)} pin={pin} learner={learner} left={positions[index] / width * 100} />)}
+    {pins.map(({ pin, learner }, index) => {
+      const left = positions[index] / width * 100;
+      return <LearnerPin key={learnerKey(learner)} pin={pin} learner={learner} left={left} top={curved ? curveY(left) - 55 : undefined} />;
+    })}
     {!pins.length && <p className={styles.noPins}>{parallel ? 'No parallel learners here' : 'No learners positioned here'}</p>}
   </div>;
 }
 
 /** One main route with extra pins for skips and a second route for parallel study. */
-export function EmployerJourneyTimeline({ employerId, learners, filtered, records, moduleId, onRetry }: Props) {
+export function EmployerJourneyTimeline({ employerId, learners, filtered, records, moduleId, onRetry, variant = 'straight' }: Props) {
+  const curved = variant === 'curved';
   const titleId = useId();
   const scrollId = useId();
   const viewport = useRef<HTMLDivElement>(null);
@@ -156,10 +176,10 @@ export function EmployerJourneyTimeline({ employerId, learners, filtered, record
   }, [moduleIds]);
   const move = (direction: number) => viewport.current?.scrollBy({ left: direction * 300,
     behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
-  return <section className={styles.section} aria-labelledby={titleId}>
+  return <section className={styles.section} data-variant={variant} aria-labelledby={titleId}>
     <header className={styles.header}>
       <div className={styles.heading}><span className={styles.headingIcon}><Route size={24} aria-hidden="true" /></span>
-        <div><span className={styles.eyebrow}>THE LEARNING JOURNEY</span><h2 id={titleId}>All modules timeline</h2><p>One route. Every learner. Every step forward.</p></div></div>
+        <div><span className={styles.eyebrow}>THE LEARNING JOURNEY</span><h2 id={titleId}>{curved ? 'Curved modules timeline' : 'All modules timeline'}</h2><p>One route. Every learner. Every step forward.</p></div></div>
       <div className={styles.controls}><span><BookOpen size={14} />{modules.length} modules</span><span><Users size={14} />{filtered.length} learners</span>
         <div className={styles.arrows}><button type="button" aria-label="Earlier timeline modules" aria-controls={scrollId} disabled={!scroll.previous} onClick={() => move(-1)}><ChevronLeft size={18} /></button>
           <button type="button" aria-label="Later timeline modules" aria-controls={scrollId} disabled={!scroll.next} onClick={() => move(1)}><ChevronRight size={18} /></button></div></div>
@@ -168,7 +188,7 @@ export function EmployerJourneyTimeline({ employerId, learners, filtered, record
       {skipped > 0 && <span className={styles.skipCount}><SkipForward size={14} />{skipped} learner{skipped === 1 ? '' : 's'} progressed ahead</span>}</div>
     {failed > 0 && <div className={styles.notice} role="alert"><CircleAlert size={17} /><p>{failed} learner record{failed === 1 ? '' : 's'} unavailable. Available progress is shown.</p><button type="button" onClick={onRetry}>Retry</button></div>}
     {loading && <LoadingSkeleton label="Loading learner journey timeline" />}
-    {modules.length > 0 ? <div ref={viewport} id={scrollId} className={styles.viewport} onScroll={measure} role="region" aria-label="All modules learner journey" tabIndex={0}>
+    {modules.length > 0 ? <div ref={viewport} id={scrollId} className={styles.viewport} onScroll={measure} role="region" aria-label={curved ? 'Curved modules learner journey' : 'All modules learner journey'} tabIndex={0}>
       <div className={styles.canvas} style={{ gridTemplateColumns: segments.map(segment => `minmax(${segment.width}px, 1fr)`).join(' '), minWidth: `${segments.reduce((sum, segment) => sum + segment.width, 0)}px` }}>
           {segments.map(({ module, pins, width, positions }, index) => {
             const known = module.entries.filter(entry => entry.percent != null);
@@ -180,7 +200,7 @@ export function EmployerJourneyTimeline({ employerId, learners, filtered, record
               <p className={styles.dates}>{dateRange(module.start, module.end)}</p>
               <div className={styles.moduleStats}><span><strong>{percent(average)}</strong> average{known.length !== module.entries.length && ` (${known.length}/${module.entries.length})`}</span><span><Check size={12} />{module.entries.filter(entry => entry.percent === 100).length} complete</span></div>
               </div>
-              <JourneyPinField title={module.title} pins={pins} width={width} positions={positions} />
+              <JourneyPinField title={module.title} pins={pins} width={width} positions={positions} curved={curved} />
             </article>;
           })}
           {hasParallel && <>
@@ -188,7 +208,7 @@ export function EmployerJourneyTimeline({ employerId, learners, filtered, record
             {segments.map(({ module, parallelPins, width, parallelPositions }) => <article key={`parallel:${module.id}`} className={styles.moduleSegment}
               style={{ '--module-hue': module.hue } as CSSProperties} aria-label={`${module.title} parallel journey segment`}>
               <div className={styles.parallelModuleHeader}><h4 title={module.title}>{module.title}</h4><span>{parallelPins.length} learner{parallelPins.length === 1 ? '' : 's'}</span></div>
-              <JourneyPinField title={module.title} pins={parallelPins} width={width} positions={parallelPositions} parallel />
+              <JourneyPinField title={module.title} pins={parallelPins} width={width} positions={parallelPositions} parallel curved={curved} />
             </article>)}
           </>}
       </div>

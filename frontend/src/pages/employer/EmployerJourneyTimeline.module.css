@@ -31,6 +31,11 @@
 .moduleStats > span:last-child { display: flex; align-items: center; gap: 2px; }
 .pinField { position: relative; height: 170px; flex: 0 0 170px; }
 .sharedRail { position: absolute; top: 73px; inset-inline: 0; height: 4px; background: var(--module-color); opacity: .55; }
+.curvedRail { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.curvedRail path { fill: none; stroke: var(--module-color); stroke-width: 4px; opacity: .55; }
+.section[data-variant='curved'] .pinField { height: 250px; flex-basis: 250px; }
+.section[data-variant='curved'] .scale { top: 218px; }
+.section[data-variant='curved'] .noPins { top: 178px; }
 .scale { position: absolute; top: 135px; inset-inline: 48px; display: flex; justify-content: space-between; font-size: 11px; font-weight: 650; line-height: 1.4; color: var(--employer-ink); }
 .connectors { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
 .connectors line { stroke: var(--module-color); stroke-width: 1; opacity: .45; }
