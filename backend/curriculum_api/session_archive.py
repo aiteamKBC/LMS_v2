@@ -91,7 +91,8 @@ def archive_series(series_id, *, lease_id=None, artifact_ids=None):
     artifacts = read('''SELECT a.*,r.status AS saved_status,r.blob_name AS saved_name,
         r.occurrence_id AS saved_occurrence_id FROM curriculum.live_session_artifacts a
         JOIN curriculum.live_session_occurrences o ON o.id=a.occurrence_id
-        LEFT JOIN curriculum.session_result_archive r ON r.artifact_id=a.id WHERE o.live_session_id=%s''', [series_id])
+        LEFT JOIN curriculum.session_result_archive r ON r.artifact_id=a.id WHERE o.live_session_id=%s
+        AND a.artifact_type IN ('recording','transcript')''', [series_id])
     if artifact_ids is not None:
         selected = set(artifact_ids)
         artifacts = [artifact for artifact in artifacts if artifact['id'] in selected]

@@ -13,6 +13,7 @@ from . import free_course_authoring
 from .module_live import curriculum_live, curriculum_module_changes
 from .module_collaboration import collaboration_configuration
 from .module_uploads import module_uploaded_files
+from .session_attachments import upload_attachment
 from .web_week_points import week_points
 from . import learner_directory
 from . import learner_directory_details
@@ -101,6 +102,7 @@ urlpatterns = [
     path('curriculum/session-recordings/', recordings_library.recordings_library, name='curriculum-session-recordings'),
     path('curriculum/session-results/<str:series_id>/sync/', session_results.queue_sync),
     path('curriculum/session-results/<str:series_id>/sessions/<int:session_number>/', session_results.admin_session),
+    path('curriculum/session-results/<str:series_id>/sessions/<int:session_number>/attachments/', upload_attachment),
     path('curriculum/session-results/<str:series_id>/sessions/<int:session_number>/day-results/', recordings_day.lecture_day_results),
     path('curriculum/session-results/<str:series_id>/sessions/<int:session_number>/attendance-alias/', session_results.link_attendance_alias),
     path('curriculum/session-results/<str:series_id>/sessions/<int:session_number>/attendance-correction/', session_attendance_correction),

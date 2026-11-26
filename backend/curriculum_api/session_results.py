@@ -328,6 +328,9 @@ def result_rows(series, *, session_number=None, email=None, identity=False, modu
     for artifact in artifacts:
         if email is not None and artifact['id'] in hidden:
             continue
+        if artifact['artifact_type'] == 'attachment' and series.get('linked_session_numbers') is not None:
+            continue  # A cross-module recording link grants only recording/transcript access.
+        from .session_attachment_policy import public_metadata
         bunny_value = artifact_metadata(artifact).get('lmsBunnyRecording')
         bunny = bunny_value if isinstance(bunny_value, dict) else {}
         uses_bunny = bool(bunny) or recording_uses_bunny(by_occurrence.get(artifact['occurrence_id'], {}), artifact)
@@ -335,6 +338,7 @@ def result_rows(series, *, session_number=None, email=None, identity=False, modu
             'id': artifact['id'], 'type': artifact['artifact_type'], 'createdAt': artifact['created_datetime'],
             'state': (bunny.get('state') or 'pending') if uses_bunny else (artifact['archive_status'] or 'pending'),
             'text': artifact['transcript_text'],
+            **(public_metadata(artifact) if artifact['artifact_type'] == 'attachment' else {}),
             **({'playbackProvider': 'bunny'} if uses_bunny else {}),
             'hiddenFromLearners': artifact['id'] in hidden,
             'endsAt': instant(artifact.get('end_datetime')),
@@ -876,7 +880,8 @@ def admin_session(request, series_id, session_number):
         except DatabaseError as error:
             if not archive_schema_missing(error):
                 raise
-        return JsonResponse({'sessions': sessions, 'job': job})
+        from .session_attachment_policy import settings_payload
+        return JsonResponse({'sessions': sessions, 'job': job, 'attachmentSettings': settings_payload()})
     except DatabaseError:
         return unavailable()
 
@@ -1132,6 +1137,13 @@ def stored_content(request, series_id, artifact_id, *, learner_view=False):
     if not rows or state != 'ready':
         return JsonResponse({'error': 'This file is still being saved. Please try again later.'}, status=409)
     row = rows[0]
+    if row['artifact_type'] == 'attachment':
+        from .session_attachment_storage import file_response
+        try:
+            return file_response(row)
+        except Exception as error:
+            log.warning('Session attachment access unavailable (%s).', type(error).__name__)
+            return JsonResponse({'error': 'Session attachment access is temporarily unavailable.'}, status=503)
     if row['artifact_type'] == 'recording' and request.GET.get('format') == 'engagement':
         from .recording_engagement import recording_engagement
         data = recording_engagement(series_id, row, learner_view=learner_view)

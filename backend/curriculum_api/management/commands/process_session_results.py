@@ -173,6 +173,13 @@ class Command(BaseCommand):
                 if not error:
                     phase = 'feedback'
                     sync_post_lecture_feedback(series_id)
+                # Attachment failures retain their own retry without suppressing
+                # recording publication or the existing attendance feedback.
+                phase = 'attachments'
+                from curriculum_api.session_attachment_import import sync_series_attachments
+                attachment_errors = sync_series_attachments(series_id)
+                if attachment_errors:
+                    error = '; '.join([value for value in [error, *attachment_errors] if value])
             except Exception as failure:
                 status = getattr(failure, 'status_code', None) or getattr(getattr(failure, 'response', None), 'status_code', None)
                 status_label = f', HTTP {status}' if type(status) is int and 400 <= status < 600 else ''
