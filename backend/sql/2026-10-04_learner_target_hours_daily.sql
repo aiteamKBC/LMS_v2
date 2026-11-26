@@ -265,7 +265,7 @@ SELECT
     END AS aptem_id,
     coach_email,
     CURRENT_DATE AS as_of_date,
-    snapshot_date,
+    snapshot_date AS historical_snapshot_date,
     resolved_planned_hours::numeric(12, 2) AS planned_hours,
     resolved_start_date AS start_date,
     resolved_end_date AS planned_end_date,
@@ -289,7 +289,7 @@ SELECT
             )
         ELSE NULL::numeric
     END AS target_hours,
-    snapshot_target_hours,
+    snapshot_target_hours AS historical_snapshot_target_hours,
     resolved_status AS status,
     CASE
         WHEN resolved_status = 'FORMULA_READY' AND CURRENT_DATE < resolved_start_date
@@ -309,12 +309,123 @@ SELECT
             THEN 'missing_start_or_end_date'
         ELSE 'unsupported_status:' || coalesce(status_norm, '<blank>')
     END AS status_reason,
-    coalesce(formula_version, 'target_hours_v1') AS formula_version,
-    coalesce(calculation_method, 'clamp(planned_hours * elapsed_days / programme_days, 0, planned_hours)') AS calculation_method,
-    'live_schedule_view' AS source_system,
+    'target_hours_v1'::text AS formula_version,
+    'clamp(planned_hours * elapsed_days / programme_days, 0, planned_hours)'::text AS calculation_method,
+    CASE
+        WHEN planned_hours_source LIKE 'historical_snapshot.%'
+          OR start_date_source LIKE 'historical_snapshot.%'
+          OR planned_end_date_source LIKE 'historical_snapshot.%'
+          OR aptem_id_source LIKE 'historical_snapshot.%'
+            THEN 'live_schedule_view_with_snapshot_fallback'::text
+        ELSE 'live_schedule_view'::text
+    END AS source_system,
     'profile:' || learner_id::text || ';enrolment:' || coalesce(enrolment_id::text, '')
-        || ';aptem:' || coalesce(source_aptem_id, profile_aptem_id::text, snapshot_aptem_id::text, '') AS source_reference,
-    coalesce(calculated_by, 'system:target-hours-v1') AS calculated_by,
-    calculated_at,
-    coalesce(updated_at, now()) AS updated_at
-FROM classified;
+        || ';aptem:' || coalesce(source_aptem_id, profile_aptem_id::text, snapshot_aptem_id::text, '') || ';hours_source:'::text || planned_hours_source || ';start_source:'::text || start_date_source || ';end_source:'::text || planned_end_date_source || ';aptem_source:'::text || aptem_id_source AS source_reference,
+    'database:Learner.target_hours_as_of'::text AS calculated_by,
+    statement_timestamp() AS calculated_at,
+    statement_timestamp() AS updated_at
+   FROM (
+       SELECT c.*,
+           CASE
+               WHEN c.contract_training_plan_hours IS NOT NULL THEN 'training_plan_contract.training_plan_planned_hours'
+               WHEN c.contract_planned_hours IS NOT NULL THEN 'training_plan_contract.planned'
+               WHEN "Learner".target_hours_safe_numeric(c.source_planned_hours) IS NOT NULL THEN 'enrolment.Planned_hours'
+               WHEN c.profile_planned_hours IS NOT NULL THEN 'learner_profile.planned_hours'
+               WHEN c.snapshot_planned_hours IS NOT NULL THEN 'historical_snapshot.planned_hours'
+               ELSE 'unavailable'
+           END AS planned_hours_source,
+           CASE
+               WHEN c.contract_start_date IS NOT NULL THEN 'training_plan_contract.program_start_date'
+               WHEN "Learner".target_hours_safe_date(c.source_start_date) IS NOT NULL THEN 'enrolment.start_date'
+               WHEN "Learner".target_hours_safe_date(c.source_learner_start_date) IS NOT NULL THEN 'enrolment.learner_start_date'
+               WHEN c.profile_start_date IS NOT NULL THEN 'learner_profile.start_date'
+               WHEN "Learner".target_hours_safe_date(c.profile_learner_start_date) IS NOT NULL THEN 'learner_profile.learner_start_date'
+               WHEN c.snapshot_start_date IS NOT NULL THEN 'historical_snapshot.start_date'
+               ELSE 'unavailable'
+           END AS start_date_source,
+           CASE
+               WHEN c.contract_end_date IS NOT NULL THEN 'training_plan_contract.planned_end_date'
+               WHEN "Learner".target_hours_safe_date(c.source_end_date) IS NOT NULL THEN 'enrolment.end_date'
+               WHEN "Learner".target_hours_safe_date(c.source_learner_end_date) IS NOT NULL THEN 'enrolment.learner_end_date'
+               WHEN "Learner".target_hours_safe_date(c.source_apprenticeship_end_date) IS NOT NULL THEN 'enrolment.Apprenticeship_End_date'
+               WHEN "Learner".target_hours_safe_date(c.source_practical_end_date) IS NOT NULL THEN 'enrolment.Practical_period_end_date'
+               WHEN c.profile_end_date IS NOT NULL THEN 'learner_profile.end_date'
+               WHEN "Learner".target_hours_safe_date(c.profile_learner_end_date) IS NOT NULL THEN 'learner_profile.learner_end_date'
+               WHEN c.snapshot_end_date IS NOT NULL THEN 'historical_snapshot.planned_end_date'
+               ELSE 'unavailable'
+           END AS planned_end_date_source,
+           CASE
+               WHEN COALESCE(NULLIF(c.profile_aptem_id::text, ''), NULLIF(c.source_aptem_id, '')) ~ '^[0-9]+$'
+                   THEN CASE WHEN NULLIF(c.profile_aptem_id::text, '') IS NOT NULL
+                       THEN 'learner_profile.aptem_id' ELSE 'enrolment.aptem_id' END
+               WHEN c.snapshot_aptem_id IS NOT NULL THEN 'historical_snapshot.aptem_id'
+               ELSE 'unavailable'
+           END AS aptem_id_source
+       FROM classified c
+   ) current_inputs;
+
+COMMENT ON COLUMN "Learner"."learner_target_hours_current".learner_id IS
+    'Current LMS learner profile ID.';
+
+COMMENT ON COLUMN "Learner"."learner_target_hours_current".enrolment_id IS
+    'Current enrolment ID linked to the learner profile.';
+
+COMMENT ON COLUMN "Learner"."learner_target_hours_current".aptem_id IS
+    'Current resolved Aptem ID; source_reference identifies any historical fallback.';
+
+COMMENT ON COLUMN "Learner"."learner_target_hours_current".coach_email IS
+    'Current coach email resolved through the learner profile coach assignment.';
+
+COMMENT ON COLUMN "Learner"."learner_target_hours_current".as_of_date IS
+    'Date used for the live target calculation: CURRENT_DATE in the database session timezone.';
+
+COMMENT ON COLUMN "Learner"."learner_target_hours_current".historical_snapshot_date IS
+    'Historical as-of date of the latest saved daily snapshot. Not the date of the live calculation.';
+
+COMMENT ON COLUMN "Learner"."learner_target_hours_current".planned_hours IS
+    'Programme hours resolved on each read: training-plan contract, enrolment, learner profile, then historical fallback. See source_reference.';
+
+COMMENT ON COLUMN "Learner"."learner_target_hours_current".start_date IS
+    'Start date resolved on each read using the existing source priority. See source_reference.';
+
+COMMENT ON COLUMN "Learner"."learner_target_hours_current".planned_end_date IS
+    'Planned end date resolved on each read using the existing source priority. See source_reference.';
+
+COMMENT ON COLUMN "Learner"."learner_target_hours_current".elapsed_days IS
+    'Elapsed calendar days at as_of_date, clamped between zero and programme_days.';
+
+COMMENT ON COLUMN "Learner"."learner_target_hours_current".programme_days IS
+    'Calendar days between the resolved start_date and planned_end_date; NULL for an invalid window.';
+
+COMMENT ON COLUMN "Learner"."learner_target_hours_current".target_hours IS
+    'Live target at as_of_date using Learner.target_hours_as_of; NULL when status is not FORMULA_READY.';
+
+COMMENT ON COLUMN "Learner"."learner_target_hours_current".historical_snapshot_target_hours IS
+    'Target saved in the historical snapshot. Use target_hours for the live target.';
+
+COMMENT ON COLUMN "Learner"."learner_target_hours_current".status IS
+    'Current classification of learner status and resolved calculation inputs.';
+
+COMMENT ON COLUMN "Learner"."learner_target_hours_current".status_reason IS
+    'Current explanation of status, including missing inputs and programme date boundaries.';
+
+COMMENT ON COLUMN "Learner"."learner_target_hours_current".formula_version IS
+    'Version of the live target-hours rule; independent of historical snapshot metadata.';
+
+COMMENT ON COLUMN "Learner"."learner_target_hours_current".calculation_method IS
+    'Formula used by the live target-hours rule; independent of historical snapshot metadata.';
+
+COMMENT ON COLUMN "Learner"."learner_target_hours_current".source_system IS
+    'Live view calculation; explicitly marked with_snapshot_fallback when a resolved input comes from a historical snapshot.';
+
+COMMENT ON COLUMN "Learner"."learner_target_hours_current".source_reference IS
+    'Learner identities followed by hours_source, start_source, end_source and aptem_source for the current resolved inputs.';
+
+COMMENT ON COLUMN "Learner"."learner_target_hours_current".calculated_by IS
+    'Database function responsible for the live target calculation, not the historical snapshot writer.';
+
+COMMENT ON COLUMN "Learner"."learner_target_hours_current".calculated_at IS
+    'Time the current view query began. Historical snapshot calculation times remain in learner_target_hours_daily.';
+
+COMMENT ON COLUMN "Learner"."learner_target_hours_current".updated_at IS
+    'Time the current view query began; not the last write to source data. Historical snapshot update times remain in learner_target_hours_daily.';

@@ -38,6 +38,16 @@ def initials(name):
 
 def year_activities(owner):
     from learner_api.canonical_hours import full_hour_projection_ids
+    from learner_api.monthly_actuals import allocated_months
+
+    saved = allocated_months(owner)
+    if saved is not None:
+        months = [{'month': month, 'activities': values['row_count'],
+                   'accepted_hours': values['actual_hours']} for month, values in saved['months'].items()]
+        if saved['unallocated_activities']:
+            months.append({'month': '', 'activities': len(saved['unallocated_activities']),
+                           'accepted_hours': 0, 'unallocated_activities': saved['unallocated_activities']})
+        return months
 
     # Retakes, local legacy timers and transfers need the same reconciliation
     # as the learner ledger and the coach's OTJH chart. Attendance is already

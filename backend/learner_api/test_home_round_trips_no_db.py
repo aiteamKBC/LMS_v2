@@ -219,6 +219,8 @@ class HomeAttendanceProfileTests(SimpleTestCase):
              patch.object(home_progress, "lecture_register", return_value=[]) as register, \
              patch.object(home_progress, "apply_canonical_home_metrics",
                           side_effect=lambda home, metrics: home), \
+             patch.object(home_progress, "apply_monthly_home_hours",
+                          side_effect=lambda home, owner, **kwargs: home), \
              patch("learner_api.training_plan_dashboard.plan_planned_hours", return_value=None):
             home_progress.read_home_progress(learner, "commercial", [], [], [], [], date(2026, 10, 18),
                                              attendance_module_ids=["MOD-1"], canonical_metrics={"otjh": {}})

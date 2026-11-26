@@ -63,6 +63,7 @@ class MonthlyFocusTests(SimpleTestCase):
         activities, reviews, lectures = self.fixtures()
         with patch('learner_api.canonical_learning.require_profile', return_value={'id': 101}), \
              patch('coach_api.monthly_focus.read_month_activities', return_value=(activities[:1], ['M1'])), \
+             patch('learner_api.monthly_actuals.monthly_snapshot', return_value=None), \
              patch('coach_api.monthly_focus.read_monthly', return_value={'summary': {'requiredHours': 50, 'achievedHours': 10, 'ksbs': ['K1', 'S1']}}) as monthly, \
              patch('learner_api.calendar.coaching_events_for_learner', return_value=reviews) as calendar, \
              patch('coach_api.monthly_focus.read_month_lectures', return_value=lectures):
@@ -82,6 +83,7 @@ class MonthlyFocusTests(SimpleTestCase):
             with self.subTest(kind=kind), \
                  patch('learner_api.canonical_learning.require_profile', return_value={'id': 101}), \
                  patch('coach_api.monthly_focus.read_month_activities', return_value=(activities[:1], ['M1'])), \
+                 patch('learner_api.monthly_actuals.monthly_snapshot', return_value=None), \
                  patch('coach_api.monthly_focus.read_monthly', return_value={'summary': {'requiredHours': 23, 'achievedHours': 14.83, 'ksbs': []}}) as monthly, \
                  patch('learner_api.calendar.coaching_events_for_learner', return_value=reviews), \
                  patch('coach_api.monthly_focus.read_month_lectures', return_value=lectures):

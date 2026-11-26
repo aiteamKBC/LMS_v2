@@ -57,6 +57,39 @@ def apply_canonical_home_metrics(home, metrics):
     return result
 
 
+def apply_monthly_home_hours(home, owner, *, records=None, canonical_metrics=None):
+    """Use Monthly Logs' accepted total, including its cache-miss rules.
+
+    Module completion credits are for component breakdowns. Adding them
+    separately can diverge from Monthly Logs' accepted attendance ledger.
+    Counts, submitted hours and the official programme plan stay independent.
+    """
+    from .monthly_actuals import monthly_snapshot
+
+    saved = monthly_snapshot(owner)
+    if saved is not None:
+        actual = saved['training_plan_totals']['accepted_hours']
+    elif canonical_metrics is not None or home['otjh']['actual'] is None:
+        # read_home_progress already applied these reconciled programme totals.
+        # Reuse them on a cache miss; no second ledger read or attendance top-up.
+        return home
+    else:
+        from . import monthly_log_attendance
+        from .attendance_otjh import additional_rows
+        from django.utils import timezone
+
+        records = (canonical_learning.entries_for(owner, monthly_summary=True)
+                   if records is None else records)
+        totals = canonical_learning.metrics_from_records(records, {})['otjh']
+        attendance = additional_rows(records, monthly_log_attendance.read_rows(owner, now=timezone.now()))
+        actual = totals['completed_actual'] + sum(item['actual_hours'] for item in attendance)
+    actual = round(actual, 4)
+    result = {**home, 'otjh': dict(home['otjh'])}
+    planned = result['otjh']['planned']
+    result['otjh'].update(actual=actual, percent=round(actual / planned * 100, 2) if planned else None)
+    return result
+
+
 def summarise_home(activities, native, progress, submissions, assigned, start, end,
                    lectures, historical_hours=0):
     """Aggregate explicit activity identities; never infer identity from titles."""
@@ -238,10 +271,10 @@ def read_home_progress(
                                 'total': sum(module['total'] for module in modules)}
         result['modules'] = counts(modules, lambda module: module['total'] > 0
                                    and module['completed'] == module['total'])
-    # Programme hours come only from canonical_learning. Verified live sessions
-    # enter that projection through the final learner attendance register; a
-    # second raw-provider top-up here would make Home disagree with Overview and
-    # Coach whenever the register sync is delayed or replayed.
+    # Prefer the persisted Monthly Logs total. If unavailable, keep the shared
+    # canonical metrics above, including attendance once and staff corrections.
+    with projection_stage('monthly_actuals'):
+        result = apply_monthly_home_hours(result, owner, records=canonical_records, canonical_metrics=metrics)
     planned = (metrics.get('otjh') or {}).get('planned') if metrics else None
     result['otjh']['missingPlannedActivities'] = 0 if planned is not None else None
     return result

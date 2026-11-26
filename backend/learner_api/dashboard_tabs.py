@@ -25,8 +25,21 @@ def monthly_hours(owner, records, targets, *, signed_months=(), current_month=No
     Allocations retain reporting month and seconds, including split entries.
     The original monthly-log summary includes closed months and the open month.
     """
-    months = defaultdict(lambda: {'actual_hours': 0, 'not_accepted_hours': 0})
     current = current_month or timezone.localdate().strftime('%Y-%m')
+    from learner_api.monthly_actuals import monthly_snapshot
+    saved = monthly_snapshot(owner, targets=targets)
+    if saved is not None:
+        empty = dict(actual_hours=0, not_accepted_hours=0, submitted_hours=0.0, verification_hours=0.0)
+        months = []
+        for month in sorted(set(saved['months']) | set(signed_months)):
+            if month > current:
+                continue
+            values = saved['months'].get(month, empty)
+            months.append({'month': month, **{key: values[key] for key in empty},
+                           'training_plan_target': targets.get(month)})
+        return {'learner': {'planned_end_date': owner.get('end_date')}, 'months': months,
+                'training_plan_totals': dict(saved['training_plan_totals'])}
+    months = defaultdict(lambda: {'actual_hours': 0, 'not_accepted_hours': 0})
     for record in records:
         for entry in canonical.allocations(record):
             month = entry.get('reporting_month')

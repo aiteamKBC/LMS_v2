@@ -13,6 +13,11 @@ log = logging.getLogger(__name__)
 
 
 def read_hour_totals(owner):
+    from learner_api.monthly_actuals import allocated_months
+    saved = allocated_months(owner)
+    if saved is not None:
+        return [{'month': month, 'completed': values['actual_hours'],
+                 'submitted': values['not_accepted_hours']} for month, values in saved['months'].items()]
     if int(owner['id']) in full_hour_projection_ids([owner]):
         months = {}
         for entry in canonical.entries_for(owner, lineage_only=True):

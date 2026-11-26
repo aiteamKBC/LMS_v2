@@ -204,6 +204,8 @@ def read_monthly(source, kind, owner, profile, request, *, canonical_contract=Fa
     records = canonical.entries_for(owner, lineage_only=True, dashboard_metadata=True, monthly_summary=True)
     recorded_attendance = additional_rows(records, saved_attendance_hours(owner, now=now))
     targets = canonical.targets_for(owner)
+    from .monthly_actuals import monthly_snapshot
+    stored = monthly_snapshot(owner, targets=targets)
     spine = schedule.read_dashboard(source, section='overview', targets=targets,
                                     dashboard_tab='monthly', compact_monthly=True,
                                     monthly_month=requested or current)
@@ -266,7 +268,9 @@ def read_monthly(source, kind, owner, profile, request, *, canonical_contract=Fa
         WHERE learner_id=%s AND report_month=%s AND review_confirmed IS TRUE LIMIT 1''', [owner['id'], month]) if month <= current and month not in targets and not actual_records else []
     attendance_actual = sum(canonical.number(r['actual_hours']) for r in recorded_attendance if r['reporting_month'] == month)
     logged = month <= current and (month in targets or actual_records or signed or attendance_actual)
-    canonical_actual = sum(canonical.number(r.get('actual_seconds')) / 3600 for r in actual_records if canonical.counts_as_actual(r)) + attendance_actual
+    canonical_actual = (stored['months'][month]['actual_hours'] if stored is not None and month in stored['months']
+                        else sum(canonical.number(r.get('actual_seconds')) / 3600 for r in actual_records
+                                 if canonical.counts_as_actual(r)) + attendance_actual)
     achieved = max(0, canonical_actual) if logged else ((fallback or {}).get('actual', 0) if (fallback or {}).get('includesHistorical') else sum(row['hours'] for row in actual_rows if row['month'] == month) + (fallback or {}).get('actual', 0))
     required = targets.get(month) if month <= current else None
     if required is None:

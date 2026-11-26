@@ -61,6 +61,8 @@ class HomeProgressReuseTests(SimpleTestCase):
                  patch.object(home_progress, 'lecture_register', return_value=lectures) as register, \
                  patch.object(canonical, 'require_profile', return_value=owner), \
                  patch.object(canonical, 'source_subjects', side_effect=catalogue) as subjects, \
+                 patch('learner_api.monthly_actuals.monthly_snapshot', return_value=None), \
+                 patch('learner_api.monthly_log_attendance.read_rows', return_value=[]), \
                  patch.object(canonical, 'entries_for', side_effect=AssertionError('Duplicate ledger read')), \
                  patch('learner_api.student_activity_access.student_activity_available', return_value=True), \
                  patch.object(module_progress, 'read_native_progress', return_value=(
@@ -82,7 +84,7 @@ class HomeProgressReuseTests(SimpleTestCase):
                                          credit_projection=True)
         self.assertEqual(native.call_args.args[1].enrolment_id, enrolment)
         self.assertTrue(native.call_args.kwargs['compact_content'])
-        self.assertEqual(live.call_count, 1)
+        self.assertEqual(live.call_count, 1)  # Module completion only; no programme top-up.
         self.assertTrue(all(call.kwargs['register'] is lectures for call in live.call_args_list))
         self.assertEqual((records, lectures, detail, native_progress, metrics), before)
         return result
@@ -93,7 +95,7 @@ class HomeProgressReuseTests(SimpleTestCase):
                 result = self.read(kind, enrolment)
                 self.assertEqual(result['activities'], {'completed': 4, 'total': 6})
                 self.assertEqual(result['modules'], {'completed': 0, 'total': 2})
-                self.assertEqual(result['otjh']['actual'], .5)
+                self.assertEqual(result['otjh']['actual'], .5)  # Accepted canonical time owns the total.
 
     def test_coach_perspective_never_reuses_coach_records_for_student_catalogue(self):
         result = self.read('commercial', 22, student=False)

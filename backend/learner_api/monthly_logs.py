@@ -372,6 +372,11 @@ def current_months(learner, signs=(), *, include_open=False, include_future=Fals
 
 
 def summary_data(learner, *, include_open=False, include_future=False, ensure_month=None):
+    from .monthly_actuals import summary as stored_summary
+    stored = stored_summary(learner, include_open=include_open, include_future=include_future,
+                            ensure_month=ensure_month)
+    if stored is not None:
+        return stored
     canonical_owner = learner.get('_canonical_profile')
     unallocated = []
     if canonical_owner is not None:

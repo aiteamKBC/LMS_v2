@@ -16,14 +16,16 @@ class HomeLiveHoursTests(SimpleTestCase):
     def test_home_does_not_add_live_credit_outside_canonical_metrics(self):
         credit = {'componentId': 'LIVE-1', 'moduleId': 'M1', 'hours': 2.5,
                   'timeTrackingSource': 'manual_attendance'}
-        records = [{'component_ref': 'LIVE-1', 'accepted': True, 'actual_seconds': 7200}]
+        records = [{'component_ref': 'LIVE-1', 'accepted': True, 'actual_seconds': 9000}]
         result, _ = self.read(actual=2, records=records, credits=[credit])
         self.assertEqual(result['otjh']['actual'], 2)
         again, _ = self.read(actual=2, records=records, credits=[credit, credit])
         self.assertEqual(again['otjh'], result['otjh'])
 
-    def read(self, *, actual=0, planned=175, records=(), credits=None, unavailable=False, modules=None):
+    def read(self, *, actual=0, planned=175, records=None, credits=None, unavailable=False, modules=None):
         source = SimpleNamespace(pk=7, _canonical_profile={'id': 70})
+        records = ([{'component_ref': cid, 'accepted': True, 'actual_seconds': 7200}
+                    for cid in ('LIVE-1', 'LIVE-2')] if records is None else records)
         credits = ([{'componentId': 'LIVE-1', 'moduleId': 'M1', 'hours': 2},
                     {'componentId': 'LIVE-2', 'moduleId': 'M1', 'hours': 2}]
                    if credits is None else credits)
@@ -37,6 +39,8 @@ class HomeLiveHoursTests(SimpleTestCase):
                    side_effect=DatabaseError('offline') if unavailable else None) as register, \
              patch('learner_api.live_session_progress.read_live_credits', return_value=credits) as read, \
              patch('learner_api.module_progress.canonical_module_progress', return_value=modules or []) as catalogue, \
+             patch('learner_api.monthly_actuals.monthly_snapshot', return_value=None), \
+             patch('learner_api.monthly_log_attendance.read_rows', return_value=[]), \
              patch('learner_api.home_progress.canonical_learning.entries_for', return_value=list(records)) as entries, \
              patch('learner_api.training_plan_dashboard.plan_planned_hours', return_value=175):
             result = read_home_progress(source, 'commercial', [], [], [], [('M1', 'Synthetic')], END,
@@ -336,6 +340,8 @@ class HomeProgressTests(SimpleTestCase):
              patch('learner_api.home_progress.rows', return_value=[]), \
              patch('learner_api.home_progress.lecture_register', return_value=[]), \
              patch('learner_api.training_plan_dashboard.plan_planned_hours', return_value=200) as plan, \
+             patch('learner_api.monthly_actuals.monthly_snapshot', return_value={
+                 'training_plan_totals': {'accepted_hours': 12.5}}), \
              patch('learner_api.home_progress.canonical_learning.metrics',
                    return_value={'otjh': {'actual': 12.5, 'planned': None}}):
             result = read_home_progress(source, 'commercial', [], [], [], [], END)

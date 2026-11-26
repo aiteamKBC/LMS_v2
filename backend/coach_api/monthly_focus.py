@@ -4,6 +4,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from django.db import connections
+from django.utils import timezone as django_timezone
 from curriculum_api.week_visibility import visible_child_sql
 from curriculum_api.canonical_read_sql import component_ksb_mappings_sql
 from learner_api import canonical_learning
@@ -143,15 +144,20 @@ def read_monthly_focus(context, month):
         raise LookupError('Learner enrolment is unavailable.')
     owner = canonical_learning.require_profile(context.source.pk)
     activities, assigned = read_month_activities(context, month)
-    # Keep the coach view on the same canonical monthly source as the learner
-    # dashboard. The previous local calculation only read accepted progress
-    # rows and therefore missed the learner dashboard's attendance and fallback
-    # reconciliation, making Achieved hours (and consequently Difference) drift
-    # between the two perspectives.
-    monthly = read_monthly(context.source, context.kind, owner, context.profile, context.request)
-    summary = monthly['summary']
-    required = summary.get('requiredHours')
-    actual = summary.get('achievedHours')
+    # Reuse the stored month when available. Cache misses and future months
+    # retain the Dashboard's shared attendance and target fallback rules.
+    from learner_api.monthly_actuals import monthly_snapshot
+    current = django_timezone.localdate(timezone=BUSINESS_ZONE).strftime('%Y-%m')
+    saved = monthly_snapshot(owner) if month <= current else None
+    values = saved['months'].get(month) if saved is not None else None
+    if values is not None:
+        required = values['training_plan_target']
+        actual = values['actual_hours']
+    else:
+        monthly = read_monthly(context.source, context.kind, owner, context.profile, context.request)
+        summary = monthly['summary']
+        required = summary.get('requiredHours')
+        actual = summary.get('achievedHours')
     active_profile = context.profile if context.profile.lifecycle_status == 'active' else None
     reviews = coaching_events_for_learner(context.source, active_profile, month=month)
     lectures = read_month_lectures(context, owner, assigned, month)
