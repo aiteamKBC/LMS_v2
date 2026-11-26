@@ -718,7 +718,7 @@ class ActivityStatusTests(SimpleTestCase):
         payload = self.attendance_payload()
         self.db.execute("INSERT INTO learner_monthly_targets VALUES (1,'2026-10','locked')"); self.db.commit()
         with self.assertRaises(ServiceError) as error: self.save(payload)
-        self.assertEqual(error.exception.code, 'month_locked')
+        self.assertEqual(error.exception.code, 'month_signed')
         self.assertEqual(self.query('SELECT * FROM learner_progress_entries'), [])
         self.assertEqual(self.query('SELECT * FROM learner_activity_display_overrides'), [])
 

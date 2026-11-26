@@ -1,4 +1,5 @@
 """Hermetic bulk-query and canonical-projection regressions, synthetic evidence."""
+import inspect
 from contextlib import ExitStack
 from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -76,6 +77,12 @@ class AttendanceGroupBulkTests(SimpleTestCase):
         with patch.object(group, 'fetch_kbc_attendance_rows_bulk') as kbc:
             self.assertEqual(group.group_contracts([]), {})
             kbc.assert_not_called()
+
+    def test_current_schedule_scope_uses_normalized_plan_only(self):
+        source = inspect.getsource(group.group_contracts)
+        self.assertIn('"Learner".learner_training_plan_modules', source)
+        self.assertNotIn('"Training_plan"', source)
+        self.assertNotIn('"Learning_plan"', source)
 
     def test_preloaded_register_preserves_recovery_corrections_confirmations_and_manual_counts(self):
         now = datetime(2026, 9, 20, 12, tzinfo=timezone.utc)

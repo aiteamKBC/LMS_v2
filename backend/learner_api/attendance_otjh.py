@@ -21,8 +21,8 @@ def protected_months(profile_ids, read, table=None):
     original_read = read
     if table is not None:
         def read(sql, params):
-            for name in ('learner_monthly_signatures', 'learners',
-                         'manual_month_finalization_events', 'monthly_audit_signoffs', 'learner_monthly_targets'):
+            for name in ('learner_monthly_signatures', 'learner_monthly_targets', 'learners',
+                         'manual_month_finalization_events', 'monthly_audit_signoffs'):
                 sql = sql.replace(f'"Learner".{name}', table(name))
             return original_read(sql, params)
     rows = read(f'''SELECT learner_id,report_month,signature_data

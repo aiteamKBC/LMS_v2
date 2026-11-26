@@ -182,9 +182,8 @@ def main():
                 'CREATE TABLE curriculum.components(id text,settings_json jsonb,module_catalogue_id text,type text)',
                 '''CREATE TABLE "Learner".learner_monthly_signatures(id integer,learner_id bigint,
                     report_month text,signature_data text,review_confirmed boolean,signed_at timestamptz)''',
-                '''CREATE TABLE "Learner".learner_monthly_targets(learner_id bigint,report_month text,month_status text);
-            CREATE TABLE "Learner".learner_monthly_locks(learner_id bigint,report_month text,
-                    locked_at timestamptz,unlocked_at timestamptz)''',
+                '''CREATE TABLE "Learner".learner_monthly_targets(
+                    learner_id bigint,report_month text,month_status text)''',
                 '''CREATE TABLE "Learner".manual_month_finalization_events(id integer,learner_id bigint,
                     report_month text,event_type text)''',
                 '''CREATE TABLE "Learner".monthly_audit_signoffs(learner_id text,report_month text,review_confirmed boolean)''',

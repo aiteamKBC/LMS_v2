@@ -96,16 +96,8 @@ def require_activity_time_month(owner, month, mode):
     lock_query(repository.query, [(owner['id'], month)], vendor=connections[repository._query_alias.get() or 'enrolment'].vendor)
     if mode not in {'add', 'retry'}:
         return require_open_month(owner, month)
-    locked = repository.query('''SELECT report_month FROM "Learner".learner_monthly_targets
-        WHERE learner_id=%s AND report_month=%s AND month_status='locked' ''', [owner['id'], month])
-    if locked:
-        # Monthly Logs automatically locks after both people sign. That lock
-        # still protects corrections, but it must not prohibit a new attempt.
-        signs = repository.query('''SELECT signer_role FROM "Learner".learner_monthly_signatures
-            WHERE learner_id=%s AND report_month=%s AND review_confirmed IS TRUE
-              AND signer_role IN ('learner','coach')''', [owner['id'], month])
-        if {row['signer_role'] for row in signs} != {'learner', 'coach'}:
-            raise ServiceError('This monthly log is locked. No time was changed.', 'month_locked', 409)
+    # Signature-derived status protects corrections, not a new native attempt.
+    # Separate administrative finalization still blocks both add and retry.
     events = repository.query('''SELECT event_type FROM "Learner".manual_month_finalization_events
         WHERE learner_id=%s AND report_month=%s ORDER BY id DESC LIMIT 1''', [owner['id'], month])
     if events and events[0]['event_type'] == 'finalized':

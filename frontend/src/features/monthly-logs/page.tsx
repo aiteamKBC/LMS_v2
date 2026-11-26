@@ -20,7 +20,7 @@ import type { SignatureCaptureMethod } from '@/features/old-otjh/api';
 import design from '@/features/old-otjh/design.module.css';
 import journal from '@/features/old-otjh/journal.module.css';
 import reportStyles from '@/features/old-otjh/report.module.css';
-import { completeLogMonth, getLogContent, getLogMonth, getLogSummary, signLogMonth, unlockLogMonth, type LogSummary, type LogPerspective, type LogDetail } from './api';
+import { completeLogMonth, getLogContent, getLogMonth, getLogSummary, signLogMonth, type LogSummary, type LogPerspective, type LogDetail } from './api';
 import type { Activity, ActivityContent } from '@/features/old-otjh/api';
 import { correctLogManualTime } from './api';
 import { ManualTimeCorrectionDialog } from './ManualTimeCorrectionDialog';
@@ -147,11 +147,6 @@ export function MonthlyLog({ id, month, summary, base, perspective, workflow, em
     setMessage('This month has been reviewed, signed and completed.');
     void client.invalidateQueries({ queryKey: ['monthly-logs'] });
   } });
-  const unlocking = useMutation({ mutationFn: () => unlockLogMonth(id, month, summary.csrf_token, 'learner'), onSuccess: data => {
-    client.setQueryData(key, data);
-    setMessage('This monthly log has been unlocked. Existing signatures were kept.');
-    void client.invalidateQueries({ queryKey: ['monthly-logs'] });
-  } });
   if (futureMonth) return <FutureMonthState month={month} base={base} />;
   if (query.isPending && !loadedDetail) return <MonthReportSkeleton />;
   if (query.error && !query.data && !loadedDetail) return <ErrorState error={query.error} retry={() => void query.refetch()} />;
@@ -218,13 +213,12 @@ export function MonthlyLog({ id, month, summary, base, perspective, workflow, em
         </tr>)}</tbody>
       </table></div></div>
       <div className={`${journal.signoffFooter} space-y-3`}>
-        {data.locked && !observer && auth.account?.role === 'admin' && perspective === 'learner' && <button className={journal.secondaryButton} disabled={unlocking.isPending} onClick={() => unlocking.mutate()}><AppIcon className="ri-lock-unlock-line" />{unlocking.isPending ? 'Unlockingâ€¦' : 'Unlock monthly log'}</button>}
         {data.locked && <p className={journal.signingNote}><AppIcon className="ri-lock-line" /> This record is locked after both signatures were saved.</p>}
+        {!data.is_open && data.month_status && <p className={journal.signingNote}>Month status: {data.month_status === 'partially_signed' ? 'Partially signed' : data.month_status === 'locked' ? 'Locked' : 'Open'}</p>}
         {canActAsStudent && !readOnly && data.source === 'legacy' && data.can_complete && <button className={journal.primaryButton} disabled={completion.isPending} onClick={() => completion.mutate()}>Complete month</button>}
         <p className={journal.signingNote}>{data.is_open ? 'Activities recorded this month appear here automatically. Signing opens after the month ends.' : mcmWorkflow ? 'This learner log is linked to the Monthly Coaching Meeting. The learner signs the MCM once and the signature appears here automatically.' : readOnly ? 'You are viewing this learner’s record. Each person signs from their own account.' : 'Each person signs from their own account. Saved signatures are retained.'}</p>
         {signing.error && <p role="alert" className="text-red-700">{signing.error.message}</p>}
         {completion.error && <p role="alert" className="text-red-700">{completion.error.message}</p>}
-        {unlocking.error && <p role="alert" className="text-red-700">{unlocking.error.message}</p>}
       </div>
     </section>
   </div>;

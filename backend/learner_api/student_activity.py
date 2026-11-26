@@ -34,8 +34,10 @@ import logging
 from .subject_content import (ContentUnavailable, build_material, public_quiz, as_list)
 from .builder_activity_dates import read_builder_activity_dates
 
-#: Every curriculum module assigned to the learner, current or not. Used where
-#: an inactive module's history must stay readable (exported activity lineage).
+#: Every curriculum module historically associated with the learner. Legacy
+#: plan entries remain valid lineage for exported activity, while normalized
+#: rows make newer canonical allocations readable even when the JSON snapshot
+#: is stale. This scope is never used to authorize current content.
 ASSIGNED_SUBJECTS_SQL = '''
     WITH source AS (
         SELECT id, CASE WHEN jsonb_typeof("Training_plan"::jsonb)='array'
@@ -50,16 +52,21 @@ ASSIGNED_SUBJECTS_SQL = '''
         SELECT m.curriculum_module_id FROM source
         JOIN "Learner".learners l ON l.enrolment_id=source.id
         JOIN "Learner".learner_training_plan_modules m ON m.learner_id=l.id
-        WHERE jsonb_typeof(source.plan) IS DISTINCT FROM 'array'
     )
     SELECT DISTINCT cm.module_catalogue_id,cm.title
     FROM assigned JOIN curriculum.modules cm ON cm.module_catalogue_id=assigned.module_id
 '''
 
-#: The learner's CURRENT learning modules: the assignment above without
-#: inactive modules (Option A). curriculum.modules has no deletion marker;
-#: status replaces it. Current lists only -- never history.
-CURRENT_SUBJECTS_SQL = ASSIGNED_SUBJECTS_SQL + f'''    WHERE {current_module_sql('cm')}
+#: The learner's CURRENT learning modules. Current ownership is exclusively
+#: normalized; stale Created_users JSON may contribute historical lineage above
+#: but can neither grant nor deny a current module. curriculum.modules has no
+#: deletion marker, so Option A applies the status predicate here.
+CURRENT_SUBJECTS_SQL = f'''
+    SELECT DISTINCT cm.module_catalogue_id,cm.title
+    FROM "Learner".learners l
+    JOIN "Learner".learner_training_plan_modules assigned ON assigned.learner_id=l.id
+    JOIN curriculum.modules cm ON cm.module_catalogue_id=assigned.curriculum_module_id
+    WHERE l.enrolment_id=%s AND {current_module_sql('cm')}
 '''
 
 def _direct_progress_records(enrolment_id, *, profile=None):

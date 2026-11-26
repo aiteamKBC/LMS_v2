@@ -13,18 +13,12 @@ from curriculum_api.models import LiveSessionAbsence
 from .models import CoachAbsenceReport, CoachAttendanceSourceAdjustment
 
 
-# Same JSON + normalized assignment union as ATTENDANCE_SUBJECTS_SQL, retaining
-# learner identity. Never use group membership or an old invite as assignment.
+# Normalized current assignment scope, retaining learner identity. Never use
+# stale enrolment JSON, group membership, or an old invite as assignment.
 ASSIGNMENTS_SQL = '''WITH source AS (
-    SELECT id,lower(btrim("Email")) AS email,
-        CASE WHEN jsonb_typeof("Training_plan"::jsonb)='array'
-        THEN "Training_plan"::jsonb ELSE "Learning_plan"::jsonb END AS plan
+    SELECT id,lower(btrim("Email")) AS email
     FROM enrolment."Created_users" WHERE id=ANY(%s)
 ), assigned AS (
-    SELECT id,email,entry->>'moduleId' AS module_id FROM source
-    CROSS JOIN LATERAL jsonb_array_elements(
-        CASE WHEN jsonb_typeof(plan)='array' THEN plan ELSE '[]'::jsonb END) entry
-    UNION
     SELECT source.id,source.email,m.curriculum_module_id
     FROM source JOIN "Learner".learners l ON l.enrolment_id=source.id
     JOIN "Learner".learner_training_plan_modules m ON m.learner_id=l.id

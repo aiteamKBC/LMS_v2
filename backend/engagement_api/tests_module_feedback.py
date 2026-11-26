@@ -74,43 +74,27 @@ class ModuleFeedbackSourceTests(SimpleTestCase):
 
 
 class ModuleMembershipTests(SimpleTestCase):
-    def test_staff_sync_uses_explicit_cleared_inherited_and_legacy_assignment_facts(self):
-        from curriculum_api import learner_assignment_counts_sql as directory
-        base = {'programme': 'Data', 'grp': 'Group', 'group_id': 'G1', 'ambiguous': False, 'has_plan': True,
-                'id_count': 1, 'has_explicit': True, 'matched': ['M1']}
-        facts = [
-            {**base, 'learner_id': 7},
-            {**base, 'learner_id': 8, 'id_count': 0, 'matched': []},
-            {**base, 'learner_id': 9, 'has_plan': False, 'matched': []},
-            {**base, 'learner_id': 10, 'ambiguous': True},
-        ]
-        legacy = SimpleNamespace(learning_plan=[{'moduleId': 'M1', 'assignmentMode': 'explicit'}], training_plan=None)
-        with (
-            mock.patch.object(directory, 'fetch_plan_facts', return_value=facts),
-            mock.patch.object(directory, 'seed_preset_cache', return_value={('group_id', 'G1'): ['M2']}),
-            mock.patch.object(modules.EnrolmentUser.all_learners, 'get', return_value=legacy),
-        ):
-            self.assertEqual(modules.module_memberships({'M1', 'M2'}),
-                             {'7': {'M1'}, '8': set(), '9': {'M2'}, '10': {'M1'}})
+    def memberships(self, rows, *, learner_id=None):
+        cursor = mock.MagicMock()
+        cursor.fetchall.return_value = rows
+        database = mock.MagicMock()
+        database.cursor.return_value.__enter__.return_value = cursor
+        with mock.patch.object(modules, 'connections', {'enrolment': database}):
+            result = modules.module_memberships({'M1', 'M2'}, learner_id)
+        return result, cursor
 
-    def test_cleared_explicit_commercial_and_apprenticeship_plans_use_existing_rules(self):
-        for kind, plan, training, expected in (
-            ('apprenticeship', [], None, set()),
-            ('apprenticeship', [{'moduleId': 'M1', 'assignmentMode': 'explicit'}], None, {'M1'}),
-            ('commercial', [{'moduleId': 'OTHER'}], [{'moduleId': 'M2', 'assignmentMode': 'explicit'}], {'M2'}),
-            ('apprenticeship', [{'moduleId': 'M1'}], None, {'M1', 'M2'}),
-            ('apprenticeship', None, None, {'M2'}),
-        ):
-            learner = SimpleNamespace(pk=7, programme='Data', group='Group', learner_type=kind,
-                                      learning_plan=plan, training_plan=training)
-            query = mock.Mock()
-            query.first.return_value = learner
-            with (
-                self.subTest(kind=kind, plan=plan),
-                mock.patch.object(modules.EnrolmentUser.all_learners, 'filter', return_value=query),
-                mock.patch.object(modules.plans, '_preset_ids_for', return_value=['M2']),
-            ):
-                self.assertEqual(modules.module_memberships({'M1', 'M2'}, '7'), {'7': expected})
+    def test_staff_sync_uses_only_normalized_plan_rows(self):
+        result, cursor = self.memberships([(7, 'M1'), (7, 'M2'), (8, 'M2')])
+        self.assertEqual(result, {'7': {'M1', 'M2'}, '8': {'M2'}})
+        self.assertIn('learner_training_plan_modules', cursor.execute.call_args.args[0])
+        self.assertNotIn('Created_users', cursor.execute.call_args.args[0])
+        self.assertEqual(cursor.execute.call_args.args[1], [['M1', 'M2']])
+
+    def test_learner_sync_scopes_by_enrolment_id_and_empty_is_authoritative(self):
+        result, cursor = self.memberships([], learner_id='285')
+        self.assertEqual(result, {})
+        self.assertIn('learner.enrolment_id=%s', cursor.execute.call_args.args[0])
+        self.assertEqual(cursor.execute.call_args.args[1], [['M1', 'M2'], '285'])
 
     def test_removed_or_inactive_module_cannot_be_opened(self):
         delivery = SimpleNamespace(module_catalogue_id='M1')

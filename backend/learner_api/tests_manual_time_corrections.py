@@ -39,7 +39,8 @@ class ManualTimeCorrectionTests(SimpleTestCase):
                 started_at,accepted,passed,achieved_score,total_score,feedback);
             CREATE TABLE Learner.learner_activity_reporting_segments(id,progress_id,learner_id,reporting_month,actual_seconds);
             CREATE TABLE Learner.learning_reflection_submissions(id,progress_entry_id,learner_id,learner_kind,status,activity_type,actual_time_hours,full_submission,coach_feedback);
-            CREATE TABLE Learner.learner_monthly_targets(learner_id bigint,report_month text,month_status text);
+            CREATE TABLE Learner.learner_monthly_targets(id INTEGER PRIMARY KEY,learner_id,report_month,
+                programme_profile_id,programme_id,month_status,updated_at);
             CREATE TABLE Learner.learner_monthly_signatures(learner_id,report_month,review_confirmed);
             CREATE TABLE Learner.manual_month_finalization_events(id,learner_id,report_month,event_type);
             CREATE TABLE Learner.monthly_audit_signoffs(learner_id,report_month,review_confirmed);
@@ -177,6 +178,8 @@ class ManualTimeCorrectionTests(SimpleTestCase):
              patch('learner_api.attendance_otjh.read_bulk', side_effect=lambda owners, read:
                    {int(owner['id']): {'lectures': [], 'protected': {}, 'frozen_rows': []} for owner in owners}), \
              patch.object(logs, 'attendance_rows', return_value=[]), \
+             patch.object(logs, 'lock_states', side_effect=lambda _id, months, **_kw: {
+                 month: {'month_status': 'open', 'locked': False} for month in months}), \
              patch.object(canonical, 'targets_for', return_value={'2026-10': 100}), \
              patch.object(canonical, 'programme_planned_hours', return_value=100), \
              patch('coach_api.selectors.otjh.learner_programme_window', return_value=('2026-01-01', '2026-12-31')), \
@@ -238,9 +241,8 @@ class ManualTimeCorrectionTests(SimpleTestCase):
         with self.assertRaises(ServiceError): self.correct(progress_id=2)
         with self.assertRaises(ServiceError): self.correct(month='2026-09')
 
-    def test_signed_locked_and_finalized_months_reject_without_changes(self):
+    def test_signed_finalized_and_audit_signed_months_reject_without_changes(self):
         checks = [
-            ("INSERT INTO Learner.learner_monthly_targets VALUES(70,'2026-10','locked')", 'learner_monthly_targets'),
             ("INSERT INTO Learner.learner_monthly_signatures VALUES(70,'2026-10',true)", 'learner_monthly_signatures'),
             ("INSERT INTO Learner.manual_month_finalization_events VALUES(1,70,'2026-10','finalized')", 'manual_month_finalization_events'),
             ("INSERT INTO Learner.monthly_audit_signoffs VALUES('42','2026-10',true)", 'monthly_audit_signoffs'),
@@ -251,6 +253,19 @@ class ManualTimeCorrectionTests(SimpleTestCase):
             with self.assertRaises(ServiceError): self.correct()
             self.assertEqual(self.row(), before)
             self.db.execute(f'DELETE FROM Learner.{table}'); self.db.commit()
+
+    def test_canonical_partial_and_locked_statuses_reject_without_changes(self):
+        for month_status in ('partially_signed', 'locked'):
+            with self.subTest(month_status=month_status):
+                before = self.row()
+                self.db.execute('INSERT INTO Learner.learner_monthly_targets VALUES(1,70,?,?,?,?,?)',
+                                ['2026-10', '', None, month_status, '2026-10-01'])
+                self.db.commit()
+                with self.assertRaises(ServiceError):
+                    self.correct()
+                self.assertEqual(self.row(), before)
+                self.db.execute('DELETE FROM Learner.learner_monthly_targets')
+                self.db.commit()
 
     def test_invalid_payloads_and_stale_revisions_do_not_write(self):
         for seconds in (True, 0, -1, 0.5, 2147483648, '30', None):

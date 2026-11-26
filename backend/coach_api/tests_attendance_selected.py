@@ -233,6 +233,11 @@ class EvidenceFixture:
 
 
 class SelectedAttendanceTests(SimpleTestCase):
+    def test_current_schedule_scope_uses_normalized_plan_only(self):
+        self.assertIn('"Learner".learner_training_plan_modules', selected.ASSIGNMENTS_SQL)
+        self.assertNotIn('"Training_plan"', selected.ASSIGNMENTS_SQL)
+        self.assertNotIn('"Learning_plan"', selected.ASSIGNMENTS_SQL)
+
     def test_delivery_without_cohort_cannot_receive_automatic_parallel_credit(self):
         with EvidenceFixture(2) as fixture:
             result, _ = fixture.read()

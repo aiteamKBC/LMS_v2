@@ -94,10 +94,19 @@ class UnscheduledReviewHoursTests(TestCase):
 
     def test_locked_month_rolls_back_final_signature_and_completion(self):
         submit(self.review, {'progress': 'Agreed actions'})
-        self.query('INSERT INTO "Learner".learner_monthly_locks (learner_id,report_month,locked_at) '
-                   'VALUES (%s,%s,%s)',
-                   [self.learner_id, timezone.now().astimezone(UK).strftime('%Y-%m'), timezone.now()])
-        with self.assertRaisesRegex(ValueError, 'locked'):
+        month = timezone.now().astimezone(UK).strftime('%Y-%m')
+        target_id = self.query('''INSERT INTO "Learner".learner_monthly_targets
+            (learner_id,report_month,source_system,source_ref,basis)
+            VALUES (%s,%s,'test','test:monthly-status','test') RETURNING id''',
+            [self.learner_id, month])[0][0]
+        for role in ('learner', 'coach'):
+            self.query('''INSERT INTO "Learner".learner_monthly_signatures
+                (learner_id,report_month,signer_role,review_confirmed,source_system,source_ref,
+                 source_learner_id,programme_key)
+                VALUES (%s,%s,%s,true,'lms',%s,%s,%s)''',
+                [self.learner_id, month, role, f'lms-monthly:test:{role}',
+                 str(self.learner_id), f'test:{target_id}'])
+        with self.assertRaisesRegex(ValueError, 'signed'):
             self.finish()
         self.review.refresh_from_db()
         self.assertEqual(self.review.status, 'awaiting-signature')

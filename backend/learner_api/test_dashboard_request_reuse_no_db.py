@@ -31,19 +31,17 @@ class PresetCacheTests(SimpleTestCase):
         self.assertEqual(preset.call_count, 2)
         self.assertFalse(hasattr(source, '_plan_preset_cache'))
 
-    def test_shared_plan_readers_use_the_request_cache(self):
-        from . import training_plan_dashboard, weekly_learning
+    def test_canonical_plan_reader_does_not_consult_legacy_preset_cache(self):
+        from . import training_plan_dashboard
         cache = {}
-        source = self.learner(_plan_preset_cache=cache, id=265, cohort='', pk=265)
+        source = self.learner(
+            _plan_preset_cache=cache, _canonical_training_plan=[], id=265, cohort='', pk=265,
+        )
         cursor = MagicMock()
-        with patch.object(training_plan_dashboard, '_effective_plan_ids', return_value=[]) as resolve, \
-             patch.object(training_plan_dashboard, '_builder_subject_metadata', return_value=({}, {})):
-            training_plan_dashboard.plan_module_ids(cursor, source, None)
-        self.assertIs(resolve.call_args.args[1], cache)
-        with patch.object(weekly_learning, 'effective_training_plan', side_effect=RuntimeError('stop')) as plan:
-            with self.assertRaises(RuntimeError):
-                weekly_learning.build_learning_content_summary(source, 265, learning_summary=True)
-        self.assertIs(plan.call_args.args[1], cache)
+        with patch.object(training_plan_dashboard, '_builder_subject_metadata', return_value=({}, {})):
+            ids, links = training_plan_dashboard.plan_module_ids(cursor, source, None)
+        self.assertEqual((ids, links), ([], {}))
+        self.assertEqual(cache, {})
 
     def test_tab_dispatch_installs_a_fresh_cache_for_each_request(self):
         from . import dashboard_tabs, dashboard_monthly, identity, learning_plan
@@ -95,12 +93,14 @@ class BuilderLinkReuseTests(SimpleTestCase):
     def test_overview_plan_then_learning_reads_module_titles_once(self):
         from . import dashboard_tabs, training_plan_dashboard, weekly_learning, student_activity_access, \
             builder_activity_dates, learning_plan, student_activity, canonical_learning
-        source = SimpleNamespace(pk=265, aptem_id=None, _plan_preset_cache={}, _builder_link_cache={})
+        source = SimpleNamespace(
+            pk=265, aptem_id=None, _plan_preset_cache={}, _builder_link_cache={},
+            _canonical_training_plan=[{'moduleId': 'M1'}, {'moduleId': 'M2'}],
+        )
         read = self.reader()
         cursor = MagicMock()
         cursor.__enter__.return_value = cursor
-        with patch.object(training_plan_dashboard, '_effective_plan_ids', return_value=['M1', 'M2']), \
-             patch.object(learning_plan, '_effective_plan_ids', return_value=['M1', 'M2']), \
+        with patch.object(learning_plan, '_effective_plan_ids', return_value=['M1', 'M2']), \
              patch.object(canonical_learning, 'curriculum_module_ids_for', return_value=[]), \
              patch.object(training_plan_dashboard, '_builder_subject_metadata', read), \
              patch.object(student_activity, '_builder_subject_metadata', read), \

@@ -71,7 +71,7 @@ class AttendanceOtjhTests(SimpleTestCase):
                 return [owner]
             if 'SUM(CASE WHEN actual_seconds' in sql:
                 return [{'learner_id': 70, 'actual_seconds': 4517}]
-            if 'learner_monthly_targets' in sql and 'month_status' not in sql:
+            if 'learner_monthly_targets' in sql and 'target_hours' in sql:
                 return [{'learner_id': 70, 'report_month': '2026-10', 'target_hours': 10}]
             return self.read(sql, params)
         with patch.object(canonical, 'query', side_effect=read), \
@@ -254,7 +254,7 @@ class AttendanceOtjhTests(SimpleTestCase):
         self.assertEqual(rows, captured)
         self.assertEqual(monthly_logs.additional_attendance(self.learner, rows), [])
 
-    def test_unlocked_and_reopened_months_use_current_policy(self):
+    def test_reopened_finalization_uses_current_policy(self):
         self.lecture()
         self.db.execute("INSERT INTO Learner.learner_monthly_targets VALUES (70,'2026-10','open')")
         self.db.execute("INSERT INTO Learner.manual_month_finalization_events VALUES (1,70,'2026-10','finalized'),(2,70,'2026-10','reopened')")

@@ -18,6 +18,7 @@ export type MonthState = {
   student_signature: Signature | null;
   coach_signature: Signature | null;
   locked?: boolean;
+  month_status?: 'open' | 'partially_signed' | 'locked';
   locked_at?: string | null;
   can_unlock?: boolean;
   pending_revisions: number;
