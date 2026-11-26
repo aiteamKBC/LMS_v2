@@ -7,10 +7,9 @@ started a response, while preserving started and completed response history.
 from datetime import date, datetime, time
 from zoneinfo import ZoneInfo
 
-from django.db import connection, transaction
+from django.db import connection, connections, transaction
 from django.utils import timezone
 
-from learner_api import learning_plan as plans
 from learner_api.models import EnrolmentUser
 
 from .models import FeedbackDelivery, FeedbackDeliveryRecipient, FeedbackForm, FeedbackResponse
@@ -65,28 +64,32 @@ def active_modules():
 
 
 def module_memberships(wanted, learner_id=None):
-    """Use the assignment directory's rules, including cleared/explicit plans.
+    """Return normalized Training Plan ownership for the requested modules.
 
-    The staff path reads compact SQL facts rather than downloading every plan.
-    The learner path uses the same authoritative resolver for their own plan.
-    Neither path hydrates content, writes plans, or reconciles identities.
+    Feedback delivery is a current entitlement, so legacy enrolment JSON and
+    placement presets cannot grant it. Historical responses remain untouched.
     """
+    wanted = sorted({str(value).strip() for value in wanted or () if str(value or '').strip()})
+    if not wanted:
+        return {}
+    params = [wanted]
+    learner_filter = ''
     if learner_id is not None:
-        learner = EnrolmentUser.all_learners.filter(pk=learner_id).first()
-        if learner is None:
-            return {}
-        return {str(learner.pk): set(plans._effective_plan_ids(learner, {})) & wanted}
-    from curriculum_api.learner_assignment_counts_sql import fetch_plan_facts, _effective_ids_from_fact, seed_preset_cache
-    facts = fetch_plan_facts(wanted)
-    cache = seed_preset_cache(facts)
-    result = {}
-    for fact in facts:
-        learner_id = str(fact['learner_id'])
-        if fact['ambiguous']:
-            learner = EnrolmentUser.all_learners.get(pk=learner_id)
-            result[learner_id] = set(plans._effective_plan_ids(learner, cache)) & wanted
-        else:
-            result[learner_id] = _effective_ids_from_fact(fact, wanted, cache)
+        learner_filter = ' AND learner.enrolment_id=%s'
+        params.append(learner_id)
+    with connections['enrolment'].cursor() as cursor:
+        cursor.execute('''
+            SELECT learner.enrolment_id,plan.curriculum_module_id
+            FROM "Learner".learner_training_plan_modules plan
+            JOIN "Learner".learners learner ON learner.id=plan.learner_id
+            WHERE plan.curriculum_module_id=ANY(%s)
+              AND learner.enrolment_id IS NOT NULL
+        ''' + learner_filter + '''
+            ORDER BY learner.enrolment_id,plan.position,plan.id
+        ''', params)
+        result = {}
+        for enrolment_id, module_id in cursor.fetchall():
+            result.setdefault(str(enrolment_id), set()).add(str(module_id))
     return result
 
 

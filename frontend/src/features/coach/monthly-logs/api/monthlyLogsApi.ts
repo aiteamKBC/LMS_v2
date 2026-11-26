@@ -7,7 +7,7 @@ export type CoachLogYear = {
   learner: LogLearner & { initials: string }; year: number; years: number[];
   summary: { coachSignatures: { completed: number; total: number }; acceptedOtjhHours: number; trainingPlanHours: number | null };
   months: Array<{ month: string; activities: number; acceptedOtjhHours: number; targetHours: number | null;
-    isOpen: boolean; learnerSigned: boolean; coachSigned: boolean }>;
+    isOpen: boolean; learnerSigned: boolean; coachSigned: boolean; monthStatus: 'open' | 'partially_signed' | 'locked' }>;
 };
 export type CoachLogDetail = { summary: LogSummary; detail: LogDetail };
 

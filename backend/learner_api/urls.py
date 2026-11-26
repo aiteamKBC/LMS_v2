@@ -92,7 +92,6 @@ urlpatterns = [
     path('monthly-logs/<int:learner_id>/<str:month>/manual-time/<int:progress_id>/', monthly_logs.correct_manual_time, name='monthly-log-manual-time'),
     path('monthly-logs/<int:learner_id>/<str:month>/sign/', monthly_logs.sign, name='monthly-log-sign'),
     path('monthly-logs/<int:learner_id>/<str:month>/complete/', monthly_logs.complete, name='monthly-log-complete'),
-    path('monthly-logs/<int:learner_id>/<str:month>/unlock/', monthly_logs.unlock, name='monthly-log-unlock'),
     path('monthly-logs/<int:learner_id>/<str:month>/activities/<int:row_id>/', monthly_logs.content, name='monthly-log-content'),
     path('monthly-logs/<int:learner_id>/<str:month>/activities/<int:row_id>/materials/<int:material_id>/', monthly_logs.canonical_material, name='monthly-log-canonical-material'),
     path('attendance/<str:kind>/<int:learner_id>/lectures/', attendance_lectures, name='attendance-lectures'),

@@ -116,17 +116,23 @@ def project_year(learner, year):
     current_month = timezone.localdate().strftime('%Y-%m')
     available = sorted(month for month in (activity_by_month.keys() | targets.keys() | signs_by_month.keys())
                        if month <= current_month)
+    states = logs.lock_states(learner['id'], available, canonical_owner=owner)
     months = []
     for month in available:
         if not month.startswith(f'{year}-'):
             continue
         activity = activity_by_month.get(month, {})
         signature = signs_by_month.get(month, {})
+        state = states.get(month, {})
+        month_status = state.get('month_status') or logs._effective_month_status(
+            'open', [role for role, present in (('learner', signature.get('learner_signed')),
+                                                ('coach', signature.get('coach_signed'))) if present])
         months.append({'month': month, 'activities': activity.get('activities', 0),
                        'acceptedOtjhHours': float(activity.get('accepted_hours', 0)),
                        'targetHours': targets.get(month), 'isOpen': month == current_month,
                        'learnerSigned': bool(signature.get('learner_signed')),
-                       'coachSigned': bool(signature.get('coach_signed'))})
+                       'coachSigned': bool(signature.get('coach_signed')),
+                       'monthStatus': month_status})
     closed = [month for month in available if month < current_month]
     return {'learner': {'id': learner['id'], 'name': learner['name'],
                         'initials': initials(learner['name']), 'programme': learner['programme']},

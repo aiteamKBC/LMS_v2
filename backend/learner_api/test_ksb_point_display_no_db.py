@@ -51,7 +51,7 @@ class KsbPointDisplayTests(unittest.TestCase):
             # The lock query also joins learners; it must not receive owner rows.
             for table, expected in (
                 ('learner_monthly_signatures', [700, 701]),
-                ('learner_monthly_locks', [700, 701] * 3),
+                ('learner_monthly_targets', [700, 701] * 3),
                 ('live_session_learner_attendance', [700, 701]),
             ):
                 if table in sql:
@@ -76,5 +76,5 @@ class KsbPointDisplayTests(unittest.TestCase):
         self.assertEqual(result[11]['ksb']['points'][0]['definitionCode'], 'B1.2')
         self.assertEqual(result[10]['ksb']['points'][0]['activityId'], '1')
         self.assertEqual(result[11]['ksb']['points'][0]['activityId'], '2')
-        for table in ('learner_monthly_signatures', 'learner_monthly_locks', 'live_session_learner_attendance'):
+        for table in ('learner_monthly_signatures', 'learner_monthly_targets', 'live_session_learner_attendance'):
             self.assertEqual(sum(table in call.args[0] for call in self.query.call_args_list), 1)

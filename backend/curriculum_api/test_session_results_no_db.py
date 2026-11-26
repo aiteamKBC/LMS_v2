@@ -1502,19 +1502,74 @@ class EndpointTests(unittest.TestCase):
         self.assertJoinError(response, 'unavailable')
 
     def learner_series(self, assigned, shared, series_row, additional=(), kind='commercial'):
-        learner = types.SimpleNamespace(email='a@example.invalid')
+        learner = types.SimpleNamespace(pk=7, email='a@example.invalid',
+                                        training_plan=[{'moduleId': 'STALE'}])
+        profile = types.SimpleNamespace(id=248, enrolment_id=7)
         model = types.SimpleNamespace(all_learners=types.SimpleNamespace(
             filter=lambda **kwargs: types.SimpleNamespace(first=lambda: learner)))
         detail = types.ModuleType('learner_api.learner_detail'); detail.SOURCE_MODELS = {kind: model}
+        identity = types.ModuleType('learner_api.identity')
+        identity.learner_profile_for_source = Mock(return_value=profile)
+        learning_plan = types.ModuleType('learner_api.learning_plan')
+        learning_plan.install_canonical_training_plan_module_ids = Mock(side_effect=lambda source, owner: (
+            setattr(source, '_canonical_training_plan', [{'moduleId': module_id} for module_id in assigned])
+            or source._canonical_training_plan
+        ))
         lectures = types.ModuleType('learner_api.attendance_lectures')
-        lectures.read_assigned_modules = lambda source: [{'id': module_id} for module_id in assigned]
+        lectures.read_assigned_modules = lambda source: [
+            {'id': entry['moduleId']} for entry in source._canonical_training_plan
+        ]
         lectures.shared_teams_sources = Mock(return_value=shared)
         self.ns['read'].side_effect = lambda sql, params=(): (
             [{'module_catalogue_id': module_id} for module_id in additional]
             if "c.settings_json->>'extraTeamsLiveSessionId'=%s" in sql
             else [series_row] if series_row else [])
-        with patch.dict(sys.modules, {'learner_api.learner_detail': detail, 'learner_api.attendance_lectures': lectures}):
+        with patch.dict(sys.modules, {
+                'learner_api.learner_detail': detail,
+                'learner_api.identity': identity,
+                'learner_api.learning_plan': learning_plan,
+                'learner_api.attendance_lectures': lectures,
+        }):
             return self.ns['learner_series'](kind, 7, 'S'), lectures.shared_teams_sources
+
+    def test_learner_series_uses_canonical_plan_not_stale_enrolment_json(self):
+        series = {'id': 'S', 'module_catalogue_id': 'CANONICAL', 'status': 'active'}
+
+        (learner, found), _shared = self.learner_series(['CANONICAL'], {}, series)
+
+        self.assertIsNotNone(learner)
+        self.assertIs(found, series)
+        self.assertEqual(learner.training_plan, [{'moduleId': 'STALE'}])
+        self.assertEqual(learner._canonical_training_plan, [{'moduleId': 'CANONICAL'}])
+
+    def test_learner_series_fails_closed_without_canonical_owner(self):
+        learner = types.SimpleNamespace(pk=7, email='a@example.invalid')
+        model = types.SimpleNamespace(all_learners=types.SimpleNamespace(
+            filter=lambda **kwargs: types.SimpleNamespace(first=lambda: learner)))
+        detail = types.ModuleType('learner_api.learner_detail'); detail.SOURCE_MODELS = {'commercial': model}
+        identity = types.ModuleType('learner_api.identity')
+        identity.learner_profile_for_source = Mock(return_value=None)
+        learning_plan = types.ModuleType('learner_api.learning_plan')
+        learning_plan.install_canonical_training_plan_module_ids = Mock()
+        lectures = types.ModuleType('learner_api.attendance_lectures')
+        lectures.read_assigned_modules = Mock()
+        lectures.shared_teams_sources = Mock()
+
+        with patch.dict(sys.modules, {
+                'learner_api.learner_detail': detail,
+                'learner_api.identity': identity,
+                'learner_api.learning_plan': learning_plan,
+                'learner_api.attendance_lectures': lectures,
+        }):
+            result = self.ns['learner_series']('commercial', 7, 'S')
+
+        self.assertEqual(result, (None, None))
+        identity.learner_profile_for_source.assert_called_once_with(
+            learner, 7, heal=False, fields=('id', 'enrolment_id'),
+        )
+        learning_plan.install_canonical_training_plan_module_ids.assert_not_called()
+        lectures.read_assigned_modules.assert_not_called()
+        self.ns['read'].assert_not_called()
 
     def test_learner_series_accepts_a_learner_on_a_shared_teams_duplicate(self):
         series = {'id': 'S', 'module_catalogue_id': 'SOURCE', 'status': 'Active'}
@@ -1534,15 +1589,30 @@ class EndpointTests(unittest.TestCase):
 
     def test_learner_series_saved_results_preserve_inactive_parent_history(self):
         series = {'id': 'S', 'module_catalogue_id': 'SOURCE', 'status': 'active'}
-        learner = types.SimpleNamespace(email='a@example.invalid')
+        learner = types.SimpleNamespace(pk=7, email='a@example.invalid')
+        profile = types.SimpleNamespace(id=248, enrolment_id=7)
         model = types.SimpleNamespace(all_learners=types.SimpleNamespace(
             filter=lambda **kwargs: types.SimpleNamespace(first=lambda: learner)))
         detail = types.ModuleType('learner_api.learner_detail'); detail.SOURCE_MODELS = {'commercial': model}
+        identity = types.ModuleType('learner_api.identity')
+        identity.learner_profile_for_source = Mock(return_value=profile)
+        learning_plan = types.ModuleType('learner_api.learning_plan')
+        learning_plan.install_canonical_training_plan_module_ids = Mock(side_effect=lambda source, owner: (
+            setattr(source, '_canonical_training_plan', [{'moduleId': 'SOURCE'}])
+            or source._canonical_training_plan
+        ))
         lectures = types.ModuleType('learner_api.attendance_lectures')
-        lectures.read_assigned_modules = lambda source: [{'id': 'SOURCE'}]
+        lectures.read_assigned_modules = lambda source: [
+            {'id': entry['moduleId']} for entry in source._canonical_training_plan
+        ]
         lectures.shared_teams_sources = Mock(return_value={})
         self.ns['read'].return_value = [series]
-        with patch.dict(sys.modules, {'learner_api.learner_detail': detail, 'learner_api.attendance_lectures': lectures}):
+        with patch.dict(sys.modules, {
+                'learner_api.learner_detail': detail,
+                'learner_api.identity': identity,
+                'learner_api.learning_plan': learning_plan,
+                'learner_api.attendance_lectures': lectures,
+        }):
             found_learner, found_series = self.ns['learner_series'](
                 'commercial', 7, 'S', linked_recordings=True)
         self.assertIs(found_learner, learner)
@@ -1639,14 +1709,30 @@ class EndpointTests(unittest.TestCase):
                 self.assertEqual(self.learner_series(['MOD-A'], {}, series)[0], (None, None))
                 access.linked_session_numbers.assert_not_called()
                 learner = types.SimpleNamespace(email='a@example.invalid')
+                learner.pk = 7
+                profile = types.SimpleNamespace(id=248, enrolment_id=7)
                 model = types.SimpleNamespace(all_learners=types.SimpleNamespace(
                     filter=lambda **kwargs: types.SimpleNamespace(first=lambda: learner)))
                 detail = types.ModuleType('learner_api.learner_detail'); detail.SOURCE_MODELS = {'commercial': model}
+                identity = types.ModuleType('learner_api.identity')
+                identity.learner_profile_for_source = Mock(return_value=profile)
+                learning_plan = types.ModuleType('learner_api.learning_plan')
+                learning_plan.install_canonical_training_plan_module_ids = Mock(side_effect=lambda source, owner: (
+                    setattr(source, '_canonical_training_plan', [{'moduleId': 'MOD-A'}])
+                    or source._canonical_training_plan
+                ))
                 lectures = types.ModuleType('learner_api.attendance_lectures')
-                lectures.read_assigned_modules = lambda source: [{'id': 'MOD-A'}]
+                lectures.read_assigned_modules = lambda source: [
+                    {'id': entry['moduleId']} for entry in source._canonical_training_plan
+                ]
                 lectures.shared_teams_sources = Mock(return_value={})
                 self.ns['read'].return_value = [series]
-                with patch.dict(sys.modules, {'learner_api.learner_detail': detail, 'learner_api.attendance_lectures': lectures}):
+                with patch.dict(sys.modules, {
+                        'learner_api.learner_detail': detail,
+                        'learner_api.identity': identity,
+                        'learner_api.learning_plan': learning_plan,
+                        'learner_api.attendance_lectures': lectures,
+                }):
                     _, found = self.ns['learner_series']('commercial', 7, 'S', linked_recordings=True)
                 self.assertEqual(found, {**series, 'linked_session_numbers': {3}})
                 self.assertEqual(access.linked_session_numbers.call_args.args, ({'MOD-A'}, 'S'))

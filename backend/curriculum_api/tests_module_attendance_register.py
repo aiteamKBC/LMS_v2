@@ -27,7 +27,7 @@ class ModuleAttendanceRegisterTests(SimpleTestCase):
                 attendance_status text,attended_seconds integer,first_join_at text,last_leave_at text);
             CREATE TABLE learner_monthly_signatures (learner_id integer,report_month text,signature_data text,
                 review_confirmed boolean,signed_at text,id integer);
-            CREATE TABLE learner_monthly_locks (learner_id integer,report_month text,locked_at text,unlocked_at text);
+            CREATE TABLE learner_monthly_targets (learner_id integer,report_month text,month_status text);
             CREATE TABLE manual_month_finalization_events (id integer,aptem_id integer,report_month text,event_type text);
             CREATE TABLE monthly_audit_signoffs (learner_id text,report_month text,review_confirmed boolean);
             CREATE TABLE learners (id integer,aptem_id integer);
@@ -155,7 +155,7 @@ class ModuleAttendanceRegisterTests(SimpleTestCase):
     def enrich(self, records=(), overrides=(), learner_type='commercial'):
         learner_ids = sorted({row['learnerId'] for row in self.plan})
         def read(sql, params=()):
-            if 'learner_monthly_signatures' in sql or 'learner_monthly_locks' in sql:
+            if 'learner_monthly_signatures' in sql or 'learner_monthly_targets' in sql:
                 return self.read(sql, params)
             if 'FROM "live_session_occurrences"' in sql:
                 return self.read(sql, params)

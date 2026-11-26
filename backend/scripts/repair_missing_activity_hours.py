@@ -47,8 +47,8 @@ SELECT p.id,p.learner_id,p.kind,p.component_ref,p.component_type,p.quiz_ref,p.pa
       'dated_entries',marking.full_submission #> '{monthlyAssignment,timeEntries}') END AS marking,
     ARRAY(SELECT report_month FROM "Learner".learner_monthly_signatures
           WHERE learner_id=l.id AND review_confirmed IS TRUE
-      UNION SELECT report_month FROM "Learner".learner_monthly_locks
-          WHERE learner_id=l.id AND locked_at IS NOT NULL AND unlocked_at IS NULL
+      UNION SELECT report_month FROM "Learner".learner_monthly_targets
+          WHERE learner_id=l.id AND month_status IN ('partially_signed','locked')
       UNION SELECT report_month FROM "Learner".monthly_audit_signoffs
           WHERE learner_id=l.aptem_id::text AND review_confirmed IS TRUE
       UNION SELECT report_month FROM (

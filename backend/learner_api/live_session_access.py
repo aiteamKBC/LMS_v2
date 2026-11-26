@@ -105,14 +105,24 @@ def access_refusal(kind, learner_id, component_id, *, source=None, component_typ
         rows = _read('SELECT type,module_catalogue_id FROM curriculum.components WHERE id=%s', [str(component_id)])
         if not rows or not is_live(rows[0]['type']):
             return None  # Other activity types retain their existing validation.
+        from .identity import learner_profile_for_source
         from .learner_detail import _resolve_from_master
-        from .learning_plan import effective_training_plan
+        from .learning_plan import (
+            effective_training_plan,
+            install_canonical_training_plan_module_ids,
+        )
         if source is None:
             from .models import CommercialUser, EnrolmentUser
             model = {'commercial': CommercialUser, 'apprenticeship': EnrolmentUser}.get(kind)
             source = model.objects.filter(pk=learner_id).first() if model else None
         if source is None:
             return JsonResponse({'error': 'Learner not found.'}, status=404)
+        profile = learner_profile_for_source(
+            source, learner_id, heal=False, fields=('id', 'enrolment_id'),
+        )
+        if profile is None:
+            return JsonResponse({'error': 'This activity is not in your learning plan.'}, status=403)
+        install_canonical_training_plan_module_ids(source, profile)
         module_id = str(rows[0]['module_catalogue_id'])
         assigned = [row for row in effective_training_plan(source) if str(row.get('moduleId')) == module_id]
         if not assigned:

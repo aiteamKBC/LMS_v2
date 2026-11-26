@@ -34,10 +34,14 @@ def project_points(rows, configurations):
 
 
 def learner_plan(kind, learner_id):
-    from .learner_detail import SOURCE_MODELS
-    from .learning_plan import _effective_plan_ids
-    from . import canonical_learning
     from coach_api.weekly_learning import assignment_projection
+
+    from . import canonical_learning
+    from .learner_detail import SOURCE_MODELS
+    from .learning_plan import (
+        _effective_plan_ids,
+        install_canonical_training_plan_module_ids,
+    )
     model = SOURCE_MODELS.get(kind)
     if model is None:
         raise ValueError('Invalid learner kind.')
@@ -47,6 +51,7 @@ def learner_plan(kind, learner_id):
     source.training_plan = source._weekly_training_plan
     source.learning_plan = source._weekly_learning_plan
     owner = canonical_learning.require_profile(learner_id)
+    install_canonical_training_plan_module_ids(source, owner)
     module_ids = list(dict.fromkeys(_effective_plan_ids(source, {})))
     if not module_ids:
         return {'weeks': {}}
