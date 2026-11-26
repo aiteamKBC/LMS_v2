@@ -32,13 +32,13 @@
 .pinField { position: relative; height: 170px; flex: 0 0 170px; }
 .sharedRail { position: absolute; top: 73px; inset-inline: 0; height: 4px; background: var(--module-color); opacity: .55; }
 .curvedRail { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
-.curvedRail path { fill: none; stroke: var(--module-color); stroke-width: 4px; opacity: .55; }
-.section[data-variant='curved'] .pinField { height: 250px; flex-basis: 250px; }
-.section[data-variant='curved'] .scale { top: 218px; }
-.section[data-variant='curved'] .noPins { top: 178px; }
+.curvedRail path { fill: none; stroke: var(--module-color); stroke-width: 4px; stroke-linecap: round; stroke-linejoin: round; opacity: .55; }
+.section[data-variant='curved'] .pinField { height: 340px; flex-basis: 340px; }
+.section[data-variant='curved'] .scale { top: 306px; }
+.section[data-variant='curved'] .noPins { top: 275px; }
 .scale { position: absolute; top: 135px; inset-inline: 48px; display: flex; justify-content: space-between; font-size: 11px; font-weight: 650; line-height: 1.4; color: var(--employer-ink); }
 .connectors { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
-.connectors line { stroke: var(--module-color); stroke-width: 1; opacity: .45; }
+.connectors line, .connectors path { fill: none; stroke: var(--module-color); stroke-width: 1; opacity: .45; }
 .pin { position: absolute; top: 20px; z-index: 1; width: 88px; transform: translateX(-50%); display: flex; align-items: center; flex-direction: column; border: 0; padding: 0; background: transparent; color: var(--module-color); cursor: pointer; }
 .pinHead { position: relative; display: grid; place-items: center; width: 35px; height: 43px; filter: drop-shadow(0 2px 2px #0002); }
 .pinHead::before { content: ''; position: absolute; top: 2px; width: 31px; height: 31px; border: 2px solid var(--employer-surface); border-radius: 50% 50% 50% 3px; background: var(--module-color); transform: rotate(-45deg); }

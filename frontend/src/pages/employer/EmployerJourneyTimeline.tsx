@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useLocation } from 'react-router-dom';
 import { BookOpen, Check, ChevronLeft, ChevronRight, CircleAlert, GitFork, MapPin, Route, SkipForward, Users } from 'lucide-react';
@@ -19,14 +19,19 @@ const percent = (value: number | null) => value == null ? 'Unavailable' : `${num
 const dateRange = (start: string, end: string) => start && end ? `${formatReviewDate(start)} – ${formatReviewDate(end)}`
   : start ? `From ${formatReviewDate(start)}` : end ? `Until ${formatReviewDate(end)}` : 'Schedule unavailable';
 const initials = (name: string) => name.trim().split(/\s+/).slice(0, 2).map(part => part[0]).join('').toUpperCase();
-// Each third is a cubic with linear X and smooth Y; joins stay horizontal
-// even when neighbouring modules have different widths.
-const curveHeights = [125, 95, 155, 125];
-function curveY(percent: number) {
-  const position = Math.max(0, Math.min(100, percent)) / 100 * 3;
-  const segment = Math.min(2, Math.floor(position));
-  const t = position - segment;
-  return curveHeights[segment] + (curveHeights[segment + 1] - curveHeights[segment]) * t * t * (3 - 2 * t);
+// One continuous wave in canvas pixels, so changing module widths never resets
+// the phase or steepness at a colour boundary. Pins use the same curve.
+const curveFrequency = 2 * Math.PI / 900;
+const curveY = (distance: number) => 170 + 70 * Math.cos(distance * curveFrequency);
+const curveSlope = (distance: number) => -70 * curveFrequency * Math.sin(distance * curveFrequency);
+function curvePath(offset: number, width: number) {
+  let path = `M0 ${curveY(offset)}`;
+  for (let start = 0; start < width; start += 50) {
+    const end = Math.min(start + 50, width);
+    const handle = (end - start) / 3;
+    path += ` C${start + handle} ${curveY(offset + start) + handle * curveSlope(offset + start)} ${end - handle} ${curveY(offset + end) - handle * curveSlope(offset + end)} ${end} ${curveY(offset + end)}`;
+  }
+  return path;
 }
 type LearnerPosition = { pin: JourneyPin; learner: EmployerLearnerCard };
 const sortPins = (a: LearnerPosition, b: LearnerPosition) => (a.pin.percent ?? 0) - (b.pin.percent ?? 0)
@@ -109,25 +114,48 @@ function LearnerPin({ pin, learner, left, top }: { pin: JourneyPin; learner: Emp
   </>;
 }
 
-function JourneyPinField({ title, pins, width, positions, parallel = false, curved = false }: {
-  title: string; pins: LearnerPosition[]; width: number; positions: number[]; parallel?: boolean; curved?: boolean;
+function JourneyPinField({ title, pins, width, positions, layoutKey, parallel = false, curved = false }: {
+  title: string; pins: LearnerPosition[]; width: number; positions: number[]; layoutKey: string; parallel?: boolean; curved?: boolean;
 }) {
-  return <div className={styles.pinField} role="group" aria-label={`${title} ${parallel ? 'parallel learner' : 'learner'} pins`}>
-    {curved ? <svg className={styles.curvedRail} viewBox="0 0 100 250" preserveAspectRatio="none" aria-hidden="true">
-      <path d="M0 125 C11.111111 125 22.222222 95 33.333333 95 C44.444444 95 55.555556 155 66.666667 155 C77.777778 155 88.888889 125 100 125" vectorEffect="non-scaling-stroke" />
+  const field = useRef<HTMLDivElement>(null);
+  const [geometry, setGeometry] = useState({ width, offset: 0 });
+  useLayoutEffect(() => {
+    const element = field.current;
+    const canvas = element?.parentElement?.parentElement;
+    if (!curved || !element || !canvas) return;
+    const measure = () => {
+      const bounds = element.getBoundingClientRect();
+      const offset = bounds.left - canvas.getBoundingClientRect().left;
+      setGeometry(current => current.width === bounds.width && current.offset === offset
+        ? current : { width: bounds.width, offset });
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    observer.observe(canvas);
+    return () => observer.disconnect();
+  }, [curved, width, layoutKey]);
+  const yAt = (percent: number) => curveY(geometry.offset + percent / 100 * geometry.width);
+  return <div ref={field} className={styles.pinField} role="group" aria-label={`${title} ${parallel ? 'parallel learner' : 'learner'} pins`}>
+    {curved ? <svg className={styles.curvedRail} viewBox={`0 0 ${geometry.width} 340`} preserveAspectRatio="none" aria-hidden="true">
+      <path d={curvePath(geometry.offset, geometry.width)} vectorEffect="non-scaling-stroke" />
     </svg> : <div className={styles.sharedRail} aria-hidden="true" />}
     <div className={styles.scale} aria-hidden="true"><span>0%</span><span>50%</span><span>100%</span></div>
     <svg className={styles.connectors} aria-hidden="true" width="100%" height="100%">
       {pins.map(({ pin, learner }, index) => {
         const marker = positions[index] / width * 100;
         const progress = (48 + (pin.percent ?? 0) / 100 * (width - 96)) / width * 100;
-        return <line key={learnerKey(learner)} x1={`${marker}%`} y1={curved ? curveY(marker) - 17 : 58}
-          x2={`${progress}%`} y2={curved ? curveY(progress) : 75} />;
+        if (curved) {
+          const x1 = marker / 100 * geometry.width, x2 = progress / 100 * geometry.width;
+          const y1 = yAt(marker) - 17, y2 = yAt(progress);
+          return <path key={learnerKey(learner)} d={`M${x1} ${y1} C${x1} ${y1 + 12} ${x2} ${y2 - 12} ${x2} ${y2}`} />;
+        }
+        return <line key={learnerKey(learner)} x1={`${marker}%`} y1="58" x2={`${progress}%`} y2="75" />;
       })}
     </svg>
     {pins.map(({ pin, learner }, index) => {
       const left = positions[index] / width * 100;
-      return <LearnerPin key={learnerKey(learner)} pin={pin} learner={learner} left={left} top={curved ? curveY(left) - 55 : undefined} />;
+      return <LearnerPin key={learnerKey(learner)} pin={pin} learner={learner} left={left} top={curved ? yAt(left) - 55 : undefined} />;
     })}
     {!pins.length && <p className={styles.noPins}>{parallel ? 'No parallel learners here' : 'No learners positioned here'}</p>}
   </div>;
@@ -200,7 +228,7 @@ export function EmployerJourneyTimeline({ employerId, learners, filtered, record
               <p className={styles.dates}>{dateRange(module.start, module.end)}</p>
               <div className={styles.moduleStats}><span><strong>{percent(average)}</strong> average{known.length !== module.entries.length && ` (${known.length}/${module.entries.length})`}</span><span><Check size={12} />{module.entries.filter(entry => entry.percent === 100).length} complete</span></div>
               </div>
-              <JourneyPinField title={module.title} pins={pins} width={width} positions={positions} curved={curved} />
+              <JourneyPinField title={module.title} pins={pins} width={width} positions={positions} layoutKey={moduleIds} curved={curved} />
             </article>;
           })}
           {hasParallel && <>
@@ -208,7 +236,7 @@ export function EmployerJourneyTimeline({ employerId, learners, filtered, record
             {segments.map(({ module, parallelPins, width, parallelPositions }) => <article key={`parallel:${module.id}`} className={styles.moduleSegment}
               style={{ '--module-hue': module.hue } as CSSProperties} aria-label={`${module.title} parallel journey segment`}>
               <div className={styles.parallelModuleHeader}><h4 title={module.title}>{module.title}</h4><span>{parallelPins.length} learner{parallelPins.length === 1 ? '' : 's'}</span></div>
-              <JourneyPinField title={module.title} pins={parallelPins} width={width} positions={parallelPositions} parallel curved={curved} />
+              <JourneyPinField title={module.title} pins={parallelPins} width={width} positions={parallelPositions} layoutKey={moduleIds} parallel curved={curved} />
             </article>)}
           </>}
       </div>
