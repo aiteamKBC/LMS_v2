@@ -23,12 +23,15 @@ export function useAssignmentTimer(key: string) {
   };
   const pause = () => { flush(); tickAt.current = null; setRunning(false); };
   const resume = () => { if (tickAt.current === null) tickAt.current = Date.now(); setRunning(true); };
-  const restore = (serverSeconds: number, start: boolean) => {
+  const restore = (serverSeconds: number, start: boolean, authoritative = false) => {
     let local = 0;
     try { local = Number(localStorage.getItem(key)) || 0; } catch { /* Use server draft. */ }
     flush();
-    seconds.current = Math.max(seconds.current, 0, Math.floor(Number(serverSeconds) || 0), Number.isFinite(local) ? local : 0);
+    seconds.current = authoritative
+      ? Math.max(0, Math.floor(Number(serverSeconds) || 0))
+      : Math.max(seconds.current, 0, Math.floor(Number(serverSeconds) || 0), Number.isFinite(local) ? local : 0);
     setElapsed(seconds.current); tickAt.current = start ? Date.now() : null; setRunning(start);
+    if (authoritative) persist();
   };
   const reset = () => { seconds.current = 0; setElapsed(0); tickAt.current = null; setRunning(false); persist(); };
   useEffect(() => {

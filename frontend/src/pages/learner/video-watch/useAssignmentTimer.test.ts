@@ -34,3 +34,12 @@ it('restores a server draft on another device and keeps another learner separate
   expect(view.result.current.elapsed).toBe(92);
   expect(localStorage.getItem('assignment:other')).toBe('400');
 });
+
+it('uses an explicit submitted display correction instead of stale browser time', () => {
+  localStorage.setItem('assignment:one', String(426695));
+  const view = renderHook(() => useAssignmentTimer('assignment:one'));
+  act(() => view.result.current.restore(28800, false, true));
+  expect(view.result.current.elapsed).toBe(28800);
+  expect(view.result.current.running).toBe(false);
+  expect(localStorage.getItem('assignment:one')).toBe('28800');
+});

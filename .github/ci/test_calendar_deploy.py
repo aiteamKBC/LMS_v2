@@ -132,7 +132,11 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertEqual(positions, sorted(positions))
         # Recording validation is now an additional blocking gate; retain every
         # existing security, Teams and schema dependency alongside it.
-        self.assertIn('security, teams, release-guards, recording-checks]', workflow)
+        needs_line = next(line for line in workflow.splitlines()
+                          if line.strip().startswith('needs: [changes, backend'))
+        needs = {item.strip() for item in needs_line.split('[', 1)[1].split(']', 1)[0].split(',')}
+        self.assertEqual(needs, {'changes', 'backend', 'backend-tests', 'frontend', 'security',
+                                'teams', 'release-guards', 'recording-checks', 'assignment-checks'})
         self.assertIn('uses: ./.github/workflows/recording-checks.yml', workflow)
 
     def test_app_revision_is_pinned_and_only_merged_main_is_deployed(self):

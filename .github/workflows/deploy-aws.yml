@@ -348,10 +348,18 @@ jobs:
     name: Recording regression guards
     uses: ./.github/workflows/recording-checks.yml
 
+  assignment-checks:
+    name: Learner assignment regression guards
+    needs: changes
+    if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true'
+    uses: ./.github/workflows/learner-assignment-checks.yml
+    with:
+      ref: ${{ needs.changes.outputs.commit }}
+
   # ------------------------------------------------------------------ deploy
   deploy:
     name: Deploy to AWS
-    needs: [changes, backend, backend-tests, frontend, security, teams, release-guards, recording-checks]
+    needs: [changes, backend, backend-tests, frontend, security, teams, release-guards, recording-checks, assignment-checks]
     # Runs when the changed parts passed; parts that didn't change are skipped
     if: >-
       !cancelled()
