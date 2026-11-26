@@ -12,13 +12,11 @@ export function markingStatusLabel(status: string, isOverdue = false) {
 }
 
 export function markingSubmissionPreview(item: MarkingSubmission) {
-  if (item.markingPart) return item.contentPreview || 'Open this part to review the learner\'s answers.';
   return item.learningReflection || item.applicationText || item.benefitExplanation
     || 'Open the submission to review the learner evidence and recorded KSBs.';
 }
 
 export function markingActivityLabel(item: MarkingSubmission, kind: MarkingKind) {
-  if (item.markingPartLabel) return item.markingPartLabel;
   if (item.activityType) return item.activityType.replaceAll('_', ' ');
   return kind === 'assignment' ? 'Assignment' : 'Learning reflection';
 }

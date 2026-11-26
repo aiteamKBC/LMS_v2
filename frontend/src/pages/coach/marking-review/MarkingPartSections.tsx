@@ -100,22 +100,21 @@ function EntryBody({ entry }: { entry: MarkingSectionEntry }) {
   }
 }
 
-const FEEDBACK_TAB = 'feedback';
-
 /**
- * The learner's answers for one part of a monthly report: one tab per step,
- * then the coach feedback and decision in the last tab.
+ * One tab of a monthly report (steps 2-4 or steps 5-8), with a sub-tab per step.
+ * ``extras`` adds page-owned content to a step, e.g. the uploaded files on step 3.
  */
-export function MarkingPartSections({ sections, feedback }: { sections: MarkingSection[]; feedback?: ReactNode }) {
-  const tabs = [...sections.map(section => String(section.step)), ...(feedback ? [FEEDBACK_TAB] : [])];
-  const [active, setActive] = useState(tabs[0] ?? FEEDBACK_TAB);
+export function MarkingPartSections({ sections, label, extras = {} }: { sections: MarkingSection[]; label: string; extras?: Record<number, ReactNode> }) {
+  const tabs = sections.map(section => String(section.step));
+  const [active, setActive] = useState(tabs[0] ?? '');
   const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const section = sections.find(item => String(item.step) === active);
+  const panelId = `marking-step-panel-${tabs.join('-')}`;
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     const offset = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
     const edge = event.key === 'Home' ? tabs[0] : event.key === 'End' ? tabs[tabs.length - 1] : null;
-    if (!offset && !edge) return;
+    if ((!offset && !edge) || !tabs.length) return;
     event.preventDefault();
     const next = edge ?? tabs[(tabs.indexOf(active) + offset + tabs.length) % tabs.length];
     setActive(next);
@@ -124,45 +123,37 @@ export function MarkingPartSections({ sections, feedback }: { sections: MarkingS
 
   return (
     <div className={styles.parts}>
-      <div className={styles.stepNav} role="tablist" aria-label="Steps in this part" onKeyDown={onKeyDown}>
+      <div className={styles.stepNav} role="tablist" aria-label={label} onKeyDown={onKeyDown}>
         {sections.map(item => {
           const id = String(item.step);
           return (
             <button type="button" role="tab" key={id} id={`marking-step-tab-${id}`} ref={node => { tabRefs.current[id] = node; }}
-              aria-selected={active === id} aria-controls="marking-step-panel" tabIndex={active === id ? 0 : -1} onClick={() => setActive(id)}>
+              aria-selected={active === id} aria-controls={panelId} tabIndex={active === id ? 0 : -1} onClick={() => setActive(id)}>
               <span>{item.step}</span>{item.title}
             </button>
           );
         })}
-        {feedback && (
-          <button type="button" role="tab" id={`marking-step-tab-${FEEDBACK_TAB}`} ref={node => { tabRefs.current[FEEDBACK_TAB] = node; }}
-            aria-selected={active === FEEDBACK_TAB} aria-controls="marking-step-panel" tabIndex={active === FEEDBACK_TAB ? 0 : -1}
-            data-feedback="true" onClick={() => setActive(FEEDBACK_TAB)}>
-            <span><i className="ri-chat-check-line" aria-hidden="true" /></span>Feedback &amp; decision
-          </button>
-        )}
       </div>
-      <div role="tabpanel" id="marking-step-panel" aria-labelledby={`marking-step-tab-${active}`}>
-        {section ? (
-          <section className={styles.step}>
-            <header className={styles.stepHeader}>
-              <span className={styles.badge} aria-hidden="true">{section.step}</span>
-              <div>
-                <p>Step {section.step} of {sections[sections.length - 1]?.step ?? section.step}</p>
-                <h4>{section.title}</h4>
-              </div>
-            </header>
-            <div className={styles.stepBody}>
-              {section.entries.length ? section.entries.map(entry => (
-                <div className={styles.entry} key={entry.label} data-format={entry.format ?? 'text'}>
-                  <h5>{entry.label}</h5>
-                  <EntryBody entry={entry} />
-                </div>
-              )) : <p className={styles.empty}>Nothing was entered for this step.</p>}
+      {section && (
+        <section className={styles.step} role="tabpanel" id={panelId} aria-labelledby={`marking-step-tab-${active}`}>
+          <header className={styles.stepHeader}>
+            <span className={styles.badge} aria-hidden="true">{section.step}</span>
+            <div>
+              <p>Step {section.step}</p>
+              <h4>{section.title}</h4>
             </div>
-          </section>
-        ) : feedback}
-      </div>
+          </header>
+          <div className={styles.stepBody}>
+            {section.entries.length ? section.entries.map(entry => (
+              <div className={styles.entry} key={entry.label} data-format={entry.format ?? 'text'}>
+                <h5>{entry.label}</h5>
+                <EntryBody entry={entry} />
+              </div>
+            )) : !extras[section.step] && <p className={styles.empty}>Nothing was entered for this step.</p>}
+            {extras[section.step] && <div className={styles.entry}>{extras[section.step]}</div>}
+          </div>
+        </section>
+      )}
     </div>
   );
 }

@@ -12,7 +12,6 @@
 .stepNav button:hover { border-color: #8eb6d6; background: #f4f9ff; }
 .stepNav button[aria-selected="true"] { border-color: var(--navy); background: var(--navy); color: #fff; }
 .stepNav button[aria-selected="true"] span { background: #fff; color: var(--navy); }
-.stepNav button[data-feedback="true"] { margin-left: auto; }
 .stepNav button:focus-visible { outline: 2px solid #2c87ce; outline-offset: 2px; }
 .stepNav button span { display: inline-flex; width: 20px; height: 20px; align-items: center; justify-content: center; border-radius: 999px; background: #e8eef5; color: var(--navy); font-size: 10px; font-weight: 780; }
 

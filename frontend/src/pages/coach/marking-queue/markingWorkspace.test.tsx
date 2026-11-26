@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import CoachMarkingQueue from './page';
 import CoachMarkingReviewPage from '../marking-review/page';
@@ -155,58 +155,54 @@ describe('coach marking workspace', () => {
     });
   });
 
-  it('lists a monthly report as separate assignment and reflection items that open their own part', async () => {
-    const assignmentPart = { ...submission, markingPart: 'assignment', markingPartLabel: 'Assignment (Steps 2–4)', contentPreview: 'My assignment answer.' };
-    const reflectionPart = { ...submission, markingPart: 'reflection', markingPartLabel: 'Reflection (Steps 5–8)', contentPreview: 'My month in review.' };
+  it('lists only assignment submissions, with no reflection or type tabs', async () => {
     mocks.coachFetch.mockImplementation(() => response({
-      items: [assignmentPart, reflectionPart],
-      summary: { ...summary, totalItems: 2, pendingItems: 2, reflectionItems: 1 },
-      pagination: { page: 1, pageSize: 25, totalItems: 2, totalPages: 1, hasNext: false, hasPrevious: false },
+      items: [submission],
+      summary,
+      pagination: { page: 1, pageSize: 25, totalItems: 1, totalPages: 1, hasNext: false, hasPrevious: false },
     }));
-    function Destination() {
-      return <p>Opened {new URLSearchParams(useLocation().search).get('part') ?? 'none'}</p>;
-    }
 
     render(
       <MemoryRouter initialEntries={['/coach/marking-queue']}>
         <Routes>
           <Route path="/coach/marking-queue" element={<CoachMarkingQueue />} />
-          <Route path="/coach/marking-queue/:submissionId" element={<Destination />} />
         </Routes>
       </MemoryRouter>,
     );
 
-    expect(await screen.findByText('Assignment (Steps 2–4)')).toBeInTheDocument();
-    expect(screen.getByText('Reflection (Steps 5–8)')).toBeInTheDocument();
-    expect(screen.getByText('My assignment answer.')).toBeInTheDocument();
-    expect(screen.getByText('My month in review.')).toBeInTheDocument();
-    expect(mocks.coachFetch).toHaveBeenCalledWith(expect.stringContaining('split=1'));
-    const views = screen.getAllByRole('button', { name: 'View' });
-    expect(views).toHaveLength(2);
-    fireEvent.click(views[1]);
-    expect(screen.getByText('Opened reflection')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Stakeholder engagement reflection' })).toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: 'Submission type' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Reflections/ })).not.toBeInTheDocument();
+    for (const [url] of mocks.coachFetch.mock.calls) expect(String(url)).toContain('kind=assignment');
   });
 
-  it('marks one part of a monthly report against that part only', async () => {
-    const reflectionPart = {
+  it('reviews a monthly report in assignment, reflection and feedback tabs with one decision', async () => {
+    const monthly = {
       ...submission,
-      markingPart: 'reflection',
-      markingPartLabel: 'Reflection (Steps 5–8)',
-      markingSections: [
-        { step: 5, title: 'Full-month reflection', entries: [{ label: 'How does the learning fit together?', text: 'It connected budgeting with risk.' }] },
-        { step: 6, title: 'Impact & employer benefit', entries: [] },
-      ],
+      monthlySections: {
+        assignment: [
+          { step: 2, title: 'Assignment answer', entries: [{ label: 'Assignment answer', text: 'The budget came from quotations.', format: 'text' }] },
+          { step: 3, title: 'Evidence & cross-referencing', entries: [] },
+          { step: 4, title: 'KSBs & hours claimed', entries: [{ label: 'Hours claimed', text: '6', format: 'value' }] },
+        ],
+        reflection: [
+          { step: 5, title: 'Full-month reflection', entries: [{ label: 'How does the learning fit together?', text: 'It connected budgeting with risk.', format: 'text' }] },
+          { step: 6, title: 'Impact & employer benefit', entries: [] },
+          { step: 7, title: 'Action plan & EPA', entries: [] },
+          { step: 8, title: 'Coaching & presentation', entries: [] },
+        ],
+      },
     };
     mocks.coachFetch.mockImplementation((url: string, options?: { method?: string; body?: unknown }) => {
-      if (url.includes('/ai-feedback')) return response({ feedback: 'Reflection draft.', meta: {} });
-      if (url.includes('/ai-prompt')) return response({ prompt: 'Validate the reflection.', file: 'AI_reflection_prompt.MD', kind: 'reflection', available: true });
-      if (options?.method === 'PATCH') return response({ id: submission.id, part: 'reflection', status: 'accepted' });
-      if (url.includes('?status=all')) return response({ items: [reflectionPart], summary });
-      return response({ item: reflectionPart });
+      if (url.endsWith('/ai-feedback')) return response({ feedback: 'Whole report draft.', meta: {} });
+      if (url.endsWith('/ai-prompt')) return response({ prompt: 'Mark the report.', file: 'AI_marking_prompt.MD', kind: 'assignment', available: true });
+      if (options?.method === 'PATCH') return response({ id: submission.id, status: 'accepted' });
+      if (url.includes('?status=all')) return response({ items: [monthly], summary });
+      return response({ item: monthly });
     });
 
     render(
-      <MemoryRouter initialEntries={[`/coach/marking-queue/${submission.id}?part=reflection`]}>
+      <MemoryRouter initialEntries={[`/coach/marking-queue/${submission.id}`]}>
         <Routes>
           <Route path="/coach/marking-queue/:submissionId" element={<CoachMarkingReviewPage />} />
           <Route path="/coach/marking-queue" element={<p>Queue destination</p>} />
@@ -214,34 +210,42 @@ describe('coach marking workspace', () => {
       </MemoryRouter>,
     );
 
-    expect(await screen.findByRole('heading', { name: 'Full-month reflection' })).toBeInTheDocument();
-    const steps = screen.getByRole('tablist', { name: 'Steps in this part' });
-    expect(within(steps).getAllByRole('tab').map(tab => tab.textContent)).toEqual(['5Full-month reflection', '6Impact & employer benefit', 'Feedback & decision']);
-    expect(screen.getByText('It connected budgeting with risk.')).toBeInTheDocument();
-    // The decision lives in its own tab, after the steps.
-    expect(screen.queryByRole('button', { name: 'Generate AI draft' })).not.toBeInTheDocument();
-    fireEvent.click(within(steps).getByRole('tab', { name: /Impact & employer benefit/ }));
-    expect(screen.getByText('Nothing was entered for this step.')).toBeInTheDocument();
-    expect(screen.queryByText('It connected budgeting with risk.')).not.toBeInTheDocument();
-    expect(screen.queryByText('I mapped the stakeholders and changed the communication cadence.')).not.toBeInTheDocument();
-    expect(mocks.coachFetch).toHaveBeenCalledWith(`/coach_api/coach/marking-queue/${submission.id}?part=reflection`);
-    await waitFor(() => expect(mocks.coachFetch).toHaveBeenCalledWith(`/coach_api/coach/marking-queue/${submission.id}/ai-prompt?part=reflection`));
+    const main = await screen.findByRole('tablist', { name: 'Monthly report' });
+    expect(within(main).getAllByRole('tab').map(tab => tab.textContent)).toEqual([
+      'Assignment, KSBs & evidenceSteps 2–4', 'ReflectionSteps 5–8', 'FeedbackWhole report',
+    ]);
+    // The old Submission / Evidence & KSBs / Progress history tabs are gone for a monthly report.
+    expect(screen.queryByRole('tab', { name: 'Progress history' })).not.toBeInTheDocument();
 
-    fireEvent.click(within(steps).getByRole('tab', { name: /Feedback & decision/ }));
+    // Assignment tab: one sub-tab per step, step 2 first. No decision here.
+    const assignmentSteps = screen.getByRole('tablist', { name: 'Assignment, KSBs & evidence steps' });
+    expect(within(assignmentSteps).getAllByRole('tab')).toHaveLength(3);
+    expect(screen.getByText('The budget came from quotations.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Generate AI draft' })).not.toBeInTheDocument();
+    fireEvent.click(within(assignmentSteps).getByRole('tab', { name: /Evidence & cross-referencing/ }));
+    expect(screen.getByText('Uploaded evidence')).toBeInTheDocument();
+
+    fireEvent.click(within(main).getByRole('tab', { name: /Reflection/ }));
+    const reflectionSteps = screen.getByRole('tablist', { name: 'Reflection steps' });
+    expect(within(reflectionSteps).getAllByRole('tab')).toHaveLength(4);
+    expect(screen.getByText('It connected budgeting with risk.')).toBeInTheDocument();
+    expect(screen.queryByText('The budget came from quotations.')).not.toBeInTheDocument();
+
+    fireEvent.click(within(main).getByRole('tab', { name: /Feedback/ }));
+    expect(screen.getByText(/cover the whole monthly report/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Generate AI draft' }));
     const feedback = await screen.findByPlaceholderText('Write clear, actionable feedback for the learner…');
-    await waitFor(() => expect(feedback).toHaveValue('Reflection draft.'));
-    expect(mocks.coachFetch).toHaveBeenCalledWith(`/coach_api/coach/marking-queue/${submission.id}/ai-feedback?part=reflection`, { method: 'POST' });
+    await waitFor(() => expect(feedback).toHaveValue('Whole report draft.'));
+    expect(mocks.coachFetch).toHaveBeenCalledWith(`/coach_api/coach/marking-queue/${submission.id}/ai-feedback`, { method: 'POST' });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Accept reflection part' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Accept assignment and send feedback' }));
     await waitFor(() => expect(screen.getByText('Queue destination')).toBeInTheDocument());
     const patchCall = mocks.coachFetch.mock.calls.find(([, options]) => options?.method === 'PATCH');
     expect(patchCall?.[0]).toBe(`/coach_api/coach/marking-queue/${submission.id}`);
     expect(JSON.parse(String(patchCall?.[1]?.body))).toEqual({
       decision: 'accepted',
-      feedback: 'Reflection draft.',
+      feedback: 'Whole report draft.',
       reviewedBy: 'Test Coach',
-      part: 'reflection',
     });
   });
 });

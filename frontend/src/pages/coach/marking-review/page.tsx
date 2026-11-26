@@ -10,8 +10,8 @@ import styles from './markingReview.module.css';
 
 import { AssignmentAttemptHistory } from '@/components/feature/AssignmentAttemptHistory';
 import type { SubmissionAttempt } from '@/api/assignmentAttempts';
-import { fetchMarkingDetail, fetchMarkingSidebarQueue, markingPartQuery } from '@/features/coach/marking/api/markingApi';
-import type { MarkingPart, MarkingSection } from '@/features/coach/marking/types/marking.types';
+import { fetchMarkingDetail, fetchMarkingSidebarQueue } from '@/features/coach/marking/api/markingApi';
+import type { MonthlySections } from '@/features/coach/marking/types/marking.types';
 import { readExtraActivities } from '../extra-activities/api';
 import { loadLearningReflectionSubmission, type StoredLearningReflectionSubmission } from '@/api/reflectionSubmission';
 import { CoachPresentationDownload } from './CoachPresentationDownload';
@@ -32,9 +32,8 @@ async function personalEvidence(submissionId: string, fileId?: string) {
 }
 
 interface Submission {
-  markingPart?: MarkingPart;
-  markingPartLabel?: string;
-  markingSections?: MarkingSection[];
+  /** Present for a monthly (nine-step) assignment report: the content of the two review tabs. */
+  monthlySections?: MonthlySections;
   ksbReview?: KsbReview;
   submissionAttempts?: SubmissionAttempt[];
   version?: number;
@@ -86,7 +85,13 @@ interface QueueSummary {
 
 type ReviewDecision = 'accepted' | 'rejected' | 'referred';
 type WorkspaceTab = 'submission' | 'evidence' | 'history';
-type QueueKind = 'all' | 'assignment' | 'reflection';
+/** A monthly report: steps 2-4, steps 5-8, then one feedback and decision for the whole report. */
+type MonthlyTab = 'assignment' | 'reflection' | 'feedback';
+const MONTHLY_TABS: Array<[MonthlyTab, string, string]> = [
+  ['assignment', 'Assignment, KSBs & evidence', 'Steps 2–4'],
+  ['reflection', 'Reflection', 'Steps 5–8'],
+  ['feedback', 'Feedback', 'Whole report'],
+];
 
 function statusLabel(status: string) {
   if (status === 'ksb_review') return 'KSB review required';
@@ -112,29 +117,17 @@ function fileSize(bytes: number) {
 }
 
 function isAssignment(item: Submission) {
-  if (item.markingPart) return item.markingPart === 'assignment';
   return ['assignment', 'extra_activity'].includes((item.activityType || '').toLowerCase());
 }
 
-/** A monthly report is two queue items with one id, so the part is part of the identity. */
-function itemKey(item: Pick<Submission, 'id' | 'markingPart'>) {
-  return `${item.id}:${item.markingPart ?? ''}`;
-}
-
 function kindLabel(item: Submission) {
-  if (item.markingPartLabel) return item.markingPartLabel;
   return item.activityType === 'extra_activity' ? 'Extra activity' : isAssignment(item) ? 'Assignment' : 'Reflection';
-}
-
-function parseMarkingPart(value: string | null): MarkingPart | null {
-  return value === 'assignment' || value === 'reflection' ? value : null;
 }
 
 export default function CoachMarkingReviewPage() {
   const [searchParams] = useSearchParams();
   const extraActivities = useLocation().pathname.startsWith('/coach/extra-activities');
   const personal = searchParams.get('scope') === 'personal';
-  const part = personal ? null : parseMarkingPart(searchParams.get('part'));
   const apiEndpoint = personal ? '/coach_api/coach/personal-marking' : '/coach_api/coach/marking-queue';
   const scopeQuery = personal ? '?scope=personal' : '';
   const queuePath = extraActivities ? '/coach/extra-activities' : `/coach/marking-queue${scopeQuery}`;
@@ -163,8 +156,8 @@ export default function CoachMarkingReviewPage() {
   const [promptError, setPromptError] = useState('');
   const [promptUpload, setPromptUpload] = useState<File | null>(null);
   const [search, setSearch] = useState('');
-  const [queueKind, setQueueKind] = useState<QueueKind>('all');
   const [tab, setTab] = useState<WorkspaceTab>('submission');
+  const [monthlyTab, setMonthlyTab] = useState<MonthlyTab>('assignment');
 
   const loadSequence = useRef(0);
   const load = useCallback(async () => {
@@ -180,13 +173,14 @@ export default function CoachMarkingReviewPage() {
     }
 
     try {
-      const detailItem = await fetchMarkingDetail<Submission>(personal ? 'personal' : 'official', submissionId || '', part);
+      const detailItem = await fetchMarkingDetail<Submission>(personal ? 'personal' : 'official', submissionId || '');
       if (sequence !== loadSequence.current) return;
       if (extraActivities && detailItem?.activityType !== 'extra_activity') throw new Error('Extra activity not found.');
       // Initialise together: a later effect could overwrite the coach's first edit.
       setFeedback(detailItem?.coachFeedback ?? '');
       setPromptUpload(null);
       setSelected(detailItem);
+      setMonthlyTab('assignment');
 
       try {
         const queueData = extraActivities ? await readExtraActivities(new URLSearchParams({ status: 'all', page: '1' })).then(data => ({
@@ -205,7 +199,7 @@ export default function CoachMarkingReviewPage() {
     } finally {
       if (sequence === loadSequence.current) setLoading(false);
     }
-  }, [coach.email, coach.isInitialized, submissionId, personal, extraActivities, part]);
+  }, [coach.email, coach.isInitialized, submissionId, personal, extraActivities]);
 
   useEffect(() => {
     let active = true;
@@ -240,7 +234,7 @@ export default function CoachMarkingReviewPage() {
     if (!selected || personal) return;
     let cancelled = false;
     setPromptError('');
-    coachFetch(`${apiEndpoint}/${selected.id}/ai-prompt${markingPartQuery(selected.markingPart)}`)
+    coachFetch(`${apiEndpoint}/${selected.id}/ai-prompt`)
       .then(async response => {
         const body = await response.text();
         let data: { prompt?: string; file?: string; kind?: string; available?: boolean; detail?: string; error?: string } = {};
@@ -263,18 +257,16 @@ export default function CoachMarkingReviewPage() {
   const promptCleared = !prompt.trim() && Boolean(defaultPrompt.trim());
 
   const visibleQueue = useMemo(() => {
-    const currentItems = selected && !queueItems.some(item => itemKey(item) === itemKey(selected))
+    const currentItems = selected && !queueItems.some(item => item.id === selected.id)
       ? [selected, ...queueItems]
       : queueItems;
     const term = search.trim().toLowerCase();
     return currentItems.filter(item => {
-      const kindMatches = queueKind === 'all'
-        || (queueKind === 'assignment' ? isAssignment(item) : !isAssignment(item));
       const searchMatches = !term || [item.learner, item.programme, item.activityTitle, item.module]
         .some(value => value?.toLowerCase().includes(term));
-      return kindMatches && searchMatches;
+      return searchMatches;
     });
-  }, [queueItems, queueKind, search, selected]);
+  }, [queueItems, search, selected]);
 
   const markedToday = useMemo(() => {
     const today = new Date().toDateString();
@@ -312,7 +304,7 @@ export default function CoachMarkingReviewPage() {
         if (promptUpload) form.append('promptFile', promptUpload, promptUpload.name);
         request.body = form;
       }
-      const response = await coachFetch(`${apiEndpoint}/${selected.id}/ai-feedback${markingPartQuery(selected.markingPart)}`, request);
+      const response = await coachFetch(`${apiEndpoint}/${selected.id}/ai-feedback`, request);
       const text = await response.text();
       let data: { feedback?: string; error?: string; detail?: string; meta?: { ksbCount?: number; epaFile?: string; promptSource?: string; promptFile?: string; evidenceFiles?: { filename: string; readable: boolean }[] } } = {};
       try { data = text ? JSON.parse(text) : {}; } catch { throw new Error(`The draft could not be generated (server error ${response.status}).`); }
@@ -346,7 +338,7 @@ export default function CoachMarkingReviewPage() {
       const response = await coachFetch(`${apiEndpoint}/${selected.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ decision, feedback: feedback.trim(), reviewedBy: coach.name, ...(personal ? { version: selected.version } : {}), ...(selected.markingPart ? { part: selected.markingPart } : {}) }),
+        body: JSON.stringify({ decision, feedback: feedback.trim(), reviewedBy: coach.name, ...(personal ? { version: selected.version } : {}) }),
       });
       const text = await response.text();
       let data: { detail?: string; error?: string; fields?: Record<string, string[] | string> } = {};
@@ -363,7 +355,50 @@ export default function CoachMarkingReviewPage() {
     }
   };
 
-  // Part reviews show this in the last step tab; everything else shows it below the submission.
+  const uploadedEvidence = selected ? (
+    <>
+    <div className={styles.sectionHeading}><div><h4>Uploaded evidence</h4><p>Documents attached to this activity.</p></div><span>{evidence.length} files</span></div>
+    {evidence.length ? (
+      <ul className={styles.evidenceList}>
+        {evidence.map(record => {
+          const approved = record.status === 'approved';
+          return (
+            <li key={record.id}>
+              <i className="ri-file-text-line" aria-hidden="true" />
+              <div><strong>{record.filename}</strong><span>{[record.contentType, fileSize(record.sizeBytes)].filter(Boolean).join(' · ')}</span></div>
+              {approved ? <button type="button" disabled={downloading === record.id} onClick={() => void openEvidence(record)}>{downloading === record.id ? 'Opening…' : 'Open file'}</button> : <em>{record.status === 'rejected' ? 'Failed scan' : 'Awaiting scan'}</em>}
+            </li>
+          );
+        })}
+      </ul>
+    ) : <p className={styles.emptyText}>{evidenceError || 'No document was uploaded with this submission.'}</p>}
+    {evidenceError && evidence.length > 0 && <p className={styles.inlineError}>{evidenceError}</p>}
+    </>
+  ) : null;
+
+  const declarationGrid = selected ? (
+    <div className={styles.declarationGrid}>
+      <span>Completed: <strong>{formatDate(selected.dateCompleted)}</strong></span>
+      <span>Paid hours: <strong>{selected.completedDuringPaidHours || '—'}</strong></span>
+      <span>OTJH confirmed: <strong>{selected.otjhConfirmed ? 'Yes' : 'No'}</strong></span>
+      <span>Declaration signed: <strong>{selected.signedDeclaration ? 'Yes' : 'No'}</strong></span>
+    </div>
+  ) : null;
+
+  const presentationDownload = selected?.activityType === 'assignment' ? (
+    <CoachPresentationDownload
+      key={`${coach.email}:${personal}:${selected.id}:${selected.version ?? selected.submittedAt ?? ''}`}
+      scope={personal ? 'personal' : 'official'} submissionId={selected.id}
+      submittedAt={selected.submittedAt} version={selected.version}
+    />
+  ) : null;
+
+  const ksbReviewPanel = selected?.ksbReview ? (
+    <KsbReviewPanel key={`${selected.id}:${selected.ksbReview.revision}:${selected.ksbReview.status}`}
+      submissionId={selected.id} review={selected.ksbReview} onSaved={() => void load()} />
+  ) : null;
+
+  // A monthly report shows this in its Feedback tab; everything else shows it below the submission.
   const feedbackPanel = selected && selected.ksbReview?.status !== 'pending' ? (
       <section className={styles.feedbackPanel}>
         <div className={styles.feedbackHeading}>
@@ -400,10 +435,10 @@ export default function CoachMarkingReviewPage() {
           {promptError && <p className={styles.inlineError}>{promptError}</p>}
         </MarkingInstructionsPanel>}
   
-        {selected.markingPart && <p className={styles.aiNotice}><i className="ri-information-line" aria-hidden="true" /> This monthly report is marked in two parts: the assignment (steps 2–4) and the reflection (steps 5–8). The learner receives one combined feedback, with a section for each part, once both are decided. The report is accepted only if both parts are accepted.</p>}
+        {selected.monthlySections && <p className={styles.aiNotice}><i className="ri-information-line" aria-hidden="true" /> This feedback and decision cover the whole monthly report: the assignment, KSBs &amp; evidence (steps 2–4) and the reflection (steps 5–8). The AI draft is written from both.</p>}
         <div className={styles.decisionRow}>
           <button type="button" className={styles.reject} disabled={saving || (selected.activityType === 'extra_activity' && !extraDocument)} onClick={() => void saveDecision(personal ? 'referred' : 'rejected')}><i className="ri-arrow-go-back-line" aria-hidden="true" /> {personal ? 'Return for improvement' : 'Refer back with feedback'}</button>
-          <button type="button" className={styles.accept} disabled={saving || (selected.activityType === 'extra_activity' && !extraDocument)} onClick={() => void saveDecision('accepted')}><i className={saving ? 'ri-loader-4-line' : 'ri-shield-check-line'} aria-hidden="true" /> {selected.activityType === 'extra_activity' ? 'Accept extra activity and send feedback' : selected.markingPart ? `Accept ${selected.markingPart} part` : 'Accept assignment and send feedback'}</button>
+          <button type="button" className={styles.accept} disabled={saving || (selected.activityType === 'extra_activity' && !extraDocument)} onClick={() => void saveDecision('accepted')}><i className={saving ? 'ri-loader-4-line' : 'ri-shield-check-line'} aria-hidden="true" /> {selected.activityType === 'extra_activity' ? 'Accept extra activity and send feedback' : 'Accept assignment and send feedback'}</button>
         </div>
       </section>
   ) : null;
@@ -447,14 +482,9 @@ export default function CoachMarkingReviewPage() {
                 <span className="sr-only">Search marking queue</span>
                 <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search learner or activity" />
               </label>
-              {!extraActivities && <div className={styles.queueFilters} role="group" aria-label="Filter marking queue by type">
-                {(['all', 'assignment', 'reflection'] as QueueKind[]).map(value => (
-                  <button type="button" key={value} aria-pressed={queueKind === value} onClick={() => setQueueKind(value)}>{value === 'all' ? 'All' : `${value[0].toUpperCase()}${value.slice(1)}s`}</button>
-                ))}
-              </div>}
               <div className={styles.queueList}>
                 {visibleQueue.map(item => (
-                  <button type="button" key={itemKey(item)} className={styles.queueItem} aria-current={itemKey(item) === itemKey(selected) ? 'true' : undefined} onClick={() => navigate(extraActivities ? `/coach/extra-activities/${item.id}` : `/coach/marking-queue/${item.id}${markingPartQuery(item.markingPart)}`)}>
+                  <button type="button" key={item.id} className={styles.queueItem} aria-current={item.id === selected.id ? 'true' : undefined} onClick={() => navigate(extraActivities ? `/coach/extra-activities/${item.id}` : `/coach/marking-queue/${item.id}`)}>
                     <span className={styles.queueItemTop}><strong>{item.learner}</strong><em>{kindLabel(item)}</em></span>
                     <span className={styles.queueTitle}>{item.activityTitle}</span>
                     <span className={styles.queueMeta}>Submitted {item.submittedDisplay}</span>
@@ -484,11 +514,7 @@ export default function CoachMarkingReviewPage() {
               {!personal && ['session', 'recording', 'video'].includes(selected.activityType) && <SavedReflection
                 timeOnly learnerKind={selected.learnerKind} learnerId={selected.learnerId}
                 activityType={selected.activityType} activityId={selected.activityId} />}
-              {selected.activityType === 'assignment' && selected.markingPart !== 'assignment' && <CoachPresentationDownload
-                key={`${coach.email}:${personal}:${selected.id}:${selected.version ?? selected.submittedAt ?? ''}`}
-                scope={personal ? 'personal' : 'official'} submissionId={selected.id}
-                submittedAt={selected.submittedAt} version={selected.version}
-              />}
+              {selected.activityType === 'assignment' && !selected.monthlySections && presentationDownload}
               {selected.activityType === 'extra_activity' && <section className={styles.responseBlock}>
                 <strong>Extra activity</strong>
                 {extraDocumentError && <p role="alert">{extraDocumentError}</p>}
@@ -496,6 +522,33 @@ export default function CoachMarkingReviewPage() {
                 {extraDocument && <><strong>Activity description</strong><p className="whitespace-pre-wrap">{extraDocument.assignmentAnswer}</p><strong>What the learner learned</strong><p className="whitespace-pre-wrap">{extraDocument.whatYouLearned}</p></>}
               </section>}
 
+              {selected.monthlySections ? <>
+              <div className={`${styles.tabs} ${styles.monthlyTabs}`} role="tablist" aria-label="Monthly report">
+                {MONTHLY_TABS.map(([value, label, steps]) => (
+                  <button type="button" role="tab" id={`monthly-tab-${value}`} aria-controls={`monthly-panel-${value}`} aria-selected={monthlyTab === value} key={value} onClick={() => setMonthlyTab(value)}>
+                    <span>{label}</span><small>{steps}</small>
+                  </button>
+                ))}
+              </div>
+              {monthlyTab === 'assignment' && (
+                <section className={styles.tabPanel} role="tabpanel" id="monthly-panel-assignment" aria-labelledby="monthly-tab-assignment">
+                  <MarkingPartSections key={`${selected.id}:assignment`} label="Assignment, KSBs & evidence steps" sections={selected.monthlySections.assignment}
+                    extras={{ 3: uploadedEvidence, 4: declarationGrid }} />
+                </section>
+              )}
+              {monthlyTab === 'reflection' && (
+                <section className={styles.tabPanel} role="tabpanel" id="monthly-panel-reflection" aria-labelledby="monthly-tab-reflection">
+                  <MarkingPartSections key={`${selected.id}:reflection`} label="Reflection steps" sections={selected.monthlySections.reflection}
+                    extras={{ 8: presentationDownload }} />
+                </section>
+              )}
+              {monthlyTab === 'feedback' && (
+                <section className={styles.tabPanel} role="tabpanel" id="monthly-panel-feedback" aria-labelledby="monthly-tab-feedback">
+                  {ksbReviewPanel}
+                  {feedbackPanel}
+                </section>
+              )}
+              </> : <>
               <div className={styles.tabs} role="tablist" aria-label="Submission detail">
                 {([
                   ['submission', 'Submission'],
@@ -517,7 +570,6 @@ export default function CoachMarkingReviewPage() {
                     <span>Learner submission</span>
                     <p>{[selected.module, selected.week].filter(Boolean).join(' · ') || selected.activityTitle}</p>
                   </div>
-                  {selected.markingSections ? <MarkingPartSections key={itemKey(selected)} sections={selected.markingSections} feedback={feedbackPanel} /> : <>
                   <article className={styles.answerBlock}>
                     <header><strong>Learning reflection</strong><span>{(selected.learningReflection || '').trim().split(/\s+/).filter(Boolean).length} words</span></header>
                     <p>{selected.learningReflection || 'No learning reflection was supplied.'}</p>
@@ -530,34 +582,13 @@ export default function CoachMarkingReviewPage() {
                     <header><strong>Employer and business impact</strong></header>
                     <p>{[selected.selectedBenefits.join(', '), selected.benefitExplanation].filter(Boolean).join(' — ') || 'No employer benefit was supplied.'}</p>
                   </article>
-                  </>}
-                  <div className={styles.declarationGrid}>
-                    <span>Completed: <strong>{formatDate(selected.dateCompleted)}</strong></span>
-                    <span>Paid hours: <strong>{selected.completedDuringPaidHours || '—'}</strong></span>
-                    <span>OTJH confirmed: <strong>{selected.otjhConfirmed ? 'Yes' : 'No'}</strong></span>
-                    <span>Declaration signed: <strong>{selected.signedDeclaration ? 'Yes' : 'No'}</strong></span>
-                  </div>
+                  {declarationGrid}
                 </section>
               )}
 
               {tab === 'evidence' && (
                 <section className={styles.tabPanel} role="tabpanel">
-                  <div className={styles.sectionHeading}><div><h4>Uploaded evidence</h4><p>Documents attached to this activity.</p></div><span>{evidence.length} files</span></div>
-                  {evidence.length ? (
-                    <ul className={styles.evidenceList}>
-                      {evidence.map(record => {
-                        const approved = record.status === 'approved';
-                        return (
-                          <li key={record.id}>
-                            <i className="ri-file-text-line" aria-hidden="true" />
-                            <div><strong>{record.filename}</strong><span>{[record.contentType, fileSize(record.sizeBytes)].filter(Boolean).join(' · ')}</span></div>
-                            {approved ? <button type="button" disabled={downloading === record.id} onClick={() => void openEvidence(record)}>{downloading === record.id ? 'Opening…' : 'Open file'}</button> : <em>{record.status === 'rejected' ? 'Failed scan' : 'Awaiting scan'}</em>}
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  ) : <p className={styles.emptyText}>{evidenceError || 'No document was uploaded with this submission.'}</p>}
-                  {evidenceError && evidence.length > 0 && <p className={styles.inlineError}>{evidenceError}</p>}
+                  {uploadedEvidence}
 
                   <div className={styles.sectionHeading}><div><h4>{selected.ksbReview?.status === 'pending' ? 'Original learner KSB claims — awaiting review' : 'Claimed KSBs'}</h4><p>Knowledge, skills and behaviours recorded for this activity.</p></div></div>
                   <div className={styles.ksbList}>
@@ -584,9 +615,9 @@ export default function CoachMarkingReviewPage() {
                 </section>
               )}
 
-              {selected.ksbReview && <KsbReviewPanel key={`${selected.id}:${selected.ksbReview.revision}:${selected.ksbReview.status}`}
-                submissionId={selected.id} review={selected.ksbReview} onSaved={() => void load()} />}
-              {!selected.markingSections && feedbackPanel}
+              {ksbReviewPanel}
+              {feedbackPanel}
+              </>}
             </main>
           </div>
         )}
