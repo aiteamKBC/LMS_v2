@@ -344,10 +344,14 @@ jobs:
     name: Calendar deployment guards
     uses: ./.github/workflows/calendar-deployment-checks.yml
 
+  recording-checks:
+    name: Recording regression guards
+    uses: ./.github/workflows/recording-checks.yml
+
   # ------------------------------------------------------------------ deploy
   deploy:
     name: Deploy to AWS
-    needs: [changes, backend, backend-tests, frontend, security, teams, release-guards]
+    needs: [changes, backend, backend-tests, frontend, security, teams, release-guards, recording-checks]
     # Runs when the changed parts passed; parts that didn't change are skipped
     if: >-
       !cancelled()

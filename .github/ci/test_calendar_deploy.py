@@ -130,7 +130,10 @@ class WorkflowContractTests(unittest.TestCase):
         commands = ['deploy.sh push-candidate', 'calendar_release.py schema', 'deploy.sh promote', 'deploy.sh roll']
         positions = [workflow.index(command) for command in commands]
         self.assertEqual(positions, sorted(positions))
-        self.assertIn('security, teams, release-guards]', workflow)
+        # Recording validation is now an additional blocking gate; retain every
+        # existing security, Teams and schema dependency alongside it.
+        self.assertIn('security, teams, release-guards, recording-checks]', workflow)
+        self.assertIn('uses: ./.github/workflows/recording-checks.yml', workflow)
 
     def test_app_revision_is_pinned_and_only_merged_main_is_deployed(self):
         workflow = (ROOT / '.github/workflows/deploy-aws.yml').read_text()

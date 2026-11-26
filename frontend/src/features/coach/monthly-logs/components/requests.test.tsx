@@ -124,3 +124,24 @@ it('refreshes after 60 seconds on a new visit', async () => {
   await screen.findByRole('table');
   view.client.clear();
 });
+
+it('recovers from an HTML server error and loads another learner independently', async () => {
+  let failYear = true;
+  vi.mocked(coachFetch).mockImplementation(async path => {
+    if (String(path).includes('/7?') && failYear) {
+      failYear = false;
+      return new Response('<!doctype html><title>Server Error</title>', { status: 500 });
+    }
+    return new Response(JSON.stringify(response(String(path))));
+  });
+  const view = mount('/coach/monthly-logs/7');
+  expect(await screen.findByText('Monthly logs could not be loaded (HTTP 500). Please try again.')).toBeVisible();
+  expect(screen.queryByText(/Unexpected token/)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+  await screen.findByRole('table');
+  fireEvent.click(screen.getByRole('link', { name: /Other learner/ }));
+  await waitFor(() => expect(coachFetch).toHaveBeenLastCalledWith(`/coach_api/coach/monthly-logs/8?year=${year}`));
+  await screen.findByRole('table');
+  expect(screen.queryByText('Unable to load monthly logs')).not.toBeInTheDocument();
+  view.client.clear();
+});

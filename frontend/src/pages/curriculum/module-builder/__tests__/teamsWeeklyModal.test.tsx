@@ -4,6 +4,7 @@ import { showCurriculumAlert } from '@/components/feature/CurriculumSweetAlert';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, expect, it, vi } from 'vitest';
+import { useState } from 'react';
 import type {
   CurriculumCohort,
   CurriculumGroup,
@@ -261,6 +262,98 @@ it('clears the save reminder when the module is saved without clearing the meeti
   expect(dialog.getByRole('button', { name: 'Create' })).toHaveAttribute('aria-disabled', 'false');
   expect(dialog.getByLabelText(/Details/)).toHaveValue('Keep these meeting details');
   expect(createTeamsMeeting).not.toHaveBeenCalled();
+});
+
+it.each(['Presenters', 'Co-organizers', 'Attendees'])('saves the module inside Teams and retains added %s until their separate save', async role => {
+  let release!: (module: ModuleCatalogueItem) => void;
+  const onSaveModule = vi.fn(() => new Promise<ModuleCatalogueItem>(resolve => { release = resolve; }));
+  function Builder() {
+    const [unsavedChanges, setUnsavedChanges] = useState(true);
+    return <TeamsMeetingModal module={{ catalogueId: 'MOD-1', title: 'Module' } as never}
+      unsavedChanges={unsavedChanges} onClose={vi.fn()}
+      onSaveModule={async () => { const saved = await onSaveModule(); setUnsavedChanges(false); return saved; }} />;
+  }
+  render(<MemoryRouter><Builder /></MemoryRouter>);
+  const dialog = within(await screen.findByRole('dialog'));
+  await dialog.findByRole('button', { name: 'Remove learner@example.invalid' });
+  const people = dialog.getByRole('combobox', { name: role });
+  fireEvent.change(people, { target: { value: 'added@example.invalid' } });
+  fireEvent.keyDown(people, { key: 'Enter' });
+  expect(dialog.getByRole('button', { name: 'Save without notifying' })).toBeDisabled();
+  const saveModule = dialog.getByRole('button', { name: 'Save module and continue' });
+  fireEvent.click(saveModule);
+  fireEvent.click(saveModule);
+  expect(onSaveModule).toHaveBeenCalledTimes(1);
+  expect(dialog.getByRole('button', { name: 'Saving module…' })).toBeDisabled();
+  expect(dialog.queryByRole('button', { name: 'Close' })).not.toBeInTheDocument();
+  expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
+  await act(async () => { release(freshModule); });
+  const savePeople = dialog.getByRole('button', { name: 'Save without notifying' });
+  await waitFor(() => expect(savePeople).toBeEnabled());
+  expect(dialog.queryByRole('button', { name: 'Save module and continue' })).not.toBeInTheDocument();
+  expect(dialog.getByRole('button', { name: 'Remove added@example.invalid' })).toBeVisible();
+  expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
+  await userEvent.click(savePeople);
+  await waitFor(() => expect(updateTeamsMeetingSchedule).toHaveBeenCalledTimes(1));
+  const [, payload] = updateTeamsMeetingSchedule.mock.calls[0] as [string, Record<string, unknown>];
+  const field = { Presenters: 'presenters', 'Co-organizers': 'coOrganizers', Attendees: 'attendees' }[role]!;
+  expect(payload[field]).toContain('added@example.invalid');
+  expect(payload).toMatchObject({ peopleOnly: true, invitationsOnly: true, organizerEmail: 'organizer@example.invalid', eventId: 'event-1' });
+  expect((payload.scheduledOccurrences as Array<{ startDateTimeUtc: string }>).map(item => item.startDateTimeUtc))
+    .toEqual(['2026-09-02T08:30:00.000Z', '2026-09-09T08:30:00.000Z']);
+});
+
+it('shows a module save failure inside Teams and keeps the added people available for retry', async () => {
+  const onSaveModule = vi.fn(async (): Promise<ModuleCatalogueItem | null> => null);
+  open('MOD-1', { unsavedChanges: true, onSaveModule, moduleSaveError: 'This module is reserved by another editor.' });
+  const dialog = within(await screen.findByRole('dialog'));
+  await dialog.findByRole('button', { name: 'Remove learner@example.invalid' });
+  const people = dialog.getByRole('combobox', { name: 'Attendees' });
+  fireEvent.change(people, { target: { value: 'added@example.invalid' } });
+  fireEvent.keyDown(people, { key: 'Enter' });
+  await userEvent.click(dialog.getByRole('button', { name: 'Save module and continue' }));
+  expect(await dialog.findByRole('alert')).toHaveTextContent('This module is reserved by another editor.');
+  expect(dialog.getByRole('button', { name: 'Save module and continue' })).toBeEnabled();
+  expect(dialog.getByRole('button', { name: 'Remove added@example.invalid' })).toBeVisible();
+  expect(dialog.getByRole('button', { name: 'Save without notifying' })).toBeDisabled();
+  expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
+});
+
+it('keeps Teams blocked if a newer module edit remains after saving', async () => {
+  const onSaveModule = vi.fn(async () => freshModule);
+  open('MOD-1', { unsavedChanges: true, onSaveModule });
+  const dialog = within(await screen.findByRole('dialog'));
+  await dialog.findByRole('button', { name: 'Remove learner@example.invalid' });
+  await userEvent.click(dialog.getByRole('button', { name: 'Save module and continue' }));
+  await waitFor(() => expect(dialog.getByRole('button', { name: 'Save module and continue' })).toBeEnabled());
+  expect(dialog.getByRole('button', { name: 'Save without notifying' })).toBeDisabled();
+  expect(dialog.getByRole('button', { name: 'Update Teams calendar' })).toHaveAttribute('aria-disabled', 'true');
+  expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
+});
+
+it('retries a failed calendar read after saving the module without saving it twice or losing people', async () => {
+  const onSaveModule = vi.fn(async () => freshModule);
+  function Builder() {
+    const [unsavedChanges, setUnsavedChanges] = useState(true);
+    return <TeamsMeetingModal module={{ catalogueId: 'MOD-1', title: 'Module' } as never}
+      unsavedChanges={unsavedChanges} onClose={vi.fn()}
+      onSaveModule={async () => { const saved = await onSaveModule(); setUnsavedChanges(false); return saved; }} />;
+  }
+  render(<MemoryRouter><Builder /></MemoryRouter>);
+  const dialog = within(await screen.findByRole('dialog'));
+  await dialog.findByRole('button', { name: 'Remove learner@example.invalid' });
+  const people = dialog.getByRole('combobox', { name: 'Attendees' });
+  fireEvent.change(people, { target: { value: 'added@example.invalid' } });
+  fireEvent.keyDown(people, { key: 'Enter' });
+  fetchCurriculumTeamsMeetingSummaries.mockRejectedValueOnce(new Error('Calendar unavailable'));
+  await userEvent.click(dialog.getByRole('button', { name: 'Save module and continue' }));
+  expect(await dialog.findByRole('alert')).toHaveTextContent('The module was saved, but its calendar could not be reloaded.');
+  expect(dialog.getByRole('button', { name: 'Save without notifying' })).toBeDisabled();
+  await userEvent.click(dialog.getByRole('button', { name: 'Retry calendar check' }));
+  await waitFor(() => expect(dialog.getByRole('button', { name: 'Save without notifying' })).toBeEnabled());
+  expect(dialog.getByRole('button', { name: 'Remove added@example.invalid' })).toBeVisible();
+  expect(onSaveModule).toHaveBeenCalledTimes(1);
+  expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
 });
 
 it('explains a missing Microsoft connection beside Create without making a request', async () => {

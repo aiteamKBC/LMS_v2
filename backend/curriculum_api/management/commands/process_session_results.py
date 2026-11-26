@@ -65,11 +65,26 @@ class Command(BaseCommand):
         if options['scheduled']:
             if not requested_ids:
                 try:
+                    from coach_api.recordings_bunny import run_pending as run_coaching
+                    checked = run_coaching(limit=options['limit'])
+                    if checked:
+                        self.stdout.write(f'Checked {checked} coaching recording transfers.')
+                except Exception as coach_failure:
+                    logger.warning('Coaching recording transfers need retry (%s).', type(coach_failure).__name__)
+                try:
                     from curriculum_api.bunny_module_collections import run_pending_collections
                     run_pending_collections(limit=options['limit'])
                 except Exception as collection_failure:
                     logging.getLogger(__name__).warning('Module live collections need retry (%s).',
                                                         type(collection_failure).__name__)
+                try:
+                    from curriculum_api.live_recording_migration import run_pending_migrations
+                    migrated = run_pending_migrations(limit=options['limit'])
+                    if migrated:
+                        self.stdout.write(f'Checked {migrated} live recording migrations.')
+                except Exception as migration_failure:
+                    logging.getLogger(__name__).warning('Live recording migrations need retry (%s).',
+                                                        type(migration_failure).__name__)
             scheduled_scope = ' AND o.live_session_id=ANY(%s)' if requested_ids else ''
             with connections['default'].cursor() as cursor:
                 # A series can exhaust its attempts before its next lecture. Reopen
