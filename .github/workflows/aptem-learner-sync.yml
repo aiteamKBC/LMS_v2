@@ -30,6 +30,8 @@ jobs:
           python-version: '3.12'
           cache: pip
           cache-dependency-path: backend/requirements.txt
+      - name: Verify runner safety and failure handling
+        run: python -m unittest discover -s .github/ci -p test_aptem_learner_sync.py
       - name: Install the existing backend dependencies
         run: python -m pip install -r backend/requirements.txt
       - name: Verify the database and reconcile names, statuses and programme dates

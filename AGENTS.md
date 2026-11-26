@@ -2,20 +2,6 @@
 
 Shared working policy for every agent and teammate working in this repository. Read this file before investigating or editing a task. Apply it to screenshots, short messages, follow-up requests, bug fixes, features, refactors, configuration, and documentation. Do not depend on the owner's local `CLAUDE.md`; it is not the team's policy.
 
-## Current validation setup (25 November 2026)
-
-The owner explicitly requested removal of the project's automated test suites,
-test-only fixtures, runners and test CI jobs. Those commands are no longer
-available. Instructions below about retaining or running those removed suites
-refer to the retired setup; do not recreate a removed suite merely to satisfy
-those commands.
-
-For current work, run the existing frontend lint/type-check/build commands and
-mobile typecheck when applicable. Validate backend Python syntax and use Django
-system checks only in a verified environment. Keep the Teams invariants below
-and report that automated regression coverage is unavailable. All scope,
-ownership, database safety, review and deployment requirements remain in force.
-
 ## 1. Start every task with scope and restrictions
 
 Before editing, give the teammate a short scope note containing:

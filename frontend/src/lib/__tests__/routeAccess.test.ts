@@ -1,0 +1,337 @@
+import { describe, expect, it } from 'vitest';
+import {
+  CHOOSE_WORKSPACE_ROUTE,
+  homeRouteFor,
+  isBareLearnerWorkspacePath,
+  mayAccessRoute,
+  postLoginRouteFor,
+  rolesForRoute,
+  shouldChooseWorkspace,
+  workspacesFor,
+} from '../routeAccess';
+import type { Role } from '@/api/auth';
+
+const as = (role: Role) => ({ role });
+
+/**
+ * These pin the audience boundary rather than the rule table's shape: the point
+ * is which person can open which area, so each case is written the way the bug
+ * would be reported ("a learner pasted a curriculum URL").
+ */
+describe('mayAccessRoute', () => {
+  it('limits HR System to administrators and explicitly granted integration staff', () => {
+    const path = '/workspace/hr-system';
+    expect(mayAccessRoute(path, as('admin'))).toBe(true);
+    expect(mayAccessRoute(path, { role: 'staff', access: 'integrations' })).toBe(true);
+    expect(mayAccessRoute(path, { role: 'staff', access: 'coach', accessWorkspaces: [{ access: 'integrations', home: path }] })).toBe(true);
+    for (const role of ['staff', 'learner', 'employer'] as const) {
+      expect(mayAccessRoute(path, as(role))).toBe(false);
+    }
+    expect(mayAccessRoute(path, { role: 'learner', access: 'integrations' })).toBe(false);
+    expect(mayAccessRoute(path, { role: 'staff', access: 'advanced-admin' })).toBe(false);
+    // The existing employer integration route keeps its own audience.
+    expect(mayAccessRoute('/workspace/integrations/breathe', as('employer'))).toBe(true);
+  });
+  it('keeps Advanced Admin inside its scoped workspace', () => {
+    const account = { role: 'staff' as const, access: 'advanced-admin' };
+    for (const path of ['/workspace/advanced-admin', '/workspace/advanced-admin/learners/12',
+      '/workspace/advanced-admin/learners/12/reviews',
+      '/workspace/advanced-admin/learners/12/preview',
+      '/workspace/advanced-admin/learners/12/preview/messages', '/profile']) {
+      expect(mayAccessRoute(path, account), path).toBe(true);
+    }
+    for (const path of ['/workspace/admin', '/coach/caseload', '/learner/home',
+      '/curriculum/teams-meetings', '/workspace/coach']) {
+      expect(mayAccessRoute(path, account), path).toBe(false);
+    }
+    expect(homeRouteFor({ ...account, accessHome: '/workspace/admin', subjectId: 12 }))
+      .toBe('/workspace/advanced-admin');
+  });
+  it('keeps learners and employers out of the staff console', () => {
+    const staffOnly = [
+      '/curriculum/teams-meetings',
+      '/curriculum/cohorts',
+      '/workspace/curriculum',
+      '/workspace/coach',
+      '/coach/caseload',
+      '/tutor/learners',
+      '/users',
+      '/engagement/clubs',
+      '/leadership/ofsted',
+      '/finance/budgets',
+      '/safeguarding/reports',
+      '/training-plan/learner/12',
+    ];
+
+    for (const path of staffOnly) {
+      expect(mayAccessRoute(path, as('learner')), path).toBe(false);
+      expect(mayAccessRoute(path, as('employer')), path).toBe(false);
+      expect(mayAccessRoute(path, as('staff')), path).toBe(true);
+      expect(mayAccessRoute(path, as('admin')), path).toBe(true);
+    }
+  });
+
+  it('limits the live support queue to administrators and explicitly granted support staff', () => {
+    const path = '/support/ticket-queue';
+    for (const role of ['learner', 'employer', 'staff'] as const) {
+      expect(mayAccessRoute(path, as(role))).toBe(false);
+    }
+    expect(mayAccessRoute(path, as('admin'))).toBe(true);
+    expect(mayAccessRoute(path, { role: 'staff', access: 'support' })).toBe(true);
+    expect(mayAccessRoute(path, { role: 'staff', access: 'coach', accessWorkspaces: [{ access: 'support', home: path }] })).toBe(true);
+  });
+
+  it('admits only the super-admin to the admin console', () => {
+    for (const path of ['/admin/users', '/workspace/admin', '/workspace/admin/employers', '/internal-panel', '/users/my-courses']) {
+      expect(mayAccessRoute(path, as('admin')), path).toBe(true);
+      expect(mayAccessRoute(path, as('staff')), path).toBe(false);
+      expect(mayAccessRoute(path, as('learner')), path).toBe(false);
+    }
+  });
+
+  it('lets staff open a learner page, and keeps employers out', () => {
+    // Staff review learners; the API stops them *writing* as one
+    // (login/permissions.learner_self_only), which is the part that matters.
+    for (const path of ['/workspace/learner', '/learner/attendance']) {
+      expect(mayAccessRoute(path, as('learner')), path).toBe(true);
+      expect(mayAccessRoute(path, as('staff')), path).toBe(true);
+      expect(mayAccessRoute(path, as('employer')), path).toBe(false);
+    }
+  });
+
+  it('lets employers and staff open the employer portal, but not learners', () => {
+    for (const path of ['/workspace/employer', '/employer/apprentices', '/employers/7']) {
+      expect(mayAccessRoute(path, as('employer')), path).toBe(true);
+      expect(mayAccessRoute(path, as('staff')), path).toBe(true);
+      expect(mayAccessRoute(path, as('learner')), path).toBe(false);
+    }
+  });
+
+  it('leaves the shared surfaces open to everyone signed in', () => {
+    for (const path of ['/messages', '/notifications', '/tasks', '/user-guide', '/home']) {
+      for (const role of ['admin', 'staff', 'employer', 'learner'] as Role[]) {
+        expect(mayAccessRoute(path, as(role)), `${path} ${role}`).toBe(true);
+      }
+    }
+  });
+
+  it('matches on whole segments, so /employer does not swallow /employers', () => {
+    // Both happen to admit the same roles; the risk is a rule like "/admin"
+    // silently capturing a future "/administration".
+    expect(rolesForRoute('/employers/7')).toEqual(rolesForRoute('/employer/apprentices'));
+    expect(rolesForRoute('/adminfoo')).toEqual(rolesForRoute('/unclassified-page'));
+  });
+
+  it('closes an unclassified path rather than opening it', () => {
+    expect(mayAccessRoute('/some-new-page', as('learner'))).toBe(false);
+    expect(mayAccessRoute('/some-new-page', as('staff'))).toBe(true);
+  });
+});
+
+/**
+ * RequireAuth sends a refused account to its home. If any home were itself
+ * refused, that would be a redirect loop — so this asserts the property the
+ * guard's loop check exists to catch.
+ */
+describe('homeRouteFor', () => {
+  it('sends every account somewhere it is allowed to be', () => {
+    const accounts = [
+      { role: 'learner' as Role, accessHome: null, subjectId: 3 },
+      { role: 'employer' as Role, accessHome: null, subjectId: 7 },
+      { role: 'staff' as Role, accessHome: '/users', subjectId: 1 },
+      { role: 'staff' as Role, accessHome: '/workspace/curriculum', subjectId: 1 },
+      { role: 'staff' as Role, accessHome: '/workspace/coach', subjectId: 1 },
+      { role: 'staff' as Role, accessHome: '/workspace/tutor', subjectId: 1 },
+      { role: 'admin' as Role, accessHome: '/workspace/admin', subjectId: 1 },
+      // No access grant recorded — the server sends these to /access-required,
+      // which is public, so it is never refused.
+      { role: 'staff' as Role, accessHome: null, subjectId: 1 },
+    ];
+
+    for (const account of accounts) {
+      const home = homeRouteFor(account);
+      expect(mayAccessRoute(home, account), `${account.role} -> ${home}`).toBe(true);
+    }
+  });
+
+  it('sends an employer to their own organisation', () => {
+    expect(homeRouteFor({ role: 'employer', accessHome: null, subjectId: 42 })).toBe('/employers/42');
+  });
+
+  it('prefers the access grant the server derived', () => {
+    expect(
+      homeRouteFor({ role: 'staff', accessHome: '/workspace/curriculum', subjectId: 1 }),
+    ).toBe('/workspace/curriculum');
+  });
+});
+
+describe('postLoginRouteFor', () => {
+  it('defaults both new and imported learners to Student Home even with an old home value', () => {
+    for (const hasLegacyRecord of [false, true]) {
+      const account = { role: 'learner' as const, subjectId: 42, hasLegacyRecord, accessHome: '/old-otjh' };
+      expect(homeRouteFor(account)).toBe('/learner/home');
+      expect(postLoginRouteFor(account)).toBe('/learner/home');
+      expect(postLoginRouteFor(account, '/workspace/learner')).toBe('/learner/home');
+    }
+  });
+
+  it('starts imported learners at Student Home before following learning or signing links', () => {
+    for (const requested of ['/learner/attendance', '/old-otjh/months/2026-07', '/workspace/learner?tab=attendance']) {
+      expect(postLoginRouteFor({ role: 'learner', subjectId: 42, hasLegacyRecord: true }, requested)).toBe('/learner/home');
+    }
+  });
+
+  it('always starts record monitors at the monitoring dashboard', () => {
+    for (const requested of ['/workspace/learner', '/coach/caseload', '/old-otjh/coach/42', undefined]) {
+      expect(postLoginRouteFor({ role: 'staff', subjectId: 86, access: 'record-monitor' }, requested)).toBe('/old-otjh/monitor');
+    }
+  });
+
+  it('replaces a remembered learner Dashboard with Student Home after login', () => {
+    expect(
+      postLoginRouteFor({ role: 'learner', accessHome: null, subjectId: 42 }, '/workspace/learner'),
+    ).toBe('/learner/home');
+  });
+
+  it('sends staff away from a stale bare learner workspace return target', () => {
+    expect(
+      postLoginRouteFor({ role: 'staff', accessHome: '/workspace/coach', subjectId: 1 }, '/workspace/learner'),
+    ).toBe('/workspace/coach');
+  });
+
+  it('sends admins away from a stale bare learner workspace return target with query params', () => {
+    expect(
+      postLoginRouteFor({ role: 'admin', accessHome: '/workspace/admin', subjectId: 1 }, '/workspace/learner?tab=attendance'),
+    ).toBe('/workspace/admin');
+  });
+
+  it('starts staff at home even when an explicit learner link was open before sign-in', () => {
+    expect(
+      postLoginRouteFor({ role: 'staff', accessHome: '/workspace/coach', subjectId: 1 }, '/workspace/learner/commercial/19'),
+    ).toBe('/workspace/coach');
+  });
+
+  it.each([
+    [{ role: 'admin' as const, subjectId: 1, accessHome: '/workspace/admin' }, '/workspace/admin'],
+    [{ role: 'staff' as const, subjectId: 1, accessHome: '/workspace/curriculum' }, '/workspace/curriculum'],
+    [{ role: 'staff' as const, subjectId: 1, accessHome: '/workspace/tutor' }, '/workspace/tutor'],
+    [{ role: 'staff' as const, subjectId: 1, accessHome: '/access-required' }, '/access-required'],
+    [{ role: 'employer' as const, subjectId: 42 }, '/employers/42'],
+    [{ role: 'employer' as const, subjectId: null }, '/workspace/employer'],
+  ])('always uses the account home %s instead of stale destinations', (account, home) => {
+    for (const requested of ['/notifications?unread=1', '/curriculum/programmes', '/employers/99', '//example.test', undefined]) {
+      expect(postLoginRouteFor(account, requested)).toBe(home);
+    }
+  });
+
+  it('falls back to the account home when there is no return target', () => {
+    expect(
+      postLoginRouteFor({ role: 'staff', accessHome: '/workspace/tutor', subjectId: 1 }, ''),
+    ).toBe('/workspace/tutor');
+  });
+
+  it('recognises only the bare learner workspace as ambiguous', () => {
+    expect(isBareLearnerWorkspacePath('/workspace/learner/')).toBe(true);
+    expect(isBareLearnerWorkspacePath('/workspace/learner/apprenticeship/82')).toBe(false);
+    expect(isBareLearnerWorkspacePath('/learner/attendance')).toBe(false);
+  });
+});
+
+describe('choosing between several workspaces', () => {
+  const coach = { access: 'coach', home: '/workspace/coach', navRole: 'coach' };
+  const tutor = { access: 'tutor', home: '/workspace/tutor', navRole: 'tutor' };
+
+  it('asks an account holding two grants which one it wants', () => {
+    const account = {
+      role: 'staff' as const, subjectId: 1,
+      access: 'coach', accessHome: '/workspace/coach',
+      accessWorkspaces: [coach, tutor],
+    };
+    expect(shouldChooseWorkspace(account)).toBe(true);
+    expect(postLoginRouteFor(account)).toBe(CHOOSE_WORKSPACE_ROUTE);
+  });
+
+  it('does not interrupt an account with only one workspace', () => {
+    const account = {
+      role: 'staff' as const, subjectId: 1,
+      access: 'coach', accessHome: '/workspace/coach',
+      accessWorkspaces: [coach],
+    };
+    expect(shouldChooseWorkspace(account)).toBe(false);
+    expect(postLoginRouteFor(account)).toBe('/workspace/coach');
+  });
+
+  it('leaves accounts the server sent no workspaces for exactly as they were', () => {
+    // An older session, or a payload from before accessWorkspaces existed.
+    const account = {
+      role: 'staff' as const, subjectId: 1, accessHome: '/workspace/tutor',
+      accessWorkspaces: undefined,
+    };
+    expect(workspacesFor(account)).toEqual([]);
+    expect(shouldChooseWorkspace(account)).toBe(false);
+    expect(postLoginRouteFor(account)).toBe('/workspace/tutor');
+  });
+
+  it('offers a staff member who also studies their own learner record', () => {
+    const account = {
+      role: 'admin' as const, subjectId: 1,
+      access: 'super-admin', accessHome: '/workspace/admin',
+      accessWorkspaces: [
+        { access: 'super-admin', home: '/workspace/admin', navRole: 'admin' },
+        { access: 'learner', home: '/workspace/learner/commercial/510', navRole: 'learner' },
+      ],
+    };
+    expect(postLoginRouteFor(account)).toBe(CHOOSE_WORKSPACE_ROUTE);
+    // The route carries the record id: the chooser must never rebuild it.
+    expect(workspacesFor(account)[1].home).toBe('/workspace/learner/commercial/510');
+    // A query-string home resolves to the bare route, which has no learner.
+    expect(isBareLearnerWorkspacePath(workspacesFor(account)[1].home)).toBe(false);
+    expect(isBareLearnerWorkspacePath('/workspace/learner?kind=commercial&id=510')).toBe(true);
+  });
+
+  it('offers a record monitor their additional workspaces', () => {
+    const account = {
+      role: 'staff' as const, subjectId: 86, access: 'record-monitor',
+      accessWorkspaces: [coach, tutor],
+    };
+    expect(shouldChooseWorkspace(account)).toBe(true);
+    expect(postLoginRouteFor(account)).toBe(CHOOSE_WORKSPACE_ROUTE);
+    expect(mayAccessRoute('/workspace/coach', account)).toBe(true);
+    expect(mayAccessRoute('/workspace/admin', account)).toBe(false);
+  });
+
+  it('keeps Advanced Admin restricted even with extra grants', () => {
+    const account = { role: 'staff' as const, access: 'advanced-admin', subjectId: 86,
+      accessWorkspaces: [{ access: 'advanced-admin', home: '/workspace/advanced-admin' }, coach] };
+    expect(shouldChooseWorkspace(account)).toBe(false);
+    expect(postLoginRouteFor(account)).toBe('/workspace/advanced-admin');
+    expect(mayAccessRoute('/workspace/coach', account)).toBe(false);
+  });
+
+  it('admits an additional monitoring grant but refuses ungranted monitoring', () => {
+    const account = { role: 'staff' as const, access: 'coach',
+      accessWorkspaces: [coach, { access: 'record-monitor', home: '/old-otjh/monitor' }] };
+    expect(mayAccessRoute('/old-otjh/monitor', account)).toBe(true);
+    expect(mayAccessRoute('/old-otjh/monitor', { ...account, accessWorkspaces: [coach] })).toBe(false);
+  });
+
+  it('lets every role reach the chooser itself', () => {
+    for (const role of ['admin', 'staff', 'employer', 'learner'] as Role[]) {
+      expect(mayAccessRoute(CHOOSE_WORKSPACE_ROUTE, { role })).toBe(true);
+    }
+  });
+});
+
+ describe('coach directory access grants', () => {
+  it.each(['/admin/coach_directory', '/users/coach-directory', '/curriculum/coach-directory'])('restricts %s to authorised management grants', path => {
+    for (const access of ['super-admin', 'enrolment', 'curriculum']) {
+      expect(mayAccessRoute(path, { role: 'staff', access })).toBe(true);
+    }
+    for (const access of ['', 'coach', 'record-monitor']) {
+      expect(mayAccessRoute(path, { role: 'staff', access })).toBe(false);
+    }
+    expect(mayAccessRoute(path, { role: 'learner', access: 'curriculum' })).toBe(false);
+    expect(mayAccessRoute(path, { role: 'employer', access: 'enrolment' })).toBe(false);
+    expect(mayAccessRoute(path, { role: 'staff', access: 'coach', accessWorkspaces: [{ access: 'curriculum', home: '/workspace/curriculum' }] })).toBe(true);
+  });
+});

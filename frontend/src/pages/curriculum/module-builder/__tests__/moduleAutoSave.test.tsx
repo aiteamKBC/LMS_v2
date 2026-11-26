@@ -1,0 +1,962 @@
+import { authoredWeekPoints } from '@/api/webWeekPoints';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { clearAllCachedResources } from '@/api/cachedRequest';
+import type { ReactNode } from 'react';
+import type { CurriculumModule, CurriculumProgramme } from '@/lib/curriculumApi';
+import { CurriculumRequestTimeout, ModuleStructureConflictError, loadModuleWeekSessionPlan } from '../moduleAuthoringData';
+import { fieldKey, projectAvailable } from '../collaborationProtocol';
+import { CurriculumVideoUpload } from '@/pages/curriculum/shared/CurriculumVideoUpload';
+import { coachFetch } from '@/lib/coachFetch';
+import type { TeamsMeetingModal } from '../TeamsMeetingModal';
+
+vi.mock('@/api/webWeekPoints', () => ({ authoredWeekPoints: vi.fn() }));
+
+const collaborationTest = vi.hoisted(() => ({ enabled: false, claim: vi.fn(async () => true) }));
+vi.mock('@/lib/coachFetch', () => ({ coachFetch: vi.fn(async () => new Response(
+  JSON.stringify({ enabled: true, saved: true, import: null }), { status: 200 },
+)) }));
+vi.mock('../useModuleCollaboration', async importOriginal => {
+  const original = await importOriginal<typeof import('../useModuleCollaboration')>();
+  return { useModuleCollaboration: (...args: Parameters<typeof original.useModuleCollaboration>) => {
+    const actual = original.useModuleCollaboration(...args);
+    return collaborationTest.enabled ? { ...actual, enabled: true, connected: true, members: [], leases: [],
+      claim: collaborationTest.claim, holder: () => '', saved: async () => {}, cancel: () => {},
+      prepare: async (base: Parameters<typeof projectAvailable>[0], draft: Parameters<typeof projectAvailable>[1]) => {
+        const key = fieldKey('week', draft.weekStructure[0].id, 'title');
+        return { module: projectAvailable(base, draft, [key]), blocked: [key], collaboration: { editorId: 'synthetic', proofs: {} } };
+      },
+    } : actual;
+  } };
+});
+
+/**
+ * The authoring workspace saves itself.
+ *
+ * Every edit in here used to be held in component state until somebody pressed
+ * Save. A browser reload, a closed laptop or a stray Back took the lot, and the
+ * footer's "Unsaved changes" was the only warning.
+ *
+ * Saving itself is the easy half. The hard half is that a save on this endpoint
+ * REPLACES the module: every week, every component, every KSB mapping. So these
+ * cover what that makes dangerous once it happens without being asked --
+ * a burst of typing must not become a burst of full-structure writes, a reply
+ * must never put back what the reader has typed since, a refusal must never
+ * read as saved, and a module somebody else has already written must be
+ * refused rather than overwritten.
+ */
+
+const reload = vi.fn(async () => null);
+const loadModuleStructure = vi.fn();
+const saveModuleStructure = vi.fn();
+/** The unsaved-changes guard. Typed with its argument so the test can read it. */
+const swalFire = vi.fn(async (_options: Record<string, unknown>) => (
+  { isConfirmed: false, isDenied: false, isDismissed: true }
+));
+
+vi.mock('@/components/feature/WorkspaceShell', () => ({
+  WorkspaceShell: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+}));
+
+vi.mock('sweetalert2', () => ({
+  default: { fire: (options: Record<string, unknown>) => swalFire(options) },
+}));
+
+vi.mock('@/components/feature/CurriculumSweetAlert', () => ({
+  showCurriculumAlert: vi.fn(async () => undefined),
+  showCurriculumConfirm: vi.fn(async () => undefined),
+  showCurriculumLoading: vi.fn(),
+  closeCurriculumLoading: vi.fn(),
+}));
+
+// The dialog's real fields and retained edits are exercised by teamsWeeklyModal.
+// Here its save action must reach the builder's existing persistence pipeline.
+vi.mock('../TeamsMeetingModal', () => ({
+  TeamsMeetingModal: ({ onSaveModule, unsavedChanges, moduleSaving, moduleSaveError }: Parameters<typeof TeamsMeetingModal>[0]) => (
+    <div role="dialog" aria-label="Teams calendar">
+      <p>{unsavedChanges ? 'Module has unsaved changes' : 'Module saved'}</p>
+      <button type="button" disabled={moduleSaving} onClick={() => { void onSaveModule?.(); }}>Save module and continue</button>
+      {moduleSaveError && <p role="alert">{moduleSaveError}</p>}
+    </div>
+  ),
+}));
+
+vi.mock('@/pages/curriculum/week-builder/weekTemplateData', () => ({
+  fetchComponentPointsDefaults: vi.fn(async () => ({})),
+  loadCurriculumScope: vi.fn(async () => ({ programmes: [], cohorts: [], groups: [] })),
+  fetchWeekTemplates: vi.fn(async () => []),
+  fetchWeekTemplateDetail: vi.fn(async () => null),
+  filterWeekTemplatesForScope: () => [],
+}));
+
+vi.mock('@/pages/curriculum/shared/components/weekAuthoringLazy', () => ({
+  ComponentEditor: ({ component, moduleId }: { component: { id: string; type: string; title: string; settings: Record<string, unknown> }; moduleId: string }) => component.type === 'video'
+    ? <CurriculumVideoUpload targetId={moduleId} componentId={component.id} title={component.title} source={String(component.settings.videoUrl || '')} /> : null,
+  WeekComponentRail: ({ components, onChange, onSelectId, renderComponentList, selectedId, otherWeeks, onMoveComponentToWeek }: {
+    components: Array<{ id: string; title: string }>;
+    onChange: (components: Array<{ id: string }>) => void;
+    onSelectId: (id: string) => void;
+    selectedId: string | null;
+    otherWeeks?: { id: string; label: string }[];
+    onMoveComponentToWeek?: (component: { id: string; title: string }, weekId: string) => void;
+    renderComponentList?: (items: { component: { id: string; title: string }; node: ReactNode }[], searchTerm: string) => ReactNode;
+  }) => (
+    <>
+      <button type="button" onClick={() => onChange([...components].reverse())}>Reorder components</button>
+      {components.length > 0 && otherWeeks?.length ? <button type="button" onClick={() => onMoveComponentToWeek?.(components[0], otherWeeks[0].id)}>Move first component to next week</button> : null}
+      {renderComponentList
+        ? renderComponentList(components.map(component => ({ component, node: <button type="button" aria-current={selectedId === component.id ? 'true' : undefined} onClick={() => onSelectId(component.id)}>{component.title}</button> })), '')
+        : components.map(component => <button key={component.id} type="button" onClick={() => onSelectId(component.id)}>{component.title}</button>)}
+    </>
+  ),
+  WeekOverviewPanel: () => null,
+}));
+
+vi.mock('../moduleAuthoringData', async importOriginal => ({
+  ...(await importOriginal<typeof import('../moduleAuthoringData')>()),
+  loadModuleStructure: (...args: unknown[]) => loadModuleStructure(...(args as [])),
+  loadModuleWeekSessionPlan: vi.fn(async () => null),
+  saveModuleStructure: (...args: unknown[]) => saveModuleStructure(...(args as [])),
+}));
+
+const programmes = [
+  { id: 'program-mm', sourceId: 'PROG-MM', name: 'Marketing Manager' },
+] as CurriculumProgramme[];
+
+vi.mock('@/api/moduleCatalogueActivity', () => ({ fetchModuleCatalogueActivity: vi.fn(async () => Object.fromEntries(modules.map(module => [module.moduleCatalogueId!, { source: 'new_lms', startDate: '2000-01-01', lastLiveDate: '2099-12-31' }]))) }));
+
+const modules = [
+  {
+    id: 'MOD-AUTOSAVE-1',
+    moduleCatalogueId: 'MOD-AUTOSAVE-1',
+    name: 'Marketing Strategy',
+    programme: 'Marketing Manager',
+    programmeId: 'PROG-MM',
+    sessionsNumber: 1,
+    status: 'draft',
+  },
+] as CurriculumModule[];
+
+// The workspace reads the signed-in account (it decides which learner preview
+// an admin is offered). Without this the page throws on its first line and
+// every case below fails before it has asserted anything about saving.
+vi.mock("@/hooks/useAuth", () => ({
+  useAuth: () => ({ auth: { account: { role: 'curriculum' } } }),
+}));
+
+vi.mock('@/hooks/useCurriculumModules', () => ({
+  useCurriculumModules: () => ({ modules, loading: false, error: null, reload }),
+}));
+
+vi.mock('@/hooks/useCurriculumProgrammes', () => ({
+  useCurriculumProgrammes: () => ({ programmes, loading: false, error: null, reload: vi.fn() }),
+}));
+
+vi.mock('@/hooks/useCurriculumKsbSets', () => ({
+  useCurriculumKsbSets: () => ({ ksbSets: [], loading: false, error: null, reload: vi.fn() }),
+}));
+
+vi.mock('@/lib/curriculumApi', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/curriculumApi')>()),
+  fetchCurriculumStandards: vi.fn(async () => []),
+  fetchCurriculumTutors: vi.fn(async () => []),
+  fetchCurriculumTeamsMeetingSummaries: vi.fn(async () => []),
+  fetchCurriculumOverview: vi.fn(async () => ({ programmes, cohorts: [], groups: [], modules })),
+  fetchCurriculumHolidays: vi.fn(async () => []),
+}));
+
+/** One week with a title to type into — the smallest thing worth saving. */
+function storedStructure(revision = 'rev-1') {
+  return {
+    weekStructure: [
+      {
+        id: 'WEEK-1',
+        moduleId: 'MOD-AUTOSAVE-1',
+        weekNumber: 1,
+        title: 'Week one',
+        summary: '',
+        learningOutcomes: [],
+        components: [
+          {
+            id: 'COMPONENT-1',
+            type: 'reading',
+            title: 'First component',
+            description: '',
+            expectedOtjh: 1,
+            points: 5,
+            reflectionRequired: false,
+            reflectionQuestion: '',
+            workplaceEvidenceRequired: false,
+            tutorValidationRequired: false,
+            ksbMappings: [],
+            settings: {},
+          },
+          {
+            id: 'COMPONENT-2',
+            type: 'reading',
+            title: 'Second component',
+            description: '',
+            expectedOtjh: 1,
+            points: 5,
+            reflectionRequired: false,
+            reflectionQuestion: '',
+            workplaceEvidenceRequired: false,
+            tutorValidationRequired: false,
+            ksbMappings: [],
+            settings: {},
+          },
+        ],
+        ksbMappings: [],
+      },
+    ],
+    structureRevision: revision,
+  };
+}
+
+type SavedModule = { weekStructure: Array<{ title: string; components: Array<{ id: string }> }>; structureRevision?: string };
+type SaveCall = [string, SavedModule, { expectedRevision?: string } | undefined];
+
+/**
+ * Hold the next save open until the test lets it finish.
+ *
+ * It answers with the module it was given, the way the endpoint does: the reply
+ * to a save is the state that was SENT, which is the whole reason a reply must
+ * not be applied over whatever has been typed since.
+ */
+function holdNextSave() {
+  let release: () => void = () => undefined;
+  const gate = new Promise<void>(resolve => {
+    release = resolve;
+  });
+  saveModuleStructure.mockImplementationOnce(async (_id: string, module: SavedModule) => {
+    await gate;
+    return { ...module, structureRevision: 'rev-held' };
+  });
+  return { release };
+}
+
+async function openWorkspace(extraSearch = '', structure = storedStructure()) {
+  loadModuleStructure.mockResolvedValue(structure);
+  const search = `?module=MOD-AUTOSAVE-1${extraSearch}`;
+  window.history.replaceState({}, '', `/curriculum/module-builder${search}`);
+  const { default: ModuleBuilder } = await import('../page');
+  render(
+    <MemoryRouter initialEntries={[`/curriculum/module-builder${search}`]}>
+      <ModuleBuilder />
+    </MemoryRouter>,
+  );
+  return screen.findByLabelText(/Week title/i);
+}
+
+/** The footer's one sentence about what has happened to the reader's edits. */
+function saveState() {
+  return screen.getByTestId('module-builder-save-state').textContent || '';
+}
+
+function saveCalls() {
+  return saveModuleStructure.mock.calls as SaveCall[];
+}
+
+/** The footer's on/off switch for the workspace saving itself. */
+function autoSaveToggle() {
+  return screen.getByTestId('module-builder-auto-save-toggle');
+}
+
+/**
+ * Open the workspace with auto save switched on.
+ *
+ * It is off on every module until somebody asks for it, so the tests about what
+ * the workspace does once it is saving itself have to ask first -- the same
+ * click a reader makes.
+ */
+async function openWorkspaceSaving() {
+  const title = await openWorkspace();
+  await userEvent.click(autoSaveToggle());
+  return title;
+}
+
+describe('Module Builder auto-save', { timeout: 25000 }, () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+    vi.mocked(authoredWeekPoints).mockReset();
+    vi.mocked(authoredWeekPoints).mockImplementation(async (moduleId, weekId, saved) => ({
+      moduleId, weekId, editorId: 'synthetic-editor', csrfToken: 'synthetic-token', revision: saved ? saved.revision + 1 : 0,
+      points: saved?.points || [{ id: 'P1', title: 'Explore', componentIds: [] }],
+      activities: [{ id: 'COMPONENT-1', title: 'First reading', type: 'reading' }],
+    }));
+    vi.mocked(coachFetch).mockImplementation(async () => new Response(JSON.stringify({ enabled: true, saved: true, import: null }), { status: 200 }));
+    clearAllCachedResources();
+    collaborationTest.enabled = false;
+    collaborationTest.claim.mockClear();
+    reload.mockClear();
+    loadModuleStructure.mockClear();
+    saveModuleStructure.mockClear();
+    vi.mocked(loadModuleWeekSessionPlan).mockReset();
+    vi.mocked(loadModuleWeekSessionPlan).mockResolvedValue(null);
+    swalFire.mockClear();
+    // Each save echoes the module back with the next revision, the way the
+    // endpoint does — that reply is what arms the save after it.
+    let revision = 1;
+    saveModuleStructure.mockImplementation(async (_id: string, module: SavedModule) => {
+      revision += 1;
+      return { ...module, structureRevision: `rev-${revision}` };
+    });
+  });
+
+  it('shows component cards inside their collapsible Point and retains unsaved Point edits', async () => {
+    await openWorkspace();
+    fireEvent.change(await screen.findByLabelText('Point 1 name'), { target: { value: 'Week introduction' } });
+    fireEvent.click(screen.getByRole('checkbox', { name: 'First component' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse Week one' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Week one' }));
+    const nav = within(await screen.findByRole('region', { name: 'Week components' }));
+    fireEvent.click(nav.getByRole('button', { name: 'Week introduction, 1 activity' }));
+    expect(within(nav.getByRole('group', { name: 'Week introduction components' })).getByRole('button', { name: 'First component' })).toBeVisible();
+    expect(nav.queryByText('Other components')).not.toBeInTheDocument();
+    fireEvent.click(nav.getByRole('button', { name: /First component/ }));
+    await waitFor(() => expect(nav.getByRole('button', { name: /First component/ })).toHaveAttribute('aria-current', 'true'));
+    expect(saveModuleStructure).not.toHaveBeenCalled();
+    expect(vi.mocked(authoredWeekPoints).mock.calls.filter(call => call[2])).toHaveLength(0);
+  });
+
+  it('keeps an untouched module saved when its session plan fills the week headings', async () => {
+    vi.mocked(loadModuleWeekSessionPlan).mockResolvedValue({
+      sessions: [{ sessionNumber: 1, weekNumber: 1, date: '2026-12-03', day: 'Thursday', skippedHolidays: [] }],
+      skippedHolidays: [], finalEndDate: '2026-12-03', warnings: [],
+    });
+    await openWorkspace();
+    await screen.findByText('03 Dec 2026', { exact: false });
+    expect(saveState()).toBe('All changes saved');
+    expect(saveModuleStructure).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: 'Create Teams meeting' }));
+    const dialog = within(screen.getByRole('dialog', { name: 'Teams calendar' }));
+    expect(dialog.getByText('Module saved')).toBeInTheDocument();
+    expect(dialog.queryByText('Module has unsaved changes')).not.toBeInTheDocument();
+  });
+
+  it('does not mark a booked module edited when a read refreshes its automatic holiday flag', async () => {
+    const stored = storedStructure();
+    stored.weekStructure[0].components[0] = { ...stored.weekStructure[0].components[0], type: 'live-session',
+      settings: { teamsLiveSessionId: 'LIVE-SAVED', teamsSessionNumber: 1, liveSessionUrl: 'https://example.invalid/meeting',
+        sessionDate: '2026-12-03', sessionTime: '09:00', durationMinutes: 120 } };
+    const module = { ...stored, weekStructure: [{ ...stored.weekStructure[0],
+      sessionDate: '2026-12-03', sessionDay: 'Thursday', liveSessionsClosed: true }] };
+    vi.mocked(loadModuleWeekSessionPlan).mockResolvedValue({
+      sessions: [{ sessionNumber: 1, weekNumber: 1, date: '2026-12-03', day: 'Thursday', skippedHolidays: [] }],
+      skippedHolidays: [], finalEndDate: '2026-12-03', warnings: [],
+    });
+    await openWorkspace('', module);
+    await screen.findByText('03 Dec 2026', { exact: false });
+    expect(saveState()).toBe('All changes saved');
+    await userEvent.click(autoSaveToggle());
+    await new Promise(resolve => window.setTimeout(resolve, 1900));
+    expect(saveModuleStructure).not.toHaveBeenCalled();
+    expect(saveState()).toBe('All changes saved');
+  });
+
+  it('retains real edits made before the plan arrives and stays saved after saving and reopening', async () => {
+    let release!: (plan: Awaited<ReturnType<typeof loadModuleWeekSessionPlan>>) => void;
+    const plan = { sessions: [{ sessionNumber: 1, weekNumber: 1, date: '2026-12-03', day: 'Thursday', skippedHolidays: [] }],
+      skippedHolidays: [], finalEndDate: '2026-12-03', warnings: [] };
+    vi.mocked(loadModuleWeekSessionPlan).mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    const title = await openWorkspace();
+    fireEvent.change(title, { target: { value: 'Actual user edit' } });
+    await act(async () => { release(plan); });
+    await screen.findByText('03 Dec 2026', { exact: false });
+    expect(saveState()).toBe('Unsaved changes - press Save');
+    expect(title).toHaveValue('Actual user edit');
+    await userEvent.click(screen.getByRole('button', { name: 'Create Teams meeting' }));
+    const dialog = within(screen.getByRole('dialog', { name: 'Teams calendar' }));
+    expect(dialog.getByText('Module has unsaved changes')).toBeInTheDocument();
+    await userEvent.click(dialog.getByRole('button', { name: 'Save module and continue' }));
+    await dialog.findByText('Module saved');
+    expect(saveCalls()[0][1].weekStructure[0].title).toBe('Actual user edit');
+    const saved = await saveModuleStructure.mock.results[0].value;
+    cleanup();
+    vi.mocked(loadModuleWeekSessionPlan).mockResolvedValue(plan);
+    const reopened = await openWorkspace('', saved);
+    expect(reopened).toHaveValue('Actual user edit');
+    await screen.findByText('03 Dec 2026', { exact: false });
+    expect(saveState()).toBe('All changes saved');
+    expect(saveModuleStructure).toHaveBeenCalledOnce();
+  });
+
+  it('saves Point-only edits through Save module, after the structure write succeeds', async () => {
+    await openWorkspace();
+    fireEvent.change(await screen.findByLabelText('Point 1 name'), { target: { value: 'New point name' } });
+    expect(saveState()).not.toBe('All changes saved');
+    expect(screen.queryByRole('button', { name: 'Save Points' })).not.toBeInTheDocument();
+    const gate = holdNextSave();
+    await userEvent.click(screen.getByTestId('module-builder-save'));
+    await waitFor(() => expect(saveModuleStructure).toHaveBeenCalledOnce());
+    expect(vi.mocked(authoredWeekPoints).mock.calls.filter(call => call[2])).toHaveLength(0);
+    gate.release();
+    await waitFor(() => expect(saveState()).toBe('All changes saved'));
+    expect(authoredWeekPoints).toHaveBeenLastCalledWith('MOD-AUTOSAVE-1', 'WEEK-1', expect.objectContaining({
+      points: [{ id: 'P1', title: 'New point name', componentIds: [] }], revision: 0,
+    }));
+  });
+
+  it('does not write Points when the module save fails', async () => {
+    await openWorkspace();
+    fireEvent.change(await screen.findByLabelText('Point 1 name'), { target: { value: 'Retain me' } });
+    saveModuleStructure.mockRejectedValueOnce(new Error('Module unavailable'));
+    await userEvent.click(screen.getByTestId('module-builder-save'));
+    await screen.findByText('Module unavailable');
+    expect(vi.mocked(authoredWeekPoints).mock.calls.filter(call => call[2])).toHaveLength(0);
+    expect(screen.getByLabelText('Point 1 name')).toHaveValue('Retain me');
+    expect(saveState()).not.toBe('All changes saved');
+  });
+
+  it('saves the current module through the Teams action without closing the calendar', async () => {
+    const title = await openWorkspace();
+    fireEvent.change(title, { target: { value: 'Keep this title' } });
+    await userEvent.click(screen.getByRole('button', { name: 'Create Teams meeting' }));
+    const dialog = within(screen.getByRole('dialog', { name: 'Teams calendar' }));
+    const gate = holdNextSave();
+    await userEvent.click(dialog.getByRole('button', { name: 'Save module and continue' }));
+    await waitFor(() => expect(saveModuleStructure).toHaveBeenCalledOnce());
+    expect(dialog.getByRole('button', { name: 'Save module and continue' })).toBeDisabled();
+    expect(saveCalls()[0][1].weekStructure[0].title).toBe('Keep this title');
+    expect(saveCalls()[0][2]).toMatchObject({ expectedRevision: 'rev-1' });
+    gate.release();
+    await dialog.findByText('Module saved');
+    expect(screen.getByRole('dialog', { name: 'Teams calendar' })).toBeInTheDocument();
+    expect(title).toHaveValue('Keep this title');
+  });
+
+  it('passes a failed module save into the open Teams calendar and retains the module draft', async () => {
+    const title = await openWorkspace();
+    fireEvent.change(title, { target: { value: 'Retain this draft' } });
+    saveModuleStructure.mockRejectedValueOnce(new Error('Module unavailable'));
+    await userEvent.click(screen.getByRole('button', { name: 'Create Teams meeting' }));
+    const dialog = within(screen.getByRole('dialog', { name: 'Teams calendar' }));
+    await userEvent.click(dialog.getByRole('button', { name: 'Save module and continue' }));
+    expect(await dialog.findByRole('alert')).toHaveTextContent('Module unavailable');
+    expect(dialog.getByText('Module has unsaved changes')).toBeInTheDocument();
+    expect(title).toHaveValue('Retain this draft');
+    expect(saveModuleStructure).toHaveBeenCalledOnce();
+  });
+
+  it('reports a partial save and allows retry without losing Points', async () => {
+    await openWorkspace();
+    fireEvent.change(await screen.findByLabelText('Point 1 name'), { target: { value: 'Retry me' } });
+    vi.mocked(authoredWeekPoints).mockRejectedValueOnce(new Error('Points unavailable'));
+    await userEvent.click(screen.getByTestId('module-builder-save'));
+    await screen.findByText(/Module changes saved, but Week Points could not be saved/);
+    expect(saveState()).not.toBe('All changes saved');
+    expect(screen.getByLabelText('Point 1 name')).toHaveValue('Retry me');
+    await userEvent.click(screen.getByTestId('module-builder-save'));
+    await waitFor(() => expect(saveState()).toBe('All changes saved'));
+    const writes = vi.mocked(authoredWeekPoints).mock.calls.filter(call => call[2]);
+    expect(writes).toHaveLength(2);
+    expect(writes[1][2]).toMatchObject({ points: [{ id: 'P1', title: 'Retry me', componentIds: [] }], revision: 0 });
+  });
+
+  it('includes Point-only edits in the existing optional auto-save', async () => {
+    await openWorkspaceSaving();
+    fireEvent.change(await screen.findByLabelText('Point 1 name'), { target: { value: 'Automatically saved' } });
+    await waitFor(() => expect(saveModuleStructure).toHaveBeenCalledOnce(), { timeout: 4000 });
+    await waitFor(() => expect(saveState()).toBe('All changes saved'));
+    expect(authoredWeekPoints).toHaveBeenLastCalledWith('MOD-AUTOSAVE-1', 'WEEK-1', expect.objectContaining({
+      points: [{ id: 'P1', title: 'Automatically saved', componentIds: [] }],
+    }));
+  });
+
+  it('opens module settings without requesting a reservation for the derived hours total', async () => {
+    collaborationTest.enabled = true;
+    await openWorkspace('&settings=1');
+    await userEvent.click(screen.getByLabelText('Total OTJH hours'));
+    expect(collaborationTest.claim).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByLabelText('Module title'));
+    expect(collaborationTest.claim).toHaveBeenCalledWith(fieldKey('module', 'MOD-AUTOSAVE-1', 'title'));
+  });
+
+  it('requests Bunny copying of the open video with the ordinary Save button', async () => {
+    const structure = storedStructure();
+    const video = structure.weekStructure[0].components[0];
+    video.type = 'video';
+    video.settings = { sourceType: 'YouTube', videoUrl: 'https://www.youtube.com/watch?v=abcdefghijk' };
+    await openWorkspace('', structure);
+    await userEvent.click(await screen.findByRole('button', { name: 'First component' }));
+    await userEvent.click(screen.getByTestId('module-builder-save'));
+    await waitFor(() => expect(saveModuleStructure).toHaveBeenCalledTimes(1));
+    expect(saveModuleStructure.mock.calls[0][2]).toMatchObject({ source: 'manual', importVideoComponentIds: ['COMPONENT-1'] });
+  });
+
+  it('finishes the LMS Save while Bunny is still uploading, without claiming the copy is ready', async () => {
+    vi.mocked(coachFetch).mockImplementation(async () => new Response(JSON.stringify({ enabled: true, saved: true,
+      import: { id: 'copy', status: 'uploading', error: '' } }), { status: 200 }));
+    const structure = storedStructure();
+    structure.weekStructure[0].components[0].type = 'video';
+    await openWorkspace('', structure);
+    await userEvent.click(await screen.findByRole('button', { name: 'First component' }));
+    await screen.findByText('Uploading to Bunny');
+    await userEvent.click(screen.getByTestId('module-builder-save'));
+    await waitFor(() => expect(saveModuleStructure).toHaveBeenCalledOnce());
+    await waitFor(() => expect(saveState()).toBe('All changes saved'));
+    expect(screen.getByTestId('module-builder-save')).toBeEnabled();
+    expect(screen.getByText('Uploading to Bunny')).toBeInTheDocument();
+    expect(screen.queryByText('Stored on Bunny')).not.toBeInTheDocument();
+    expect(screen.queryByText('Save failed')).not.toBeInTheDocument();
+  });
+
+  it('confirms a timed-out write from a fresh read without sending it again', async () => {
+    saveModuleStructure.mockImplementationOnce(async (_id: string, sent: SavedModule) => {
+      loadModuleStructure.mockResolvedValue({ ...sent, structureRevision: 'committed' });
+      throw new CurriculumRequestTimeout();
+    });
+    const title = await openWorkspace();
+    await userEvent.type(title, '!');
+    await userEvent.click(screen.getByTestId('module-builder-save'));
+    await waitFor(() => expect(saveState()).toBe('All changes saved'));
+    expect(loadModuleStructure).toHaveBeenLastCalledWith('MOD-AUTOSAVE-1', { skipCache: true });
+    expect(saveModuleStructure).toHaveBeenCalledOnce();
+    expect(title).toHaveValue('Week one!');
+    expect(screen.queryByText('Save failed')).not.toBeInTheDocument();
+    expect(screen.queryByText(/The response timed out/)).not.toBeInTheDocument();
+  });
+
+  it('keeps a timeout unconfirmed when the read still has the previous content', async () => {
+    saveModuleStructure.mockImplementationOnce(async (_id: string, sent: SavedModule) => {
+      const old = structuredClone(sent);
+      old.weekStructure[0].title = 'Week one';
+      loadModuleStructure.mockResolvedValue(old);
+      throw new CurriculumRequestTimeout();
+    });
+    const title = await openWorkspace();
+    await userEvent.type(title, '!');
+    await userEvent.click(screen.getByTestId('module-builder-save'));
+    await waitFor(() => expect(saveState()).toBe('Save not confirmed - your changes are still here'));
+    expect(title).toHaveValue('Week one!');
+    expect(screen.getByText('Save not confirmed')).toBeInTheDocument();
+    expect(screen.queryByText('Save failed')).not.toBeInTheDocument();
+    expect(saveModuleStructure).toHaveBeenCalledOnce();
+  });
+
+  it('clears the old timeout notice when a later refresh confirms the saved content', async () => {
+    saveModuleStructure.mockImplementationOnce(async (_id: string, sent: SavedModule) => {
+      loadModuleStructure.mockRejectedValueOnce(new Error('Read temporarily unavailable'))
+        .mockResolvedValue({ ...sent, structureRevision: 'committed' });
+      throw new CurriculumRequestTimeout();
+    });
+    const title = await openWorkspace();
+    await userEvent.type(title, '!');
+    await userEvent.click(screen.getByTestId('module-builder-save'));
+    await waitFor(() => expect(saveState()).toBe('Save not confirmed - your changes are still here'));
+    // Returning to the tab can refresh only after opening has finished and
+    // enabled its listener; the input can render before that point.
+    await waitFor(() => expect(screen.queryByRole('status', {
+      name: /Opening .* builder/,
+    })).not.toBeInTheDocument());
+    fireEvent(window, new Event('focus'));
+    await waitFor(() => expect(saveState()).toBe('All changes saved'));
+    expect(screen.queryByText('Save not confirmed')).not.toBeInTheDocument();
+    expect(screen.queryByText('Save failed')).not.toBeInTheDocument();
+    expect(title).toHaveValue('Week one!');
+    expect(saveModuleStructure).toHaveBeenCalledOnce();
+  });
+
+  it('preserves edits typed during the confirmation read and keeps them unsaved', async () => {
+    let release!: () => void;
+    saveModuleStructure.mockImplementationOnce(async (_id: string, sent: SavedModule) => {
+      loadModuleStructure.mockImplementationOnce(() => new Promise(resolve => {
+        release = () => resolve({ ...sent, structureRevision: 'committed' });
+      }));
+      throw new CurriculumRequestTimeout();
+    });
+    const title = await openWorkspace();
+    await userEvent.type(title, '!');
+    await userEvent.click(screen.getByTestId('module-builder-save'));
+    await waitFor(() => expect(saveState()).toBe('Checking saved changes...'));
+    await userEvent.type(title, '?');
+    release();
+    await waitFor(() => expect(saveState()).toBe('Unsaved changes - press Save'));
+    expect(title).toHaveValue('Week one!?');
+    expect(screen.queryByText('Save failed')).not.toBeInTheDocument();
+    expect(saveModuleStructure).toHaveBeenCalledOnce();
+  });
+
+  it('saves a new video component before uploading its already selected MP4', async () => {
+    const structure = storedStructure();
+    structure.weekStructure[0].components[0].type = 'video';
+    const order: string[] = [];
+    vi.mocked(coachFetch).mockImplementation(async (_url, options) => {
+      if (options?.method === 'POST') {
+        order.push('upload');
+        return new Response(JSON.stringify({ savedSettings: { videoUrl: '/curriculum_api/curriculum/uploads/videos/module/M1/C1/hash.mp4', sourceType: 'HTML (MP4)' } }), { status: 202 });
+      }
+      return new Response(JSON.stringify({ enabled: true, saved: false, import: null }), { status: 200 });
+    });
+    saveModuleStructure.mockImplementationOnce(async (_id: string, module: SavedModule) => {
+      order.push('save');
+      return { ...module, structureRevision: 'rev-2' };
+    });
+    await openWorkspace('', structure);
+    await userEvent.click(await screen.findByRole('button', { name: 'First component' }));
+    const picker = screen.getByLabelText('Upload MP4 to LMS and Bunny');
+    expect(picker).toBeEnabled();
+    fireEvent.change(picker, { target: { files: [new File(['video'], 'new-video.mp4')] } });
+    expect(order).toEqual([]);
+    await userEvent.click(screen.getByTestId('module-builder-save'));
+    await waitFor(() => expect(order).toEqual(['save', 'upload']));
+    await waitFor(() => expect(screen.queryByText(/new-video.mp4.*Selected/)).not.toBeInTheDocument());
+    expect(vi.mocked(coachFetch).mock.calls.find(([, options]) => options?.method === 'POST')?.[0])
+      .toBe('/curriculum_api/curriculum/videos/module/MOD-AUTOSAVE-1/COMPONENT-1/');
+    expect(saveModuleStructure).toHaveBeenCalledOnce();
+  });
+
+  it.each([false, true])('saves an independent reorder while retaining a reserved title and navigation guard (free course: %s)', async (isFreeCourse) => {
+    collaborationTest.enabled = true;
+    const title = await openWorkspace('', { ...storedStructure(), isFreeCourse } as ReturnType<typeof storedStructure>);
+    await userEvent.type(title, '!');
+    await userEvent.click(await screen.findByRole('button', { name: 'Reorder components' }));
+    await userEvent.click(screen.getByTestId('module-builder-save'));
+    await waitFor(() => expect(saveModuleStructure).toHaveBeenCalledTimes(1));
+    expect(saveCalls()[0][1].weekStructure[0].title).toBe('Week one');
+    expect(saveCalls()[0][1].weekStructure[0].components.map(c => c.id)).toEqual(['COMPONENT-2', 'COMPONENT-1']);
+    expect(saveModuleStructure.mock.calls[0][1].isFreeCourse).toBe(isFreeCourse);
+    await waitFor(() => expect(title).toHaveValue('Week one!'));
+    expect(saveState()).toBe('Unsaved changes - press Save');
+    await userEvent.click(screen.getByRole('button', { name: 'Back to modules' }));
+    await waitFor(() => expect(swalFire).toHaveBeenCalled());
+  });
+
+  it('saves a week title without the Save button being pressed', async () => {
+    const title = await openWorkspaceSaving();
+    expect(saveModuleStructure).not.toHaveBeenCalled();
+
+    await userEvent.type(title, '!');
+
+    await waitFor(() => expect(saveModuleStructure).toHaveBeenCalled(), { timeout: 8000 });
+    expect(saveCalls()[0][1].weekStructure[0].title).toBe('Week one!');
+    // And it names the version it was built from, or the write is a
+    // last-write-wins replacement of whatever the module has become since.
+    expect(saveCalls()[0][2]?.expectedRevision).toBe('rev-1');
+  });
+
+  it('spends one save on a burst of typing, not one per character', async () => {
+    // The whole structure goes back on every save, so a request per keystroke
+    // would be hundreds of full writes for one renamed week.
+    const title = await openWorkspaceSaving();
+
+    await userEvent.type(title, 'abcdef');
+
+    await waitFor(() => expect(saveModuleStructure).toHaveBeenCalled(), { timeout: 8000 });
+    expect(saveModuleStructure).toHaveBeenCalledTimes(1);
+    expect(saveCalls()[0][1].weekStructure[0].title).toBe('Week oneabcdef');
+  });
+
+  it('carries the revision the previous save returned into the next one', async () => {
+    // Without this every save after the first conflicts with its own predecessor.
+    const title = await openWorkspaceSaving();
+    await userEvent.type(title, 'A');
+    await waitFor(() => expect(saveModuleStructure).toHaveBeenCalledTimes(1), { timeout: 8000 });
+
+    await userEvent.type(title, 'B');
+
+    await waitFor(() => expect(saveModuleStructure).toHaveBeenCalledTimes(2), { timeout: 8000 });
+    expect(saveCalls()[1][2]?.expectedRevision).toBe('rev-2');
+  });
+
+  it('keeps what the reader types while a save is in flight, and sends it after', async () => {
+    // The response to a save is the state that was SENT. Applying it blindly
+    // puts the screen back to before the keystrokes made since — the reader
+    // watches their own typing disappear.
+    const held = holdNextSave();
+    const title = await openWorkspaceSaving();
+
+    await userEvent.type(title, ' first');
+    await waitFor(() => expect(saveModuleStructure).toHaveBeenCalledTimes(1), { timeout: 8000 });
+    // Typed while save A is still open.
+    await userEvent.type(title, ' second');
+    held.release();
+
+    await waitFor(() => expect(title).toHaveValue('Week one first second'), { timeout: 8000 });
+    // And the edit made during the save is not merely kept on screen, it is
+    // saved: a pending edit that never reaches the backend is the same loss
+    // one round trip later.
+    await waitFor(() => expect(saveModuleStructure).toHaveBeenCalledTimes(2), { timeout: 8000 });
+    expect(saveCalls()[1][1].weekStructure[0].title).toBe('Week one first second');
+  });
+
+  it('never has two saves of the same module in flight at once', async () => {
+    // Two open requests can land in either order, and the loser's payload would
+    // decide what the module is. There is no ordering to get right if there is
+    // only ever one.
+    const held = holdNextSave();
+    const title = await openWorkspaceSaving();
+
+    await userEvent.type(title, 'x');
+    await waitFor(() => expect(saveModuleStructure).toHaveBeenCalledTimes(1), { timeout: 8000 });
+    await userEvent.type(title, 'y');
+    await userEvent.type(title, 'z');
+    // Pressing Save now must not open a second request either.
+    await userEvent.click(screen.getByTestId('module-builder-save'));
+
+    expect(saveModuleStructure).toHaveBeenCalledTimes(1);
+    held.release();
+    await waitFor(() => expect(saveModuleStructure).toHaveBeenCalledTimes(2), { timeout: 8000 });
+    expect(saveCalls()[1][1].weekStructure[0].title).toBe('Week onexyz');
+  });
+
+  it('reads as saved only once the backend has confirmed the write', async () => {
+    const held = holdNextSave();
+    const title = await openWorkspaceSaving();
+    expect(saveState()).toBe('All changes saved');
+
+    await userEvent.type(title, '!');
+    expect(saveState()).toBe('Unsaved changes');
+    await waitFor(() => expect(saveState()).toBe('Saving module structure...'), { timeout: 8000 });
+
+    held.release();
+    await waitFor(() => expect(saveState()).toBe('All changes saved'), { timeout: 8000 });
+  });
+
+  it('says there are later edits still pending while a save is running', async () => {
+    const held = holdNextSave();
+    const title = await openWorkspaceSaving();
+
+    await userEvent.type(title, '!');
+    await waitFor(() => expect(saveState()).toBe('Saving module structure...'), { timeout: 8000 });
+    await userEvent.type(title, '?');
+
+    expect(saveState()).toBe('Saving... later edits still pending');
+    held.release();
+  });
+
+  it('reports a failed save as failed and keeps the edits', async () => {
+    saveModuleStructure.mockRejectedValueOnce(new Error('Curriculum API returned 500'));
+    const title = await openWorkspaceSaving();
+
+    await userEvent.type(title, '!');
+
+    await waitFor(() => expect(saveState()).toBe('Save failed - your changes are still here'), { timeout: 8000 });
+    expect(title).toHaveValue('Week one!');
+    // And it does not sit there retrying the payload the backend just refused.
+    await new Promise(resolve => window.setTimeout(resolve, 2000));
+    expect(saveModuleStructure).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries a failed save on the next edit rather than needing a page reload', async () => {
+    saveModuleStructure.mockRejectedValueOnce(new Error('Curriculum API returned 500'));
+    const title = await openWorkspaceSaving();
+    await userEvent.type(title, '!');
+    await waitFor(() => expect(saveState()).toBe('Save failed - your changes are still here'), { timeout: 8000 });
+
+    await userEvent.type(title, '?');
+
+    await waitFor(() => expect(saveState()).toBe('All changes saved'), { timeout: 8000 });
+    expect(saveCalls()[1][1].weekStructure[0].title).toBe('Week one!?');
+  });
+
+  it('keeps every local change when the module was written by somebody else', async () => {
+    // A 409. Re-sending this payload as it stands is exactly the destruction
+    // the refusal prevented -- so it is not re-sent. The stored version is read
+    // and merged into the workspace, and the merged module, which carries both
+    // editors' work, is what goes instead. Reloading by hand is not asked for
+    // any more, and nothing the reader typed is touched.
+    saveModuleStructure.mockRejectedValueOnce(new ModuleStructureConflictError(
+      'This module changed after you opened it. Your changes have not been overwritten. '
+      + 'Reload the latest version before saving again.',
+      'rev-99',
+      null,
+    ));
+    const title = await openWorkspaceSaving();
+    // What the other editor stored: the same week, with a summary they wrote.
+    const theirs = storedStructure('rev-99');
+    theirs.weekStructure[0].summary = 'Sara wrote this summary';
+    loadModuleStructure.mockResolvedValue(theirs);
+
+    await userEvent.type(title, ' mine');
+
+    await waitFor(() => expect(saveState()).toBe('All changes saved'), { timeout: 8000 });
+    expect(title).toHaveValue('Week one mine');
+    const retried = saveCalls()[saveCalls().length - 1];
+    // The refusal named rev-99, and that is the version the merged module is
+    // genuinely built on -- it contains their summary.
+    expect(retried[2]?.expectedRevision).toBe('rev-99');
+    expect(retried[1].weekStructure[0].title).toBe('Week one mine');
+    expect((retried[1].weekStructure[0] as { summary?: string }).summary).toBe('Sara wrote this summary');
+    // Nothing tells the reader to reload, because there is nothing for them to
+    // do: the save went through.
+    expect(screen.queryByText(/Reload the latest version/)).not.toBeInTheDocument();
+  });
+
+  it('sends the edits straight away when Save now is pressed', async () => {
+    // Same pipeline as the auto-save, without the quiet period.
+    const title = await openWorkspaceSaving();
+    await userEvent.type(title, '!');
+
+    await userEvent.click(screen.getByTestId('module-builder-save'));
+
+    await waitFor(() => expect(saveModuleStructure).toHaveBeenCalledTimes(1));
+    expect(saveCalls()[0][1].weekStructure[0].title).toBe('Week one!');
+    expect(saveCalls()[0][2]?.expectedRevision).toBe('rev-1');
+    // One save, not one from the button and another from the timer behind it.
+    await new Promise(resolve => window.setTimeout(resolve, 2000));
+    expect(saveModuleStructure).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves the module to the Save button until somebody turns auto save on', async () => {
+    // The default, on every module. A save here replaces every week, component
+    // and KSB mapping the module has, so the workspace does not start doing
+    // that unasked.
+    const title = await openWorkspace();
+    expect(autoSaveToggle()).toHaveTextContent('Auto save off');
+
+    await userEvent.type(title, '!');
+
+    await new Promise(resolve => window.setTimeout(resolve, 2500));
+    expect(saveModuleStructure).not.toHaveBeenCalled();
+    expect(saveState()).toBe('Unsaved changes - press Save');
+
+    await userEvent.click(screen.getByTestId('module-builder-save'));
+    await waitFor(() => expect(saveModuleStructure).toHaveBeenCalledTimes(1));
+    expect(saveCalls()[0][1].weekStructure[0].title).toBe('Week one!');
+    expect(saveCalls()[0][2]?.expectedRevision).toBe('rev-1');
+  });
+
+  it('saves the component order chosen in the course structure', async () => {
+    await openWorkspace();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Reorder components' }));
+    await userEvent.click(screen.getByTestId('module-builder-save'));
+
+    await waitFor(() => expect(saveModuleStructure).toHaveBeenCalledTimes(1));
+    expect(saveCalls()[0][1].weekStructure[0].components.map(component => component.id))
+      .toEqual(['COMPONENT-2', 'COMPONENT-1']);
+  });
+
+  it('creates a new week without an Other components wrapper and preserves the existing week on save', async () => {
+    await openWorkspace();
+    await userEvent.click(screen.getByRole('button', { name: /^Week$/ }));
+    expect(await screen.findByLabelText('Week title')).toHaveValue('Week 2');
+    await screen.findByRole('button', { name: 'Collapse Week 2' });
+    expect(screen.queryByText('Other components')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByTestId('module-builder-save'));
+    await waitFor(() => expect(saveModuleStructure).toHaveBeenCalledOnce());
+    expect(saveModuleStructure.mock.calls[0][1].weekStructure).toEqual([
+      expect.objectContaining({ id: 'WEEK-1', title: 'Week one', components: [
+        expect.objectContaining({ id: 'COMPONENT-1' }), expect.objectContaining({ id: 'COMPONENT-2' }),
+      ] }),
+      expect.objectContaining({ title: 'Week 2', weekNumber: 2, components: [] }),
+    ]);
+  });
+
+  it('removes a moved component from its source Point while saving it in the destination week', async () => {
+    const stored = storedStructure();
+    const source = stored.weekStructure[0];
+    const structure = { ...stored, weekStructure: [source, { ...source, id: 'WEEK-2', weekNumber: 2, title: 'Week two', components: [] }] };
+    vi.mocked(authoredWeekPoints).mockImplementation(async (moduleId, weekId, saved) => ({
+      moduleId, weekId, editorId: 'synthetic', csrfToken: 'synthetic', revision: saved ? 1 : 0,
+      points: saved?.points || (weekId === 'WEEK-1' ? [{ id: 'P1', title: 'Explore', componentIds: ['COMPONENT-1'] }] : []), activities: [],
+    }));
+    await openWorkspace('', structure);
+    await screen.findByRole('button', { name: 'Explore, 1 activity' });
+    await userEvent.click(screen.getByRole('button', { name: 'Move first component to next week' }));
+    await userEvent.click(screen.getByTestId('module-builder-save'));
+    await waitFor(() => expect(saveModuleStructure).toHaveBeenCalledOnce());
+    expect(saveModuleStructure.mock.calls[0][1].weekStructure.map((week: { components: { id: string }[] }) => week.components.map(component => component.id)))
+      .toEqual([['COMPONENT-2'], ['COMPONENT-1']]);
+    await waitFor(() => expect(vi.mocked(authoredWeekPoints).mock.calls.filter(call => call[2])).toHaveLength(1));
+    expect(vi.mocked(authoredWeekPoints).mock.calls.find(call => call[2]))
+      .toEqual(['MOD-AUTOSAVE-1', 'WEEK-1', expect.objectContaining({ points: [{ id: 'P1', title: 'Explore', componentIds: [] }] })]);
+  });
+
+  it('saves dragged weeks in their new order with dates assigned by timetable position', async () => {
+    const stored = storedStructure();
+    const first = { ...stored.weekStructure[0], components: stored.weekStructure[0].components.map(component => ({
+      ...component, settings: { readingContent: `Saved content for ${component.id}` },
+    })) };
+    const secondComponents = first.components.map(component => ({ ...component, id: `SECOND-${component.id}` }));
+    const structure = { ...stored, weekStructure: [
+      { ...first, sessionDate: '2026-11-16', sessionDay: 'Monday' },
+      { ...first, id: 'WEEK-2', weekNumber: 2, title: 'Week two', sessionDate: '2026-11-23', sessionDay: 'Monday', components: secondComponents },
+    ] };
+    const before = structuredClone(structure);
+    const title = await openWorkspace('', structure);
+    const source = (await screen.findByRole('button', { name: 'Collapse Week one' })).parentElement!;
+    const target = screen.getByRole('button', { name: 'Expand Week two' }).parentElement!;
+    const dataTransfer = { effectAllowed: 'none' };
+
+    fireEvent.dragStart(source, { dataTransfer });
+    fireEvent.dragOver(target, { dataTransfer });
+    fireEvent.drop(target, { dataTransfer });
+    fireEvent.dragEnd(source, { dataTransfer });
+
+    // The selected week stays selected as it moves, and nothing is saved until Save.
+    expect(title).toHaveValue('Week one');
+    expect(saveModuleStructure).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByTestId('module-builder-save'));
+    await waitFor(() => expect(saveModuleStructure).toHaveBeenCalledOnce());
+    expect(saveModuleStructure.mock.calls[0][1].weekStructure).toEqual([
+      expect.objectContaining({ id: 'WEEK-2', weekNumber: 1, sessionDate: '2026-11-16', sessionDay: 'Monday', components: secondComponents.map(component => expect.objectContaining({ ...component, settings: expect.objectContaining(component.settings) })) }),
+      expect.objectContaining({ id: 'WEEK-1', weekNumber: 2, sessionDate: '2026-11-23', sessionDay: 'Monday', components: first.components.map(component => expect.objectContaining({ ...component, settings: expect.objectContaining(component.settings) })) }),
+    ]);
+    expect(structure).toEqual(before);
+  });
+
+  it('holds every edit until Save is pressed once auto save is turned off again', async () => {
+    const title = await openWorkspaceSaving();
+    expect(autoSaveToggle()).toHaveTextContent('Auto save on');
+
+    await userEvent.click(autoSaveToggle());
+    expect(autoSaveToggle()).toHaveTextContent('Auto save off');
+    await userEvent.type(title, '!');
+
+    // Well past the quiet period, and nothing has been sent.
+    await new Promise(resolve => window.setTimeout(resolve, 2500));
+    expect(saveModuleStructure).not.toHaveBeenCalled();
+    // The footer says what has to happen rather than implying it is in hand.
+    expect(saveState()).toBe('Unsaved changes - press Save');
+    expect(title).toHaveValue('Week one!');
+
+    // Same pipeline, same revision check -- only the trigger is different.
+    await userEvent.click(screen.getByTestId('module-builder-save'));
+    await waitFor(() => expect(saveModuleStructure).toHaveBeenCalledTimes(1));
+    expect(saveCalls()[0][1].weekStructure[0].title).toBe('Week one!');
+    expect(saveCalls()[0][2]?.expectedRevision).toBe('rev-1');
+    await waitFor(() => expect(saveState()).toBe('All changes saved'));
+  });
+
+  it('sends the work typed before it was switched on as soon as it is', async () => {
+    const title = await openWorkspace();
+    await userEvent.type(title, '!');
+    await new Promise(resolve => window.setTimeout(resolve, 2000));
+    expect(saveModuleStructure).not.toHaveBeenCalled();
+
+    await userEvent.click(autoSaveToggle());
+
+    await waitFor(() => expect(saveModuleStructure).toHaveBeenCalledTimes(1), { timeout: 8000 });
+    expect(saveCalls()[0][1].weekStructure[0].title).toBe('Week one!');
+  });
+
+  it('keeps the choice to the module it was made on', async () => {
+    await openWorkspaceSaving();
+    expect(autoSaveToggle()).toHaveTextContent('Auto save on');
+
+    // Nothing is written anywhere, so the next module -- and the next reader on
+    // this browser -- opens on the default rather than inheriting this.
+    expect(window.localStorage.getItem('curriculumModuleBuilderAutoSave')).toBeNull();
+  });
+
+  it('asks before leaving a module whose save was refused', async () => {
+    // Auto-save shortens the unsaved window; it does not remove it. A refusal
+    // leaves real work in the browser and nowhere else, so the existing guard
+    // has to still be the thing standing between it and Back.
+    saveModuleStructure.mockRejectedValueOnce(new Error('Curriculum API returned 500'));
+    const title = await openWorkspaceSaving();
+    await userEvent.type(title, '!');
+    await waitFor(() => expect(saveState()).toBe('Save failed - your changes are still here'), { timeout: 8000 });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Back to modules' }));
+
+    await waitFor(() => expect(swalFire).toHaveBeenCalled());
+    expect(swalFire.mock.calls[0][0]).toMatchObject({ title: 'Save changes first?' });
+    // Cancelled, so the workspace and the edits are still here.
+    expect(await screen.findByLabelText(/Week title/i)).toHaveValue('Week one!');
+  });
+});

@@ -1,0 +1,292 @@
+"""A module's week count and its session count are two numbers, stored apart.
+
+`sessions_number` used to carry both. For a group delivering one day a week they
+agree, so nothing looked wrong -- but a Mon+Thu group runs two sessions for every
+authored week, and the single column made each save round-trip through the Edit
+module drawer multiply the weeks shown by the delivery days (5 -> 10 -> 20 -> 40).
+
+These tests pin the split at the boundary that broke: what a PATCH stores, and
+what the next read hands back to the drawer. Asserted through the endpoints
+rather than the helpers, because the bug was never in the arithmetic -- it was in
+one field being asked to mean two things on the way in and out.
+"""
+
+import json
+from datetime import datetime
+
+from curriculum_api import views
+from curriculum_api.tests import CurriculumPersistenceTransactionHarness
+
+
+class WeeksAndSessionsAreStoredApart(CurriculumPersistenceTransactionHarness):
+    """The counts a module carries, and which of them each feature reads."""
+
+    def setUp(self):
+        super().setUp()
+        from coach_api.tests_support.persisted_fixtures import curriculum_session
+        curriculum_session(self, self.client)
+
+    def create_module(self, *, week_days='Monday, Thursday', weeks=5, sessions=10):
+        response = self.client.post(
+            '/curriculum_api/curriculum/modules/',
+            data=json.dumps({
+                'name': 'Delivered Twice A Week',
+                'moduleType': 'authoring',
+                'sourceType': 'authoring',
+                'programmeId': 'PROG-SPLIT',
+                'programmeName': 'Split Programme',
+                'weeks': weeks,
+                'sessionsNumber': sessions,
+                'weekDays': week_days,
+                'startDate': '2026-09-07',
+            }),
+            content_type='application/json',
+        )
+        self.assertIn(response.status_code, (200, 201), response.content)
+        body = json.loads(response.content)
+        catalogue_id = (
+            body.get('moduleCatalogueId')
+            or body.get('catalogueId')
+            or (body.get('module') or {}).get('catalogueId')
+            or (body.get('module') or {}).get('moduleCatalogueId')
+        )
+        self.assertTrue(catalogue_id, body)
+        return catalogue_id
+
+    def stored_row(self, catalogue_id):
+        rows = views.authoring_fetch_all(
+            views.AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [catalogue_id],
+        )
+        self.assertTrue(rows, f'no stored row for {catalogue_id}')
+        return rows[0]
+
+    def test_group_module_schedule_override_survives_catalogue_and_drives_one_series(self):
+        tree = self.tree_payload()
+        tree['cohorts'][0]['groups'][0]['modules'] = []
+        response = self.post_json('/curriculum_api/curriculum/programmes/tree/', tree)
+        self.assertEqual(response.status_code, 200, response.content)
+        response = self.post_json('/curriculum_api/curriculum/groups/GROUP-DATA-1/modules/', {
+            'moduleName': 'Two sessions each week',
+            'startDate': '2026-09-07', 'weeks': 4, 'sessionsNumber': 8,
+            # A module override opts into Custom; Group remains the default.
+            'scheduleMode': 'custom',
+            'weeklySchedule': [
+                {'day': day, 'startTime': '09:00', 'endTime': '11:00'}
+                for day in ('Monday', 'Thursday')
+            ],
+            'weekDays': 'Monday, Thursday', 'startTime': '09:00', 'endTime': '11:00',
+            'tutor': 'Tutor One',
+        })
+        self.assertEqual(response.status_code, 200, response.content)
+        module_id = response.json()['created'][0]['catalogueId']
+        row = self.stored_row(module_id)
+        self.assertEqual(row['weeks_number'], 4)
+        self.assertEqual(row['sessions_number'], 8)
+        self.assertEqual(row['session_week_day'], 'Monday, Thursday')
+        # Editing from the catalogue must receive the override, not group Wednesday.
+        summary = views.authoring_catalogue_summaries()[module_id]
+        catalogue = views.authoring_summary_catalogue_item(summary)
+        self.assertEqual(catalogue['weekDays'], 'Monday, Thursday')
+        self.assertEqual(catalogue['startTime'], '09:00')
+        self.assertEqual(catalogue['endTime'], '11:00')
+        group = self.row(views.GROUPS_TABLE, 'group_id', 'GROUP-DATA-1')
+        self.assertEqual(group['session_week_day'], 'Wednesday')
+
+        plan = views.module_session_plan_for_count(row, views.module_stored_session_count(row))
+        expected_dates = ['2026-09-07', '2026-09-10', '2026-09-14', '2026-09-17', '2026-09-21', '2026-09-24', '2026-09-28', '2026-10-01']
+        self.assertEqual([session['date'] for session in plan['sessions']], expected_dates)
+        # Both weekdays belong to one recurring event; no separate per-day series.
+        payload = {'scheduledOccurrences': [
+            {'sessionNumber': index + 1, 'startDateTimeUtc': f'{date}T08:00:00Z', 'durationMinutes': 120}
+            for index, date in enumerate(expected_dates)
+        ]}
+        anchor = datetime(2026, 9, 7, 9, 0)
+        weekdays = views.teams_recurrence_weekdays(payload, anchor)
+        recurrence = views.teams_event_recurrence('weekly', anchor, 8, weekdays)
+        self.assertEqual(recurrence['pattern']['daysOfWeek'], ['monday', 'thursday'])
+        self.assertEqual(recurrence['range']['numberOfOccurrences'], 8)
+
+        response = self.patch_json(f'/curriculum_api/curriculum/modules/{module_id}/', {
+            'weekDays': 'Tuesday, Friday', 'sessionsNumber': 8,
+            'weeklySchedule': [
+                {'day': day, 'startTime': '09:00', 'endTime': '11:00'}
+                for day in ('Tuesday', 'Friday')
+            ],
+        })
+        self.assertEqual(response.status_code, 200, response.content)
+        after = views.get_authoring_structure_payload(module_id)
+        self.assertEqual(after['weekDays'], 'Tuesday, Friday')
+        self.assertEqual(after['weeks'], 4)
+        self.assertEqual(after['sessionsNumber'], 8)
+
+    def test_creating_a_module_keeps_the_two_counts_distinct(self):
+        catalogue_id = self.create_module(weeks=5, sessions=10)
+        row = self.stored_row(catalogue_id)
+
+        self.assertEqual(views.parse_int(row.get('weeks_number'), 0), 5)
+        self.assertEqual(views.parse_int(row.get('sessions_number'), 0), 10)
+
+    def test_editing_the_weeks_does_not_multiply_them_on_the_way_back(self):
+        # The reported bug, end to end: type 5 into "Weeks" on a Mon+Thu module,
+        # save, reopen. The drawer used to offer 10, then 20, then 40.
+        catalogue_id = self.create_module(weeks=8, sessions=16)
+
+        for _ in range(3):
+            response = self.client.patch(
+                f'/curriculum_api/curriculum/modules/{catalogue_id}/',
+                data=json.dumps({'weeks': 5, 'sessionsNumber': 10}),
+                content_type='application/json',
+            )
+            self.assertEqual(response.status_code, 200, response.content)
+
+            structure = views.get_authoring_structure_payload(catalogue_id)
+            self.assertEqual(structure.get('weeks'), 5)
+            self.assertEqual(structure.get('sessionsNumber'), 10)
+
+    def test_a_smaller_weeks_count_never_deletes_authored_weeks(self):
+        """The reported data loss: an edit in the drawer wiped the built weeks.
+
+        The Weeks box is seeded from the module's stored week count and falls
+        back to 1 when there is none, which is the state an imported module
+        arrives in. Sending that 1 used to shrink the week list straight to it,
+        deleting eleven weeks and every component in them -- and still answering
+        ``updated: True``. A trailing shell may go; an authored week may not.
+        """
+        catalogue_id = self.create_module(weeks=12, sessions=12, week_days='Monday')
+        # The catalogue's metadata-only create does not author week rows.
+        # Seed the authored structure this preservation regression exercises.
+        views.save_module_authoring_structure(catalogue_id, {
+            **views.get_authoring_structure_payload(catalogue_id),
+            'weekStructure': [
+                {'weekNumber': index + 1, 'title': f'Week {index + 1}', 'components': []}
+                for index in range(12)
+            ],
+        })
+        structure = views.get_authoring_structure_payload(catalogue_id)
+        weeks = structure['weekStructure']
+        self.assertEqual(len(weeks), 12)
+        # Build something into the first six, leaving six untouched shells.
+        for index, week in enumerate(weeks[:6]):
+            week['components'] = [{
+                'id': f'COMP-KEEP-{index}',
+                'type': 'reading',
+                'title': f'Reading {index}',
+                'expectedOtjh': 1,
+            }]
+        views.save_module_authoring_structure(catalogue_id, {**structure, 'weekStructure': weeks})
+
+        response = self.client.patch(
+            f'/curriculum_api/curriculum/modules/{catalogue_id}/',
+            data=json.dumps({'weeks': 1, 'sessionsNumber': 1}),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+
+        after = views.get_authoring_structure_payload(catalogue_id)
+        # The six shells are dropped, the six authored weeks stay, and the
+        # stored count agrees with the rows that survived.
+        self.assertEqual(len(after['weekStructure']), 6)
+        self.assertEqual(
+            sum(len(week.get('components') or []) for week in after['weekStructure']), 6,
+        )
+        self.assertEqual(views.parse_int(self.stored_row(catalogue_id).get('weeks_number'), 0), 6)
+
+    def test_a_patch_that_only_renames_leaves_both_counts_alone(self):
+        catalogue_id = self.create_module(weeks=6, sessions=12)
+
+        response = self.client.patch(
+            f'/curriculum_api/curriculum/modules/{catalogue_id}/',
+            data=json.dumps({'name': 'Renamed Only'}),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+
+        row = self.stored_row(catalogue_id)
+        self.assertEqual(views.parse_int(row.get('weeks_number'), 0), 6)
+        self.assertEqual(views.parse_int(row.get('sessions_number'), 0), 12)
+
+    def test_the_session_plan_runs_to_the_sessions_not_the_weeks(self):
+        # What the Teams series and the calendar are built from. Reading the week
+        # count here produced half the meetings a twice-weekly module needs.
+        catalogue_id = self.create_module(weeks=5, sessions=10)
+        row = self.stored_row(catalogue_id)
+
+        self.assertEqual(views.module_stored_session_count(row), 10)
+        self.assertEqual(views.module_stored_week_count(row), 5)
+
+    def test_a_row_predating_the_split_reads_its_weeks_back_out_of_its_sessions(self):
+        # weeks_number is NULL for every row written before the column existed.
+        # A Mon+Thu row holding 10 sessions is 5 weeks, not 10.
+        legacy = {'sessions_number': 10, 'session_week_day': 'Monday, Thursday', 'weeks_number': None}
+
+        self.assertEqual(views.module_stored_week_count(legacy), 5)
+        self.assertEqual(views.module_stored_session_count(legacy), 10)
+
+    def test_a_legacy_single_day_row_is_unchanged_by_the_split(self):
+        # The case that always agreed, and must keep agreeing.
+        legacy = {'sessions_number': 6, 'session_week_day': 'Monday', 'weeks_number': None}
+
+        self.assertEqual(views.module_stored_week_count(legacy), 6)
+        self.assertEqual(views.module_stored_session_count(legacy), 6)
+
+    def test_authored_week_rows_win_over_a_derived_guess(self):
+        legacy = {'sessions_number': 10, 'session_week_day': 'Monday, Thursday', 'weeks_number': None}
+
+        self.assertEqual(views.module_stored_week_count(legacy, week_count=7), 7)
+
+    def test_delivery_days_never_reads_as_zero(self):
+        # A zero would divide the week count away entirely.
+        for value in ('', None, ',', ' , '):
+            self.assertEqual(views.delivery_days_per_week({'session_week_day': value}), 1, value)
+        self.assertEqual(views.delivery_days_per_week({'session_week_day': 'Monday, Thursday'}), 2)
+        self.assertEqual(views.delivery_days_per_week({'session_week_day': 'Mon,Tue,Wed'}), 3)
+
+    def test_two_live_sessions_in_one_week_get_distinct_delivery_dates(self):
+        """Each live component uses its delivery slot, not the week's first date."""
+        from coach_api.tests_support.persisted_fixtures import programme
+        programme('PROG-SPLIT')
+        module_id = 'MOD-TWO-SESSIONS-SAME-WEEK'
+        views.authoring_upsert(views.AUTHORING_MODULES_TABLE, ['module_catalogue_id'], {
+            'module_catalogue_id': module_id,
+            'programme_id': 'PROG-SPLIT',
+            'programme_name': 'Split Programme',
+            'title': 'Monday and Wednesday module',
+            'weeks_number': 2,
+            'sessions_number': 4,
+            'start_date': '2026-09-07',
+            'session_week_day': 'Monday, Wednesday',
+            'session_start_time': '09:00',
+            'session_end_time': '10:00',
+        })
+        for week_number in (1, 2):
+            week_id = f'WEEK-TWICE-{week_number}'
+            views.authoring_upsert(views.AUTHORING_WEEKS_TABLE, ['id'], {
+                'id': week_id,
+                'module_catalogue_id': module_id,
+                'week_number': week_number,
+                'display_order': week_number,
+                'title': f'Week {week_number}',
+            })
+            for slot in (1, 2):
+                views.authoring_upsert(views.AUTHORING_COMPONENTS_TABLE, ['id'], {
+                    'id': f'COMP-TWICE-{week_number}-{slot}',
+                    'week_id': week_id,
+                    'module_catalogue_id': module_id,
+                    'type': 'live_session',
+                    'title': f'Live session {slot}',
+                    'display_order': slot,
+                    'settings_json': views.json_db_value({}),
+                })
+
+        payload = views.get_authoring_structure_payload(module_id)
+        visible_dates = [
+            component['settings'].get('sessionDate') or week['sessionDate']
+            for week in payload['weekStructure']
+            for component in week['components']
+            if component['type'] == 'live-session'
+        ]
+
+        self.assertEqual(
+            visible_dates,
+            ['2026-09-07', '2026-09-09', '2026-09-14', '2026-09-16'],
+        )

@@ -1,0 +1,530 @@
+import { act, fireEvent, render, screen, waitFor, cleanup, within } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ReactNode } from 'react';
+import MonthlyLogsPage from './page';
+import { getCoachMonthlyLogLearners, getCoachLogYear, getCoachLogDetail } from '@/features/coach/monthly-logs/api/monthlyLogsApi';
+vi.mock('@/features/coach/monthly-logs/api/monthlyLogsApi', async importOriginal => ({
+  ...await importOriginal<typeof import('@/features/coach/monthly-logs/api/monthlyLogsApi')>(),
+  getCoachMonthlyLogLearners: vi.fn(), getCoachLogYear: vi.fn(), getCoachLogDetail: vi.fn(),
+}));
+import { completeLogMonth, correctLogManualTime, getLogContent, getLogLearners, getLogMonth, getLogSummary, signLogMonth, type LogDetail, type LogSummary } from './api';
+import { learnerNavItems, coachNavItems } from '@/mocks/navigation';
+import { rememberLearner } from '@/hooks/useMyLearner';
+
+const account = { id: 1, role: 'learner', subjectId: 7, displayName: 'Example learner', access: 'learner' };
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ auth: { account } }) }));
+vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children, role }: { children: ReactNode; role: string }) => <div data-testid="workspace" data-role={role}>{children}</div> }));
+vi.mock('@/features/old-otjh/JournalDownloads', () => ({ JournalDownloads: () => <button>Download PDF</button> }));
+vi.mock('@/features/old-otjh/SignatureCapture', () => ({ SignatureCapture: ({ dialogRole, onDraftStart, onSave }: {
+  dialogRole: string; onDraftStart: () => void; onSave: (blob: Blob, capture: 'draw') => void;
+}) => <button onClick={() => { onDraftStart(); onSave(new Blob(['signature']), 'draw'); }}>Sign as {dialogRole}</button> }));
+vi.mock('./api', () => ({ completeLogMonth: vi.fn(), correctLogManualTime: vi.fn(), getLogContent: vi.fn(), getLogLearners: vi.fn(), getLogMonth: vi.fn(), getLogSummary: vi.fn(), signLogMonth: vi.fn() }));
+
+const current: LogDetail = { source: 'lms', month: '2026-09', status: 'awaiting_signature', row_count: 1,
+  planned_hours: 2, actual_hours: 1, not_accepted_hours: 0, pending_revisions: 0, can_complete: false,
+  source_finalization: null, student_signature: null, coach_signature: null, snapshot_digest: 'reviewed-digest',
+  rows: [{ id: 44, title: 'Completed reading', category: 'Reading', activity_date: '2026-09-12', activity_time: '10:00',
+    timestamp_label: '10:00', planned_hours: 2, actual_hours: 1, accepted: true, completion_note: 'Saved reflection', documents: [], results: [] }] };
+const retained: LogDetail = { ...current, source: 'lms', month: '2026-08', status: 'complete',
+  student_signature: { url: '/saved-learner.png', signer_name: 'Example learner', signed_at: '2026-09-01' },
+  coach_signature: { url: '/saved-coach.png', signer_name: 'Coach', signed_at: '2026-09-01' } };
+const summary: LogSummary = { learner: { id: 7, aptem_id: 42, name: 'Example learner', programme: 'Programme', coach_name: 'Coach' },
+  months: [current, retained], total_months: 2, completed_months: 1,
+  training_plan_totals: { accepted_hours: 517.32, planned_hours: 576 }, read_only: false, csrf_token: 'csrf' };
+
+function page(path = '/learner/monthly-logs') {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  const view = render(<QueryClientProvider client={client}><MemoryRouter initialEntries={[path]}><Routes>
+    <Route path="/learner/monthly-logs" element={<MonthlyLogsPage />} />
+    <Route path="/learner/monthly-logs/:month" element={<MonthlyLogsPage />} />
+    <Route path="/learner/monthly-logs/:kind/:id" element={<MonthlyLogsPage />} />
+    <Route path="/learner/monthly-logs/:kind/:id/:month" element={<MonthlyLogsPage />} />
+    <Route path="/learner/monthly-cycle/:kind/:id" element={<MonthlyLogsPage />} />
+    <Route path="/coach/monthly-logs" element={<MonthlyLogsPage />} />
+    <Route path="/coach/monthly-logs/:learnerId" element={<MonthlyLogsPage />} />
+    <Route path="/coach/monthly-logs/:learnerId/:month" element={<MonthlyLogsPage />} />
+  </Routes></MemoryRouter></QueryClientProvider>);
+  return { ...view, client };
+}
+
+beforeEach(() => {
+  vi.resetAllMocks();
+  localStorage.clear();
+  Object.assign(account, { role: 'learner', subjectId: 7, access: 'learner' });
+  vi.mocked(getLogSummary).mockResolvedValue(summary);
+  vi.mocked(getCoachMonthlyLogLearners).mockImplementation(() => getLogLearners());
+  vi.mocked(getCoachLogYear).mockImplementation(async (id, year) => {
+    const data = await getLogSummary(id, new AbortController().signal, 'coach');
+    return { learner: { id: Number(id), name: data.learner!.name, programme: data.learner!.programme, initials: 'EL' },
+      year, years: [year], unallocatedActivities: data.unallocated_activities, summary: { coachSignatures: { completed: data.months.filter(item => !item.is_open && item.coach_signature).length, total: data.months.filter(item => !item.is_open).length },
+        acceptedOtjhHours: data.training_plan_totals!.accepted_hours, trainingPlanHours: data.training_plan_totals!.planned_hours },
+      months: data.months.map(item => ({ month: item.month, activities: item.row_count, acceptedOtjhHours: Number(item.actual_hours),
+        targetHours: item.training_plan_target == null ? null : Number(item.training_plan_target), isOpen: !!item.is_open, learnerSigned: !!item.student_signature, coachSigned: !!item.coach_signature })) };
+  });
+  vi.mocked(getCoachLogDetail).mockImplementation(async (id, month) => ({
+    summary: await getLogSummary(id, new AbortController().signal, 'coach'),
+    detail: await getLogMonth(id, month, new AbortController().signal, 'coach'),
+  }));
+  vi.mocked(getLogMonth).mockImplementation(async (_id, month) => month === '2026-08' ? retained : current);
+  vi.mocked(getLogLearners).mockResolvedValue({ learners: [
+    { id: 7, name: 'Example learner', programme: 'Programme' },
+    { id: 8, name: 'Second learner', programme: 'Data Technician' },
+  ] });
+  vi.mocked(getLogContent).mockResolvedValue({ id: 44, parts: [{ id: 44, title: 'Original material', category: 'Reading',
+    url: 'https://example.org/reading', html: null, quiz: null }] });
+});
+afterEach(cleanup);
+
+it.each(['learner', 'coach'] as const)('keeps undated activities visible for %s review without inventing a month', async role => {
+  Object.assign(account, { role, access: role });
+  vi.mocked(getLogSummary).mockResolvedValue({ ...summary, months: [], unallocated_activities: [
+    { id: 901, title: 'Undated untimed activity', actual_hours: 0, actual_hours_recorded: false },
+    { id: 902, title: 'Undated recorded zero', actual_hours: 0, actual_hours_recorded: true },
+  ] });
+  page(role === 'learner' ? '/learner/monthly-logs' : '/coach/monthly-logs/7');
+  fireEvent.click(await screen.findByText('Activities awaiting month review (2)'));
+  const table = screen.getByRole('table', { name: 'Activities awaiting month review' });
+  const missing = within(table).getByText('Undated untimed activity').closest('tr')!;
+  expect(within(missing).getAllByText('Unavailable')).toHaveLength(2);
+  const zero = within(table).getByText('Undated recorded zero').closest('tr')!;
+  expect(within(zero).getAllByText('Unavailable')).toHaveLength(1);
+  expect(within(zero).getByText('0h 00m')).toBeInTheDocument();
+  expect(screen.queryByRole('link', { name: /Review month/ })).not.toBeInTheDocument();
+});
+
+it.each(['learner', 'coach'] as const)('shows unavailable duration separately from recorded zero for %s', async role => {
+  Object.assign(account, { role, access: role });
+  const detail = { ...current, rows: [
+    { ...current.rows[0], id: 901, title: 'Untimed activity', actual_hours: 0, actual_hours_recorded: false },
+    { ...current.rows[0], id: 902, title: 'Recorded zero activity', actual_hours: 0, actual_hours_recorded: true },
+  ] };
+  vi.mocked(getLogMonth).mockResolvedValue(detail);
+  page(role === 'learner' ? '/learner/monthly-logs/2026-09' : '/coach/monthly-logs/7/2026-09');
+  const missing = (await screen.findByText('Untimed activity')).closest('tr')!;
+  expect(within(missing).getByText('Unavailable')).toBeInTheDocument();
+  expect(within(missing).getByText('Duration not recorded — review required')).toBeInTheDocument();
+  expect(screen.getByText('Some activities have no recorded duration. Their hours are unavailable and are excluded from totals.')).toBeInTheDocument();
+  const zero = screen.getByText('Recorded zero activity').closest('tr')!;
+  expect(within(zero).queryByText('Unavailable')).not.toBeInTheDocument();
+  expect(within(zero).getByText('0h 00m')).toBeInTheDocument();
+});
+
+it.each(['learner', 'coach'] as const)('lets the %s correct the same manual row and immediately shows the recalculated hours', async role => {
+  Object.assign(account, { role, access: role });
+  const original = { ...current, actual_hours: 30, rows: [{ ...current.rows[0], actual_hours: 30,
+    manual_time: { progress_id: 1, seconds: 108000, revision: 'original' } }] };
+  const corrected = { ...original, actual_hours: .5, rows: [{ ...original.rows[0], actual_hours: .5,
+    manual_time: { progress_id: 1, seconds: 1800, revision: 'corrected' } }] };
+  const totalSummary = { ...summary, months: [original, { ...retained, actual_hours: 10 }],
+    training_plan_totals: { accepted_hours: 40, planned_hours: 100 } };
+  vi.mocked(getLogSummary).mockResolvedValue(totalSummary);
+  vi.mocked(getLogMonth).mockResolvedValue(original);
+  vi.mocked(correctLogManualTime).mockImplementation(async () => {
+    vi.mocked(getLogMonth).mockResolvedValue(corrected);
+    vi.mocked(getLogSummary).mockResolvedValue({ ...totalSummary, months: [corrected, { ...retained, actual_hours: 10 }],
+      training_plan_totals: { accepted_hours: 10.5, planned_hours: 100 } });
+    return corrected;
+  });
+  page(role === 'learner' ? '/learner/monthly-logs' : '/coach/monthly-logs/7');
+  expect((await screen.findAllByText('40.00 h')).length).toBeGreaterThan(0);
+  fireEvent.click(screen.getByRole('link', { name: 'Review month: September 2026' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Correct manual time for Completed reading' }));
+  fireEvent.change(screen.getByLabelText('Hours'), { target: { value: '0' } });
+  fireEvent.change(screen.getByLabelText('Minutes'), { target: { value: '30' } });
+  fireEvent.change(screen.getByLabelText('Reason for correction'), { target: { value: 'Entered hours instead of minutes' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save correction' }));
+  await screen.findByText('Manual time corrected. This entry and its totals have been updated.');
+  expect(correctLogManualTime).toHaveBeenCalledWith('7', '2026-09', 1,
+    { seconds: 1800, revision: 'original', reason: 'Entered hours instead of minutes' }, 'csrf', role);
+  expect(within(screen.getByRole('button', { name: 'Completed reading' }).closest('tr')!).getByText('0h 30m')).toBeVisible();
+  expect(screen.queryByRole('dialog', { name: 'Correct manual time' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('link', { name: 'All months' }));
+  expect((await screen.findAllByText('10.50 h')).length).toBeGreaterThan(0);
+  expect(screen.queryByText('40.00 h')).not.toBeInTheDocument();
+});
+
+it.each(['learner', 'coach'] as const)('hides manual corrections from a %s when either party has signed the month', async role => {
+  Object.assign(account, { role, access: role });
+  vi.mocked(getLogMonth).mockResolvedValue({ ...current,
+    coach_signature: { signer_name: 'Coach', signed_at: '2026-10-01', url: '/signed.png' },
+    rows: [{ ...current.rows[0], manual_time: { progress_id: 1, seconds: 108000, revision: 'original' } }],
+  });
+  page(role === 'learner' ? '/learner/monthly-logs/2026-09' : '/coach/monthly-logs/7/2026-09');
+  await screen.findByRole('table', { name: 'Monthly activity log' });
+  expect(screen.queryByRole('button', { name: /Correct manual time/ })).not.toBeInTheDocument();
+  expect(correctLogManualTime).not.toHaveBeenCalled();
+});
+
+describe('monthly logs', () => {
+  it.each(['learner', 'coach'] as const)('orders %s activities by date and time without changing the saved report', async role => {
+    const rows = [
+      { ...current.rows[0], id: 101, title: 'Later day', activity_date: '2026-09-20', activity_time: '08:00' },
+      { ...current.rows[0], id: 102, title: 'Unknown date', activity_date: '', activity_time: '' },
+      { ...current.rows[0], id: 103, title: 'Afternoon reading', activity_date: '2026-09-02', activity_time: '14:00' },
+      { ...current.rows[0], id: 104, title: 'Morning reading', activity_date: '2026-09-02', activity_time: '09:00' },
+    ];
+    const report = { ...current, rows, row_count: rows.length };
+    vi.mocked(getLogMonth).mockResolvedValue(report);
+    if (role === 'coach') Object.assign(account, { role: 'coach', access: 'coach' });
+    page(role === 'coach' ? '/coach/monthly-logs/7/2026-09' : '/learner/monthly-logs/2026-09');
+    const table = await screen.findByRole('table', { name: 'Monthly activity log' });
+    expect(within(table).getAllByRole('button').map(button => button.textContent)).toEqual([
+      'Morning reading', 'Afternoon reading', 'Later day', 'Unknown date',
+    ]);
+    expect(report.rows.map(row => row.id)).toEqual([101, 102, 103, 104]);
+    expect(report.snapshot_digest).toBe('reviewed-digest');
+    expect(report.month).toBe('2026-09');
+    expect(report.actual_hours).toBe(current.actual_hours);
+  });
+
+  it('replaces both learner cards and gives coaches a monthly logs destination', () => {
+    const learnerItems = learnerNavItems.flatMap(item => [item, ...(item.children || [])]);
+    expect(learnerItems.filter(item => item.label === 'Monthly Logs')).toHaveLength(1);
+    expect(learnerItems.some(item => ['Monthly Cycle', 'Monthly submission'].includes(item.label))).toBe(false);
+    expect(coachNavItems.flatMap(item => item.children || [item]).find(item => item.label === 'Monthly Logs')?.href).toBe('/coach/monthly-logs');
+  });
+
+  it('lists retained months and new activities under the signed-in learner', async () => {
+    page();
+    expect(await screen.findByText('September 2026')).toBeInTheDocument();
+    expect(screen.getByText('August 2026')).toBeInTheDocument();
+    expect(getLogSummary).toHaveBeenCalledWith('7', expect.any(AbortSignal), 'learner');
+    expect(screen.getAllByRole('link', { name: /Review month/ }).map(link => link.getAttribute('href')))
+      .toEqual(['/learner/monthly-logs/2026-08', '/learner/monthly-logs/2026-09']);
+  });
+
+  it('shows one programme total card from accepted SSOT hours and the full Training Plan', async () => {
+    page();
+    const card = await screen.findByRole('region', { name: 'Training Plan OTJ hours' });
+    expect(card).toHaveTextContent('517.32 h');
+    expect(card).toHaveTextContent('Accepted');
+    expect(card).toHaveTextContent('576.00 h');
+    expect(card).toHaveTextContent('Planned');
+  });
+
+  it('shows the SSOT monthly target and keeps the all-months tab selected', async () => {
+    vi.mocked(getLogSummary).mockResolvedValue({ ...summary, months: [{ ...current, training_plan_target: 20 }] });
+    page();
+    expect(await screen.findByText('September 2026')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /All months/ })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByText('20.00 h')).toBeVisible();
+  });
+
+  it('does not substitute an external contract when an SSOT target is unavailable', async () => {
+    rememberLearner('apprenticeship', '7');
+    vi.mocked(getLogSummary).mockResolvedValue({ ...summary, months: [
+      { ...retained, training_plan_target: null, target_warning: 'The signed Training Plan could not be read.' },
+      { ...current, training_plan_target: 12 },
+    ] });
+    page();
+    expect(await screen.findByText('Unavailable')).toBeVisible();
+    expect(screen.getByText('12.00 h')).toBeVisible();
+    expect(screen.getByText('The signed Training Plan could not be read.')).toBeInTheDocument();
+  });
+
+  it('keeps a missing SSOT target unavailable', async () => {
+    rememberLearner('apprenticeship', '7');
+    vi.mocked(getLogSummary).mockResolvedValue({ ...summary, months: [{ ...current, training_plan_target: null }] });
+    page();
+    expect(await screen.findByText('Unavailable')).toBeVisible();
+  });
+
+  it('shows the SSOT warning in the month report when its target is missing', async () => {
+    rememberLearner('apprenticeship', '7');
+    vi.mocked(getLogMonth).mockResolvedValue({ ...retained, training_plan_target: null,
+      target_warning: 'The signed Training Plan could not be read.' });
+    page('/learner/monthly-logs/2026-08');
+    expect(await screen.findByText(/Target hours: Unavailable/)).toBeVisible();
+  });
+
+  it('shows the current month as an in-progress live log, not as an unsigned closed month', async () => {
+    vi.mocked(getLogSummary).mockResolvedValue({ ...summary, months: [{ ...current, is_open: true }], total_months: 1, completed_months: 0 });
+    page();
+    expect(await screen.findByText('September 2026')).toBeInTheDocument();
+    expect(screen.getAllByText('Month in progress').length).toBeGreaterThan(0);
+    expect(screen.getByText('View current log')).toBeVisible();
+    expect(screen.getByText('Current month in progress')).toBeVisible();
+  });
+
+  it('allows reviewing current-month activities but keeps signing unavailable', async () => {
+    vi.mocked(getLogMonth).mockResolvedValue({ ...current, is_open: true });
+    page('/learner/monthly-logs/2026-09');
+    expect(await screen.findByText('Completed reading')).toBeInTheDocument();
+    expect(screen.getAllByText('Available after month-end')).toHaveLength(2);
+    expect(screen.queryByRole('button', { name: /Sign as/ })).not.toBeInTheDocument();
+    expect(screen.getByText(/Signing opens after the month ends/)).toBeVisible();
+  });
+
+  it('shows an MCM-linked log before the learner signs the MCM', async () => {
+    const emptyMcmMonth = { ...current, rows: [], row_count: 0, actual_hours: 0, planned_hours: 0 };
+    vi.mocked(getLogSummary).mockResolvedValue({ ...summary, months: [emptyMcmMonth] });
+    vi.mocked(getLogMonth).mockResolvedValue(emptyMcmMonth);
+    page('/learner/monthly-logs/apprenticeship/7/2026-09?workflow=mcm&source=mcm');
+    expect(await screen.findByText('September 2026')).toBeVisible();
+    expect(screen.queryByRole('button', { name: /Sign as learner/ })).not.toBeInTheDocument();
+    expect(screen.getByText(/learner signs the MCM once/i)).toBeVisible();
+    expect(getLogSummary).toHaveBeenCalledWith('7', expect.any(AbortSignal), 'learner', '2026-09', 'mcm');
+  });
+
+  it('loads a future MCM-linked month so its signature can be mirrored', async () => {
+    const futureMcmMonth = { ...current, month: '2999-01', rows: [], row_count: 0, actual_hours: 0, planned_hours: 0 };
+    vi.mocked(getLogSummary).mockResolvedValue({ ...summary, months: [futureMcmMonth] });
+    vi.mocked(getLogMonth).mockResolvedValue(futureMcmMonth);
+    page('/learner/monthly-logs/apprenticeship/7/2999-01?workflow=mcm&source=mcm');
+    expect(await screen.findByText('January 2999')).toBeVisible();
+    expect(screen.queryByText('January 2999 has not started yet')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Sign as learner/ })).not.toBeInTheDocument();
+    expect(getLogMonth).toHaveBeenCalledWith('7', '2999-01', expect.any(AbortSignal), 'learner', false, 'mcm');
+  });
+
+  it('shows a friendly scheduled state instead of requesting a future monthly log', async () => {
+    page('/learner/monthly-logs/commercial/7/2999-01?source=attendance%3Aocc-8');
+    expect(await screen.findByText('January 2999 has not started yet')).toBeVisible();
+    expect(screen.getByText(/monthly log will become available when the month begins/i)).toBeVisible();
+    expect(screen.getByRole('link', { name: /Back to Attendance/ })).toHaveAttribute('href', '/learner/attendance');
+    expect(screen.getByRole('link', { name: /View available months/ })).toHaveAttribute('href', '/learner/monthly-logs');
+    expect(getLogMonth).not.toHaveBeenCalled();
+  });
+
+  it('filters the year and unsigned learner months while keeping historical reports reachable', async () => {
+    const earlier = { ...retained, month: '2025-05', coach_signature: null };
+    vi.mocked(getLogSummary).mockResolvedValue({ ...summary, months: [current, retained, earlier] });
+    page();
+    await screen.findByText('May 2025');
+    fireEvent.click(screen.getByRole('button', { name: /Awaiting signature/ }));
+    expect(screen.queryByText('May 2025')).not.toBeInTheDocument();
+    expect(screen.queryByText('August 2026')).not.toBeInTheDocument();
+    expect(screen.getByText('September 2026')).toBeInTheDocument();
+    fireEvent.change(screen.getByRole('combobox', { name: 'Filter by year' }), { target: { value: '2025' } });
+    expect(screen.getByText('All signatures saved for 2025')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'View all months' }));
+    expect(screen.getByRole('link', { name: 'Review month: May 2025' })).toHaveAttribute('href', '/learner/monthly-logs/2025-05');
+  });
+
+  it('filters missing coach signatures independently of learner completion', async () => {
+    Object.assign(account, { role: 'staff', access: 'coach' });
+    vi.mocked(getLogSummary).mockResolvedValue({ ...summary, months: [{ ...retained, coach_signature: null }] });
+    page('/coach/monthly-logs/7');
+    await screen.findByText('August 2026');
+    fireEvent.click(screen.getByRole('button', { name: /Awaiting signature/ }));
+    expect(screen.getByRole('link', { name: 'Review month: August 2026' })).toHaveAttribute('href', '/coach/monthly-logs/7/2026-08');
+    expect(screen.getByRole('progressbar', { name: 'Coach signatures saved' })).toHaveAttribute('aria-valuenow', '0');
+  });
+
+  it('keeps the selected learner and learner workspace when staff use the learner navigation card', async () => {
+    Object.assign(account, { role: 'admin', subjectId: 99, access: 'super-admin' });
+    rememberLearner('apprenticeship', '7');
+    page();
+    expect(await screen.findByText('August 2026')).toBeInTheDocument();
+    expect(screen.getByTestId('workspace')).toHaveAttribute('data-role', 'learner');
+    expect(getLogSummary).toHaveBeenCalledWith('7', expect.any(AbortSignal), 'learner');
+    expect(getLogLearners).not.toHaveBeenCalled();
+    fireEvent.click(screen.getAllByRole('link', { name: /Review month/ })[0]);
+    expect(await screen.findByAltText('Learner signature')).toHaveAttribute('src', '/saved-learner.png');
+    expect(screen.getByRole('link', { name: /All months/ })).toHaveAttribute('href', '/learner/monthly-logs/apprenticeship/7');
+    fireEvent.click(screen.getByRole('button', { name: 'Next month' }));
+    await waitFor(() => expect(getLogMonth).toHaveBeenCalledWith('7', '2026-09', expect.any(AbortSignal), 'learner'));
+    expect(screen.queryByRole('button', { name: /Sign as/ })).not.toBeInTheDocument();
+    expect(screen.queryByText('(you)')).not.toBeInTheDocument();
+  });
+
+  it.each(['/learner/monthly-logs/commercial/8', '/learner/monthly-cycle/commercial/8'])(
+    'keeps the explicit learner in %s instead of a remembered record', async path => {
+      Object.assign(account, { role: 'staff', subjectId: 99, access: 'coach' });
+      rememberLearner('apprenticeship', '7');
+      page(path);
+      await screen.findByText('August 2026');
+      expect(getLogSummary).toHaveBeenCalledWith('8', expect.any(AbortSignal), 'learner');
+      expect(screen.getAllByRole('link', { name: /Review month/ })[0]).toHaveAttribute('href', '/learner/monthly-logs/commercial/8/2026-08');
+      expect(getLogLearners).not.toHaveBeenCalled();
+    });
+
+  it('pins a learner account to itself even if a preview URL or remembered learner selects someone else', async () => {
+    rememberLearner('commercial', '8');
+    page('/learner/monthly-logs/commercial/8');
+    await screen.findByText('August 2026');
+    expect(getLogSummary).toHaveBeenCalledWith('7', expect.any(AbortSignal), 'learner');
+    expect(getLogSummary).not.toHaveBeenCalledWith('8', expect.anything(), expect.anything());
+  });
+
+  it('keeps saved historical signatures and the original iframe preview', async () => {
+    page('/learner/monthly-logs/2026-08');
+    expect(await screen.findByAltText('Learner signature')).toHaveAttribute('src', '/saved-learner.png');
+    expect(screen.getByAltText('Coach signature')).toHaveAttribute('src', '/saved-coach.png');
+    expect(screen.queryByRole('button', { name: /Sign as/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Completed reading' }));
+    await waitFor(() => expect(document.querySelector('iframe[title="Original material"]')).toHaveAttribute('src', 'https://example.org/reading'));
+    expect(getLogContent).toHaveBeenCalledWith('7', '2026-08', 44, 'learner');
+  });
+
+  it.each(['att:92_2026-08-28_pmo', 'attendance:occ-8'])('opens and focuses the exact linked source %s even with duplicate titles', async sourceRef => {
+    const data = { ...retained, rows: [
+      { ...retained.rows[0], title: 'PMO lecture', category: 'Attendance', source_ref: 'att:other-session' },
+      { ...retained.rows[0], id: 45, title: 'PMO lecture', category: 'Attendance', source_ref: sourceRef },
+    ] };
+    vi.mocked(getLogMonth).mockResolvedValue(data);
+    vi.mocked(getLogContent).mockResolvedValue({ id: 45, parts: [{ id: 45, title: 'Original attendance source', category: 'Attendance',
+      url: 'https://example.org/attendance/45', html: null, quiz: null }] });
+    const { client } = page(`/learner/monthly-logs/2026-08?source=${encodeURIComponent(sourceRef)}`);
+    await waitFor(() => expect(document.querySelector('iframe[title="Original attendance source"]')).toHaveAttribute('src', 'https://example.org/attendance/45'));
+    expect(getLogContent).toHaveBeenCalledWith('7', '2026-08', 45, 'learner');
+    expect(getLogContent).not.toHaveBeenCalledWith('7', '2026-08', 44, 'learner');
+    const triggers = screen.getAllByRole('button', { name: 'PMO lecture' });
+    expect(triggers[0]).toHaveAttribute('aria-expanded', 'false');
+    expect(triggers[1]).toHaveAttribute('aria-expanded', 'true');
+    expect(triggers[1]).toHaveFocus();
+    fireEvent.click(screen.getByRole('button', { name: 'Close PMO lecture' }));
+    await act(async () => { await client.invalidateQueries({ queryKey: ['monthly-logs'] }); });
+    expect(triggers[1]).toHaveAttribute('aria-expanded', 'false');
+    expect(document.querySelector('iframe')).toBeNull();
+    expect(signLogMonth).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])('does not open an unrelated source when the link is missing or ambiguous (ambiguous: %s)', async ambiguous => {
+    const data = { ...retained, rows: [
+      { ...retained.rows[0], source_ref: 'att:other' },
+      { ...retained.rows[0], id: 45, source_ref: 'att:other' },
+    ] };
+    vi.mocked(getLogMonth).mockResolvedValue(data);
+    page(`/learner/monthly-logs/2026-08?source=${encodeURIComponent(ambiguous ? 'att:other' : 'att:missing')}`);
+    expect(await screen.findByText(ambiguous ? 'More than one record is linked to this activity. Please select the correct record below.' : 'This activity is not recorded in this month’s log.')).toBeInTheDocument();
+    expect(getLogContent).not.toHaveBeenCalled();
+    expect(document.querySelector('iframe')).toBeNull();
+  });
+
+  it('keeps the selected learner when staff follow an attendance link', async () => {
+    Object.assign(account, { role: 'admin', subjectId: 99, access: 'super-admin' });
+    rememberLearner('apprenticeship', '7');
+    vi.mocked(getLogMonth).mockResolvedValue({ ...retained, rows: [{ ...retained.rows[0], source_ref: 'att:learner-eight' }] });
+    page('/learner/monthly-logs/commercial/8/2026-08?source=att%3Alearner-eight');
+    await waitFor(() => expect(getLogContent).toHaveBeenCalledWith('8', '2026-08', 44, 'learner'));
+    expect(screen.getByTestId('workspace')).toHaveAttribute('data-role', 'learner');
+    expect(screen.queryByRole('button', { name: /Sign as/ })).not.toBeInTheDocument();
+  });
+
+  it('saves only the learner signature using the reviewed digest', async () => {
+    vi.mocked(signLogMonth).mockResolvedValue({ ...current, student_signature: retained.student_signature, status: 'complete' });
+    page('/learner/monthly-logs/2026-09');
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign as learner' }));
+    expect(screen.queryByRole('button', { name: 'Sign as coach' })).not.toBeInTheDocument();
+    await waitFor(() => expect(signLogMonth).toHaveBeenCalledWith('7', '2026-09', 'reviewed-digest', expect.any(Blob), 'draw', 'csrf', 'learner'));
+    expect(await screen.findByText('Your signature has been saved for this month.')).toBeInTheDocument();
+  });
+
+  it('signs a formula-backed snapshot like an ordinary month', async () => {
+    const provisional = {
+      ...retained,
+      status: 'awaiting_signature' as const,
+      student_signature: null,
+      coach_signature: null,
+      provisional: true,
+      snapshot_digest: 'provisional-digest',
+      rows: [{ ...retained.rows[0], provisional: true, provisional_fields: ['actual', 'ksb'] }],
+    };
+    vi.mocked(getLogMonth).mockResolvedValue(provisional);
+    vi.mocked(signLogMonth).mockResolvedValue({ ...provisional, student_signature: retained.student_signature, status: 'complete' });
+
+    page('/learner/monthly-logs/2026-08');
+    expect(await screen.findByText('August 2026')).toBeVisible();
+    expect(screen.queryByText(/Provisional reconstruction|signature will capture the exact formula-derived hours/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Sign as learner' }));
+    await waitFor(() => expect(signLogMonth).toHaveBeenCalledWith(
+      '7', '2026-08', 'provisional-digest', expect.any(Blob), 'draw', 'csrf', 'learner',
+    ));
+  });
+
+  it('lets the coach add their own signature to a learner-signed month', async () => {
+    Object.assign(account, { role: 'staff', access: 'coach' });
+    vi.mocked(getLogMonth).mockResolvedValue({ ...current, student_signature: retained.student_signature, status: 'complete' });
+    page('/coach/monthly-logs/7/2026-09');
+    expect(await screen.findByRole('button', { name: 'Sign as coach' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Sign as learner' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /All months/ })).toHaveAttribute('href', '/coach/monthly-logs/7');
+  });
+
+  it('lets an admin sign for the selected learner using their own signature', async () => {
+    Object.assign(account, { role: 'admin', subjectId: 999, access: 'super-admin' });
+    vi.mocked(signLogMonth).mockResolvedValue({ ...current, student_signature: retained.student_signature, status: 'complete' });
+    page('/learner/monthly-logs/commercial/7/2026-09');
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign as learner' }));
+    expect(screen.queryByRole('button', { name: 'Sign as coach' })).not.toBeInTheDocument();
+    await waitFor(() => expect(signLogMonth).toHaveBeenCalledWith('7', '2026-09', 'reviewed-digest', expect.any(Blob), 'draw', 'csrf', 'learner'));
+  });
+
+  it('does not expose the retired legacy completion action for an SSOT month', async () => {
+    Object.assign(account, { role: 'admin', subjectId: 999, access: 'super-admin' });
+    vi.mocked(getLogMonth).mockResolvedValue({ ...retained, status: 'awaiting_signature', can_complete: true });
+    page('/learner/monthly-logs/commercial/7/2026-08');
+    expect(await screen.findByText('August 2026')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Complete month' })).not.toBeInTheDocument();
+    expect(completeLogMonth).not.toHaveBeenCalled();
+  });
+
+  it('shows the assigned coach learner list', async () => {
+    Object.assign(account, { role: 'staff', access: 'coach' });
+    vi.mocked(getLogLearners).mockResolvedValue({ learners: [{ id: 7, name: 'Example learner', programme: 'Programme' }] });
+    page('/coach/monthly-logs');
+    expect(await screen.findByRole('link', { name: /Example learner/ })).toHaveAttribute('href', '/coach/monthly-logs/7');
+    expect(screen.getByRole('link', { name: /Example learner/ })).not.toHaveAttribute('aria-current');
+    expect(getCoachMonthlyLogLearners).toHaveBeenCalledTimes(1);
+    expect(getCoachLogYear).not.toHaveBeenCalled();
+    expect(getLogSummary).not.toHaveBeenCalled();
+  });
+
+  it('uses a coach loading layout without the decorative background image', () => {
+    Object.assign(account, { role: 'staff', access: 'coach' });
+    vi.mocked(getLogLearners).mockReturnValue(new Promise(() => undefined));
+    page('/coach/monthly-logs');
+    const loading = screen.getByRole('status', { name: 'Loading coach monthly logs' });
+    expect(loading.querySelector('img')).toBeNull();
+  });
+
+  it('keeps the learner list visible and updates the selected learner in the same coach workspace', async () => {
+    Object.assign(account, { role: 'staff', access: 'coach' });
+    vi.mocked(getLogSummary).mockImplementation(async id => id === '8'
+      ? { ...summary, learner: { ...summary.learner!, id: 8, name: 'Second learner', programme: 'Data Technician' } }
+      : summary);
+    page('/coach/monthly-logs/7');
+    await screen.findByRole('region', { name: 'Example learner monthly logs' });
+    fireEvent.click(screen.getByRole('link', { name: /Second learner/ }));
+    expect(await screen.findByRole('region', { name: 'Second learner monthly logs' })).toBeVisible();
+    expect(screen.getByRole('navigation', { name: 'Choose a learner' })).toBeVisible();
+    expect(screen.getByRole('link', { name: /Second learner/ })).toHaveAttribute('aria-current', 'page');
+    expect(getLogSummary).toHaveBeenCalledWith('8', expect.any(AbortSignal), 'coach');
+  });
+
+  it('disables signing for the admin read-only coach view', async () => {
+    Object.assign(account, { role: 'staff', access: 'super-admin' });
+    vi.mocked(getLogSummary).mockResolvedValue({ ...summary, read_only: true });
+    page('/coach/monthly-logs/7/2026-09');
+    await screen.findByRole('table', { name: 'Report sign-off' });
+    expect(screen.queryByRole('button', { name: /Sign as/ })).not.toBeInTheDocument();
+  });
+
+  it('shows a useful empty state for a learner without historical or new activity', async () => {
+    vi.mocked(getLogSummary).mockResolvedValue({ ...summary, months: [], total_months: 0, completed_months: 0 });
+    page();
+    expect(await screen.findByText('No monthly logs yet')).toBeInTheDocument();
+  });
+});
+
+
+it('keeps monthly activities accessible when the signed target is unavailable', async () => {
+  const target_warning = 'The signed Training Plan is unavailable. Activities remain available.';
+  const missing = { ...retained, training_plan_target: null, target_warning };
+  vi.mocked(getLogSummary).mockResolvedValue({ ...summary, months: [missing] });
+  page();
+  expect(await screen.findByText(target_warning)).toBeVisible();
+  expect(screen.getByText('Unavailable')).toBeVisible();
+  expect(screen.getByRole('link', { name: 'Review month: August 2026' })).toBeVisible();
+});
+
+it('shows the unavailable-target warning and actual activity in the report', async () => {
+  const target_warning = 'The signed Training Plan could not be read.';
+  vi.mocked(getLogMonth).mockResolvedValue({ ...retained, training_plan_target: null, target_warning });
+  page('/learner/monthly-logs/2026-08');
+  expect(await screen.findByText(/Target hours: Unavailable/)).toBeVisible();
+  expect(screen.getByRole('button', { name: /Completed reading/ })).toBeVisible();
+});

@@ -1,0 +1,512 @@
+"""Run directly with Python: synthetic ORM doubles, no Django setup, DB or network."""
+import ast
+import json
+import re
+import sys
+import types
+import unicodedata
+import unittest
+from collections import defaultdict
+from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
+
+
+BACKEND = Path(__file__).resolve().parents[1]
+
+
+def load_functions(path, names, namespace):
+    tree = ast.parse(path.read_text(encoding="utf-8-sig"))
+    nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
+    assert len(nodes) == len(names)
+    exec(compile(ast.Module(body=nodes, type_ignores=[]), str(path), "exec"), namespace)
+
+
+def matches(row, key, value):
+    field, *lookups = key.split("__")
+    actual = getattr(row, field)
+    for lookup in lookups:
+        if lookup == "date":
+            actual = actual.date() if actual else None
+        elif lookup == "in":
+            return actual in value
+        elif lookup == "isnull":
+            return (actual is None) == value
+        elif lookup == "gte":
+            return actual is not None and actual >= value
+        elif lookup == "lte":
+            return actual is not None and actual <= value
+        elif lookup == "exact":
+            return actual == value
+        else:
+            raise AssertionError(f"Unsupported lookup: {lookup}")
+    return actual == value
+
+
+class Predicate:
+    def __init__(self, **conditions):
+        self.empty = not conditions
+        self.check = lambda row: all(matches(row, key, value) for key, value in conditions.items())
+
+    def __or__(self, other):
+        if self.empty:
+            return other
+        if other.empty:
+            return self
+        combined = Predicate()
+        combined.empty = False
+        combined.check = lambda row: self.check(row) or other.check(row)
+        return combined
+
+
+class Rows:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def using(self, database):
+        assert database == "synthetic"
+        return self
+
+    def filter(self, *predicates, **conditions):
+        return Rows([row for row in self.rows if all(p.check(row) for p in predicates)
+                     and all(matches(row, key, value) for key, value in conditions.items())])
+
+    def exclude(self, predicate):
+        return Rows([row for row in self.rows if not predicate.check(row)])
+
+    def only(self, *fields):
+        return self
+
+    def annotate(self, **expressions):
+        assert set(expressions) == {"normalized_email"}
+        return Rows([SimpleNamespace(**vars(row), normalized_email=str(row.email or "").strip().lower())
+                     for row in self.rows])
+
+    def values_list(self, *fields):
+        def value(row, field):
+            for part in field.split("__"):
+                row = getattr(row, part)
+            return row
+        return [tuple(value(row, field) for field in fields) for row in self.rows]
+
+    def order_by(self, *fields):
+        return Rows(sorted(self.rows, key=lambda row: tuple(getattr(row, field) for field in fields)))
+
+    def __iter__(self):
+        return iter(self.rows)
+
+
+class AttendanceProfilesTests(unittest.TestCase):
+    def setUp(self):
+        self.start = datetime(2026, 9, 1, 9, tzinfo=timezone.utc)
+        self.profiles = [SimpleNamespace(id=1, email="one@example.invalid", email_normalized="one@example.invalid",
+                                        full_name="Learner One", enrolment_id=101, coach_name="Coach", learner_type="commercial"),
+                         SimpleNamespace(id=2, email="two@example.invalid", email_normalized="two@example.invalid",
+                                         full_name="Learner Two", enrolment_id=202, coach_name="Coach", learner_type="apprenticeship"),
+                         SimpleNamespace(id=3, email="destination@example.invalid", email_normalized="destination@example.invalid",
+                                         full_name="Destination Learner", enrolment_id=303, coach_name="Coach", learner_type="apprenticeship")]
+        self.series = [SimpleNamespace(id="S1", attendees=[], module_catalogue_id="M1", module_title="Module One"),
+                       SimpleNamespace(id="S2", attendees=[], module_catalogue_id="M2", module_title="Module Two"),
+                       SimpleNamespace(id="S3", attendees=[], module_catalogue_id="M3", module_title="Destination Module")]
+        self.occurrences = [self.occurrence("O1", "S1", 1), self.occurrence("O2", "S1", 2),
+                            self.occurrence("P1", "S1", 3), self.occurrence("P2", "S1", 4),
+                            self.occurrence("B1", "S2", 1), self.occurrence("D1", "S3", 1)]
+        self.occurrences[2].actual_end = None
+        self.occurrences[3].attendance_report_id = ""
+        self.occurrences[5].attendance_report_id = ""
+        first = self.record("O1", " ONE@example.invalid ", [(0, 2)])
+        self.records = [first, first, self.record("O1", "one@example.invalid", [(1, 4)]),
+                        self.record("P1", "one@example.invalid", [(0, 5)]),
+                        self.record("P2", "one@example.invalid", [(0, 5)]),
+                        self.record("B1", "two@example.invalid", [(0, 5)]),
+                        self.record("O1", "destination@example.invalid", [(0, 5)])]
+        self.launches = (defaultdict(set), defaultdict(set))
+        self.plan_modules = [
+            SimpleNamespace(module_ref="M1", learner=self.profiles[0]),
+            SimpleNamespace(module_ref="M2", learner=self.profiles[1]),
+            SimpleNamespace(module_ref="M3", learner=self.profiles[2]),
+        ]
+        self.replaced_sources = {
+            "D1": {"occurrence_id": "O1", "attendance_report_id": "report-O1"},
+        }
+        self.recovery = Mock(side_effect=lambda rows: rows)
+        results_module = types.ModuleType("curriculum_api.session_results")
+        results_module.launch_expectations = Mock(side_effect=lambda *args: self.launches)
+        recovery_module = types.ModuleType("learner_api.session_recovery")
+        recovery_module.apply_recovery_to_rows = self.recovery
+        alternative_module = types.ModuleType("learner_api.alternative_recovery")
+        alternative_module.approved_alternative_guests = lambda *_args: defaultdict(set)
+        # Use the real shared invitation parser without importing Django views.
+        views_module = types.ModuleType("curriculum_api.views")
+        views_module.__dict__.update(json=json, re=re)
+        load_functions(BACKEND / "curriculum_api/views.py",
+                       {"teams_series_email_list", "parse_json_value", "clean_str"}, views_module.__dict__)
+        self.modules = patch.dict(sys.modules, {"curriculum_api.views": views_module,
+                                               "curriculum_api.session_results": results_module,
+                                               "learner_api.session_recovery": recovery_module,
+                                               "learner_api.alternative_recovery": alternative_module})
+        self.modules.start()
+        self.addCleanup(self.modules.stop)
+        self.namespace = {
+            "__package__": "learner_api", "defaultdict": defaultdict, "datetime": datetime,
+            "datetime_timezone": timezone, "parse_datetime": lambda value: datetime.fromisoformat(value),
+            "Q": Predicate, "Lower": lambda value: value, "Trim": lambda value: value,
+            "router": SimpleNamespace(db_for_read=lambda model: "synthetic"),
+            # Alias/link persistence is covered by its own focused loader tests.
+            # This synthetic roster fixture intentionally has no reviewed aliases.
+            "_attendance_alias_rows": lambda _database, _assignments: [],
+            "_attendance_identity_link_rows": lambda _database, _occurrences: [],
+            "_replaced_attendance_sources": lambda _database, _occurrences: self.replaced_sources,
+            "timezone": SimpleNamespace(now=lambda: self.start, is_aware=lambda value: value.tzinfo is not None,
+                                        is_naive=lambda value: value.tzinfo is None,
+                                        make_aware=lambda value, tz: value.replace(tzinfo=tz),
+                                        localtime=lambda value: value.astimezone(timezone(timedelta(hours=1)))),
+        }
+        policy_namespace = {"datetime": datetime, "timezone": timezone, "json": json,
+                            "re": re, "unicodedata": unicodedata}
+        load_functions(BACKEND / "curriculum_api/session_results_policy.py",
+                       {"instant", "attendance_seconds", "evidence_seconds",
+                        "attendance_display_name", "attendance_name_key"}, policy_namespace)
+        self.namespace["evidence_seconds"] = policy_namespace["evidence_seconds"]
+        self.namespace["attendance_display_name"] = policy_namespace["attendance_display_name"]
+        self.namespace["attendance_name_key"] = policy_namespace["attendance_name_key"]
+        policy_namespace['defaultdict'] = defaultdict
+        load_functions(BACKEND / "curriculum_api/session_results_policy.py", {"attendance_identity"}, policy_namespace)
+        load_functions(BACKEND / "curriculum_api/attendance_link_policy.py",
+                       {"identity_key", "record_key", "ambiguous_guest_names", "apply_reviewed_identities"}, policy_namespace)
+        self.namespace["apply_reviewed_identities"] = policy_namespace["apply_reviewed_identities"]
+        self.namespace["identity_rules"] = lambda *_args: []
+        self.bind_rows()
+        load_functions(BACKEND / "learner_api/teams_attendance.py",
+                       {"_email", "_canonical_attendance_email", "_unique_exact_name_email",
+                        "_assigned_learner_emails_by_module", "_module_expected_emails",
+                        "_local_datetime", "_graph_datetime", "_attendance_interval_bounds",
+                        "fetch_verified_teams_attendance_rows"},
+                       self.namespace)
+
+    def bind_rows(self):
+        for name, rows in [("LearnerProfile", self.profiles), ("LiveSession", self.series),
+                           ("LearnerTrainingPlanModule", self.plan_modules),
+                           ("LiveSessionOccurrence", self.occurrences), ("LiveSessionAttendance", self.records),
+                           ("ModuleAuthoringModule", [SimpleNamespace(module_catalogue_id="M1", group_id="G1", group_name="Group One"),
+                                                      SimpleNamespace(module_catalogue_id="M2", group_id="G2", group_name="Group Two"),
+                                                      SimpleNamespace(module_catalogue_id="M3", group_id="G3", group_name="Group Three")])]:
+            self.namespace[name] = type(name, (), {"objects": Rows(rows)})
+
+    def occurrence(self, identifier, series_id, number):
+        start = self.start + timedelta(days=number - 1)
+        return SimpleNamespace(id=identifier, live_session_id=series_id, session_number=number,
+                               scheduled_start=start, scheduled_end=start + timedelta(hours=1),
+                               actual_start=start, actual_end=start + timedelta(hours=1),
+                               attendance_report_id=f"report-{identifier}", artifacts_synced_at=start, updated_at=start)
+
+    def record(self, occurrence_id, email, intervals):
+        return SimpleNamespace(id=f"row-{occurrence_id}-{email}-{intervals}", occurrence_id=occurrence_id,
+                               email=email, graph_record_id="record", role="attendee", raw_data={},
+                               display_name="Synthetic Participant", total_attendance_seconds=300,
+                               intervals=[{"joinDateTime": (self.start + timedelta(minutes=start)).isoformat(),
+                                           "leaveDateTime": (self.start + timedelta(minutes=end)).isoformat()}
+                                          for start, end in intervals])
+
+    def fetch(self, learner_id=1, **kwargs):
+        self.bind_rows()
+        return self.namespace["fetch_verified_teams_attendance_rows"]([learner_id], **kwargs)
+
+    def test_module_roster_is_used_when_invitation_snapshot_is_empty(self):
+        rows = self.fetch()
+        self.assertEqual([row["session_id"] for row in rows], ["O1", "O2"])
+
+    def test_replaced_link_projects_source_report_to_destination_live_session(self):
+        rows = self.fetch(3, module_refs=["M3"])
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["session_id"], "D1")
+        self.assertEqual(rows[0]["occurrence_id"], "D1")
+        self.assertEqual(rows[0]["live_session_id"], "S3")
+        self.assertEqual(rows[0]["module_catalogue_id"], "M3")
+        self.assertEqual(rows[0]["attendance_report_id"], "report-O1")
+        self.assertEqual(rows[0]["attendance_status"], "present")
+
+    def test_replaced_link_compares_source_report_with_all_33_destination_learners(self):
+        extra_profiles = [
+            SimpleNamespace(
+                id=learner_id,
+                email=f"stakeholder-{learner_id}@example.invalid",
+                email_normalized=f"stakeholder-{learner_id}@example.invalid",
+                full_name=f"Stakeholder Learner {learner_id}",
+                enrolment_id=300 + learner_id,
+                coach_name="Coach",
+                learner_type="apprenticeship",
+            )
+            for learner_id in range(4, 36)
+        ]
+        self.profiles.extend(extra_profiles)
+        self.plan_modules.extend(
+            SimpleNamespace(module_ref="M3", learner=learner)
+            for learner in extra_profiles
+        )
+        # The saved source report has eight of the destination module's
+        # learners. The other 25 destination learners must remain absent, and
+        # source-module learners must never be copied into this roster.
+        self.records.extend(
+            self.record("O1", learner.email, [(0, 5)])
+            for learner in extra_profiles[:7]
+        )
+
+        rows = self.fetch(None, module_refs=["M3"])
+
+        self.assertEqual(len(rows), 33)
+        self.assertEqual(
+            sum(row["attendance_status"] == "present" for row in rows),
+            8,
+        )
+        self.assertEqual(
+            sum(row["attendance_status"] == "absent" for row in rows),
+            25,
+        )
+        self.assertEqual({row["module_catalogue_id"] for row in rows}, {"M3"})
+        self.assertEqual({row["occurrence_id"] for row in rows}, {"D1"})
+        self.assertNotIn("one@example.invalid", {row["learner_email"] for row in rows})
+
+    def test_assigned_reported_learner_is_visible_and_expected(self):
+        rows = self.fetch(include_reported_participants=True)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["session_id"], "O1")
+        self.assertEqual(rows[0]["attended_seconds"], 240)
+        self.assertEqual(rows[0]["attendance_status"], "present")
+        self.assertTrue(rows[0]["is_expected"])
+        self.assertEqual(rows[0]["eligibility_reason"], "module_assignment")
+        self.assertEqual(rows[0]["session_start_time"].hour, 10)
+
+    def test_module_roster_creates_absences_in_other_completed_occurrences(self):
+        self.assertEqual(
+            [row["session_id"] for row in self.fetch(include_reported_participants=True)],
+            ["O1", "O2"],
+        )
+
+    def test_pending_and_missing_reports_are_not_displayed(self):
+        for occurrence in self.occurrences:
+            occurrence.actual_end = None
+        self.assertEqual(self.fetch(include_reported_participants=True), [])
+
+    def test_removed_participation_leaves_module_roster_absences(self):
+        self.records = []
+        self.assertEqual(
+            [row["attendance_status"] for row in self.fetch(include_reported_participants=True)],
+            ["absent", "absent"],
+        )
+
+    def test_unknown_email_is_not_attributed_but_expected_absence_remains(self):
+        self.records = [self.record("O1", "", [(0, 5)])]
+        rows = self.fetch(include_reported_participants=True)
+        self.assertEqual([row["session_id"] for row in rows], ["O1", "O2"])
+        self.assertTrue(all(row["attendance_status"] == "absent" for row in rows))
+
+    def test_learner_module_and_date_scopes_are_preserved(self):
+        rows = self.fetch(2, include_reported_participants=True)
+        self.assertEqual([(row["learner_id"], row["session_id"]) for row in rows], [(2, "B1")])
+        self.assertEqual(self.fetch(module_refs=["M2"], include_reported_participants=True), [])
+        self.assertEqual(
+            [row["session_id"] for row in self.fetch(start_date=(self.start + timedelta(days=1)).date(), include_reported_participants=True)],
+            ["O2"],
+        )
+        self.assertEqual(self.fetch(end_date=(self.start - timedelta(days=1)).date(), include_reported_participants=True), [])
+        self.assertEqual(self.fetch(99, include_reported_participants=True), [])
+
+    def test_invitees_keep_the_same_rows_and_absences(self):
+        self.series[0].attendees = ["one@example.invalid"]
+        original = self.fetch()
+        expanded = self.fetch(include_reported_participants=True)
+        self.assertEqual(original, expanded)
+        self.assertEqual([row["attendance_status"] for row in expanded], ["present", "absent"])
+        self.assertTrue(all(row["is_expected"] for row in expanded))
+
+    def test_authenticated_launch_does_not_change_module_assignment_scope(self):
+        self.launches[0]["S1"].add("one@example.invalid")
+        self.launches[1]["O1"].add("one@example.invalid")
+        self.assertEqual(self.fetch(), self.fetch(include_reported_participants=True))
+        self.assertEqual(self.fetch()[0]["eligibility_reason"], "module_assignment")
+
+    def test_existing_duration_threshold_is_preserved(self):
+        for seconds, status in [(180, "absent"), (181, "present")]:
+            with self.subTest(seconds=seconds):
+                row = self.record("O1", "one@example.invalid", [])
+                row.total_attendance_seconds = seconds
+                self.records = [row]
+                self.assertEqual(self.fetch(include_reported_participants=True)[0]["attendance_status"], status)
+
+    def test_mixed_duration_rows_keep_presence_without_leaking_to_another_session(self):
+        detailed = self.record('O1', ' ONE@EXAMPLE.INVALID ', [(0, 1)])
+        duration_only = self.record('O1', 'one@example.invalid', [])
+        duration_only.total_attendance_seconds = 240
+        self.records = [detailed, duration_only]
+        rows = self.fetch(include_reported_participants=True)
+        self.assertEqual([(row['occurrence_id'], row['attendance_status'], row['attended_seconds']) for row in rows],
+                         [('O1', 'present', 240), ('O2', 'absent', 0)])
+
+    def test_recovery_still_receives_the_exact_occurrence_and_learner(self):
+        self.fetch(include_reported_participants=True)
+        recovered = self.recovery.call_args.args[0]
+        self.assertEqual(
+            [(row["learner_id"], row["occurrence_id"]) for row in recovered],
+            [(1, "O1"), (1, "O2")],
+        )
+
+    def test_first_guest_visit_uses_full_module_name_match_for_both_learner_types(self):
+        for learner_id, occurrence, name in [(1, 'O1', 'Learner One'), (2, 'B1', 'Learner Two')]:
+            guest = self.record(occurrence, '', [(0, 5)])
+            guest.display_name = name
+            self.records = [guest]
+            self.assertEqual(self.fetch(learner_id)[0]['attendance_status'], 'present')
+
+    def test_one_learner_filter_does_not_hide_same_name_elsewhere_in_module(self):
+        self.profiles[1].full_name = self.profiles[0].full_name
+        self.plan_modules.append(SimpleNamespace(module_ref='M1', learner=self.profiles[1]))
+        guest = self.record('O1', '', [(0, 5)])
+        guest.display_name = self.profiles[0].full_name
+        self.records = [guest]
+        self.assertTrue(all(row['attendance_status'] == 'absent' for row in self.fetch(1)))
+        rows = self.fetch(None, module_refs=['M1'], independent_learner_scope=True)
+        self.assertEqual({row['learner_id'] for row in rows}, {1, 2})
+        self.assertTrue(all(row['attendance_status'] == 'absent' for row in rows))
+
+    def test_same_name_in_another_module_does_not_block_or_receive_the_match(self):
+        self.profiles[1].full_name = self.profiles[0].full_name
+        guest = self.record('O1', '', [(0, 5)])
+        guest.display_name = self.profiles[0].full_name
+        self.records = [guest]
+        self.assertEqual(self.fetch(1)[0]['attendance_status'], 'present')
+        self.assertEqual(self.fetch(2)[0]['attendance_status'], 'absent')
+
+    def test_two_different_guest_identities_require_review_in_reporting(self):
+        first = self.record('O1', '', [(0, 5)])
+        second = self.record('O1', '', [(6, 10)])
+        for index, guest in enumerate([first, second]):
+            guest.display_name = 'Learner One'
+            guest.raw_data = {'identity': {'id': f'guest-{index}'}}
+        self.records = [first, second]
+        self.assertEqual(self.fetch(1)[0]['attendance_status'], 'absent')
+
+    def test_approved_recovery_guest_name_matching_keeps_ambiguity_and_occurrence_scope(self):
+        self.plan_modules = [row for row in self.plan_modules if row.learner.id != 1]
+        for occurrence in self.occurrences:
+            occurrence.pk = occurrence.id
+        guest = self.record('O1', '', [(0, 5)])
+        guest.display_name = 'Learner One'
+        self.records = [guest]
+        recovery_module = sys.modules['learner_api.alternative_recovery']
+        recovery_module.approved_alternative_guests = lambda *_args, **_kwargs: defaultdict(set, {'O1': {'one@example.invalid'}})
+        rows = self.fetch(1)
+        self.assertEqual([(row['session_id'], row['attendance_status']) for row in rows], [('O1', 'present')])
+        self.profiles[1].full_name = 'Learner One'
+        recovery_module.approved_alternative_guests = lambda *_args, **_kwargs: defaultdict(set, {'O1': {'one@example.invalid', 'two@example.invalid'}})
+        rows = self.fetch(1)
+        self.assertEqual([(row['learner_id'], row['attendance_status']) for row in rows], [(1, 'absent')])
+
+
+class CoachAttendanceContractTests(unittest.TestCase):
+    def setUp(self):
+        self.reader = Mock(return_value=[])
+        self.namespace = {
+            "fetch_verified_teams_attendance_rows": self.reader,
+            "normalize_email": lambda value: str(value or "").strip().lower(),
+            "clean_text": lambda value: str(value or "").strip(), "to_int": int,
+            "format_iso_date_value": lambda value: value.isoformat(),
+            "format_date_value": lambda value: value.strftime("%d %b %Y"),
+            "empty_attendance_detail_summary": lambda: {"empty": True},
+            "build_attendance_detail_summary_payload": lambda rows: {"rows": rows},
+        }
+        load_functions(BACKEND / "coach_api/views.py",
+                       {
+                           "fetch_attendance_detail_summary_data",
+                           "fetch_attendance_detail_rows",
+                           "normalize_attendance_detail_status",
+                           "serialize_attendance_register_row",
+                       }, self.namespace)
+
+    def test_other_summary_consumers_keep_the_existing_roster(self):
+        self.namespace["fetch_attendance_detail_summary_data"]([1], ["one@example.invalid"])
+        self.reader.assert_called_once_with([1], ["one@example.invalid"])
+
+    def test_attendance_summary_explicitly_opts_in(self):
+        self.namespace["fetch_attendance_detail_summary_data"]([1], ["one@example.invalid"], include_reported_participants=True)
+        self.reader.assert_called_once_with([1], ["one@example.invalid"], include_reported_participants=True)
+
+    def test_profile_details_use_the_same_expanded_source(self):
+        self.assertEqual(self.namespace["fetch_attendance_detail_rows"]({"id": "1", "email": "one@example.invalid"}), [])
+        self.reader.assert_called_once_with([1], ["one@example.invalid"], include_reported_participants=True)
+
+    def test_attendance_register_row_exposes_the_existing_verified_record(self):
+        row = self.namespace["serialize_attendance_register_row"]({
+            "learner_id": 1,
+            "learner_name": "One Learner",
+            "learner_email": "one@example.invalid",
+            "session_id": "occurrence-1",
+            "session_title": "Data Analysis — Session 2",
+            "session_date": date(2026, 9, 10),
+            "attendance_status": "attended",
+        })
+
+        self.assertEqual(row, {
+            "learnerId": "1",
+            "learnerName": "One Learner",
+            "learnerEmail": "one@example.invalid",
+            "sessionId": "occurrence-1",
+            "sessionTitle": "Data Analysis — Session 2",
+            "subjectId": "occurrence-1",
+            "subjectTitle": "Data Analysis — Session 2",
+            "sessionDate": "2026-09-10",
+            "sessionDateLabel": "10 Sep 2026",
+            "status": "present",
+        })
+
+
+class DashboardKbcAttendanceTests(unittest.TestCase):
+    def setUp(self):
+        self.kbc = Mock(return_value={
+            "4321": {"sessions": 4, "present": 3, "absent": 1, "rate": 75,
+                     "lastSessionDate": date(2026, 9, 18)},
+        })
+        self.canonical = Mock(return_value={
+            7: {"sessions": 2, "present": 1, "absent": 1, "attendanceRate": 50,
+                "lastSessionDate": date(2026, 9, 18)},
+            8: {"sessions": 3, "present": 2, "absent": 1, "attendanceRate": 67},
+        })
+        self.namespace = {
+            "to_int": lambda value: int(value or 0),
+            "caseload_aptem_ids": lambda rows: {7: 4321},
+            "caseload_canonical_attendance": self.canonical,
+            "fetch_kbc_attendance_rates": self.kbc,
+            "format_date_value": lambda value: value.strftime("%d %b %Y") if value else "--",
+            "logger": Mock(),
+        }
+        load_functions(BACKEND / "coach_api/views.py", {"dashboard_attendance_rows"}, self.namespace)
+
+    def test_aptem_and_other_learners_use_canonical_occurrence_summary(self):
+        rows = [SimpleNamespace(id=7), SimpleNamespace(id=8)]
+        learners = [{"id": "7", "name": "A"}, {"id": "8", "name": "B"}]
+
+        payload = self.namespace["dashboard_attendance_rows"](rows, learners)
+
+        self.assertEqual([(row["id"], row["attendance"]) for row in payload], [("7", 50), ("8", 67)])
+        self.assertEqual((payload[0]["sessions"], payload[0]["present"], payload[0]["absent"]), (2, 1, 1))
+        self.assertEqual(payload[0]["lastSessionDate"], "2026-09-18")
+        self.kbc.assert_not_called()
+        self.canonical.assert_called_once_with(rows)
+
+    def test_missing_kbc_rows_preserve_canonical_occurrence_data(self):
+        self.kbc.return_value = {}
+        rows = [SimpleNamespace(id=7), SimpleNamespace(id=8)]
+
+        payload = self.namespace["dashboard_attendance_rows"](rows, [{"id": "7"}, {"id": "8"}])
+
+        self.assertEqual([row["id"] for row in payload], ["7", "8"])
+        self.assertEqual(payload[0]["attendance"], 50)
+        self.kbc.assert_not_called()
+        self.canonical.assert_called_once_with(rows)
+
+
+if __name__ == "__main__":
+    with patch("socket.socket", side_effect=AssertionError("Network forbidden")):
+        unittest.main()
