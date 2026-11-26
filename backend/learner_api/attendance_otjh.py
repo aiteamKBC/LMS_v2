@@ -6,6 +6,7 @@ excluded from recalculation. All reads are bounded across an entire caseload.
 """
 from collections import defaultdict
 
+from django.db import connections
 from django.utils import timezone
 
 from .live_session_policy import LIVE_SESSION_CREDIT_SECONDS
@@ -13,7 +14,27 @@ from .monthly_log_attendance import SOURCE, UK, instant, metadata, represented
 from .monthly_log_sources import number, row
 
 
-def protected_months(profile_ids, read, table=None):
+def attendance_capture_projection():
+    """Fetch frozen attendance, not signature images or unrelated evidence.
+
+    Legacy signatures can be plain image URLs or malformed JSON. Validate
+    before casting and keep only the same rows the attendance readers consume.
+    SQLite fixtures retain the portable full-column read.
+    """
+    if connections['enrolment'].vendor != 'postgresql':
+        return 'signature_data'
+    return """(SELECT jsonb_build_object('rows', coalesce((
+        SELECT jsonb_agg(item ORDER BY position)
+        FROM jsonb_array_elements(CASE WHEN jsonb_typeof(capture->'rows')='array'
+            THEN capture->'rows' ELSE '[]'::jsonb END) WITH ORDINALITY AS items(item,position)
+        WHERE item->>'source_system'='live_session_learner_attendance'
+          AND item->>'reporting_month'=report_month
+        ),'[]'::jsonb))
+        FROM (SELECT (CASE WHEN signature_data IS JSON OBJECT THEN signature_data
+            ELSE '{}' END)::jsonb AS capture) captured) AS signature_data"""
+
+
+def protected_months(profile_ids, read, table=None, *, attendance_only=False):
     ids = list(dict.fromkeys(profile_ids))
     if not ids:
         return {}
@@ -25,7 +46,8 @@ def protected_months(profile_ids, read, table=None):
                          'manual_month_finalization_events', 'monthly_audit_signoffs'):
                 sql = sql.replace(f'"Learner".{name}', table(name))
             return original_read(sql, params)
-    rows = read(f'''SELECT learner_id,report_month,signature_data
+    capture = attendance_capture_projection() if attendance_only else 'signature_data'
+    rows = read(f'''SELECT learner_id,report_month,{capture}
         FROM "Learner".learner_monthly_signatures
         WHERE learner_id IN ({slots}) AND review_confirmed IS TRUE
         ORDER BY signed_at,id''', ids)
@@ -56,7 +78,7 @@ def read_bulk(owners, read, *, now=None):
     now = now or timezone.now()
     ids = list(owners)
     slots = ','.join(['%s'] * len(ids))
-    frozen = protected_months(ids, read)
+    frozen = protected_months(ids, read, attendance_only=True)
     result = {ident: {'protected': frozen.get(ident, {}), 'lectures': [], 'frozen_rows': []} for ident in ids}
     for ident, months in frozen.items():
         for month, capture in months.items():

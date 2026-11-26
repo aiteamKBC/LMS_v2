@@ -7,6 +7,7 @@ export const MY_LEARNING_READ_TIMEOUT_MS = 120_000;
 const DASHBOARD_OVERVIEW_READ_TIMEOUT_MS = 120_000;
 const ACTIVITY_DETAIL_READ_TIMEOUT_MS = 120_000;
 const TRAINING_READ_TIMEOUT_MS = 120_000;
+const MONTHLY_READ_TIMEOUT_MS = 120_000;
 const TRANSIENT_READ_RETRY_DELAY_MS = 600;
 
 export class LearnerReadError extends Error {
@@ -79,11 +80,15 @@ async function fetchJson(key: string): Promise<unknown> {
   // Allow connection checkout plus that read, as for the selected module.
   // Calendar and quiz requests keep their own deadlines.
   const trainingRead = /^\/learner_api\/dashboard\/(commercial|apprenticeship)\/[^/?]+\/training\/(?:modules\/[^/?]+\/)?(?:\?|$)/.test(url);
+  // Monthly plans share the connection checkout and canonical hours reads.
+  // Cover both display contracts, with a bounded wait and user-driven retry.
+  const monthlyRead = /^\/learner_api\/dashboard\/(commercial|apprenticeship)\/[^/?]+\/monthly\/(?:plan\/)?(?:\?|$)/.test(url);
   const timeoutMs = /^\/learner_api\/my-learning\//.test(url)
     ? MY_LEARNING_READ_TIMEOUT_MS
     : /^\/learner_api\/dashboard\/(commercial|apprenticeship)\/[^/?]+\/overview\/(?:\?|$)/.test(url)
       ? DASHBOARD_OVERVIEW_READ_TIMEOUT_MS
       : trainingRead ? TRAINING_READ_TIMEOUT_MS
+        : monthlyRead ? MONTHLY_READ_TIMEOUT_MS
         : activityDetail ? ACTIVITY_DETAIL_READ_TIMEOUT_MS
         : /^\/learner_api\/(student-activity|metrics)\//.test(url)
           ? LEARNER_SOURCE_READ_TIMEOUT_MS : LEARNER_READ_TIMEOUT_MS;

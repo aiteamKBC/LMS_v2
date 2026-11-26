@@ -74,23 +74,14 @@ def read_rows(owner, *, now):
     register rows in their capture and remain unchanged; newly signed months
     retain exactly the attendance reviewed, even if the register later changes.
     """
-    signatures = query('''SELECT report_month,signature_data
-        FROM "Learner".learner_monthly_signatures
-        WHERE learner_id=%s AND review_confirmed IS TRUE ORDER BY signed_at,id''', [owner['id']])
-    signed, result = set(), []
-    for signature in signatures:
-        month = signature['report_month']
-        if month in signed:
-            continue
-        signed.add(month)
-        capture = metadata(signature.get('signature_data'))
+    from .attendance_otjh import protected_months
+    protected = protected_months([owner['id']], query, attendance_only=True).get(int(owner['id']), {})
+    signed, result = set(protected), []
+    for month, capture in protected.items():
         for item in capture.get('rows') or []:
             if (isinstance(item, dict) and item.get('source_system') == SOURCE
                     and item.get('reporting_month') == month):
                 result.append(dict(item))
-
-    from .attendance_otjh import protected_months
-    signed.update(protected_months([owner['id']], query).get(int(owner['id']), {}))
 
     lectures = query('''SELECT r.occurrence_id,r.module_catalogue_id,r.session_date,
         o.live_session_id,o.session_number,o.scheduled_start,o.scheduled_end,
