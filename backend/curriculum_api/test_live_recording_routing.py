@@ -117,13 +117,65 @@ class RecordingIdentityTests(SimpleTestCase):
         client = BunnyStream('796471', api_key='synthetic-api-key-must-not-be-sent')
         url = f'https://iframe.mediadelivery.net/embed/796471/{VIDEO}?token=' + 'a' * 64 + '&expires=200'
         with patch('curriculum_api.bunny_stream.requests.get', side_effect=[
-                nullcontext(Mock(status_code=200)), nullcontext(Mock(status_code=403))]) as get:
+                nullcontext(Mock(status_code=200, text=f'<video src="/{VIDEO}/playlist.m3u8"></video>')),
+                nullcontext(Mock(status_code=403, text='Forbidden'))]) as get:
             self.assertIs(client.verify_embed(url, referrer='https://example.invalid/path?ignored=1'), True)
         self.assertNotEqual(get.call_args_list[0].args[0], get.call_args_list[1].args[0])
         for call in get.call_args_list:
             self.assertNotIn('AccessKey', call.kwargs['headers'])
             self.assertEqual(call.kwargs['headers']['Referer'], 'https://example.invalid/')
             self.assertFalse(call.kwargs['allow_redirects'])
+
+    def test_public_player_probe_accepts_the_observed_http_200_static_403_page(self):
+        client = BunnyStream('796471', api_key='synthetic')
+        url = f'https://iframe.mediadelivery.net/embed/796471/{VIDEO}?token=' + 'a' * 64 + '&expires=200'
+        denial = '<html><head><title>403</title><style>body {color:red}</style></head><body><h1>&#52;03</h1></body></html>'
+        for candidate in [url, url.replace(VIDEO, VIDEO.upper())]:
+            with self.subTest(url=candidate), patch('curriculum_api.bunny_stream.requests.get', side_effect=[
+                    nullcontext(Mock(status_code=200, text=f'<video src="/{VIDEO}/playlist.m3u8"></video>')),
+                    nullcontext(Mock(status_code=200, text=denial))]):
+                self.assertIs(client.verify_embed(candidate), True)
+
+    def test_public_player_probe_rejects_a_denial_page_for_the_correct_signature(self):
+        client = BunnyStream('796471', api_key='synthetic')
+        url = f'https://iframe.mediadelivery.net/embed/796471/{VIDEO}?token=' + 'a' * 64 + '&expires=200'
+        with patch('curriculum_api.bunny_stream.requests.get', side_effect=[
+                nullcontext(Mock(status_code=200, text='<title>403</title><h1>403</h1>')),
+                nullcontext(Mock(status_code=403, text='Forbidden'))]):
+            with self.assertRaisesRegex(VideoImportError, 'reject an invalid token'):
+                client.verify_embed(url)
+
+    def test_public_player_probe_rejects_another_video_with_a_valid_http_status(self):
+        client = BunnyStream('796471', api_key='synthetic')
+        url = f'https://iframe.mediadelivery.net/embed/796471/{VIDEO}?token=' + 'a' * 64 + '&expires=200'
+        with patch('curriculum_api.bunny_stream.requests.get', side_effect=[
+                nullcontext(Mock(status_code=200, text=f'<video src="/{OTHER}/playlist.m3u8"></video>')),
+                nullcontext(Mock(status_code=403, text='Forbidden'))]):
+            with self.assertRaises(VideoImportError):
+                client.verify_embed(url)
+
+    def test_public_player_probe_does_not_treat_a_playable_403_title_as_a_denial(self):
+        client = BunnyStream('796471', api_key='synthetic')
+        url = f'https://iframe.mediadelivery.net/embed/796471/{VIDEO}?token=' + 'a' * 64 + '&expires=200'
+        player = f'<title>403</title><h1>403</h1><video src="/{VIDEO}/playlist.m3u8"></video>'
+        with patch('curriculum_api.bunny_stream.requests.get', side_effect=[
+                nullcontext(Mock(status_code=200, text=player)),
+                nullcontext(Mock(status_code=200, text=player))]):
+            with self.assertRaises(VideoImportError):
+                client.verify_embed(url)
+
+    def test_public_player_probe_rejects_generic_errors_and_unexpected_statuses(self):
+        client = BunnyStream('796471', api_key='synthetic')
+        url = f'https://iframe.mediadelivery.net/embed/796471/{VIDEO}?token=' + 'a' * 64 + '&expires=200'
+        for status, body in [(200, '<h1>Service unavailable</h1>'),
+                             (500, '<title>403</title><h1>403</h1>'),
+                             (200, '<title>403</title><h1>403</h1><script src="/player.js"></script>'),
+                             (200, '<title>403</title><h1>403</h1><p>Unexpected content</p>')]:
+            with self.subTest(status=status, body=body), patch('curriculum_api.bunny_stream.requests.get', side_effect=[
+                    nullcontext(Mock(status_code=200, text=f'<video src="/{VIDEO}/playlist.m3u8"></video>')),
+                    nullcontext(Mock(status_code=status, text=body))]):
+                with self.assertRaises(VideoImportError):
+                    client.verify_embed(url)
 
     def test_public_or_misconfigured_player_cannot_be_declared_protected(self):
         client = BunnyStream('796471', api_key='synthetic')
@@ -184,6 +236,24 @@ class LiveRoutingTests(TestCase):
 
     def test_default_keeps_existing_transfer_until_single_owner_cutover(self):
         self.assertEqual(self.enqueue().library_id, '798153')
+
+    def test_direct_fetch_keeps_exact_week_component_and_never_downloads_or_uploads_local_media(self):
+        with patch.dict(os.environ, {routing.UPLOAD_FLAG: 'true', 'BUNNY_RECORDING_DIRECT_FETCH_ENABLED': 'true'}):
+            asset = self.enqueue()
+            client = Mock(library_id='796471')
+            client.find_import.return_value = None
+            source_row = {**self.series, **self.artifact, 'occurrence_id': 'O'}
+            with patch.object(self.read, 'return_value', [source_row]), \
+                    patch.object(session_bunny, 'BunnyStream', return_value=client), \
+                    patch('curriculum_api.bunny_module_collections.recording_collection', return_value='collection'), \
+                    patch('curriculum_api.recording_direct_fetch.transfer_direct', return_value={'guid': VIDEO, 'status': 2}) as transfer, \
+                    patch.object(session_bunny, 'download_recording', side_effect=AssertionError('No local media')), \
+                    patch.object(session_bunny, '_prepare_and_upload', side_effect=AssertionError('No local upload')):
+                session_bunny.transfer_recording(asset)
+            transfer.assert_called_once()
+            self.assertEqual(asset.status, 'processing')
+            self.assertEqual(asset.scope['component_ids'], 'COMP')
+            self.assertEqual(asset.scope['week_ids'], 'WEEK')
 
     def test_missing_playback_key_blocks_only_new_live_uploads(self):
         historical = self.historical()

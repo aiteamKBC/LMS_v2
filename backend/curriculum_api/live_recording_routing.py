@@ -52,6 +52,10 @@ def matches_source(video, scope):
     occurrence = str(scope.get('occurrence_id') or '')
     if not occurrence or (tags.get('lms.occurrence_id') or tags.get('kbc_lms_occurrence_id')) != occurrence:
         return False
+    direct_key = scope.get('direct_source_key')
+    if direct_key and tags.get('lms.direct_source_key'):
+        return direct_key == tags['lms.direct_source_key'] and all(
+            tags.get('lms.' + field) == str(scope.get(field) or '') for field in ('series_id', 'module_id'))
     content_hash = str(scope.get('source_content_sha256') or '')
     remote_hash = tags.get('lms.source_content_sha256')
     if content_hash and remote_hash:
@@ -92,7 +96,8 @@ def select_existing_recording(videos, scope):
             raise VideoImportError('The existing LiveSessions recording has an invalid identity.') from None
         if matches_source(video, scope):
             matches.append(video)
-        elif (scope.get('source_content_sha256') and not tags.get('lms.source_content_sha256')) or (
+        elif (scope.get('direct_source_key') and not tags.get('lms.direct_source_key')) or (
+                scope.get('source_content_sha256') and not tags.get('lms.source_content_sha256')) or (
                 not tags.get('lms.recording_identity') and not all(tags.get('lms.' + field)
                   for field in ('series_id', 'module_id', 'graph_artifact_id'))):
             unresolved = True

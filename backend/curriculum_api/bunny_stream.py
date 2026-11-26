@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import base64
 import re
+from html.parser import HTMLParser
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 import requests
@@ -38,6 +39,37 @@ COLLECTION_NAMES = {
 FREE_COURSE_COLLECTION = 'Free course'
 
 
+class _EmbedDocument(HTMLParser):
+    """Recognize a player and Bunny's static denial page independently of status."""
+
+    def __init__(self, body):
+        super().__init__()
+        self.has_video = False
+        self.has_active_content = False
+        self.hidden = 0
+        self.visible_words = []
+        if isinstance(body, str):
+            self.feed(body)
+
+    def handle_starttag(self, tag, attrs):
+        self.has_video |= tag == 'video'
+        self.has_active_content |= tag in ('script', 'video', 'audio', 'iframe', 'embed', 'object')
+        if tag in ('script', 'style'):
+            self.hidden += 1
+
+    def handle_endtag(self, tag):
+        if tag in ('script', 'style'):
+            self.hidden = max(0, self.hidden - 1)
+
+    def handle_data(self, data):
+        if not self.hidden:
+            self.visible_words.extend(data.split())
+
+    @property
+    def is_static_denial(self):
+        return not self.has_active_content and self.visible_words in (['401', '401'], ['403', '403'])
+
+
 def live_library_id():
     """LiveSessions is separate from the existing curriculum-material library."""
     library = os.environ.get('BUNNY_LIVE_STREAM_LIBRARY_ID', '796471').strip()
@@ -54,6 +86,8 @@ def library_secret(library_id, suffix):
         prefix = 'BUNNY_STREAM_'
     elif library == live_library_id():
         prefix = 'BUNNY_LIVE_STREAM_'
+    elif library and library == os.environ.get('BUNNY_COACH_STREAM_LIBRARY_ID', '').strip():
+        prefix = 'BUNNY_COACH_STREAM_'
     else:
         raise VideoImportError('The saved Bunny library is not configured. Existing media is unchanged.')
     return os.environ.get(prefix + suffix, '').strip()
@@ -172,11 +206,20 @@ class BunnyStream:
             # Do not use the API session or its AccessKey for the public player.
             with requests.get(url, headers=headers, timeout=(3, 8), allow_redirects=False) as valid:
                 good_status = valid.status_code
+                good_body = valid.text
             with requests.get(invalid, headers=headers, timeout=(3, 8), allow_redirects=False) as rejected:
                 bad_status = rejected.status_code
+                bad_body = rejected.text
         except requests.RequestException:
             raise VideoImportError('The protected player could not be verified; historical playback is retained.') from None
-        if good_status != 200 or bad_status not in (401, 403):
+        good_page = _EmbedDocument(good_body)
+        good_player = (good_status == 200 and good_page.has_video
+                       and parsed.path.rsplit('/', 1)[-1].lower() in good_body.lower())
+        # Bunny may send its static "403 / 403" HTML with HTTP 200. A public
+        # player, an arbitrary error, or executable content is never a denial.
+        bad_denied = (bad_status in (401, 403)
+                      or bad_status == 200 and _EmbedDocument(bad_body).is_static_denial)
+        if not good_player or not bad_denied:
             raise VideoImportError('LiveSessions must accept its signed player and reject an invalid token before playback is switched.')
         return True
 

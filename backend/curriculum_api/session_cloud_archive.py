@@ -110,7 +110,7 @@ def verify_existing_recording(blob, graph_url, token):
 
 
 def matched_recording_download(artifact, organizer, graph_url, token, *, graph_get,
-                               graph_base, drive_cache=None):
+                               graph_base, drive_cache=None, include_identity=False):
     """Resolve one SharePoint source by size plus matching first/last bytes.
 
     No Azure operation is performed. The short-lived URL is returned only to
@@ -155,6 +155,20 @@ def matched_recording_download(artifact, organizer, graph_url, token, *, graph_g
         source_size, source_first, source_last = _edges(transport, source_url)
         if (source_size, source_first, source_last) != (graph_size, graph_first, graph_last):
             return False
+        if include_identity:
+            # Only provider identities are durable. Download URLs expire and
+            # must never be stored in the queue, metadata or application logs.
+            drive = (detail.get('parentReference') or {}).get('driveId')
+            version = detail.get('cTag') or detail.get('eTag')
+            if not drive or not version:
+                raise ValueError('The Microsoft file identity or version is missing.')
+            confirmed = graph_get('GET', item_path)
+            if (confirmed.get('id') != detail['id'] or confirmed.get('size') != graph_size
+                    or (confirmed.get('cTag') or confirmed.get('eTag')) != version
+                    or (confirmed.get('parentReference') or {}).get('driveId') != drive):
+                raise ValueError('The Microsoft recording changed during source verification.')
+            return source_url, {'drive': drive, 'item': detail['id'],
+                                'version': version, 'size': graph_size}
         return source_url, graph_size, graph_first, graph_last
 
 

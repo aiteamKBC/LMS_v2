@@ -247,7 +247,7 @@ def transfer_recording(asset, *, lease_id=None):
             live_video = _find_import(asset, client)
             if live_video:
                 asset.scope.pop('live_video_create_pending', None)
-            if live_video is None:
+            if live_video is None and os.environ.get('BUNNY_RECORDING_DIRECT_FETCH_ENABLED', '').lower() not in ('true', '1', 'yes'):
                 live_video = find_existing_recording(client, asset.scope)
                 if live_video:
                     asset.scope = {**asset.scope, 'adopted_existing_live_video': live_video['guid']}
@@ -275,6 +275,19 @@ def transfer_recording(asset, *, lease_id=None):
             asset.save(update_fields=['video_id', 'updated_at'])
             client.metadata(asset.video_id, asset.scope, asset.title)
     video = live_video or (client.video(asset.video_id) if asset.video_id else None)
+    if (asset.library_id == live_library_id()
+            and os.environ.get('BUNNY_RECORDING_DIRECT_FETCH_ENABLED', '').lower() in ('true', '1', 'yes')):
+        from .live_recording_routing import uploads_enabled
+        from .recording_direct_fetch import transfer_direct
+        if video is None or video.get('status') in (0, 5, 6):
+            if not uploads_enabled():
+                raise VideoImportError('The original recording uploader cutover is not enabled.')
+            video = transfer_direct(asset, client, source, row)
+        asset.status = 'ready' if video and video.get('status') == 4 else 'processing'
+        if asset.status == 'ready':
+            from .live_recording_migration import verify_live_playback
+            verify_live_playback(asset, client)
+        return
     if video is not None and _retire_empty_failed_upload(asset, video):
         video = None
     if asset.library_id == live_library_id() and asset.library_id != os.environ.get('BUNNY_STREAM_LIBRARY_ID', '798153'):

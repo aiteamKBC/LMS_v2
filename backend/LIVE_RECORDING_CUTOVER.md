@@ -92,7 +92,13 @@ Only a ready replacement with verified protected playback replaces that player;
 later processing of the historical journal cannot switch it back. Existing
 module collections are reused and peer source metadata is preserved.
 
-New originals are downloaded to the worker's bounded temporary file, hashed
+When direct fetch is enabled, new originals use the bounded Microsoft identity
+checks and provider-to-provider route described in
+[COACH_RECORDING_CUTOVER.md](COACH_RECORDING_CUTOVER.md). That path does not store
+or re-upload full media on AWS and does not silently fall back to the local
+transfer. Source ambiguities remain blocked for reconciliation.
+
+With direct fetch disabled, originals are downloaded to the worker's bounded temporary file, hashed
 with SHA-256, then uploaded from that same file. A unique `live_source` journal
 claim for the exact bytes and authorized occurrence scope gives simultaneous
 Graph aliases one upload owner and one Bunny GUID. Retries retain that owner;

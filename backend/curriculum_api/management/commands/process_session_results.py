@@ -65,6 +65,13 @@ class Command(BaseCommand):
         if options['scheduled']:
             if not requested_ids:
                 try:
+                    from coach_api.recordings_bunny import run_pending as run_coaching
+                    checked = run_coaching(limit=options['limit'])
+                    if checked:
+                        self.stdout.write(f'Checked {checked} coaching recording transfers.')
+                except Exception as coach_failure:
+                    logger.warning('Coaching recording transfers need retry (%s).', type(coach_failure).__name__)
+                try:
                     from curriculum_api.bunny_module_collections import run_pending_collections
                     run_pending_collections(limit=options['limit'])
                 except Exception as collection_failure:
