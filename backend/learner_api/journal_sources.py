@@ -60,7 +60,7 @@ def table(name):
     if name == 'activity_ksbs':
         from curriculum_api.source_activity_ksbs import relation
         return relation()
-    return TABLES[name] if enabled() or name in ('learner_journal_row_ksbs', 'learner_activity_ksbs') else f'structured_manual_activities.{name}'
+    return TABLES[name] if enabled() or name in ('learner_journal_row_ksbs', 'learner_activity_ksbs', 'manual_activity_hours_revision') else f'structured_manual_activities.{name}'
 
 
 def retained_journal_sql(sql):
@@ -72,7 +72,7 @@ def retained_journal_sql(sql):
     for name, target in TABLES.items():
         if name == 'activity_ksbs':
             target = table(name)
-        elif not enabled() and name not in ('learner_journal_row_ksbs', 'learner_activity_ksbs'):
+        elif not enabled() and name not in ('learner_journal_row_ksbs', 'learner_activity_ksbs', 'manual_activity_hours_revision'):
             continue
         sql = re.sub(r'(?<![\w])"?structured_manual_activities"?\."?'
                      + re.escape(name) + r'"?(?![\w])', lambda _: target, sql)

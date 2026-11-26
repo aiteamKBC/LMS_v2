@@ -59,9 +59,12 @@ def load_records():
         aptem_id, report_month, event_type, created_at FROM {repo.FINALIZATIONS}
         WHERE aptem_id=ANY(%s) AND report_month<=%s
         ORDER BY aptem_id, report_month, id DESC''', [aptem_ids, repo.CUTOFF])
-    pending = repo.query('''SELECT aptem_id, selected_month AS month, count(*) AS count
-        FROM structured_manual_activities.manual_activity_hours_revision
-        WHERE aptem_id=ANY(%s) AND status='pending' GROUP BY aptem_id, selected_month''', [aptem_ids])
+    pending = repo.query('''SELECT l.aptem_id, r.selected_month AS month, count(*) AS count
+        FROM "Learner".manual_activity_hours_revision r
+        JOIN "Learner".learners l ON l.id=r.learner_id
+        JOIN "Learner".learner_journal_rows j ON j.id=r.row_id AND j.learner_id=r.learner_id
+        WHERE l.aptem_id=ANY(%s) AND r.status='pending' AND j.deleted_at IS NULL
+        GROUP BY l.aptem_id, r.selected_month''', [aptem_ids])
     return assemble(learners, sources, transitions, signs, finals, pending)
 
 
