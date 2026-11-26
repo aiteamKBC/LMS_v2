@@ -298,9 +298,10 @@ class FeedbackValidationTests(SimpleTestCase):
         self.assertEqual(available.filter.call_count, 2)
 
     def test_editing_a_used_post_lecture_form_creates_the_next_version(self):
+        form_identifier = '5e60c23d-36c7-4d3c-ada4-0fe47dc9bbee'
         previous = feedback.FeedbackForm(
             id=10, title='Lecture feedback', form_type='post_lecture',
-            delivery_scope='all_modules', template_key='5e60c23d-36c7-4d3c-ada4-0fe47dc9bbee',
+            delivery_scope='all_modules', template_key=form_identifier,
             version=1, is_current=True, description='', instructions='', status='published',
             created_by='Staff', anonymous_responses=False, allow_save_continue=True,
             allow_edit_after_submission=False,
