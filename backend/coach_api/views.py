@@ -105,6 +105,13 @@ from learner_api.submission_audit import (
     SUBMISSION_AUDIT_SQL,
     record_submission_row,
 )
+from .marking_parts import (
+    MARKING_PARTS,
+    apply_part as apply_marking_part,
+    expanded_queue_sql,
+    is_split as is_split_marking_row,
+    part_row as marking_part_row,
+)
 from learner_api.active_users import components_target_to_date, completed_hours_value_from_progress, current_curriculum_ksb_items_for_learner, current_week_label, dedupe_otjh_progress_records, hydrate_training_plan, refresh_learner_ksb_snapshot
 from learner_api.calendar_connections import (
     booking_conflicts as personal_calendar_booking_conflicts,
@@ -14773,6 +14780,106 @@ def serialize_marking_submission(row, *, now=None):
     }
 
 
+def save_marking_part_decision(request, submission_id, allowed_learner_ids, part, *, decision, feedback, reviewed_by, pending_ksb_review_sql):
+    """Record one part's decision on a monthly report.
+
+    The row is locked so two coaches deciding the two parts at once cannot lose
+    either decision. Only the ``markingParts`` key of ``full_submission`` is
+    written until both parts are decided for the current submission; then the
+    row's own status and feedback -- what the learner, hours and tallies read --
+    are set from the two together.
+    """
+    from .marking_parts import (
+        MARKING_PARTS,
+        combined_decision,
+        combined_feedback,
+        combined_reviewer,
+        current_parts,
+        is_split,
+        submission_token,
+    )
+
+    now = timezone.now()
+    try:
+        with transaction.atomic(using="enrolment"), connections["enrolment"].cursor() as cur:
+            cur.execute(
+                """
+                select id, activity_type, status, submitted_at, full_submission
+                  from "Learner"."learning_reflection_submissions"
+                 where id = %s and learner_id = any(%s)
+                   and not (""" + pending_ksb_review_sql + """)
+                   and """ + MARKING_QUEUE_EXCLUDE_DRAFTS_SQL + """
+                 for update
+                """,
+                [str(submission_id), allowed_learner_ids],
+            )
+            found = cur.fetchone()
+            row = dict(zip(("id", "activity_type", "status", "submitted_at", "full_submission"), found)) if found else None
+            if row is None or not is_split(row):
+                return JsonResponse({"detail": "Submission not found."}, status=404)
+
+            parts = current_parts(row)
+            parts[part] = {
+                "decision": decision,
+                "feedback": feedback,
+                "reviewedBy": reviewed_by,
+                "reviewedAt": now.isoformat(),
+                "submittedAt": submission_token(row["submitted_at"]),
+            }
+            # Decisions from an earlier submission are dropped here rather than
+            # kept: they no longer describe the work on screen.
+            stored = {name: parts[name] for name in MARKING_PARTS if name in parts}
+            if len(stored) == len(MARKING_PARTS):
+                cur.execute(
+                    """
+                    update "Learner"."learning_reflection_submissions"
+                       set full_submission = jsonb_set(full_submission, '{markingParts}', %s::jsonb),
+                           status = %s, coach_feedback = %s, reviewed_by = %s, reviewed_at = %s
+                     where id = %s
+                    returning """ + SUBMISSION_AUDIT_SQL,
+                    [
+                        json.dumps(stored),
+                        combined_decision(*(stored[name]["decision"] for name in MARKING_PARTS)),
+                        combined_feedback(stored),
+                        combined_reviewer(stored),
+                        now,
+                        str(submission_id),
+                    ],
+                )
+            else:
+                cur.execute(
+                    """
+                    update "Learner"."learning_reflection_submissions"
+                       set full_submission = jsonb_set(full_submission, '{markingParts}', %s::jsonb)
+                     where id = %s
+                    returning """ + SUBMISSION_AUDIT_SQL,
+                    [json.dumps(stored), str(submission_id)],
+                )
+            updated = cur.fetchone()
+    except DatabaseError:
+        logger.exception("Could not update Coach marking submission part.")
+        return coach_error(
+            request,
+            code="marking_queue_unavailable",
+            message="Could not update the marking submission.",
+            status=502,
+        )
+
+    record_submission_row(updated)
+    audit_row = dict(zip(SUBMISSION_AUDIT_COLUMNS, updated))
+    from learner_api.marking_tally import refresh_tally_for_submission
+
+    refresh_tally_for_submission(audit_row["learner_kind"], audit_row["learner_id"])
+    return JsonResponse({
+        "id": str(audit_row["id"]),
+        "part": part,
+        "status": decision,
+        "reportStatus": audit_row["status"],
+        "partsDecided": len(stored),
+        "reviewedAt": now.isoformat(),
+    })
+
+
 def empty_marking_queue_response(owner_email, *, page=1, page_size=25):
     return JsonResponse({
         "owner": {"name": fetch_owner_name(owner_email), "email": owner_email},
@@ -14825,6 +14932,12 @@ def coach_marking_queue(request, submission_id=None):
         if request.method == "GET":
             if not allowed_learner_ids:
                 return JsonResponse({"detail": "Submission not found."}, status=404)
+            # A monthly report is marked as two parts; ``part`` picks which one
+            # this page is reviewing. Without it the whole row is returned, as
+            # every other caller has always received it.
+            part = clean_text(request.GET.get("part")).lower()
+            if part and part not in MARKING_PARTS:
+                return JsonResponse({"detail": "Select a valid marking part."}, status=400)
             try:
                 with connections["enrolment"].cursor() as cur:
                     cur.execute(
@@ -14849,8 +14962,16 @@ def coach_marking_queue(request, submission_id=None):
             if not value:
                 return JsonResponse({"detail": "Submission not found."}, status=404)
             from .ksb_review import detail_context
+            row = dict(zip(columns, value))
+            if part and not is_split_marking_row(row):
+                return JsonResponse({"detail": "Submission not found."}, status=404)
             try:
-                item = detail_context(serialize_marking_submission(dict(zip(columns, value))))
+                if part:
+                    item = apply_marking_part(
+                        detail_context(serialize_marking_submission(marking_part_row(row, part))), row, part,
+                    )
+                else:
+                    item = detail_context(serialize_marking_submission(row))
             except KsbReviewError as exc:
                 return JsonResponse({'detail': str(exc)}, status=exc.status)
             except DatabaseError:
@@ -14894,9 +15015,17 @@ def coach_marking_queue(request, submission_id=None):
                 reviewed_by = f"{admin_name} (for {reviewed_by})"[:255]
             if decision and decision != "accepted" and not feedback_plain_text(feedback):
                 validator.error("feedback", "Feedback is required for this decision.")
+            part = validator.text("part", lower=True, choices=set(MARKING_PARTS)) if payload.get("part") else ""
             validator.check()
         except ValidationError as exc:
             return validation_error_response(exc)
+
+        if part:
+            return save_marking_part_decision(
+                request, submission_id, allowed_learner_ids, part,
+                decision=decision, feedback=feedback, reviewed_by=reviewed_by,
+                pending_ksb_review_sql=PENDING_KSB_REVIEW_SQL,
+            )
 
         try:
             with connections["enrolment"].cursor() as cur:
@@ -14979,6 +15108,10 @@ def coach_marking_queue(request, submission_id=None):
         query_validator.error("date_to", "Must be on or after date_from.")
     learner_filter = query_validator.text("learner", max_length=128)
     search_filter = query_validator.text("search", max_length=200)
+    # The marking queue page asks for monthly reports as two items (assignment:
+    # steps 2-4, reflection: steps 5-8). Other readers of this endpoint -- the
+    # case file and reports -- omit it and keep receiving one row per report.
+    split = clean_text(request.GET.get("split")) == "1"
     try:
         query_validator.check()
     except ValidationError as exc:
@@ -15010,12 +15143,28 @@ def coach_marking_queue(request, submission_id=None):
     kind_scope_clauses = list(base_clauses)
     kind_scope_params = list(base_params)
 
+    if split:
+        source = expanded_queue_sql(MARKING_QUEUE_COLUMNS, ASSIGNMENT_ACTIVITY_TYPES)
+        selected_columns = f"{MARKING_QUEUE_COLUMNS}, row_status, marking_part"
+        assignment_kind_sql, reflection_kind_sql, kind_params = (
+            "marking_kind = 'assignment'", "marking_kind = 'reflection'", [],
+        )
+        part_order = ", marking_part asc nulls first"
+    else:
+        source = '"Learner".learning_reflection_submissions'
+        selected_columns = MARKING_QUEUE_COLUMNS
+        assignment_kind_sql, reflection_kind_sql, kind_params = (
+            "lower(btrim(activity_type)) = any(%s)", "lower(btrim(activity_type)) <> all(%s)",
+            [list(ASSIGNMENT_ACTIVITY_TYPES)],
+        )
+        part_order = ""
+
     if kind_filter == "assignment":
-        base_clauses.append("lower(btrim(activity_type)) = any(%s)")
-        base_params.append(list(ASSIGNMENT_ACTIVITY_TYPES))
+        base_clauses.append(assignment_kind_sql)
+        base_params.extend(kind_params)
     elif kind_filter == "reflection":
-        base_clauses.append("lower(btrim(activity_type)) <> all(%s)")
-        base_params.append(list(ASSIGNMENT_ACTIVITY_TYPES))
+        base_clauses.append(reflection_kind_sql)
+        base_params.extend(kind_params)
 
     item_clauses = list(base_clauses)
     item_params = list(base_params)
@@ -15049,7 +15198,7 @@ def coach_marking_queue(request, submission_id=None):
                        min(submitted_at) filter (
                            where status in ('submitted_for_tutor_review', 'escalated') OR ({PENDING_KSB_REVIEW_SQL})
                        ) as oldest_submission
-                  from "Learner".learning_reflection_submissions
+                  from {source}
                  where {base_where}
                 """,
                 [overdue_before, *base_params],
@@ -15060,29 +15209,29 @@ def coach_marking_queue(request, submission_id=None):
             cur.execute(
                 f"""
                 select count(*) filter (
-                           where lower(btrim(activity_type)) = any(%s)
+                           where {assignment_kind_sql}
                        ) as assignment_items,
                        count(*) filter (
-                           where lower(btrim(activity_type)) <> all(%s)
+                           where {reflection_kind_sql}
                        ) as reflection_items
-                  from "Learner".learning_reflection_submissions
+                  from {source}
                  where {" and ".join(kind_scope_clauses)}
                 """,
-                [list(ASSIGNMENT_ACTIVITY_TYPES), list(ASSIGNMENT_ACTIVITY_TYPES), *kind_scope_params],
+                [*kind_params, *kind_params, *kind_scope_params],
             )
             kind_row = cur.fetchone()
             cur.execute(
-                f'select count(*) from "Learner".learning_reflection_submissions where {item_where}',
+                f'select count(*) from {source} where {item_where}',
                 item_params,
             )
             filtered_total = cur.fetchone()[0]
             cur.execute(
                 f"""
-                select {MARKING_QUEUE_COLUMNS}
-                  from "Learner".learning_reflection_submissions
+                select {selected_columns}
+                  from {source}
                  where {item_where}
                  order by case when status = 'submitted_for_tutor_review' OR ({PENDING_KSB_REVIEW_SQL}) then 0 else 1 end,
-                          submitted_at asc, id asc
+                          submitted_at asc, id asc{part_order}
                  limit %s offset %s
                 """,
                 [*item_params, page_size, offset],
@@ -15098,7 +15247,11 @@ def coach_marking_queue(request, submission_id=None):
             status=502,
         )
     now = timezone.now()
-    items = [serialize_marking_submission(row, now=now) for row in rows]
+    items = [
+        apply_marking_part(serialize_marking_submission(row, now=now), row, row["marking_part"])
+        if row.get("marking_part") else serialize_marking_submission(row, now=now)
+        for row in rows
+    ]
     total_items, active_learners, pending_items, accepted_items, referred_items, overdue_items, oldest = summary_row
     total_pages = (filtered_total + page_size - 1) // page_size if filtered_total else 0
     return JsonResponse({

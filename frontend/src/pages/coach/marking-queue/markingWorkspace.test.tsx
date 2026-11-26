@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import CoachMarkingQueue from './page';
 import CoachMarkingReviewPage from '../marking-review/page';
@@ -152,6 +152,96 @@ describe('coach marking workspace', () => {
       decision: 'accepted',
       feedback: 'AI draft for coach review.',
       reviewedBy: 'Test Coach',
+    });
+  });
+
+  it('lists a monthly report as separate assignment and reflection items that open their own part', async () => {
+    const assignmentPart = { ...submission, markingPart: 'assignment', markingPartLabel: 'Assignment (Steps 2–4)', contentPreview: 'My assignment answer.' };
+    const reflectionPart = { ...submission, markingPart: 'reflection', markingPartLabel: 'Reflection (Steps 5–8)', contentPreview: 'My month in review.' };
+    mocks.coachFetch.mockImplementation(() => response({
+      items: [assignmentPart, reflectionPart],
+      summary: { ...summary, totalItems: 2, pendingItems: 2, reflectionItems: 1 },
+      pagination: { page: 1, pageSize: 25, totalItems: 2, totalPages: 1, hasNext: false, hasPrevious: false },
+    }));
+    function Destination() {
+      return <p>Opened {new URLSearchParams(useLocation().search).get('part') ?? 'none'}</p>;
+    }
+
+    render(
+      <MemoryRouter initialEntries={['/coach/marking-queue']}>
+        <Routes>
+          <Route path="/coach/marking-queue" element={<CoachMarkingQueue />} />
+          <Route path="/coach/marking-queue/:submissionId" element={<Destination />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('Assignment (Steps 2–4)')).toBeInTheDocument();
+    expect(screen.getByText('Reflection (Steps 5–8)')).toBeInTheDocument();
+    expect(screen.getByText('My assignment answer.')).toBeInTheDocument();
+    expect(screen.getByText('My month in review.')).toBeInTheDocument();
+    expect(mocks.coachFetch).toHaveBeenCalledWith(expect.stringContaining('split=1'));
+    const views = screen.getAllByRole('button', { name: 'View' });
+    expect(views).toHaveLength(2);
+    fireEvent.click(views[1]);
+    expect(screen.getByText('Opened reflection')).toBeInTheDocument();
+  });
+
+  it('marks one part of a monthly report against that part only', async () => {
+    const reflectionPart = {
+      ...submission,
+      markingPart: 'reflection',
+      markingPartLabel: 'Reflection (Steps 5–8)',
+      markingSections: [
+        { step: 5, title: 'Full-month reflection', entries: [{ label: 'How does the learning fit together?', text: 'It connected budgeting with risk.' }] },
+        { step: 6, title: 'Impact & employer benefit', entries: [] },
+      ],
+    };
+    mocks.coachFetch.mockImplementation((url: string, options?: { method?: string; body?: unknown }) => {
+      if (url.includes('/ai-feedback')) return response({ feedback: 'Reflection draft.', meta: {} });
+      if (url.includes('/ai-prompt')) return response({ prompt: 'Validate the reflection.', file: 'AI_reflection_prompt.MD', kind: 'reflection', available: true });
+      if (options?.method === 'PATCH') return response({ id: submission.id, part: 'reflection', status: 'accepted' });
+      if (url.includes('?status=all')) return response({ items: [reflectionPart], summary });
+      return response({ item: reflectionPart });
+    });
+
+    render(
+      <MemoryRouter initialEntries={[`/coach/marking-queue/${submission.id}?part=reflection`]}>
+        <Routes>
+          <Route path="/coach/marking-queue/:submissionId" element={<CoachMarkingReviewPage />} />
+          <Route path="/coach/marking-queue" element={<p>Queue destination</p>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Full-month reflection' })).toBeInTheDocument();
+    const steps = screen.getByRole('tablist', { name: 'Steps in this part' });
+    expect(within(steps).getAllByRole('tab').map(tab => tab.textContent)).toEqual(['5Full-month reflection', '6Impact & employer benefit', 'Feedback & decision']);
+    expect(screen.getByText('It connected budgeting with risk.')).toBeInTheDocument();
+    // The decision lives in its own tab, after the steps.
+    expect(screen.queryByRole('button', { name: 'Generate AI draft' })).not.toBeInTheDocument();
+    fireEvent.click(within(steps).getByRole('tab', { name: /Impact & employer benefit/ }));
+    expect(screen.getByText('Nothing was entered for this step.')).toBeInTheDocument();
+    expect(screen.queryByText('It connected budgeting with risk.')).not.toBeInTheDocument();
+    expect(screen.queryByText('I mapped the stakeholders and changed the communication cadence.')).not.toBeInTheDocument();
+    expect(mocks.coachFetch).toHaveBeenCalledWith(`/coach_api/coach/marking-queue/${submission.id}?part=reflection`);
+    await waitFor(() => expect(mocks.coachFetch).toHaveBeenCalledWith(`/coach_api/coach/marking-queue/${submission.id}/ai-prompt?part=reflection`));
+
+    fireEvent.click(within(steps).getByRole('tab', { name: /Feedback & decision/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Generate AI draft' }));
+    const feedback = await screen.findByPlaceholderText('Write clear, actionable feedback for the learner…');
+    await waitFor(() => expect(feedback).toHaveValue('Reflection draft.'));
+    expect(mocks.coachFetch).toHaveBeenCalledWith(`/coach_api/coach/marking-queue/${submission.id}/ai-feedback?part=reflection`, { method: 'POST' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Accept reflection part' }));
+    await waitFor(() => expect(screen.getByText('Queue destination')).toBeInTheDocument());
+    const patchCall = mocks.coachFetch.mock.calls.find(([, options]) => options?.method === 'PATCH');
+    expect(patchCall?.[0]).toBe(`/coach_api/coach/marking-queue/${submission.id}`);
+    expect(JSON.parse(String(patchCall?.[1]?.body))).toEqual({
+      decision: 'accepted',
+      feedback: 'Reflection draft.',
+      reviewedBy: 'Test Coach',
+      part: 'reflection',
     });
   });
 });
