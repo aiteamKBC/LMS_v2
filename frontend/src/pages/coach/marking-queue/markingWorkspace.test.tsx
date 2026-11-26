@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import CoachMarkingQueue from './page';
@@ -151,6 +151,100 @@ describe('coach marking workspace', () => {
     expect(JSON.parse(String(patchCall?.[1]?.body))).toEqual({
       decision: 'accepted',
       feedback: 'AI draft for coach review.',
+      reviewedBy: 'Test Coach',
+    });
+  });
+
+  it('lists only assignment submissions, with no reflection or type tabs', async () => {
+    mocks.coachFetch.mockImplementation(() => response({
+      items: [submission],
+      summary,
+      pagination: { page: 1, pageSize: 25, totalItems: 1, totalPages: 1, hasNext: false, hasPrevious: false },
+    }));
+
+    render(
+      <MemoryRouter initialEntries={['/coach/marking-queue']}>
+        <Routes>
+          <Route path="/coach/marking-queue" element={<CoachMarkingQueue />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Stakeholder engagement reflection' })).toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: 'Submission type' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Reflections/ })).not.toBeInTheDocument();
+    for (const [url] of mocks.coachFetch.mock.calls) expect(String(url)).toContain('kind=assignment');
+  });
+
+  it('reviews a monthly report in assignment, reflection and feedback tabs with one decision', async () => {
+    const monthly = {
+      ...submission,
+      monthlySections: {
+        assignment: [
+          { step: 2, title: 'Assignment answer', entries: [{ label: 'Assignment answer', text: 'The budget came from quotations.', format: 'text' }] },
+          { step: 3, title: 'Evidence & cross-referencing', entries: [] },
+          { step: 4, title: 'KSBs & hours claimed', entries: [{ label: 'Hours claimed', text: '6', format: 'value' }] },
+        ],
+        reflection: [
+          { step: 5, title: 'Full-month reflection', entries: [{ label: 'How does the learning fit together?', text: 'It connected budgeting with risk.', format: 'text' }] },
+          { step: 6, title: 'Impact & employer benefit', entries: [] },
+          { step: 7, title: 'Action plan & EPA', entries: [] },
+          { step: 8, title: 'Coaching & presentation', entries: [] },
+        ],
+      },
+    };
+    mocks.coachFetch.mockImplementation((url: string, options?: { method?: string; body?: unknown }) => {
+      if (url.endsWith('/ai-feedback')) return response({ feedback: 'Whole report draft.', meta: {} });
+      if (url.endsWith('/ai-prompt')) return response({ prompt: 'Mark the report.', file: 'AI_marking_prompt.MD', kind: 'assignment', available: true });
+      if (options?.method === 'PATCH') return response({ id: submission.id, status: 'accepted' });
+      if (url.includes('?status=all')) return response({ items: [monthly], summary });
+      return response({ item: monthly });
+    });
+
+    render(
+      <MemoryRouter initialEntries={[`/coach/marking-queue/${submission.id}`]}>
+        <Routes>
+          <Route path="/coach/marking-queue/:submissionId" element={<CoachMarkingReviewPage />} />
+          <Route path="/coach/marking-queue" element={<p>Queue destination</p>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    const main = await screen.findByRole('tablist', { name: 'Monthly report' });
+    expect(within(main).getAllByRole('tab').map(tab => tab.textContent)).toEqual([
+      'Assignment, KSBs & evidenceSteps 2–4', 'ReflectionSteps 5–8', 'FeedbackWhole report',
+    ]);
+    // The old Submission / Evidence & KSBs / Progress history tabs are gone for a monthly report.
+    expect(screen.queryByRole('tab', { name: 'Progress history' })).not.toBeInTheDocument();
+
+    // Assignment tab: one sub-tab per step, step 2 first. No decision here.
+    const assignmentSteps = screen.getByRole('tablist', { name: 'Assignment, KSBs & evidence steps' });
+    expect(within(assignmentSteps).getAllByRole('tab')).toHaveLength(3);
+    expect(screen.getByText('The budget came from quotations.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Generate AI draft' })).not.toBeInTheDocument();
+    fireEvent.click(within(assignmentSteps).getByRole('tab', { name: /Evidence & cross-referencing/ }));
+    expect(screen.getByText('Uploaded evidence')).toBeInTheDocument();
+
+    fireEvent.click(within(main).getByRole('tab', { name: /Reflection/ }));
+    const reflectionSteps = screen.getByRole('tablist', { name: 'Reflection steps' });
+    expect(within(reflectionSteps).getAllByRole('tab')).toHaveLength(4);
+    expect(screen.getByText('It connected budgeting with risk.')).toBeInTheDocument();
+    expect(screen.queryByText('The budget came from quotations.')).not.toBeInTheDocument();
+
+    fireEvent.click(within(main).getByRole('tab', { name: /Feedback/ }));
+    expect(screen.getByText(/cover the whole monthly report/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Generate AI draft' }));
+    const feedback = await screen.findByPlaceholderText('Write clear, actionable feedback for the learner…');
+    await waitFor(() => expect(feedback).toHaveValue('Whole report draft.'));
+    expect(mocks.coachFetch).toHaveBeenCalledWith(`/coach_api/coach/marking-queue/${submission.id}/ai-feedback`, { method: 'POST' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Accept assignment and send feedback' }));
+    await waitFor(() => expect(screen.getByText('Queue destination')).toBeInTheDocument());
+    const patchCall = mocks.coachFetch.mock.calls.find(([, options]) => options?.method === 'PATCH');
+    expect(patchCall?.[0]).toBe(`/coach_api/coach/marking-queue/${submission.id}`);
+    expect(JSON.parse(String(patchCall?.[1]?.body))).toEqual({
+      decision: 'accepted',
+      feedback: 'Whole report draft.',
       reviewedBy: 'Test Coach',
     });
   });
