@@ -15,7 +15,19 @@ describe('Marking API contract', () => {
   it('passes status, kind and bounded page request fields exactly once', async () => {
     coachFetch.mockResolvedValue(new Response(JSON.stringify({ items: [], summary: {}, pagination: {} }), { status: 200 }));
     await fetchMarkingQueue({ scope: 'official', status: 'pending', kind: 'assignment', page: 2 });
-    expect(coachFetch).toHaveBeenCalledExactlyOnceWith('/coach_api/coach/marking-queue?status=pending&kind=assignment&page=2&page_size=25');
+    expect(coachFetch).toHaveBeenCalledExactlyOnceWith('/coach_api/coach/marking-queue?status=pending&kind=assignment&page=2&page_size=25&split=1');
+  });
+
+  it('asks only the official queue to list monthly reports as assignment and reflection parts', async () => {
+    coachFetch.mockResolvedValue(new Response(JSON.stringify({ items: [], summary: {}, pagination: {} }), { status: 200 }));
+    await fetchMarkingQueue({ scope: 'personal', status: 'pending', kind: 'assignment', page: 1 });
+    expect(coachFetch).toHaveBeenCalledExactlyOnceWith('/coach_api/coach/personal-marking?status=pending&kind=assignment&page=1&page_size=25');
+  });
+
+  it('loads one part of a monthly report when a part is given', async () => {
+    coachFetch.mockResolvedValue(new Response(JSON.stringify({ item: { id: 'submission-1' } }), { status: 200 }));
+    await fetchMarkingDetail('official', 'submission-1', 'assignment');
+    expect(coachFetch).toHaveBeenCalledExactlyOnceWith('/coach_api/coach/marking-queue/submission-1?part=assignment');
   });
 
   it('loads detail before the distinct sidebar queue without duplicating detail', async () => {
@@ -26,7 +38,7 @@ describe('Marking API contract', () => {
     await fetchMarkingSidebarQueue('official');
     expect(coachFetch.mock.calls.map(call => call[0])).toEqual([
       '/coach_api/coach/marking-queue/submission-1',
-      '/coach_api/coach/marking-queue?status=all&page=1&page_size=25',
+      '/coach_api/coach/marking-queue?status=all&page=1&page_size=25&split=1',
     ]);
   });
 });

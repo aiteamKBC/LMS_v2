@@ -930,7 +930,19 @@ def _load_scoped_submission(request, submission_id):
     if not value:
         return None, _error("That submission could not be found.", 404, "not_found")
 
-    return serialize_marking_submission(dict(zip(columns, value))), None
+    row = dict(zip(columns, value))
+    # A monthly report is marked as two parts. ``?part=`` makes the prompt and
+    # the draft describe only that part's steps, under that part's policy.
+    from .marking_parts import MARKING_PARTS, apply_part, is_split, part_row
+
+    part = _s(request.GET.get("part")).lower()
+    if not part:
+        return serialize_marking_submission(row), None
+    if part not in MARKING_PARTS:
+        return None, _error("Select a valid marking part.", 400, "invalid_part")
+    if not is_split(row):
+        return None, _error("That submission could not be found.", 404, "not_found")
+    return apply_part(serialize_marking_submission(part_row(row, part)), row, part), None
 
 
 def _is_assignment(submission):
@@ -944,6 +956,8 @@ def _is_assignment(submission):
     """
     from .views import ASSIGNMENT_ACTIVITY_TYPES
 
+    if submission.get("markingPart"):
+        return submission["markingPart"] == "assignment"
     return _s(submission.get("activityType")).lower() in ASSIGNMENT_ACTIVITY_TYPES
 
 
@@ -1094,7 +1108,9 @@ def coach_marking_ai_feedback(request, submission_id):
     # (or the coach's edited policy) remains the base, while the uploaded guide
     # supplies the assessment-specific criteria for this draft.
     if uploaded_prompt:
-        base_prompt = prompt or load_prompt_document()
+        # The policy this submission is marked under, so guidance uploaded on a
+        # reflection is added to the reflection policy, not the assignment one.
+        base_prompt = prompt or _prompt_for(submission)[0]
         prompt = (
             f"{base_prompt}\n\n"
             f"Additional marking guidance supplied by the coach ({uploaded_prompt_name}):\n"
@@ -1112,6 +1128,10 @@ def coach_marking_ai_feedback(request, submission_id):
     # _is_assignment, from the same list the prompt endpoint uses, so the text
     # the coach was shown is the text that marks their submission.
     from .ai_reflection import generate_reflection_feedback
+    from .marking_parts import ai_submission
+
+    if submission.get("markingPart"):
+        submission = ai_submission(submission)
 
     try:
         if _is_assignment(submission):

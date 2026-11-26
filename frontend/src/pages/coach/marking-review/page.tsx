@@ -10,7 +10,8 @@ import styles from './markingReview.module.css';
 
 import { AssignmentAttemptHistory } from '@/components/feature/AssignmentAttemptHistory';
 import type { SubmissionAttempt } from '@/api/assignmentAttempts';
-import { fetchMarkingDetail, fetchMarkingSidebarQueue } from '@/features/coach/marking/api/markingApi';
+import { fetchMarkingDetail, fetchMarkingSidebarQueue, markingPartQuery } from '@/features/coach/marking/api/markingApi';
+import type { MarkingPart, MarkingSection } from '@/features/coach/marking/types/marking.types';
 import { readExtraActivities } from '../extra-activities/api';
 import { loadLearningReflectionSubmission, type StoredLearningReflectionSubmission } from '@/api/reflectionSubmission';
 import { CoachPresentationDownload } from './CoachPresentationDownload';
@@ -20,6 +21,7 @@ import { CoachFeedbackEditor } from '@/components/feature/CoachFeedbackEditor';
 import { FormattedFeedback } from '@/components/feature/FormattedFeedback';
 import { feedbackHtmlToPlainText } from '@/lib/feedbackHtml';
 import { MarkingInstructionsPanel } from './MarkingInstructionsPanel';
+import { MarkingPartSections } from './MarkingPartSections';
 
 const coachNav = roleNavMap.coach;
 async function personalEvidence(submissionId: string, fileId?: string) {
@@ -30,6 +32,9 @@ async function personalEvidence(submissionId: string, fileId?: string) {
 }
 
 interface Submission {
+  markingPart?: MarkingPart;
+  markingPartLabel?: string;
+  markingSections?: MarkingSection[];
   ksbReview?: KsbReview;
   submissionAttempts?: SubmissionAttempt[];
   version?: number;
@@ -107,13 +112,29 @@ function fileSize(bytes: number) {
 }
 
 function isAssignment(item: Submission) {
+  if (item.markingPart) return item.markingPart === 'assignment';
   return ['assignment', 'extra_activity'].includes((item.activityType || '').toLowerCase());
+}
+
+/** A monthly report is two queue items with one id, so the part is part of the identity. */
+function itemKey(item: Pick<Submission, 'id' | 'markingPart'>) {
+  return `${item.id}:${item.markingPart ?? ''}`;
+}
+
+function kindLabel(item: Submission) {
+  if (item.markingPartLabel) return item.markingPartLabel;
+  return item.activityType === 'extra_activity' ? 'Extra activity' : isAssignment(item) ? 'Assignment' : 'Reflection';
+}
+
+function parseMarkingPart(value: string | null): MarkingPart | null {
+  return value === 'assignment' || value === 'reflection' ? value : null;
 }
 
 export default function CoachMarkingReviewPage() {
   const [searchParams] = useSearchParams();
   const extraActivities = useLocation().pathname.startsWith('/coach/extra-activities');
   const personal = searchParams.get('scope') === 'personal';
+  const part = personal ? null : parseMarkingPart(searchParams.get('part'));
   const apiEndpoint = personal ? '/coach_api/coach/personal-marking' : '/coach_api/coach/marking-queue';
   const scopeQuery = personal ? '?scope=personal' : '';
   const queuePath = extraActivities ? '/coach/extra-activities' : `/coach/marking-queue${scopeQuery}`;
@@ -159,7 +180,7 @@ export default function CoachMarkingReviewPage() {
     }
 
     try {
-      const detailItem = await fetchMarkingDetail<Submission>(personal ? 'personal' : 'official', submissionId || '');
+      const detailItem = await fetchMarkingDetail<Submission>(personal ? 'personal' : 'official', submissionId || '', part);
       if (sequence !== loadSequence.current) return;
       if (extraActivities && detailItem?.activityType !== 'extra_activity') throw new Error('Extra activity not found.');
       // Initialise together: a later effect could overwrite the coach's first edit.
@@ -184,7 +205,7 @@ export default function CoachMarkingReviewPage() {
     } finally {
       if (sequence === loadSequence.current) setLoading(false);
     }
-  }, [coach.email, coach.isInitialized, submissionId, personal, extraActivities]);
+  }, [coach.email, coach.isInitialized, submissionId, personal, extraActivities, part]);
 
   useEffect(() => {
     let active = true;
@@ -219,7 +240,7 @@ export default function CoachMarkingReviewPage() {
     if (!selected || personal) return;
     let cancelled = false;
     setPromptError('');
-    coachFetch(`${apiEndpoint}/${selected.id}/ai-prompt`)
+    coachFetch(`${apiEndpoint}/${selected.id}/ai-prompt${markingPartQuery(selected.markingPart)}`)
       .then(async response => {
         const body = await response.text();
         let data: { prompt?: string; file?: string; kind?: string; available?: boolean; detail?: string; error?: string } = {};
@@ -242,7 +263,7 @@ export default function CoachMarkingReviewPage() {
   const promptCleared = !prompt.trim() && Boolean(defaultPrompt.trim());
 
   const visibleQueue = useMemo(() => {
-    const currentItems = selected && !queueItems.some(item => item.id === selected.id)
+    const currentItems = selected && !queueItems.some(item => itemKey(item) === itemKey(selected))
       ? [selected, ...queueItems]
       : queueItems;
     const term = search.trim().toLowerCase();
@@ -291,7 +312,7 @@ export default function CoachMarkingReviewPage() {
         if (promptUpload) form.append('promptFile', promptUpload, promptUpload.name);
         request.body = form;
       }
-      const response = await coachFetch(`${apiEndpoint}/${selected.id}/ai-feedback`, request);
+      const response = await coachFetch(`${apiEndpoint}/${selected.id}/ai-feedback${markingPartQuery(selected.markingPart)}`, request);
       const text = await response.text();
       let data: { feedback?: string; error?: string; detail?: string; meta?: { ksbCount?: number; epaFile?: string; promptSource?: string; promptFile?: string; evidenceFiles?: { filename: string; readable: boolean }[] } } = {};
       try { data = text ? JSON.parse(text) : {}; } catch { throw new Error(`The draft could not be generated (server error ${response.status}).`); }
@@ -325,7 +346,7 @@ export default function CoachMarkingReviewPage() {
       const response = await coachFetch(`${apiEndpoint}/${selected.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ decision, feedback: feedback.trim(), reviewedBy: coach.name, ...(personal ? { version: selected.version } : {}) }),
+        body: JSON.stringify({ decision, feedback: feedback.trim(), reviewedBy: coach.name, ...(personal ? { version: selected.version } : {}), ...(selected.markingPart ? { part: selected.markingPart } : {}) }),
       });
       const text = await response.text();
       let data: { detail?: string; error?: string; fields?: Record<string, string[] | string> } = {};
@@ -341,6 +362,51 @@ export default function CoachMarkingReviewPage() {
       setSaving(false);
     }
   };
+
+  // Part reviews show this in the last step tab; everything else shows it below the submission.
+  const feedbackPanel = selected && selected.ksbReview?.status !== 'pending' ? (
+      <section className={styles.feedbackPanel}>
+        <div className={styles.feedbackHeading}>
+          <div><p>Coach feedback</p><h4>Review the AI draft and make the final decision</h4></div>
+          {!personal && <div className={styles.feedbackActions}>
+            <button type="button" disabled={generating || saving} onClick={() => void generateAiFeedback()}>
+              <i className={generating ? 'ri-loader-4-line' : 'ri-sparkling-line'} aria-hidden="true" />
+              {generating ? 'Generating…' : 'Generate AI draft'}
+            </button>
+          </div>}
+        </div>
+        <CoachFeedbackEditor value={feedback} onChange={setFeedback} disabled={saving} />
+        {aiNotice && <p className={styles.aiNotice}><i className="ri-sparkling-line" aria-hidden="true" /> {aiNotice}</p>}
+        {error && <p className={styles.inlineError}>{error}</p>}
+  
+        {!personal && <MarkingInstructionsPanel key={selected.id} edited={promptEdited} guidanceAttached={Boolean(promptUpload)}>
+          <p>{promptAvailable ? `These ${promptKind === 'assignment' ? 'assignment marking' : 'reflection validation'} instructions apply to the next draft only.` : 'No saved prompt is available. You can supply instructions for this draft.'}</p>
+          <textarea aria-label="AI marking instructions" value={prompt} onChange={event => setPrompt(event.target.value)} rows={8} spellCheck={false} placeholder="Write the instructions the AI should mark against…" />
+          <label className={styles.promptUpload}>
+            <span><i className="ri-attachment-2" aria-hidden="true" /> Upload marking guidance</span>
+            <input aria-label="Upload marking guidance" type="file" accept=".pdf,.docx,.txt,.md,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown" onChange={event => {
+              setPromptUpload(event.target.files?.[0] || null);
+              setPromptError('');
+              event.currentTarget.value = '';
+            }} />
+            <small>PDF or Word (.docx), up to 5 MB. Used for this draft only.</small>
+          </label>
+          {promptUpload && <div className={styles.promptFile}><i className="ri-file-text-line" aria-hidden="true" /><span>{promptUpload.name} · used for this draft</span><button type="button" onClick={() => setPromptUpload(null)}>Remove</button></div>}
+          <div className={styles.promptMeta}>
+            <span>{promptFile || 'No prompt file'} · {prompt.length.toLocaleString()} characters</span>
+            <button type="button" disabled={!defaultPrompt || prompt === defaultPrompt} onClick={() => setPrompt(defaultPrompt)}>Reset to default</button>
+          </div>
+          {promptCleared && <p>The saved prompt will be used because this field is empty.</p>}
+          {promptError && <p className={styles.inlineError}>{promptError}</p>}
+        </MarkingInstructionsPanel>}
+  
+        {selected.markingPart && <p className={styles.aiNotice}><i className="ri-information-line" aria-hidden="true" /> This monthly report is marked in two parts: the assignment (steps 2–4) and the reflection (steps 5–8). The learner receives one combined feedback, with a section for each part, once both are decided. The report is accepted only if both parts are accepted.</p>}
+        <div className={styles.decisionRow}>
+          <button type="button" className={styles.reject} disabled={saving || (selected.activityType === 'extra_activity' && !extraDocument)} onClick={() => void saveDecision(personal ? 'referred' : 'rejected')}><i className="ri-arrow-go-back-line" aria-hidden="true" /> {personal ? 'Return for improvement' : 'Refer back with feedback'}</button>
+          <button type="button" className={styles.accept} disabled={saving || (selected.activityType === 'extra_activity' && !extraDocument)} onClick={() => void saveDecision('accepted')}><i className={saving ? 'ri-loader-4-line' : 'ri-shield-check-line'} aria-hidden="true" /> {selected.activityType === 'extra_activity' ? 'Accept extra activity and send feedback' : selected.markingPart ? `Accept ${selected.markingPart} part` : 'Accept assignment and send feedback'}</button>
+        </div>
+      </section>
+  ) : null;
 
   return (
     <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle="Marking workspace" pageSubtitle="Review evidence and record your professional judgement" userName={coach.name} userRole="Progress Coach">
@@ -388,8 +454,8 @@ export default function CoachMarkingReviewPage() {
               </div>}
               <div className={styles.queueList}>
                 {visibleQueue.map(item => (
-                  <button type="button" key={item.id} className={styles.queueItem} aria-current={item.id === selected.id ? 'true' : undefined} onClick={() => navigate(extraActivities ? `/coach/extra-activities/${item.id}` : `/coach/marking-queue/${item.id}`)}>
-                    <span className={styles.queueItemTop}><strong>{item.learner}</strong><em>{item.activityType === 'extra_activity' ? 'Extra activity' : isAssignment(item) ? 'Assignment' : 'Reflection'}</em></span>
+                  <button type="button" key={itemKey(item)} className={styles.queueItem} aria-current={itemKey(item) === itemKey(selected) ? 'true' : undefined} onClick={() => navigate(extraActivities ? `/coach/extra-activities/${item.id}` : `/coach/marking-queue/${item.id}${markingPartQuery(item.markingPart)}`)}>
+                    <span className={styles.queueItemTop}><strong>{item.learner}</strong><em>{kindLabel(item)}</em></span>
                     <span className={styles.queueTitle}>{item.activityTitle}</span>
                     <span className={styles.queueMeta}>Submitted {item.submittedDisplay}</span>
                     <span className={styles.queueStatus} data-overdue={item.isOverdue || undefined}>{item.isOverdue ? `Overdue ${item.elapsedDays}d` : statusLabel(item.status)}</span>
@@ -403,7 +469,7 @@ export default function CoachMarkingReviewPage() {
               <section className={styles.submissionHeader}>
                 <div className={styles.personRow}>
                   <div><h2>{selected.learner}</h2><p>{selected.programme || 'Learner programme'}</p></div>
-                  <span>{selected.activityType === 'extra_activity' ? 'Extra activity' : isAssignment(selected) ? 'Assignment' : 'Reflection'}</span>
+                  <span>{kindLabel(selected)}</span>
                 </div>
                 <h3>{selected.activityTitle}</h3>
                 <dl className={styles.metrics}>
@@ -418,7 +484,7 @@ export default function CoachMarkingReviewPage() {
               {!personal && ['session', 'recording', 'video'].includes(selected.activityType) && <SavedReflection
                 timeOnly learnerKind={selected.learnerKind} learnerId={selected.learnerId}
                 activityType={selected.activityType} activityId={selected.activityId} />}
-              {selected.activityType === 'assignment' && <CoachPresentationDownload
+              {selected.activityType === 'assignment' && selected.markingPart !== 'assignment' && <CoachPresentationDownload
                 key={`${coach.email}:${personal}:${selected.id}:${selected.version ?? selected.submittedAt ?? ''}`}
                 scope={personal ? 'personal' : 'official'} submissionId={selected.id}
                 submittedAt={selected.submittedAt} version={selected.version}
@@ -451,6 +517,7 @@ export default function CoachMarkingReviewPage() {
                     <span>Learner submission</span>
                     <p>{[selected.module, selected.week].filter(Boolean).join(' · ') || selected.activityTitle}</p>
                   </div>
+                  {selected.markingSections ? <MarkingPartSections key={itemKey(selected)} sections={selected.markingSections} feedback={feedbackPanel} /> : <>
                   <article className={styles.answerBlock}>
                     <header><strong>Learning reflection</strong><span>{(selected.learningReflection || '').trim().split(/\s+/).filter(Boolean).length} words</span></header>
                     <p>{selected.learningReflection || 'No learning reflection was supplied.'}</p>
@@ -463,6 +530,7 @@ export default function CoachMarkingReviewPage() {
                     <header><strong>Employer and business impact</strong></header>
                     <p>{[selected.selectedBenefits.join(', '), selected.benefitExplanation].filter(Boolean).join(' — ') || 'No employer benefit was supplied.'}</p>
                   </article>
+                  </>}
                   <div className={styles.declarationGrid}>
                     <span>Completed: <strong>{formatDate(selected.dateCompleted)}</strong></span>
                     <span>Paid hours: <strong>{selected.completedDuringPaidHours || '—'}</strong></span>
@@ -518,46 +586,7 @@ export default function CoachMarkingReviewPage() {
 
               {selected.ksbReview && <KsbReviewPanel key={`${selected.id}:${selected.ksbReview.revision}:${selected.ksbReview.status}`}
                 submissionId={selected.id} review={selected.ksbReview} onSaved={() => void load()} />}
-              {selected.ksbReview?.status !== 'pending' && <section className={styles.feedbackPanel}>
-                <div className={styles.feedbackHeading}>
-                  <div><p>Coach feedback</p><h4>Review the AI draft and make the final decision</h4></div>
-                  {!personal && <div className={styles.feedbackActions}>
-                    <button type="button" disabled={generating || saving} onClick={() => void generateAiFeedback()}>
-                      <i className={generating ? 'ri-loader-4-line' : 'ri-sparkling-line'} aria-hidden="true" />
-                      {generating ? 'Generating…' : 'Generate AI draft'}
-                    </button>
-                  </div>}
-                </div>
-                <CoachFeedbackEditor value={feedback} onChange={setFeedback} disabled={saving} />
-                {aiNotice && <p className={styles.aiNotice}><i className="ri-sparkling-line" aria-hidden="true" /> {aiNotice}</p>}
-                {error && <p className={styles.inlineError}>{error}</p>}
-
-                {!personal && <MarkingInstructionsPanel key={selected.id} edited={promptEdited} guidanceAttached={Boolean(promptUpload)}>
-                  <p>{promptAvailable ? `These ${promptKind === 'assignment' ? 'assignment marking' : 'reflection validation'} instructions apply to the next draft only.` : 'No saved prompt is available. You can supply instructions for this draft.'}</p>
-                  <textarea aria-label="AI marking instructions" value={prompt} onChange={event => setPrompt(event.target.value)} rows={8} spellCheck={false} placeholder="Write the instructions the AI should mark against…" />
-                  <label className={styles.promptUpload}>
-                    <span><i className="ri-attachment-2" aria-hidden="true" /> Upload marking guidance</span>
-                    <input aria-label="Upload marking guidance" type="file" accept=".pdf,.docx,.txt,.md,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown" onChange={event => {
-                      setPromptUpload(event.target.files?.[0] || null);
-                      setPromptError('');
-                      event.currentTarget.value = '';
-                    }} />
-                    <small>PDF or Word (.docx), up to 5 MB. Used for this draft only.</small>
-                  </label>
-                  {promptUpload && <div className={styles.promptFile}><i className="ri-file-text-line" aria-hidden="true" /><span>{promptUpload.name} · used for this draft</span><button type="button" onClick={() => setPromptUpload(null)}>Remove</button></div>}
-                  <div className={styles.promptMeta}>
-                    <span>{promptFile || 'No prompt file'} · {prompt.length.toLocaleString()} characters</span>
-                    <button type="button" disabled={!defaultPrompt || prompt === defaultPrompt} onClick={() => setPrompt(defaultPrompt)}>Reset to default</button>
-                  </div>
-                  {promptCleared && <p>The saved prompt will be used because this field is empty.</p>}
-                  {promptError && <p className={styles.inlineError}>{promptError}</p>}
-                </MarkingInstructionsPanel>}
-
-                <div className={styles.decisionRow}>
-                  <button type="button" className={styles.reject} disabled={saving || (selected.activityType === 'extra_activity' && !extraDocument)} onClick={() => void saveDecision(personal ? 'referred' : 'rejected')}><i className="ri-arrow-go-back-line" aria-hidden="true" /> {personal ? 'Return for improvement' : 'Refer back with feedback'}</button>
-                  <button type="button" className={styles.accept} disabled={saving || (selected.activityType === 'extra_activity' && !extraDocument)} onClick={() => void saveDecision('accepted')}><i className={saving ? 'ri-loader-4-line' : 'ri-shield-check-line'} aria-hidden="true" /> {selected.activityType === 'extra_activity' ? 'Accept extra activity and send feedback' : 'Accept assignment and send feedback'}</button>
-                </div>
-              </section>}
+              {!selected.markingSections && feedbackPanel}
             </main>
           </div>
         )}

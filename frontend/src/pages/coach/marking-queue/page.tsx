@@ -104,7 +104,7 @@ export default function CoachMarkingQueue() {
         ) : (
           <div className={styles.cardList}>
             {items.map(item => (
-              <article className={styles.submissionCard} key={item.id}>
+              <article className={styles.submissionCard} key={`${item.id}:${item.markingPart ?? ''}`}>
                 <div className={styles.cardTop}>
                   <div className={styles.cardContent}>
                     <div className={styles.tags}>
@@ -123,7 +123,7 @@ export default function CoachMarkingQueue() {
                     <span className={styles.quality} title="Learner submission quality score">
                       <i className="ri-sparkling-line" aria-hidden="true" /> Quality {item.qualityScore}%
                     </span>
-                    <button type="button" onClick={() => navigate(`/coach/marking-queue/${item.id}${scopeQuery}`)}>
+                    <button type="button" onClick={() => navigate(`/coach/marking-queue/${item.id}${item.markingPart ? `?part=${item.markingPart}` : scopeQuery}`)}>
                       {item.reviewedBy ? 'Review' : 'View'}
                       <i className="ri-arrow-right-line" aria-hidden="true" />
                     </button>

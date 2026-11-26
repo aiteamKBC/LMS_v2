@@ -2,6 +2,28 @@ import type { MarkingKind } from '@/lib/markingKind';
 
 export type MarkingQueueFilter = 'all' | 'pending' | 'overdue' | 'accepted' | 'referred';
 export type MarkingScope = 'official' | 'personal';
+/** Which half of a monthly report a queue item marks. Absent for every other submission. */
+export type MarkingPart = 'assignment' | 'reflection';
+
+/** One answer within a step. ``text`` is always present; list formats also carry ``items``. */
+export interface MarkingSectionEntry {
+  label: string;
+  text: string;
+  format?: 'text' | 'value' | 'checks' | 'time' | 'ksbs' | 'evidence' | 'slides';
+  items?: Array<{
+    label?: string; passed?: boolean;
+    date?: string; topic?: string; hours?: string;
+    code?: string; explanation?: string;
+    name?: string; url?: string; points?: string;
+    title?: string; body?: string;
+  }>;
+}
+
+export interface MarkingSection {
+  step: number;
+  title: string;
+  entries: MarkingSectionEntry[];
+}
 
 export interface MarkingSubmission {
   version?: number;
@@ -23,6 +45,10 @@ export interface MarkingSubmission {
   submittedDisplay: string;
   elapsedDays: number;
   isOverdue: boolean;
+  markingPart?: MarkingPart;
+  markingPartLabel?: string;
+  markingSections?: MarkingSection[];
+  contentPreview?: string;
 }
 
 export interface MarkingQueueSummary {

@@ -282,6 +282,8 @@ def _submit_reflection(request):
     # KSB review requests and corrections are staff-owned audit metadata.
     full_submission.pop('ksbReview', None)
     full_submission.pop('coachCreation', None)
+    # Coach decisions on the two marking parts (coach_api.marking_parts).
+    full_submission.pop('markingParts', None)
     # The receipt for credited lecture time is server-owned, including on drafts.
     full_submission.pop('lectureReflectionTime', None)
     full_submission.pop("selectAssignmentTopic", None)
