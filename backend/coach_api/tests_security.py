@@ -87,6 +87,9 @@ class CoachAuthorizationSecurityTests(CoachTransactionTestCase):
     databases = {"default", "enrolment"}
 
     def setUp(self):
+        # This suite verifies the real authentication gate, which generic Django
+        # tests disable by default for older unauthenticated app fixtures.
+        self.enterContext(patch.dict('os.environ', {'API_REQUIRE_AUTH': '1'}))
         from django.core.cache import cache
         from .models import CoachDashboardSnapshot
         cache.clear()
