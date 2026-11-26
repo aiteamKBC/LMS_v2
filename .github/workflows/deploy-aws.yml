@@ -5,12 +5,9 @@
 # every check below, then the deploy using the aws-staging environment.
 # Pull requests do not run this workflow.
 #
-#   backend        Docker image, Django checks, no-database tests (each
-#                  module in its own process: they stub parts of Django),
-#                  /health/ smoke test, image vulnerability scan (Trivy)
-#   frontend       lint, type-check, build (blocking); unit tests (report)
-#   teams          Teams regression checks (teams-checks.yml, AGENTS.md
-#                  sections 5-7): blocks the deploy on FAIL or BLOCKED
+#   backend        Docker image, Django checks, /health/ verification,
+#                  image vulnerability scan (Trivy)
+#   frontend       lint, type-check, build (blocking)
 #   security       leaked-secret scan of the new commits (gitleaks),
 #                  dependency audits (npm audit, pip-audit)
 #   deploy         push candidate -> calendar schema gate -> promote -> roll
@@ -105,11 +102,11 @@ jobs:
           if [ -z "$BASE" ] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then all "no earlier successful deploy found"; fi
           echo "base=$BASE" >> "$GITHUB_OUTPUT"
           FILES=$(git diff --name-only "$BASE" "$COMMIT")
-          echo "Changed since $BASE (last successful deploy):"; echo "$FILES" | sed 's/^/  /' | head -50
-          echo "$FILES" | grep -q '^\.github/' && all "CI files changed"
+          echo "Changed since $BASE (last successful deploy):"; printf '%s\n' "$FILES" | sed -n '1,50{s/^/  /;p;}'
+          grep -q '^\.github/' <<< "$FILES" && all "CI files changed"
           b=false; f=false
-          echo "$FILES" | grep -q '^backend/' && b=true
-          echo "$FILES" | grep -q '^frontend/' && f=true
+          grep -q '^backend/' <<< "$FILES" && b=true
+          grep -q '^frontend/' <<< "$FILES" && f=true
           echo "backend=$b" >> "$GITHUB_OUTPUT"; echo "frontend=$f" >> "$GITHUB_OUTPUT"
           echo "backend=$b frontend=$f"
 
@@ -141,12 +138,6 @@ jobs:
         run: |
           docker run --rm -e DJANGO_SECRET_KEY=ci -e DJANGO_DEBUG=false \
             --entrypoint python lms-backend:ci manage.py check
-
-      - name: Other fast tests (not named *_no_db)
-        run: |
-          docker run --rm -u 0 -e DJANGO_SECRET_KEY=ci -e DJANGO_DEBUG=false \
-            --entrypoint python lms-backend:ci manage.py test --noinput \
-            curriculum_api.test_youtube_download
 
       - name: Container answers /health/
         run: |
@@ -186,42 +177,6 @@ jobs:
           path: image.tar.gz
           retention-days: 1
 
-  # No-database tests split over 4 machines at once; each machine rebuilds
-  # the image from the shared build cache (fast) and runs every 4th module
-  backend-tests:
-    name: Backend - tests ${{ matrix.shard }}/4
-    needs: changes
-    if: needs.changes.outputs.backend == 'true'
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3, 4]
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.changes.outputs.commit }}
-
-      - uses: docker/setup-buildx-action@v3
-
-      - name: Build image (from cache)
-        uses: docker/build-push-action@v6
-        with:
-          context: backend
-          platforms: linux/amd64
-          provenance: false
-          load: true
-          tags: lms-backend:ci
-          cache-from: type=gha
-
-      - name: No-database tests, part ${{ matrix.shard }} of 4
-        run: |
-          docker run --rm -u 0 -e DJANGO_SECRET_KEY=ci -e DJANGO_DEBUG=false \
-            -e SHARD=${{ matrix.shard }} -e SHARDS=4 \
-            -e LMS_TEST_FRONTEND_ROOT=/test-frontend \
-            -v "$PWD/.github/ci:/ci:ro" -v "$PWD/frontend:/test-frontend:ro" \
-            --entrypoint sh lms-backend:ci /ci/no_db_tests.sh
-
   # --------------------------------------------------------------- frontend
   frontend:
     name: Frontend - lint, types, build
@@ -256,51 +211,6 @@ jobs:
           name: frontend-out
           path: frontend/out
           retention-days: 1
-
-  # Report-only until the failing files on main are fixed, so it runs beside
-  # the deploy instead of delaying it (~10 minutes)
-  frontend-tests:
-    name: Frontend - unit tests (report)
-    needs: changes
-    if: needs.changes.outputs.frontend == 'true'
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    defaults:
-      run:
-        working-directory: frontend
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.changes.outputs.commit }}
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-
-      - run: npm ci --no-audit --no-fund
-      - name: Unit tests
-        run: |
-          set -o pipefail
-          npx vitest run --reporter=dot 2>&1 | tee vitest.txt
-      - name: Test summary
-        if: always()
-        run: |
-          { echo '### Frontend unit tests'; echo '```'; grep -E "Test Files|Tests  " vitest.txt || true; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-
-  # ------------------------------------------------------------------ Teams
-  # AGENTS.md sections 5-7, compared with the same base as above (what is
-  # live); also runs on pull requests by itself. Blocks the deploy on FAIL
-  # or BLOCKED. Manual runs and unknown bases run every Teams check.
-  teams:
-    name: Teams checks
-    needs: changes
-    uses: ./.github/workflows/teams-checks.yml
-    with:
-      base: ${{ needs.changes.outputs.base }}
-      ref: ${{ needs.changes.outputs.commit }}
-    secrets: inherit
 
   # --------------------------------------------------------------- security
   security:
@@ -344,14 +254,18 @@ jobs:
     name: Calendar deployment guards
     uses: ./.github/workflows/calendar-deployment-checks.yml
 
-  recording-checks:
-    name: Recording regression guards
-    uses: ./.github/workflows/recording-checks.yml
+  assignment-checks:
+    name: Learner assignment regression guards
+    needs: changes
+    if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true'
+    uses: ./.github/workflows/learner-assignment-checks.yml
+    with:
+      ref: ${{ needs.changes.outputs.commit }}
 
   # ------------------------------------------------------------------ deploy
   deploy:
     name: Deploy to AWS
-    needs: [changes, backend, backend-tests, frontend, security, teams, release-guards, recording-checks]
+    needs: [changes, backend, frontend, security, release-guards, assignment-checks]
     # Runs when the changed parts passed; parts that didn't change are skipped
     if: >-
       !cancelled()

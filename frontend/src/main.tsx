@@ -1,6 +1,7 @@
 import { StrictMode } from 'react'
 import './i18n'
 import { createRoot } from 'react-dom/client'
+import './components/feature/WorkspaceColourTheme.css'
 import './index.css'
 import './learner-theme.css'
 import App from './App.tsx'

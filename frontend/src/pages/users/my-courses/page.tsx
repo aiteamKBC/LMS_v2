@@ -92,7 +92,7 @@ export default function EnrolmentCoursesPage() {
   };
   return <EnrolmentWorkspaceShell role="compliance" roleLabel={nav.label} navItems={nav.items} workspaceLabel="Enrolment"
     pageTitle="My Courses" pageSubtitle="Your personal learning" directoryLayout hideBreadcrumbs showBackButton={false}>
-    <div className={`${frame.page} ${motion.page} ${styles.page}`}>
+    <div className={`${frame.page} ${motion.page} ${styles.page}`} data-employer-theme>
       <header className={`${frame.hero} ${styles.hero} ${motion.cardEnter}`} style={{ '--enrolment-hero-image': "url('/assets/enrolment-my-courses-banner.png')" } as CSSProperties}>
         <div className={frame.heroCopy}>
           <EnrolmentBreadcrumbs current="My Courses" />
