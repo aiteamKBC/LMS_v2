@@ -306,6 +306,79 @@ describe('importModuleKsbWorkbook', () => {
     ]);
   });
 
+  it('keeps the saved mapping identity when an import changes its weight and classification', async () => {
+    const original = mapping('K1', { id: 'KSBMAP-SAVED', sourceType: 'standard', sourceId: 'st-example' });
+    const module = moduleWith([week(1, [component('C1', { ksbMappings: [original] })])]);
+    const file = sheetFile([{ 'Component ID': 'C1', KSBs: 'K1:secondary:25, S2' }]);
+
+    const { module: next } = await importModuleKsbWorkbook(file, module, {
+      sourceType: 'standard', sourceId: 'st-example',
+    });
+
+    const [kept, added] = next.weekStructure[0].components[0].ksbMappings;
+    expect(kept).toMatchObject({ id: 'KSBMAP-SAVED', code: 'K1', type: 'secondary', weight: 25 });
+    expect(added.id).toBeTruthy();
+    expect(added.id).not.toBe(kept.id);
+    expect(original.weight).toBe(40);
+  });
+
+  it('keeps mapping identities on repeated imports without an explicit source', async () => {
+    const module = moduleWith([week(1, [component('C1', { ksbMappings: [mapping('K1')] })])]);
+    const file = sheetFile([{ 'Component ID': 'C1', KSBs: 'K1:main:50' }]);
+    const first = await importModuleKsbWorkbook(file, module);
+    const second = await importModuleKsbWorkbook(file, first.module);
+
+    expect(first.module.weekStructure[0].components[0].ksbMappings[0].id).toBe('KSBMAP-K1');
+    expect(second.module.weekStructure[0].components[0].ksbMappings[0].id).toBe('KSBMAP-K1');
+  });
+
+  it('keeps a mapping id when the selected source uses its canonical spelling', async () => {
+    const module = moduleWith([week(1, [component('C1', { ksbMappings: [mapping('K1', {
+      sourceType: 'profile', sourceId: 'profile:KSBP-DATA',
+    })] })])]);
+    const file = sheetFile([{ 'Component ID': 'C1', KSBs: 'K1:main:50' }]);
+    const { module: next } = await importModuleKsbWorkbook(file, module, {
+      sourceType: 'framework', sourceId: 'KSBP-DATA',
+    });
+
+    expect(next.weekStructure[0].components[0].ksbMappings[0].id).toBe('KSBMAP-K1');
+  });
+
+  it('creates a distinct mapping identity when importing the same code from another source', async () => {
+    const module = moduleWith([week(1, [component('C1', { ksbMappings: [mapping('K1', {
+      sourceType: 'standard', sourceId: 'first-standard', ksbId: 'FIRST-K1',
+    })] })])]);
+    const file = sheetFile([{ 'Component ID': 'C1', KSBs: 'K1' }]);
+    const { module: next } = await importModuleKsbWorkbook(file, module, {
+      sourceType: 'standard', sourceId: 'second-standard',
+    });
+
+    const imported = next.weekStructure[0].components[0].ksbMappings[0];
+    expect(imported.id).not.toBe('KSBMAP-K1');
+    expect(imported).toMatchObject({ sourceId: 'second-standard', ksbId: '' });
+  });
+
+  it('retains the matching source identity when a component has the same code in two sources', async () => {
+    const module = moduleWith([week(1, [component('C1', { ksbMappings: [
+      mapping('K1', { id: 'KSBMAP-FIRST', sourceType: 'standard', sourceId: 'first-standard' }),
+      mapping('K1', { id: 'KSBMAP-SECOND', sourceType: 'standard', sourceId: 'second-standard' }),
+    ] })])]);
+    const file = sheetFile([{ 'Component ID': 'C1', KSBs: 'K1:main:50' }]);
+    const { module: next } = await importModuleKsbWorkbook(file, module, {
+      sourceType: 'standard', sourceId: 'first-standard',
+    });
+
+    expect(next.weekStructure[0].components[0].ksbMappings[0].id).toBe('KSBMAP-FIRST');
+  });
+
+  it('matches saved code identities without treating letter case as a new KSB', async () => {
+    const module = moduleWith([week(1, [component('C1', { ksbMappings: [mapping('k1')] })])]);
+    const file = sheetFile([{ 'Component ID': 'C1', KSBs: 'K1' }]);
+    const { module: next } = await importModuleKsbWorkbook(file, module);
+
+    expect(next.weekStructure[0].components[0].ksbMappings[0]).toMatchObject({ id: 'KSBMAP-k1', code: 'K1' });
+  });
+
   it('drops imported codes that are not in the selected source and clears stale mappings', async () => {
     const module = moduleWith([week(1, [component('C1', {
       ksbMappings: [mapping('K11', { sourceType: 'framework', sourceId: 'target-profile' })],
@@ -390,7 +463,7 @@ describe('importModuleKsbWorkbook', () => {
     expect(summary.componentsUpdated).toBe(1);
   });
 
-  it('regenerates a fresh mapping id for every applied code', async () => {
+  it('assigns a distinct mapping id to each newly mapped code', async () => {
     const file = sheetFile([{ 'Component ID': 'C1', KSBs: 'K1, S2' }]);
     const { module } = await importModuleKsbWorkbook(file, baseModule());
     const ids = module.weekStructure[0].components[0].ksbMappings.map(m => m.id);

@@ -2,6 +2,11 @@ import { DERIVED_MODULE_FIELDS, DERIVED_WEEK_FIELDS } from '../shared/entities/m
 import { recalculateModule, type ModuleCatalogueItem } from './moduleAuthoringData';
 
 const READBACK_LIMIT_MS = 10_000;
+// The planner fills these on reads. They describe the week's current delivery
+// window; they are not changes authored by the person opening the module.
+const PLANNED_WEEK_FIELDS = new Set([
+  ...DERIVED_WEEK_FIELDS, 'liveSessionsClosed', 'studyWeekStartDate', 'studyWeekEndDate', 'studyWeekHolidays',
+]);
 
 function stable(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stable).join(',')}]`;
@@ -18,7 +23,7 @@ function authored(module: ModuleCatalogueItem): unknown {
     ...Object.fromEntries(Object.entries(fields).filter(([key]) => !DERIVED_MODULE_FIELDS.has(key)
       && !['itemFingerprints', 'qualityChecklist', 'deliveryWeeks', 'deliveryStatus', 'deliveryMetadata'].includes(key))),
     weekStructure: weekStructure.map(({ components, ...week }) => ({
-      ...Object.fromEntries(Object.entries(week).filter(([key]) => !DERIVED_WEEK_FIELDS.has(key))),
+      ...Object.fromEntries(Object.entries(week).filter(([key]) => !PLANNED_WEEK_FIELDS.has(key))),
       components,
     })),
   };
