@@ -21,6 +21,7 @@ from .session_bunny_policy import BUNNY_CONTAINER, bunny_recording, signed_embed
 from .session_recording_source import download_recording, resolve_recording_download
 from .session_results_policy import instant
 from .session_transfer_progress import TransferProgress
+from .live_recording_routing import new_recording_library
 
 log = logging.getLogger(__name__)
 
@@ -63,8 +64,13 @@ def _prepare_and_upload(asset, client, stream):
     for attempt in range(3):
         try:
             if not asset.video_id:
-                recovered = _find_import(asset, client) if attempt or asset.scope.get('interrupted_upload_ids') else None
-                created = recovered or client.create(asset.id, asset.title, asset.collection_id, scope=asset.scope)
+                from .bunny_stream import live_library_id
+                if asset.library_id == live_library_id() and asset.library_id != os.environ.get('BUNNY_STREAM_LIBRARY_ID', '798153'):
+                    from .live_recording_transfer import create_video_once
+                    created = create_video_once(asset, client)
+                else:
+                    recovered = _find_import(asset, client) if attempt or asset.scope.get('interrupted_upload_ids') else None
+                    created = recovered or client.create(asset.id, asset.title, asset.collection_id, scope=asset.scope)
                 if created['guid'] in asset.scope.get('interrupted_upload_ids', []):
                     raise VideoImportError('Bunny returned a previously failed upload. Review the saved import.')
                 asset.video_id = created['guid']
@@ -171,6 +177,8 @@ def enqueue_recording(series, occurrence, artifact, module):
     content_identity = (scope['content_correlation_id'] + '|' + scope['call_id']) if scope['content_correlation_id'] else artifact['id']
     identity = hashlib.sha256(json.dumps([series['id'], occurrence['id'], content_identity,
         scope['programme_id'], scope['cohort_id'], scope['group_id']], separators=(',', ':')).encode()).hexdigest()
+    scope['recording_identity'] = identity
+    existing = CurriculumVideoImport.objects.filter(fingerprint=identity, target_kind='live_session').first()
     if not enabled():
         # Re-publish an already completed copy even if this worker cannot start
         # new transfers. A missing runtime flag must not strand saved playback.
@@ -187,11 +195,13 @@ def enqueue_recording(series, occurrence, artifact, module):
         'id': uuid.uuid5(uuid.NAMESPACE_URL, 'lms-live-recording:' + identity),
         'target_kind': 'live_session', 'target_id': series['id'], 'component_id': artifact['id'],
         'title': title, 'source_url': source, 'source_at_start': source, 'scope': scope,
-        # Preserve the existing LMS transfer/playback pipeline. The separate
-        # KBC LiveSessions ingester owns its videos; the module collection
-        # worker organizes them by their canonical occurrence metadata.
-        'library_id': os.environ.get('BUNNY_STREAM_LIBRARY_ID', '798153'), 'status': 'queued',
+        # A single-owner cutover changes only new imports. Historical ready or
+        # in-flight identities retain their saved library and player reference.
+        'library_id': existing.library_id if existing else new_recording_library(), 'status': 'queued',
     })
+    if asset.scope.get('live_replacement_import_id'):
+        from .live_recording_migration import replacement_import
+        asset = replacement_import(asset)
     if not created and asset.status == 'failed':
         CurriculumVideoImport.objects.filter(pk=asset.pk, status='failed').update(status='queued', error='')
         asset.refresh_from_db()
@@ -223,8 +233,40 @@ def transfer_recording(asset, *, lease_id=None):
     if source != asset.source_at_start or source != asset.source_url:
         raise VideoImportError('The Microsoft recording identity changed; refresh the session before retrying.')
     client = BunnyStream(asset.library_id)
+    from .bunny_stream import live_library_id
+    live_video = None
+    if asset.library_id == live_library_id() and asset.library_id != os.environ.get('BUNNY_STREAM_LIBRARY_ID', '798153'):
+        from .live_recording_routing import require_live_credentials, find_existing_recording, matches_source
+        require_live_credentials()
+        if asset.video_id and (asset.scope.get('verified_peer_recording_identity') or
+                asset.scope.get('adopted_existing_live_video') == asset.video_id):
+            live_video = client.video(asset.video_id)
+            if not matches_source(live_video, asset.scope):
+                raise VideoImportError('The mapped LiveSessions video does not match this recording source.')
+        elif not asset.video_id:
+            live_video = _find_import(asset, client)
+            if live_video:
+                asset.scope.pop('live_video_create_pending', None)
+            if live_video is None and os.environ.get('BUNNY_RECORDING_DIRECT_FETCH_ENABLED', '').lower() not in ('true', '1', 'yes'):
+                live_video = find_existing_recording(client, asset.scope)
+                if live_video:
+                    asset.scope = {**asset.scope, 'adopted_existing_live_video': live_video['guid']}
+            if live_video:
+                asset.video_id = live_video['guid']
+                playback_url(asset.library_id, asset.video_id)
+                asset.save(update_fields=['video_id', 'scope', 'updated_at'])
+        if live_video:
+            if live_video.get('status') in (5, 6):
+                raise VideoImportError('The existing LiveSessions recording needs review; no second copy was uploaded.')
+            client.metadata(asset.video_id, asset.scope, asset.title, existing_tags=live_video.get('metaTags') or [])
     from .bunny_module_collections import recording_collection
     recording_collection(asset, client)
+    if live_video and (asset.scope.get('verified_peer_recording_identity') or
+            asset.scope.get('adopted_existing_live_video') == asset.video_id) and live_video.get('status') != 4:
+        # A peer's existing GUID may still be uploading/encoding. Never PUT
+        # bytes into that GUID or create another original while it is pending.
+        asset.status = 'processing'
+        return
     if not asset.video_id:
         recovered = _find_import(asset, client)
         if recovered:
@@ -232,9 +274,34 @@ def transfer_recording(asset, *, lease_id=None):
             playback_url(asset.library_id, asset.video_id)
             asset.save(update_fields=['video_id', 'updated_at'])
             client.metadata(asset.video_id, asset.scope, asset.title)
-    video = client.video(asset.video_id) if asset.video_id else None
+    video = live_video or (client.video(asset.video_id) if asset.video_id else None)
+    if (asset.library_id == live_library_id()
+            and os.environ.get('BUNNY_RECORDING_DIRECT_FETCH_ENABLED', '').lower() in ('true', '1', 'yes')):
+        from .live_recording_routing import uploads_enabled
+        from .recording_direct_fetch import transfer_direct
+        if video is None or video.get('status') in (0, 5, 6):
+            if not uploads_enabled():
+                raise VideoImportError('The original recording uploader cutover is not enabled.')
+            video = transfer_direct(asset, client, source, row)
+        asset.status = 'ready' if video and video.get('status') == 4 else 'processing'
+        if asset.status == 'ready':
+            from .live_recording_migration import verify_live_playback
+            verify_live_playback(asset, client)
+        return
     if video is not None and _retire_empty_failed_upload(asset, video):
         video = None
+    if asset.library_id == live_library_id() and asset.library_id != os.environ.get('BUNNY_STREAM_LIBRARY_ID', '798153'):
+        from .live_recording_routing import uploads_enabled
+        if (video is None or video.get('status') in (0, 5, 6)) and not uploads_enabled():
+            raise VideoImportError('LiveSessions original uploads are waiting for the single-uploader cutover; historical playback is retained.')
+        if video is None or video.get('status') in (0, 5, 6):
+            from .live_recording_transfer import transfer_original
+            video = transfer_original(asset, client, source, row, lease_id=lease_id)
+            asset.status = 'ready' if video and video.get('status') == 4 else 'processing'
+            if asset.status == 'ready':
+                from .live_recording_migration import verify_live_playback
+                verify_live_playback(asset, client)
+            return
     if video is None:
         if _queue_remote_fetch(asset, client, source, microsoft_graph_token(), row):
             video = client.video(asset.video_id) if asset.video_id else None
@@ -261,6 +328,9 @@ def transfer_recording(asset, *, lease_id=None):
     if video.get('status') == 5:
         raise VideoImportError('Bunny could not encode this recording. Retry the saved import.')
     asset.status = 'ready' if video.get('status') == 4 else 'processing'
+    if asset.library_id == live_library_id() and asset.library_id != os.environ.get('BUNNY_STREAM_LIBRARY_ID', '798153'):
+        from .live_recording_migration import verify_live_playback
+        verify_live_playback(asset, client)
 
 
 def publish_outcome(asset):
@@ -269,6 +339,18 @@ def publish_outcome(asset):
     Never overwrite an existing Azure reference: old deployed readers can keep
     using it until the reviewed Bunny player is deployed.
     """
+    from .live_recording_migration import checked_previous, replacement_import
+    previous = checked_previous(asset)
+    if previous is not None and asset.status != 'ready':
+        # A pending/failed migration cannot replace a playable historical ref.
+        asset = previous
+    elif asset.scope.get('live_replacement_import_id'):
+        asset = replacement_import(asset, include_pending=False)
+    from .bunny_stream import live_library_id
+    if asset.library_id == live_library_id() and asset.library_id != os.environ.get('BUNNY_STREAM_LIBRARY_ID', '798153') and asset.status == 'ready':
+        if (asset.scope.get('live_playback_verified_video_id') != asset.video_id or
+                asset.scope.get('live_playback_verified_library_id') != asset.library_id):
+            raise VideoImportError('LiveSessions playback must be verified before changing the saved player reference.')
     state = 'ready' if asset.status == 'ready' else 'failed' if asset.status == 'failed' else 'pending'
     payload = {'state': state, 'libraryId': asset.library_id, 'videoId': asset.video_id,
                'collectionId': asset.collection_id, 'importId': str(asset.pk)}

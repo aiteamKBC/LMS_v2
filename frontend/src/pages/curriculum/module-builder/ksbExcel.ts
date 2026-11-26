@@ -483,13 +483,16 @@ function sameSource(left?: Pick<KsbMapping, 'sourceType' | 'sourceId'>, right?: 
 }
 
 function applyParsedToComponent(component: ModuleComponent, parsed: ParsedKsb[], source?: KsbImportSource): ModuleComponent {
-  const existing = new Map(component.ksbMappings.map(mapping => [mapping.code, mapping]));
+  const existing = new Map(component.ksbMappings.map(mapping => [mapping.code.trim().toUpperCase(), mapping]));
   const ksbMappings: KsbMapping[] = parsed.map(item => {
-    const prior = existing.get(item.code);
+    const prior = (source && component.ksbMappings.find(mapping =>
+      mapping.code.trim().toUpperCase() === item.code && sameSource(mapping, source))) || existing.get(item.code);
     const weightClass = weightClassForType(item.type);
     const sourceMatches = !source || sameSource(prior, source);
     return {
-      id: makeAuthoringId('ksb'),
+      // The database identifies a mapping by component, code and source, even
+      // after withdrawal. Editing its weight must keep the saved row identity.
+      id: (sourceMatches && prior?.id) || makeAuthoringId('ksb'),
       // A workbook is generated for one selected source. Never carry a stored
       // KSB id from another source into the imported mapping.
       ksbId: sourceMatches ? prior?.ksbId || '' : '',

@@ -200,12 +200,21 @@ def _import_collection(asset, client):
 
 def process(import_id, file_obj=None, *, session_lease_id=None):
     from .bunny_module_collections import KIND, process_collection
+    from coach_api.recordings_bunny import KIND as COACH_KIND, COLLECTION_KIND
+    coach_container = CurriculumVideoImport.objects.filter(pk=import_id, target_kind=COLLECTION_KIND).first()
+    if coach_container is not None:
+        from coach_api.recordings_bunny import ensure_collection
+        ensure_collection(coach_container, BunnyStream(coach_container.library_id))
+        return coach_container
     container = CurriculumVideoImport.objects.filter(pk=import_id, target_kind=KIND).first()
     if container is not None:
         return process_collection(container)
     with transaction.atomic():
         asset = CurriculumVideoImport.objects.select_for_update().get(pk=import_id)
         if asset.status in ('ready', 'superseded'):
+            if asset.target_kind == COACH_KIND and asset.status == 'ready':
+                from coach_api.recordings_bunny import publish
+                publish(asset)
             if asset.target_kind == 'live_session' and asset.status == 'ready':
                 from .session_bunny import publish_outcome
                 publish_outcome(asset)
@@ -220,6 +229,10 @@ def process(import_id, file_obj=None, *, session_lease_id=None):
         asset.status, asset.error = 'uploading', ''
         asset.save(update_fields=['lease_until', 'status', 'error', 'updated_at'])
     try:
+        if asset.target_kind == COACH_KIND:
+            from coach_api.recordings_bunny import transfer
+            transfer(asset)
+            return asset
         if asset.target_kind == 'live_session':
             from .session_bunny import transfer_recording
             transfer_recording(asset, lease_id=session_lease_id)
@@ -284,6 +297,9 @@ def process(import_id, file_obj=None, *, session_lease_id=None):
         if asset.target_kind == 'live_session':
             from .session_bunny import publish_outcome
             publish_outcome(asset)
+        elif asset.target_kind == COACH_KIND:
+            from coach_api.recordings_bunny import publish
+            publish(asset)
     return asset
 
 
@@ -294,7 +310,7 @@ def run_pending(limit=20):
     now = timezone.now()
     pending = CurriculumVideoImport.objects.filter(status__in=['queued', 'processing', 'uploading']).filter(
         Q(lease_until__isnull=True) | Q(lease_until__lte=now),
-    ).order_by('updated_at')
+    ).exclude(target_kind__in=['coach_recording', 'coach_collection']).order_by('updated_at')
     ids = list(pending.values_list('id', flat=True)[:limit])
     for import_id in ids:
         process(import_id)

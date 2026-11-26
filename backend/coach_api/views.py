@@ -14849,8 +14849,16 @@ def coach_marking_queue(request, submission_id=None):
             if not value:
                 return JsonResponse({"detail": "Submission not found."}, status=404)
             from .ksb_review import detail_context
+            from .marking_parts import monthly_sections
+
+            row = dict(zip(columns, value))
             try:
-                item = detail_context(serialize_marking_submission(dict(zip(columns, value))))
+                item = detail_context(serialize_marking_submission(row))
+                # A monthly report is reviewed in two tabs (steps 2-4, steps 5-8);
+                # the step content for both travels with the detail only.
+                sections = monthly_sections(row)
+                if sections is not None:
+                    item["monthlySections"] = sections
             except KsbReviewError as exc:
                 return JsonResponse({'detail': str(exc)}, status=exc.status)
             except DatabaseError:

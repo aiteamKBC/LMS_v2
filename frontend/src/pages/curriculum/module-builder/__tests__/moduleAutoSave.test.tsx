@@ -1,15 +1,16 @@
 import { authoredWeekPoints } from '@/api/webWeekPoints';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearAllCachedResources } from '@/api/cachedRequest';
 import type { ReactNode } from 'react';
 import type { CurriculumModule, CurriculumProgramme } from '@/lib/curriculumApi';
-import { CurriculumRequestTimeout, ModuleStructureConflictError } from '../moduleAuthoringData';
+import { CurriculumRequestTimeout, ModuleStructureConflictError, loadModuleWeekSessionPlan } from '../moduleAuthoringData';
 import { fieldKey, projectAvailable } from '../collaborationProtocol';
 import { CurriculumVideoUpload } from '@/pages/curriculum/shared/CurriculumVideoUpload';
 import { coachFetch } from '@/lib/coachFetch';
+import type { TeamsMeetingModal } from '../TeamsMeetingModal';
 
 vi.mock('@/api/webWeekPoints', () => ({ authoredWeekPoints: vi.fn() }));
 
@@ -68,6 +69,18 @@ vi.mock('@/components/feature/CurriculumSweetAlert', () => ({
   showCurriculumConfirm: vi.fn(async () => undefined),
   showCurriculumLoading: vi.fn(),
   closeCurriculumLoading: vi.fn(),
+}));
+
+// The dialog's real fields and retained edits are exercised by teamsWeeklyModal.
+// Here its save action must reach the builder's existing persistence pipeline.
+vi.mock('../TeamsMeetingModal', () => ({
+  TeamsMeetingModal: ({ onSaveModule, unsavedChanges, moduleSaving, moduleSaveError }: Parameters<typeof TeamsMeetingModal>[0]) => (
+    <div role="dialog" aria-label="Teams calendar">
+      <p>{unsavedChanges ? 'Module has unsaved changes' : 'Module saved'}</p>
+      <button type="button" disabled={moduleSaving} onClick={() => { void onSaveModule?.(); }}>Save module and continue</button>
+      {moduleSaveError && <p role="alert">{moduleSaveError}</p>}
+    </div>
+  ),
 }));
 
 vi.mock('@/pages/curriculum/week-builder/weekTemplateData', () => ({
@@ -280,6 +293,8 @@ describe('Module Builder auto-save', { timeout: 25000 }, () => {
     reload.mockClear();
     loadModuleStructure.mockClear();
     saveModuleStructure.mockClear();
+    vi.mocked(loadModuleWeekSessionPlan).mockReset();
+    vi.mocked(loadModuleWeekSessionPlan).mockResolvedValue(null);
     swalFire.mockClear();
     // Each save echoes the module back with the next revision, the way the
     // endpoint does — that reply is what arms the save after it.
@@ -304,6 +319,68 @@ describe('Module Builder auto-save', { timeout: 25000 }, () => {
     await waitFor(() => expect(nav.getByRole('button', { name: /First component/ })).toHaveAttribute('aria-current', 'true'));
     expect(saveModuleStructure).not.toHaveBeenCalled();
     expect(vi.mocked(authoredWeekPoints).mock.calls.filter(call => call[2])).toHaveLength(0);
+  });
+
+  it('keeps an untouched module saved when its session plan fills the week headings', async () => {
+    vi.mocked(loadModuleWeekSessionPlan).mockResolvedValue({
+      sessions: [{ sessionNumber: 1, weekNumber: 1, date: '2026-12-03', day: 'Thursday', skippedHolidays: [] }],
+      skippedHolidays: [], finalEndDate: '2026-12-03', warnings: [],
+    });
+    await openWorkspace();
+    await screen.findByText('03 Dec 2026', { exact: false });
+    expect(saveState()).toBe('All changes saved');
+    expect(saveModuleStructure).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: 'Create Teams meeting' }));
+    const dialog = within(screen.getByRole('dialog', { name: 'Teams calendar' }));
+    expect(dialog.getByText('Module saved')).toBeInTheDocument();
+    expect(dialog.queryByText('Module has unsaved changes')).not.toBeInTheDocument();
+  });
+
+  it('does not mark a booked module edited when a read refreshes its automatic holiday flag', async () => {
+    const stored = storedStructure();
+    stored.weekStructure[0].components[0] = { ...stored.weekStructure[0].components[0], type: 'live-session',
+      settings: { teamsLiveSessionId: 'LIVE-SAVED', teamsSessionNumber: 1, liveSessionUrl: 'https://example.invalid/meeting',
+        sessionDate: '2026-12-03', sessionTime: '09:00', durationMinutes: 120 } };
+    const module = { ...stored, weekStructure: [{ ...stored.weekStructure[0],
+      sessionDate: '2026-12-03', sessionDay: 'Thursday', liveSessionsClosed: true }] };
+    vi.mocked(loadModuleWeekSessionPlan).mockResolvedValue({
+      sessions: [{ sessionNumber: 1, weekNumber: 1, date: '2026-12-03', day: 'Thursday', skippedHolidays: [] }],
+      skippedHolidays: [], finalEndDate: '2026-12-03', warnings: [],
+    });
+    await openWorkspace('', module);
+    await screen.findByText('03 Dec 2026', { exact: false });
+    expect(saveState()).toBe('All changes saved');
+    await userEvent.click(autoSaveToggle());
+    await new Promise(resolve => window.setTimeout(resolve, 1900));
+    expect(saveModuleStructure).not.toHaveBeenCalled();
+    expect(saveState()).toBe('All changes saved');
+  });
+
+  it('retains real edits made before the plan arrives and stays saved after saving and reopening', async () => {
+    let release!: (plan: Awaited<ReturnType<typeof loadModuleWeekSessionPlan>>) => void;
+    const plan = { sessions: [{ sessionNumber: 1, weekNumber: 1, date: '2026-12-03', day: 'Thursday', skippedHolidays: [] }],
+      skippedHolidays: [], finalEndDate: '2026-12-03', warnings: [] };
+    vi.mocked(loadModuleWeekSessionPlan).mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    const title = await openWorkspace();
+    fireEvent.change(title, { target: { value: 'Actual user edit' } });
+    await act(async () => { release(plan); });
+    await screen.findByText('03 Dec 2026', { exact: false });
+    expect(saveState()).toBe('Unsaved changes - press Save');
+    expect(title).toHaveValue('Actual user edit');
+    await userEvent.click(screen.getByRole('button', { name: 'Create Teams meeting' }));
+    const dialog = within(screen.getByRole('dialog', { name: 'Teams calendar' }));
+    expect(dialog.getByText('Module has unsaved changes')).toBeInTheDocument();
+    await userEvent.click(dialog.getByRole('button', { name: 'Save module and continue' }));
+    await dialog.findByText('Module saved');
+    expect(saveCalls()[0][1].weekStructure[0].title).toBe('Actual user edit');
+    const saved = await saveModuleStructure.mock.results[0].value;
+    cleanup();
+    vi.mocked(loadModuleWeekSessionPlan).mockResolvedValue(plan);
+    const reopened = await openWorkspace('', saved);
+    expect(reopened).toHaveValue('Actual user edit');
+    await screen.findByText('03 Dec 2026', { exact: false });
+    expect(saveState()).toBe('All changes saved');
+    expect(saveModuleStructure).toHaveBeenCalledOnce();
   });
 
   it('saves Point-only edits through Save module, after the structure write succeeds', async () => {
@@ -331,6 +408,36 @@ describe('Module Builder auto-save', { timeout: 25000 }, () => {
     expect(vi.mocked(authoredWeekPoints).mock.calls.filter(call => call[2])).toHaveLength(0);
     expect(screen.getByLabelText('Point 1 name')).toHaveValue('Retain me');
     expect(saveState()).not.toBe('All changes saved');
+  });
+
+  it('saves the current module through the Teams action without closing the calendar', async () => {
+    const title = await openWorkspace();
+    fireEvent.change(title, { target: { value: 'Keep this title' } });
+    await userEvent.click(screen.getByRole('button', { name: 'Create Teams meeting' }));
+    const dialog = within(screen.getByRole('dialog', { name: 'Teams calendar' }));
+    const gate = holdNextSave();
+    await userEvent.click(dialog.getByRole('button', { name: 'Save module and continue' }));
+    await waitFor(() => expect(saveModuleStructure).toHaveBeenCalledOnce());
+    expect(dialog.getByRole('button', { name: 'Save module and continue' })).toBeDisabled();
+    expect(saveCalls()[0][1].weekStructure[0].title).toBe('Keep this title');
+    expect(saveCalls()[0][2]).toMatchObject({ expectedRevision: 'rev-1' });
+    gate.release();
+    await dialog.findByText('Module saved');
+    expect(screen.getByRole('dialog', { name: 'Teams calendar' })).toBeInTheDocument();
+    expect(title).toHaveValue('Keep this title');
+  });
+
+  it('passes a failed module save into the open Teams calendar and retains the module draft', async () => {
+    const title = await openWorkspace();
+    fireEvent.change(title, { target: { value: 'Retain this draft' } });
+    saveModuleStructure.mockRejectedValueOnce(new Error('Module unavailable'));
+    await userEvent.click(screen.getByRole('button', { name: 'Create Teams meeting' }));
+    const dialog = within(screen.getByRole('dialog', { name: 'Teams calendar' }));
+    await userEvent.click(dialog.getByRole('button', { name: 'Save module and continue' }));
+    expect(await dialog.findByRole('alert')).toHaveTextContent('Module unavailable');
+    expect(dialog.getByText('Module has unsaved changes')).toBeInTheDocument();
+    expect(title).toHaveValue('Retain this draft');
+    expect(saveModuleStructure).toHaveBeenCalledOnce();
   });
 
   it('reports a partial save and allows retry without losing Points', async () => {

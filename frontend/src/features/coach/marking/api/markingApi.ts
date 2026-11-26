@@ -28,7 +28,8 @@ export async function fetchMarkingDetail<T>(scope: MarkingScope, submissionId: s
 }
 
 export async function fetchMarkingSidebarQueue<T>(scope: MarkingScope) {
-  const response = await coachFetch(`${markingEndpoint(scope)}?status=all&page=1&page_size=25`);
+  // The official marking page lists assignment submissions only; activity reflections are not marked here.
+  const response = await coachFetch(`${markingEndpoint(scope)}?status=all${scope === 'official' ? '&kind=assignment' : ''}&page=1&page_size=25`);
   const text = await response.text();
   const data = text ? JSON.parse(text) as { items?: T[]; summary?: Record<string, number> } : {};
   if (!response.ok) throw new Error('Unable to load the marking queue.');

@@ -23796,6 +23796,21 @@ def normalise_component_ksb_mappings(module_catalogue_id, mappings, week_id=None
         if not key[1] or key in seen:
             continue
         seen.add(key)
+        if component_id:
+            # Imports may mint new ids, but the unique component/code/source
+            # identity includes withdrawn rows too. Reuse that row so both
+            # the component JSON and its projection keep the same saved id.
+            cache_key = ('_component_mapping_ids', clean_str(module_catalogue_id))
+            if cache_key not in source_cache:
+                source_cache[cache_key] = {
+                    component_mapping_identity(row.get('component_id'), row): clean_str(row.get('id'))
+                    for row in authoring_fetch_all(
+                        AUTHORING_KSB_MAPPINGS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id],
+                        columns=['id', 'component_id', 'ksb_code', 'source_type', 'source_id'],
+                    )
+                    if clean_str(row.get('component_id')) and clean_str(row.get('id'))
+                }
+            payload['id'] = source_cache[cache_key].get(key, payload['id'])
         json_items.append(component_ksb_mapping_json_item(payload))
         projection_payloads.append(payload)
     return json_items, projection_payloads

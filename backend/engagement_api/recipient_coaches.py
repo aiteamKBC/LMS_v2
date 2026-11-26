@@ -5,6 +5,14 @@ def _text(value):
     return str(value or '').strip()
 
 
+def current_coach(owner):
+    name = _text(owner.get('coach_name'))
+    email = _text(owner.get('coach_email')).casefold()
+    key = f'email:{email}' if email else 'unlinked' if name else 'unassigned'
+    label = (name or email) if email else 'Coach not linked' if name else 'No coach assigned'
+    return {'key': key, 'name': label, 'email': email, 'recordedName': name}
+
+
 def _counts(reviews):
     completed = sum(row.get('responseStatus') == 'completed' for row in reviews)
     return {'reviewCount': len(reviews), 'completedCount': completed,
@@ -31,10 +39,8 @@ def group_mcm_recipients(rows, current_coaches, *, search='', coach_key='', page
     groups = {}
     for learner_id, learner in learners.items():
         owner = current_coaches.get(learner_id, {})
-        name = _text(owner.get('coach_name'))
-        email = _text(owner.get('coach_email')).casefold()
-        key = f'email:{email}' if email else 'unlinked' if name else 'unassigned'
-        label = (name or email) if email else 'Coach not linked' if name else 'No coach assigned'
+        identity = current_coach(owner)
+        name, email, key, label = (identity[field] for field in ('recordedName', 'email', 'key', 'name'))
         if query and not any(query in _text(value).casefold() for value in (
             learner['learnerName'], learner['email'], learner['programme'], name, email, label,
         )):
