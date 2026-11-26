@@ -4,6 +4,8 @@ Staff can add a session PDF, slide deck, document, spreadsheet, image or text fi
 (maximum 50 MB) below the recording in the existing session results component.
 Learners can download files only through the existing owned-session authorization
 gate. A cross-module recording-only link does not grant attachment access.
+An explicitly booked additional meeting retains access to its own attachments,
+limited to the authorized occurrence(s).
 
 Files reuse `live_session_artifacts` and `session_result_archive`; no migration,
 new learning activity, required completion, attendance edit or hours entry is

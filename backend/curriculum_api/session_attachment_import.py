@@ -12,7 +12,7 @@ from urllib.parse import quote
 
 import requests
 
-from .session_attachment_policy import AttachmentError, MAX_FILE_BYTES, instant, message_files, sharepoint_url, import_enabled
+from .session_attachment_policy import AttachmentError, MAX_FILE_BYTES, instant, message_files, sharepoint_url, import_enabled, settings_payload
 from .session_graph import graph_path
 
 
@@ -82,6 +82,8 @@ def download_file(url, size):
 def sync_series_attachments(series_id):
     if not import_enabled():
         return []
+    if settings_payload()['storageProvider'] == 'unavailable':
+        return ['Session attachment storage needs configuration.']
     from .session_attachments import save_file
     from django.utils import timezone
     from coach_api.views import get_graph_settings, microsoft_graph_request, microsoft_graph_token

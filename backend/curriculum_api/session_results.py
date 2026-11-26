@@ -328,9 +328,9 @@ def result_rows(series, *, session_number=None, email=None, identity=False, modu
     for artifact in artifacts:
         if email is not None and artifact['id'] in hidden:
             continue
-        if artifact['artifact_type'] == 'attachment' and series.get('linked_session_numbers') is not None:
+        from .session_attachment_policy import public_metadata, recording_only_access
+        if artifact['artifact_type'] == 'attachment' and recording_only_access(series):
             continue  # A cross-module recording link grants only recording/transcript access.
-        from .session_attachment_policy import public_metadata
         bunny_value = artifact_metadata(artifact).get('lmsBunnyRecording')
         bunny = bunny_value if isinstance(bunny_value, dict) else {}
         uses_bunny = bool(bunny) or recording_uses_bunny(by_occurrence.get(artifact['occurrence_id'], {}), artifact)

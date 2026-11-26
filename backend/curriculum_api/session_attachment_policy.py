@@ -1,4 +1,4 @@
-"""Session file selection. No credentials, database, or network access."""
+"""Session file selection and configuration checks; no database or network I/O."""
 import hashlib
 import json
 import mimetypes
@@ -24,10 +24,25 @@ def import_enabled():
 def settings_payload():
     from .session_attachment_storage import bunny_configuration
     try:
-        provider = 'bunny' if bunny_configuration() else 'lms'
+        provider = 'unavailable'
+        if bunny_configuration():
+            provider = 'bunny'
+        else:
+            from django.conf import settings
+            if settings.configured:
+                from config.blob_storage import storage_configured
+                configured = storage_configured(getattr(settings, 'AZURE_STORAGE_ACCOUNT', ''),
+                                                getattr(settings, 'AZURE_STORAGE_KEY', ''))
+                if configured and os.environ.get('AZURE_SESSION_RECORDINGS_CONTAINER', 'session-recordings').strip():
+                    provider = 'lms'
     except AttachmentError:
         provider = 'unavailable'
     return {'maxBytes': MAX_FILE_BYTES, 'automaticImport': import_enabled(), 'storageProvider': provider}
+
+
+def recording_only_access(series):
+    """An explicit additional meeting grants its resources, unlike a recording-only link."""
+    return series.get('linked_session_numbers') is not None and not series.get('additional_meeting_access')
 
 
 def filename(value):

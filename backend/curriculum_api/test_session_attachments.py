@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from django.test import RequestFactory
+from django.test import RequestFactory, override_settings
 from django.core.files.uploadedfile import SimpleUploadedFile
 
 from curriculum_api import session_attachment_policy as policy
@@ -26,6 +26,12 @@ def message(sender='TUTOR', sent='2026-11-26T09:15:00Z', url='https://college.sh
 
 
 class SelectionTests(unittest.TestCase):
+    def test_only_recording_links_exclude_session_resources(self):
+        self.assertFalse(policy.recording_only_access({'id': 'S1'}))
+        self.assertTrue(policy.recording_only_access({'linked_session_numbers': {1}}))
+        self.assertFalse(policy.recording_only_access({
+            'linked_session_numbers': {1}, 'additional_meeting_access': True}))
+
     def test_presenter_files_map_to_the_exact_occurrence(self):
         selected = policy.message_files([message()], [OCCURRENCE], {'TUTOR'})
         self.assertEqual([f['occurrence']['id'] for f in selected], ['O1'])
@@ -88,6 +94,7 @@ class TransferTests(unittest.TestCase):
         claims = base64.urlsafe_b64encode(json.dumps({'roles': ['Files.ReadWrite.All']}).encode()).decode().rstrip('=')
         read = Mock(side_effect=[[{'id': 'S1', 'organizer_email': 'tutor@example.invalid'}], [OCCURRENCE]])
         with patch.dict(os.environ, {'SESSION_ATTACHMENTS_AUTO_IMPORT_ENABLED': 'true'}), \
+             patch.object(importer, 'settings_payload', return_value={'storageProvider': 'lms'}), \
              patch('curriculum_api.session_results.read', read), \
              patch('django.utils.timezone.now', return_value=datetime(2026, 11, 26, 12, tzinfo=timezone.utc)), \
              patch('coach_api.views.microsoft_graph_token', return_value='header.' + claims + '.signature'), \
@@ -109,6 +116,7 @@ class TransferTests(unittest.TestCase):
                 '@microsoft.graph.downloadUrl': 'https://college.sharepoint.com/file?opaque=secret'}
             raise AssertionError('Unexpected Graph call')
         with patch.dict(os.environ, {'SESSION_ATTACHMENTS_AUTO_IMPORT_ENABLED': 'true'}), \
+             patch.object(importer, 'settings_payload', return_value={'storageProvider': 'lms'}), \
              patch('curriculum_api.session_results.read', side_effect=read), \
              patch('django.utils.timezone.now', return_value=datetime(2026, 11, 26, 12, tzinfo=timezone.utc)), \
              patch('coach_api.views.microsoft_graph_token', return_value='header.' + claims + '.signature'), \
@@ -135,6 +143,19 @@ class TransferTests(unittest.TestCase):
             self.assertIsNone(storage.bunny_configuration())
         with patch.dict(os.environ, {'BUNNY_SESSION_ATTACHMENTS_ZONE': 'session-files'}, clear=True):
             with self.assertRaises(policy.AttachmentError): storage.bunny_configuration()
+
+    def test_unconfigured_archive_reports_unavailable(self):
+        with patch.dict(os.environ, {}, clear=True), override_settings(
+                STORAGE_BACKEND='azure', AZURE_STORAGE_ACCOUNT='', AZURE_STORAGE_KEY='', AWS_S3_STORAGE_BUCKET=''):
+            self.assertEqual(policy.settings_payload()['storageProvider'], 'unavailable')
+
+    def test_s3_archive_needs_its_namespace_and_bucket_without_an_azure_key(self):
+        with patch.dict(os.environ, {}, clear=True), override_settings(
+                STORAGE_BACKEND='s3', AZURE_STORAGE_ACCOUNT='test-namespace', AZURE_STORAGE_KEY='',
+                AWS_S3_STORAGE_BUCKET='synthetic-private-bucket'):
+            self.assertEqual(policy.settings_payload()['storageProvider'], 'lms')
+            with override_settings(AWS_S3_STORAGE_BUCKET=''):
+                self.assertEqual(policy.settings_payload()['storageProvider'], 'unavailable')
 
     def test_bunny_upload_is_private_has_checksum_and_cannot_redirect(self):
         config = {'BUNNY_SESSION_ATTACHMENTS_ZONE': 'session-files', 'BUNNY_SESSION_ATTACHMENTS_KEY': 'test-key'}
@@ -180,8 +201,38 @@ class TransferTests(unittest.TestCase):
             self.assertEqual(importer.sync_series_attachments('S1'), [])
         read.assert_not_called()
 
+    def test_enabled_import_rejects_missing_storage_before_database_or_microsoft(self):
+        with patch.dict(os.environ, {'SESSION_ATTACHMENTS_AUTO_IMPORT_ENABLED': 'true'}), \
+             patch.object(importer, 'settings_payload', return_value={'storageProvider': 'unavailable'}), \
+             patch('curriculum_api.session_results.read') as read, \
+             patch('coach_api.views.microsoft_graph_request') as graph:
+            self.assertEqual(importer.sync_series_attachments('S1'), ['Session attachment storage needs configuration.'])
+        read.assert_not_called(); graph.assert_not_called()
+
 
 class AccessTests(unittest.TestCase):
+    def test_additional_meeting_attachments_are_scoped_to_the_authorized_occurrence(self):
+        from curriculum_api import linked_recording_access as access
+        def attachment_query(sql, params):
+            self.assertEqual(params, ['FILE-1', 'S1'])
+            return [{'session_number': 1}] if "'attachment'" in sql else []
+        with patch.object(access, 'read', side_effect=attachment_query):
+            self.assertTrue(access.linked_artifact_allowed({'id': 'S1', 'linked_session_numbers': {1},
+                'additional_meeting_access': True}, 'FILE-1'))
+            self.assertFalse(access.linked_artifact_allowed({'id': 'S1', 'linked_session_numbers': {2},
+                'additional_meeting_access': True}, 'FILE-1'))
+            self.assertFalse(access.linked_artifact_allowed({'id': 'S1', 'linked_session_numbers': {1}}, 'FILE-1'))
+
+    def test_staff_upload_rejects_missing_storage_before_reading_or_preparing_a_file(self):
+        view = attachments.upload_attachment.__wrapped__.__wrapped__.__wrapped__
+        request = RequestFactory().post('/upload', {'file': SimpleUploadedFile('Slides.pdf', b'%PDF-test')})
+        with patch.object(attachments, 'settings_payload', return_value={'storageProvider': 'unavailable'}), \
+             patch('curriculum_api.session_results.read') as read, \
+             patch.object(attachments, 'prepare_file') as prepare, patch.object(attachments, 'save_file') as save:
+            response = view(request, 'S1', 1)
+        self.assertEqual(response.status_code, 503)
+        read.assert_not_called(); prepare.assert_not_called(); save.assert_not_called()
+
     def test_unauthenticated_and_learner_uploads_are_rejected(self):
         factory = RequestFactory()
         for account in (None, SimpleNamespace(role='learner')):
@@ -202,14 +253,16 @@ class AccessTests(unittest.TestCase):
     def test_staff_upload_requires_an_existing_exact_session(self):
         factory = RequestFactory()
         view = attachments.upload_attachment.__wrapped__.__wrapped__.__wrapped__
-        with patch('curriculum_api.session_results.read', return_value=[]), patch.object(attachments, 'save_file') as save:
+        with patch.object(attachments, 'settings_payload', return_value={'storageProvider': 'lms'}), \
+             patch('curriculum_api.session_results.read', return_value=[]), patch.object(attachments, 'save_file') as save:
             response = view(factory.post('/upload'), 'OTHER', 2)
         self.assertEqual(response.status_code, 404); save.assert_not_called()
 
     def test_staff_upload_uses_the_resolved_occurrence(self):
         view = attachments.upload_attachment.__wrapped__.__wrapped__.__wrapped__
         request = RequestFactory().post('/upload', {'file': SimpleUploadedFile('Slides.pdf', b'%PDF-test')})
-        with patch('curriculum_api.session_results.read', return_value=[OCCURRENCE]), patch.object(attachments, 'save_file', return_value='FILE-1') as save:
+        with patch.object(attachments, 'settings_payload', return_value={'storageProvider': 'lms'}), \
+             patch('curriculum_api.session_results.read', return_value=[OCCURRENCE]), patch.object(attachments, 'save_file', return_value='FILE-1') as save:
             response = view(request, 'S1', 1)
         self.assertEqual(response.status_code, 201)
         self.assertEqual(save.call_args.args[0]['id'], 'O1')

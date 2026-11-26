@@ -15,7 +15,7 @@ from django.views.decorators.csrf import csrf_protect
 from django.views.decorators.http import require_POST
 from login.permissions import require_role
 
-from .session_attachment_policy import AttachmentError, MAX_FILE_BYTES, artifact_id, content_type, filename
+from .session_attachment_policy import AttachmentError, MAX_FILE_BYTES, artifact_id, content_type, filename, settings_payload
 
 log = logging.getLogger(__name__)
 
@@ -111,6 +111,8 @@ def save_file(occurrence, stream, name, *, source_reference='', created_at=None)
 @require_role('admin', 'staff')
 def upload_attachment(request, series_id, session_number):
     from .session_results import read
+    if settings_payload()['storageProvider'] == 'unavailable':
+        return JsonResponse({'error': 'Session attachment storage needs configuration.'}, status=503)
     rows = read('''SELECT o.id,o.live_session_id FROM curriculum.live_session_occurrences o
         JOIN curriculum.live_sessions s ON s.id=o.live_session_id
         WHERE o.live_session_id=%s AND o.session_number=%s
