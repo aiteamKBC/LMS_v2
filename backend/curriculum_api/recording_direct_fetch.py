@@ -6,7 +6,9 @@ or passed together to Bunny. Ambiguous fetches never cause another POST.
 """
 import hashlib
 import json
+import re
 import uuid
+from urllib.parse import unquote, urlsplit
 
 from django.db import transaction
 from django.utils import timezone
@@ -20,8 +22,22 @@ PENDING = 'direct_fetch_requested_at'
 def resolve_source(source, token, artifact):
     from coach_api.views import get_graph_settings, microsoft_graph_request
     from .session_cloud_archive import matched_recording_download
+    organizer = artifact.get('organizer_email')
+    # The verified recording URL already names the Teams owner. Calendar SMTP
+    # aliases may not resolve through /users/{alias}/drive even for that account.
+    # File identity, version and edge-byte verification still run below.
+    parsed = urlsplit(source)
+    if (parsed.scheme == 'https' and parsed.netloc == 'graph.microsoft.com'
+            and not parsed.query and not parsed.fragment):
+        owner = re.fullmatch(r'/v1\.0/users/([^/]+)/onlineMeetings/[^/]+/recordings/[^/]+/content', parsed.path)
+        if owner:
+            identity = unquote(owner[1])
+            try:
+                organizer = str(uuid.UUID(identity))
+            except ValueError:
+                pass
     try:
-        matched = matched_recording_download(artifact, artifact.get('organizer_email'), source, token,
+        matched = matched_recording_download(artifact, organizer, source, token,
             graph_get=microsoft_graph_request, graph_base=get_graph_settings()['base_url'], include_identity=True)
     except Exception:
         raise VideoImportError('The Microsoft file identity could not be verified. No second copy was requested.') from None

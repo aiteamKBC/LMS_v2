@@ -28,6 +28,41 @@ VIDEO = '11111111-2222-3333-4444-555555555555'
 COLLECTION = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
 
 
+class DirectSourceIdentityTests(unittest.TestCase):
+    def setUp(self):
+        settings_patch = patch('coach_api.views.get_graph_settings', return_value={'base_url': 'https://graph.microsoft.com/v1.0'})
+        settings_patch.start()
+        self.addCleanup(settings_patch.stop)
+
+    def test_recording_owner_guid_resolves_drive_when_organizer_email_is_an_alias(self):
+        owner = 'aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb'
+        source = SOURCE.replace('/owner/', '/' + owner + '/')
+        with patch('curriculum_api.session_cloud_archive.matched_recording_download', return_value=('safe-url', FILE)) as match:
+            self.assertEqual(direct.resolve_source(source, 'token', {'organizer_email': OWNER}), ('safe-url', FILE))
+        self.assertEqual(match.call_args.args[1], owner)
+        self.assertTrue(match.call_args.kwargs['include_identity'])
+
+    def test_non_guid_owner_retains_existing_organizer_lookup(self):
+        with patch('curriculum_api.session_cloud_archive.matched_recording_download', return_value=('safe-url', FILE)) as match:
+            direct.resolve_source(SOURCE, 'token', {'organizer_email': OWNER})
+        self.assertEqual(match.call_args.args[1], OWNER)
+
+    def test_untrusted_authority_or_path_cannot_supply_a_drive_owner(self):
+        owner = 'aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb'
+        valid = SOURCE.replace('/owner/', '/' + owner + '/')
+        for source in (valid.replace('graph.microsoft.com', 'other.example.invalid'), valid + '?owner=override',
+                       valid.replace('/recordings/', '/other/'), valid + '#fragment'):
+            with self.subTest(source=source), patch('curriculum_api.session_cloud_archive.matched_recording_download', return_value=('safe-url', FILE)) as match:
+                direct.resolve_source(source, 'token', {'organizer_email': OWNER})
+                self.assertEqual(match.call_args.args[1], OWNER)
+
+    def test_source_identity_failure_still_blocks_the_transfer(self):
+        owner = 'aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb'
+        with patch('curriculum_api.session_cloud_archive.matched_recording_download', return_value=False):
+            with self.assertRaisesRegex(VideoImportError, 'unique Microsoft file'):
+                direct.resolve_source(SOURCE.replace('/owner/', '/' + owner + '/'), 'token', {'organizer_email': OWNER})
+
+
 class DirectRecordingTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
