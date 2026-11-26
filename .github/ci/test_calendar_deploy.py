@@ -136,8 +136,9 @@ class WorkflowContractTests(unittest.TestCase):
                           if line.strip().startswith('needs: [changes, backend'))
         needs = {item.strip() for item in needs_line.split('[', 1)[1].split(']', 1)[0].split(',')}
         self.assertEqual(needs, {'changes', 'backend', 'backend-tests', 'frontend', 'security',
-                                'teams', 'release-guards', 'recording-checks', 'assignment-checks'})
+                                'teams', 'release-guards', 'recording-checks', 'assignment-checks', 'session-attachments'})
         self.assertIn('uses: ./.github/workflows/recording-checks.yml', workflow)
+        self.assertIn('uses: ./.github/workflows/session-attachment-checks.yml', workflow)
 
     def test_app_revision_is_pinned_and_only_merged_main_is_deployed(self):
         workflow = (ROOT / '.github/workflows/deploy-aws.yml').read_text()
