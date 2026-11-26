@@ -1,0 +1,225 @@
+@import './employer-palette.css';
+
+/* Import the shared components' public class names so this adapter stays local
+   to the employer profile without changing the learner workspace. */
+@value embeddedLearnerTheme as embedded from '../learner/training-plan-timeline/TrainingPlanDetails.module.css';
+@value overview as learnerOverview, metric, metricRing from '../workspace/learner/Overview.module.css';
+@value charts, card as chartCard, module as programmeModule, moduleTrack, measureRing, measureRingItem, monthlyCard from '../learner/training-plan-timeline/ProgressCharts.module.css';
+@value theme as logTheme, indexHeader, identity as logIdentity, completion, completionIcon, learnerMeta, planTotal, yearGroup, yearHeading, month as logMonth, monthIcon, hours, filters as logFilters, yearFilter, openMonth, futureMonth, scheduleNote, status as logStatus, complete as logComplete, progress as logProgress from '../../features/monthly-logs/monthlyLogs.module.css';
+@value scope as recordScope, card as recordCard from '../../features/old-otjh/design.module.css';
+@value page as journalPage, card as journalCard from '../../features/old-otjh/journal.module.css';
+@value home as reviews, primaryButton as reviewPrimary, secondaryButton as reviewSecondary from '../learner/progress-reviews/reviewsHome.module.css';
+
+.page {
+  color: var(--employer-ink);
+  font-size: 13px;
+}
+.content {
+  --theme-surface: var(--employer-surface);
+  --theme-surface-secondary: var(--employer-background);
+  --theme-surface-elevated: var(--employer-soft);
+  --theme-border: var(--employer-line);
+  --theme-input: var(--employer-surface);
+  --theme-text-primary: var(--employer-ink);
+  --theme-text-secondary: var(--employer-muted);
+  --theme-text-muted: var(--employer-muted);
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+}
+.page :is(button, a, input, select, summary):focus-visible { outline: 2px solid var(--employer-primary); outline-offset: 3px; }
+.page :is(button, a) { -webkit-tap-highlight-color: transparent; }
+.page button { cursor: pointer; }
+.page button:disabled { cursor: default; }
+.page svg { flex-shrink: 0; }
+
+.hero { min-width: 0; padding: 24px; border: 1px solid var(--employer-line); border-radius: var(--lms-radius, 16px); background: var(--employer-surface); }
+.hero :is(h1, p, dl, dd) { margin: 0; }
+.heroTop { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 18px 24px; }
+.identity { display: flex; align-items: center; gap: 18px; min-width: 0; flex: 1 1 360px; }
+.identityText { min-width: 0; }
+.avatar { display: grid; place-items: center; width: 68px; height: 68px; flex-shrink: 0; overflow: hidden; border: 1px solid var(--employer-line); border-radius: 20px; background: var(--employer-soft); color: var(--employer-primary); font-size: 24px; font-weight: 700; }
+.avatar img { width: 100%; height: 100%; object-fit: cover; }
+.hero .eyebrow { margin-bottom: 5px; color: var(--employer-primary); font-size: 10px; font-weight: 750; letter-spacing: 1.3px; text-transform: uppercase; }
+.hero h1 { color: var(--employer-ink); font-size: clamp(24px, 2.3vw, 32px); font-weight: 750; line-height: 1.2; letter-spacing: -.8px; overflow-wrap: anywhere; }
+.hero .description { margin-top: 6px; color: var(--employer-muted); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.heroActions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.status { padding: 6px 10px; border: 1px solid var(--employer-line); border-radius: 20px; background: var(--employer-soft); color: var(--employer-ink); font-size: 11px; font-weight: 600; }
+.secondaryButton { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; padding: 9px 14px; border: 1px solid var(--employer-line); border-radius: 12px; color: var(--employer-primary); background: var(--employer-surface); font-size: 12px; font-weight: 650; }
+.secondaryButton:hover { border-color: var(--employer-primary); background: var(--employer-soft); }
+.hero .programmeFacts { display: flex; flex-wrap: wrap; gap: 12px 28px; margin-top: 22px; padding-block: 16px; border-block: 1px solid var(--employer-line); }
+.programmeFacts > div { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; min-width: 0; }
+.programmeFacts svg { color: var(--employer-primary); }
+.programmeFacts dt { color: var(--employer-muted); font-size: 11px; }
+.programmeFacts dd { color: var(--employer-ink); font-size: 12px; font-weight: 600; }
+.detailsGrid { display: grid; grid-template-columns: 1fr 1fr 1.5fr; gap: 14px; margin-top: 18px; }
+.detailCard { min-width: 0; padding: 14px 16px; border: 1px solid var(--employer-line); border-radius: 12px; background: var(--employer-background); }
+.detailRow { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
+.detailRow + .detailRow { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--employer-line); }
+.detailRow > svg { margin-top: 2px; color: var(--employer-primary); }
+.detailRow dl { min-width: 0; }
+.detailRow dt { margin-bottom: 4px; color: var(--employer-muted); font-size: 11px; }
+.detailRow dd { color: var(--employer-ink); font-size: 12px; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
+.contact { display: flex; align-items: center; gap: 7px; margin-top: 9px; color: var(--employer-primary); font-size: 11px; text-decoration: none; overflow-wrap: anywhere; }
+.contact:hover { text-decoration: underline; }
+.moduleCard { border-top: 3px solid var(--employer-gold); }
+.moduleName { display: block; }
+.moduleName + .moduleName { margin-top: 6px; }
+
+.tabs { display: flex; gap: 5px; min-width: 0; max-width: 100%; overflow-x: auto; padding: 6px; border: 1px solid var(--employer-line); border-radius: var(--lms-radius, 16px); background: var(--employer-surface); scrollbar-width: thin; scrollbar-color: var(--employer-line) transparent; }
+.tab { display: inline-flex; flex: 1 0 auto; align-items: center; justify-content: center; gap: 7px; min-height: 42px; padding: 10px 14px; border: 1px solid transparent; border-radius: 11px; background: transparent; color: var(--employer-muted); font-size: 12px; font-weight: 650; white-space: nowrap; transition: background-color .15s, color .15s; }
+.tab > svg { width: 16px; height: 16px; }
+.unsignedDot { position: relative; width: 7px; height: 7px; flex-shrink: 0; margin-inline-start: 2px; border-radius: 50%; background: var(--employer-danger); }
+.tab:hover { background: var(--employer-soft); color: var(--employer-primary); }
+.tab[aria-current='page'] { border-color: var(--employer-primary); background: var(--employer-primary); color: var(--employer-on-primary); }
+.tabs .tab:focus-visible { outline-offset: -3px; outline-color: var(--employer-gold-ink); }
+.tabContent { min-width: 0; }
+.signatureNotice { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border: 1px solid var(--employer-line); border-inline-start: 4px solid var(--employer-gold); border-radius: 12px; background: var(--employer-gold-soft); }
+.signatureNotice :is(p, i) { color: var(--employer-gold-ink); }
+
+.assignments { min-width: 0; overflow: hidden; border: 1px solid var(--employer-line); border-radius: var(--lms-radius, 16px); background: var(--employer-surface); }
+.assignmentHeader { padding: 20px; border-bottom: 1px solid var(--employer-line); }
+.assignmentHeader h2 { margin-bottom: 5px; color: var(--employer-ink); font-size: 16px; }
+.assignmentHeader p { color: var(--employer-muted); font-size: 12px; }
+.assignmentModule { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 13px 20px; background: var(--employer-background); color: var(--employer-ink); font-size: 13px; font-weight: 650; }
+.assignmentCount { flex-shrink: 0; padding: 3px 8px; border-radius: 20px; background: var(--employer-soft); color: var(--employer-primary); font-size: 10px; }
+.assignmentRow { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 16px 20px; }
+.assignmentIdentity { display: flex; flex: 1 1 220px; align-items: flex-start; gap: 10px; min-width: 0; }
+.assignmentIdentity > span { min-width: 0; }
+.assignmentStatus { display: inline-flex; padding: 4px 9px; border: 1px solid var(--employer-line); border-radius: 20px; color: var(--employer-primary); background: var(--employer-soft); font-size: 11px; font-weight: 600; white-space: nowrap; }
+.assignmentStatus[data-tone='success'] { color: var(--employer-success); background: var(--employer-success-soft); }
+.assignmentStatus[data-tone='warning'] { color: var(--employer-gold-ink); background: var(--employer-gold-soft); }
+.assignmentStatus[data-tone='danger'] { color: var(--employer-danger); background: var(--employer-danger-soft); }
+.assignmentFile { display: inline-flex; align-items: center; gap: 6px; max-width: min(256px, 100%); min-height: 36px; padding: 7px 10px; border: 1px solid var(--employer-line); border-radius: 10px; color: var(--employer-primary); background: var(--employer-surface); font-size: 12px; }
+.assignmentFile:hover { border-color: var(--employer-primary); background: var(--employer-soft); }
+.assignmentFile:disabled { opacity: .6; }
+
+/* This shared view uses utility classes rather than a CSS module. Keep its
+   presentation changes under the dedicated employer-only wrapper. */
+:global(#employer-learner-profile) .ksbContent :global(.coach-metric-card) { border: 1px solid var(--employer-line); border-radius: var(--lms-radius, 16px); background: var(--employer-surface); box-shadow: none; }
+:global(#employer-learner-profile) .ksbContent :global(.bg-gradient-to-br) { background: var(--employer-soft); color: var(--employer-primary); box-shadow: none; }
+:global(#employer-learner-profile) .ksbContent :global(.bg-background-50) { background: var(--employer-surface); border-color: var(--employer-line); box-shadow: none; }
+:global(#employer-learner-profile) .ksbContent :global(.bg-background-100) { background: var(--employer-background); }
+:global(#employer-learner-profile) .ksbContent :global(.bg-background-200) { background: var(--employer-soft); }
+:global(#employer-learner-profile) .ksbContent :global(.bg-foreground-900) { background: var(--employer-primary) !important; color: var(--employer-on-primary) !important; }
+:global(#employer-learner-profile) .ksbContent :global(.text-foreground-900) { color: var(--employer-ink); }
+:global(#employer-learner-profile) .ksbContent :global(.text-foreground-400) { color: var(--employer-muted); }
+:global(#employer-learner-profile) .ksbContent :global(.text-background-200) { color: var(--employer-line); }
+:global(#employer-learner-profile) .ksbContent button:disabled { opacity: 1; }
+:global(#employer-learner-profile) .ksbContent :global(.bg-emerald-500) { background: var(--employer-success); }
+:global(#employer-learner-profile) .ksbContent :global(.bg-amber-500) { background: var(--employer-gold-ink); }
+
+/* The shared dashboards declare their own palettes; override those roots only
+   within this profile, for both light and dark mode. */
+:global(#employer-learner-profile) .tabContent :is(.embedded, .learnerOverview) {
+  --kbc-surface: var(--employer-surface);
+  --kbc-border: var(--employer-line);
+  --kbc-text: var(--employer-ink);
+  --kbc-muted: var(--employer-muted);
+  --kbc-learner-primary: var(--employer-primary);
+  --kbc-learner-primary-dark: var(--employer-ink);
+  --kbc-learner-secondary: var(--employer-gold);
+  --learner-navy: var(--employer-ink);
+  --learner-purple: var(--employer-primary);
+  --learner-soft: var(--employer-background);
+  --learner-accent-soft: var(--employer-soft);
+  --learner-success: var(--employer-success);
+  --learner-success-soft: var(--employer-success-soft);
+  --learner-warning: var(--employer-warning);
+  --learner-warning-soft: var(--employer-warning-soft);
+  --learner-danger: var(--employer-danger);
+  --learner-danger-soft: var(--employer-danger-soft);
+  --action-primary: var(--employer-primary);
+  --action-primary-hover: var(--employer-primary-hover);
+}
+:global(#employer-learner-profile) .tabContent .metric { --metric-text: var(--employer-ink); --metric-track: var(--employer-soft); min-height: 90px; background: var(--employer-surface); border-color: var(--employer-line); padding: 18px 20px; box-shadow: none; }
+:global(#employer-learner-profile) .tabContent .metric:hover { border-color: var(--employer-primary); background: var(--employer-surface); }
+:global(#employer-learner-profile) .tabContent .charts { --programme-navy: var(--employer-primary); --programme-navy-light: var(--employer-gold); --programme-navy-soft: var(--employer-soft); gap: 16px; }
+:global(#employer-learner-profile) .tabContent .chartCard { background: var(--employer-surface); border-color: var(--employer-line); box-shadow: none; }
+:global(#employer-learner-profile) .tabContent .monthlyCard { --otjh-navy: var(--employer-primary); --otjh-navy-light: var(--employer-gold); }
+:global(#employer-learner-profile) .tabContent .programmeModule:is(:hover, [aria-pressed='true']) { border-color: var(--employer-line); background: var(--employer-soft); }
+:global(#employer-learner-profile) .tabContent .moduleTrack { background: var(--employer-soft); }
+:global(#employer-learner-profile) .tabContent .moduleTrack > span { background: var(--employer-primary); }
+:global(#employer-learner-profile) .tabContent .measureRing { --measure-color: var(--employer-primary) !important; }
+:global(#employer-learner-profile) .tabContent .measureRingItem:nth-child(1) .measureRing { --measure-color: var(--employer-danger) !important; }
+:global(#employer-learner-profile) .tabContent .measureRingItem:nth-child(3) .measureRing { --measure-color: var(--employer-gold-ink) !important; }
+:global(#employer-learner-profile) .tabContent .measureRingItem:nth-child(4) .measureRing { --measure-color: var(--employer-success) !important; }
+
+:global(#employer-learner-profile) .tabContent :is(.logTheme, .recordScope, .journalPage) {
+  --log-ink: var(--employer-ink);
+  --log-muted: var(--employer-muted);
+  --log-purple: var(--employer-primary);
+  --log-soft: var(--employer-soft);
+  --log-border: var(--employer-line);
+  --record-brand: var(--employer-primary);
+  --record-deep: var(--employer-primary-strong);
+  --record-soft: var(--employer-soft);
+  --record-ring: var(--employer-line);
+  --record-gold: var(--employer-gold-ink);
+  --record-ink: var(--employer-ink);
+  --record-muted: var(--employer-muted);
+  --record-border: var(--employer-line);
+  --record-surface: var(--employer-surface);
+  --record-gradient: linear-gradient(var(--employer-primary), var(--employer-primary));
+  --record-positive-bg: var(--employer-success-soft);
+  --record-positive-ink: var(--employer-success);
+  --record-positive-border: var(--employer-line);
+  --record-accepted-accent: var(--employer-success);
+}
+:global(#employer-learner-profile) .tabContent :is(.indexHeader, .completion, .planTotal, .yearGroup, .yearFilter, .logFilters, .recordCard, .journalCard, .futureMonth) { border: 1px solid var(--employer-line); background: var(--employer-surface); color: var(--employer-ink); box-shadow: none; }
+:global(#employer-learner-profile) .tabContent .indexHeader { min-height: 150px; }
+:global(#employer-learner-profile) .tabContent :is(.logIdentity h1, .completion strong, .planTotal strong, .hours dd) { color: var(--employer-ink); }
+:global(#employer-learner-profile) .tabContent :is(.learnerMeta, .completion p) { color: var(--employer-muted); }
+:global(#employer-learner-profile) .tabContent :is(.completionIcon, .yearHeading, .monthIcon) { background: var(--employer-soft); color: var(--employer-primary); border-color: var(--employer-line); }
+:global(#employer-learner-profile) .tabContent .logMonth { border-color: var(--employer-line); }
+:global(#employer-learner-profile) .tabContent .logMonth:hover { background: var(--employer-background); }
+:global(#employer-learner-profile) .tabContent .openMonth { border-color: var(--employer-line); color: var(--employer-primary); }
+:global(#employer-learner-profile) .tabContent .openMonth:hover { background: var(--employer-soft); }
+:global(#employer-learner-profile) .tabContent .logFilters button[aria-pressed='true'] { background: var(--employer-primary); color: var(--employer-on-primary); }
+:global(#employer-learner-profile) .tabContent .logFilters button > span { background: var(--employer-soft); color: var(--employer-primary); }
+:global(#employer-learner-profile) .tabContent .logProgress { background: var(--employer-line); }
+:global(#employer-learner-profile) .tabContent .logStatus { background: var(--employer-soft); color: var(--employer-primary); }
+:global(#employer-learner-profile) .tabContent .logComplete { background: var(--employer-success-soft); color: var(--employer-success); }
+:global(#employer-learner-profile) .tabContent .scheduleNote { border-color: var(--employer-line); background: var(--employer-background); color: var(--employer-muted); }
+
+:global(#employer-learner-profile) .tabContent .reviews {
+  --review-text: var(--employer-ink);
+  --review-muted: var(--employer-muted);
+  --review-surface: var(--employer-surface);
+  --review-soft: var(--employer-background);
+  --review-border: var(--employer-line);
+  --review-purple: var(--employer-primary);
+  --review-purple-soft: var(--employer-soft);
+  --review-focus: var(--employer-primary);
+  --review-success-text: var(--employer-success);
+  --review-success-bg: var(--employer-success-soft);
+  --review-attention-text: var(--employer-gold-ink);
+  --review-attention-bg: var(--employer-gold-soft);
+  --review-attention-border: var(--employer-line);
+}
+:global(#employer-learner-profile) .tabContent .reviewPrimary { border-color: var(--employer-primary); background: var(--employer-primary); color: var(--employer-on-primary); }
+:global(#employer-learner-profile) .tabContent .reviewPrimary:hover { border-color: var(--employer-primary-hover); background: var(--employer-primary-hover); }
+:global(#employer-learner-profile) .tabContent .reviewSecondary { border-color: var(--employer-line); background: var(--employer-surface); color: var(--employer-primary); }
+:global(#employer-learner-profile) .tabContent .reviewSecondary:hover { background: var(--employer-soft); }
+
+@media (max-width: 900px) {
+  .detailsGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .moduleCard { grid-column: 1 / -1; }
+}
+@media (max-width: 560px) {
+  .content { gap: 14px; }
+  .hero { padding: 18px; }
+  .identity { gap: 12px; flex-basis: 100%; }
+  .avatar { width: 52px; height: 52px; border-radius: 16px; font-size: 20px; }
+  .heroActions { width: 100%; justify-content: space-between; }
+  .hero .programmeFacts { flex-direction: column; gap: 12px; margin-top: 16px; }
+  .programmeFacts > div { display: grid; grid-template-columns: 16px 64px minmax(0, 1fr); }
+  .detailsGrid { grid-template-columns: minmax(0, 1fr); }
+  .moduleCard { grid-column: auto; }
+  .tabs { border-radius: 14px; }
+  .tab { min-height: 44px; }
+}
+@media (prefers-reduced-motion: reduce) { .tab { transition: none; } }
+
+:global(#employer-learner-profile) .tabContent .metricRing::after { background: var(--employer-surface); }
