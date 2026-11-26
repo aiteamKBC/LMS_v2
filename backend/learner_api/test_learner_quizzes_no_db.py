@@ -12,6 +12,12 @@ from . import learner_detail, learner_quizzes as quizzes
 
 
 class QuizListTests(SimpleTestCase):
+    def setUp(self):
+        # Patch the registry before lookup: CI intentionally has no enrolment DB.
+        connection = SimpleNamespace(cursor=MagicMock(
+            side_effect=AssertionError('Unmocked quiz database access')))
+        self.enterContext(patch.object(quizzes, 'connections', {'enrolment': connection}))
+
     def test_owned_import_lineage_restores_slot_without_rewriting_attempt_evidence(self):
         detail = {'components': [{'componentId': 'Q1', 'moduleId': 'M', 'isQuiz': True}],
                   'quizAttempts': [{'quizId': 'quiz:21', 'componentId': 'quiz:21', 'passed': True,

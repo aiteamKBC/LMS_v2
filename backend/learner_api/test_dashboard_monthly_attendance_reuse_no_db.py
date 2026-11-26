@@ -1,4 +1,5 @@
 """Monthly attendance reuse against private SQLite fixtures; no external I/O."""
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.test import SimpleTestCase
@@ -7,6 +8,9 @@ from . import attendance_otjh, dashboard_monthly, monthly_log_attendance
 from . import tests_monthly_log_attendance as fixtures
 
 
+# The injected reader owns all I/O; only its SQL dialect needs a stand-in.
+@patch('learner_api.attendance_otjh.connections',
+       {'enrolment': SimpleNamespace(vendor='sqlite')})
 class MonthlyAttendanceReuseTests(SimpleTestCase):
     setUp = fixtures.MonthlyLogAttendanceTests.setUp
     read = fixtures.MonthlyLogAttendanceTests.read

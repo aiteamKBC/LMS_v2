@@ -2,6 +2,7 @@
 from collections import defaultdict
 from copy import deepcopy
 from datetime import date, datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from django.test import SimpleTestCase
@@ -48,6 +49,9 @@ def large_facts(replacements=False):
     return content,current,courses,definitions,done,set(),hours,meta,records,modules,[],attempts
 
 
+# The injected reader owns all I/O; only its SQL dialect needs a stand-in.
+@patch('learner_api.attendance_otjh.connections',
+       {'enrolment': SimpleNamespace(vendor='postgresql')})
 class CataloguePerformanceTests(SimpleTestCase):
     def test_multi_placement_records_compute_completion_and_hours_once(self):
         definitions=[{'source_course_ref':'50','source_activity_id':kind+':7'} for kind in ('material','quiz')]
@@ -105,10 +109,11 @@ class CataloguePerformanceTests(SimpleTestCase):
         ledger_calls=[call for call in query.call_args_list if 'WITH canonical AS' in call.args[0]]
         self.assertEqual(len(ledger_calls),1)
         # Keep the ledger's one-read budget and check the added attendance reads separately.
+        # Count table reads, not the source-system literal in the capture SQL.
         for table, expected in (
             ('learner_monthly_signatures', [9]),
             ('learner_monthly_locks', [9, 9, 9]),
-            ('live_session_learner_attendance', [9]),
+            ('FROM curriculum.live_session_learner_attendance', [9]),
         ):
             calls=[call for call in query.call_args_list if table in call.args[0]]
             self.assertEqual(len(calls),1)

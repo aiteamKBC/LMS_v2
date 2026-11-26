@@ -7,6 +7,9 @@ from unittest.mock import Mock, patch
 from learner_api.test_canonical_learning_no_db import adapter
 
 
+# The injected reader owns all I/O; only its SQL dialect needs a stand-in.
+@patch('learner_api.attendance_otjh.connections',
+       {'enrolment': SimpleNamespace(vendor='postgresql')})
 class KsbPointDisplayTests(unittest.TestCase):
     def setUp(self):
         self.query = Mock(return_value=[])
@@ -52,7 +55,7 @@ class KsbPointDisplayTests(unittest.TestCase):
             for table, expected in (
                 ('learner_monthly_signatures', [700, 701]),
                 ('learner_monthly_locks', [700, 701] * 3),
-                ('live_session_learner_attendance', [700, 701]),
+                ('FROM curriculum.live_session_learner_attendance', [700, 701]),
             ):
                 if table in sql:
                     self.assertEqual(params, expected)
@@ -76,5 +79,5 @@ class KsbPointDisplayTests(unittest.TestCase):
         self.assertEqual(result[11]['ksb']['points'][0]['definitionCode'], 'B1.2')
         self.assertEqual(result[10]['ksb']['points'][0]['activityId'], '1')
         self.assertEqual(result[11]['ksb']['points'][0]['activityId'], '2')
-        for table in ('learner_monthly_signatures', 'learner_monthly_locks', 'live_session_learner_attendance'):
+        for table in ('learner_monthly_signatures', 'learner_monthly_locks', 'FROM curriculum.live_session_learner_attendance'):
             self.assertEqual(sum(table in call.args[0] for call in self.query.call_args_list), 1)
