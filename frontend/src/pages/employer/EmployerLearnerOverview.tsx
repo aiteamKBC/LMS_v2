@@ -7,9 +7,8 @@ import { useAuth } from "@/hooks/useAuth";
 import { displayValue, EMPTY_VALUE, initialsFor } from '@/lib/format';
 import { learnerRecordedDates } from '@/lib/learnerRecordedDates';
 import { formatProgrammeStartDate, learnerHeaderPlan } from '@/pages/workspace/learner/learnerHeaderPlan';
-import { LearnerDashboardHero } from '@/pages/workspace/learner/LearnerDashboardHero';
-import overviewStyles from '@/pages/workspace/learner/Overview.module.css';
-import photoStyles from '@/components/feature/LearnerProfilePhoto.module.css';
+import { ArrowLeft, BookOpen, BriefcaseBusiness, Building2, CalendarDays, Mail, Phone, UserRound, UsersRound } from 'lucide-react';
+import styles from './EmployerLearnerPage.module.css';
 
 // ============================================================================
 // The employer's Overview tab: the learner's own dashboard header, read through
@@ -46,10 +45,8 @@ function LearnerAvatar({ employerId, kind, learnerId, name }: {
   }, [employerId, kind, learnerId]);
 
   return (
-    <span className={`${photoStyles.avatar} ${overviewStyles.avatar}`} style={{ cursor: 'default' }}>
-      <span className={photoStyles.image}>
-        {url ? <img src={url} alt={`${name}'s profile photo`} /> : <span aria-hidden="true">{initialsFor(name)}</span>}
-      </span>
+    <span className={styles.avatar}>
+      {url ? <img src={url} alt={`${name}'s profile photo`} /> : <span aria-hidden="true">{initialsFor(name)}</span>}
     </span>
   );
 }
@@ -84,31 +81,40 @@ export function EmployerLearnerHeader({ employerId, kind, learner, onBack }: {
   const description = [learner.programme, learner.employer].filter(Boolean).join(' · ');
 
   return (
-    <div className={overviewStyles.overview}>
-      <LearnerDashboardHero
-        avatar={<LearnerAvatar employerId={employerId} kind={kind} learnerId={learner.id} name={learner.name} />}
-        name={learner.name || 'Learner'}
-        description={description}
-        cohort={learner.cohort || EMPTY_VALUE}
-        moduleLabel={current.label}
-        modules={current.modules.map(module => ({ id: module.id, title: module.title, href: '#' }))}
-        modulePlaceholder={modulesLabel}
-        allModulesHref="#"
-        employer={learner.employer || EMPTY_VALUE}
-        organization={learner.organization || EMPTY_VALUE}
-        coach={coachName}
-        coachEmail={schedule.data?.coach.email}
-        coachPhone={schedule.data?.coach.phone}
-        status={displayValue(learner.programmeStatus)}
-        startDate={startDate}
-        plannedEnd={plannedEnd}
-        loading={schedule.loading}
-        onContinue={onBack}
-        onOpenMap={onBack}
-        observerAction={{ label: 'All learners', onClick: onBack }}
-        readOnlyModules
-        handwritingText={{ firstLine: 'Supporting', secondLine: 'progress' }}
-      />
-    </div>
+    <header className={styles.hero} aria-label="Learner programme">
+      <div className={styles.heroTop}>
+        <div className={styles.identity}>
+          <LearnerAvatar employerId={employerId} kind={kind} learnerId={learner.id} name={learner.name} />
+          <div className={styles.identityText}>
+            <p className={styles.eyebrow}>Learner</p>
+            <h1>{learner.name || 'Learner'}</h1>
+            {description && <p className={styles.description}>{description}</p>}
+          </div>
+        </div>
+        <div className={styles.heroActions}>
+          <span className={styles.status}>{displayValue(learner.programmeStatus)}</span>
+          <button type="button" className={styles.secondaryButton} onClick={onBack}><ArrowLeft size={16} aria-hidden="true" />All learners</button>
+        </div>
+      </div>
+      <dl className={styles.programmeFacts} aria-label="Programme details">
+        <div><UsersRound size={16} aria-hidden="true" /><dt>Cohort</dt><dd>{learner.cohort || EMPTY_VALUE}</dd></div>
+        <div><CalendarDays size={16} aria-hidden="true" /><dt>Start date</dt><dd>{startDate}</dd></div>
+        <div><CalendarDays size={16} aria-hidden="true" /><dt>End date</dt><dd>{plannedEnd}</dd></div>
+      </dl>
+      <div className={styles.detailsGrid}>
+        <section className={styles.detailCard} aria-label="Employer and Organization">
+          <div className={styles.detailRow}><BriefcaseBusiness size={17} aria-hidden="true" /><dl><dt>Employer</dt><dd>{learner.employer || EMPTY_VALUE}</dd></dl></div>
+          <div className={styles.detailRow}><Building2 size={17} aria-hidden="true" /><dl><dt>Organization</dt><dd>{learner.organization || EMPTY_VALUE}</dd></dl></div>
+        </section>
+        <section className={styles.detailCard} aria-label="Coach">
+          <div className={styles.detailRow}><UserRound size={17} aria-hidden="true" /><dl><dt>Coach</dt><dd>{coachName}</dd></dl></div>
+          {schedule.data?.coach.email && <a className={styles.contact} href={`mailto:${schedule.data.coach.email}`}><Mail size={14} aria-hidden="true" />{schedule.data.coach.email}</a>}
+          {schedule.data?.coach.phone && <a className={styles.contact} href={`tel:${schedule.data.coach.phone}`}><Phone size={14} aria-hidden="true" />{schedule.data.coach.phone}</a>}
+        </section>
+        <section className={`${styles.detailCard} ${styles.moduleCard}`} aria-label={current.label}>
+          <div className={styles.detailRow}><BookOpen size={17} aria-hidden="true" /><dl><dt>{current.label}</dt><dd>{current.modules.length ? current.modules.map(module => <span className={styles.moduleName} key={module.id}>{module.title}</span>) : modulesLabel}</dd></dl></div>
+        </section>
+      </div>
+    </header>
   );
 }

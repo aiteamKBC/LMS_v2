@@ -1,0 +1,21 @@
+@import './employer-palette.css';
+
+.page { color: var(--employer-ink); }
+.panel { border-color: var(--employer-line); background: var(--employer-surface); }
+.context { background: var(--employer-gold-soft); color: var(--employer-gold-ink); }
+.success { background: var(--employer-success-soft); color: var(--employer-success); }
+.action { background: var(--employer-gold); color: var(--employer-on-gold); }
+.action:hover { background: var(--employer-gold-hover); }
+.page :is(button, a, input, textarea):focus-visible { outline: 2px solid var(--employer-primary); outline-offset: 3px; }
+
+/* The shared form renderer keeps its behaviour; only this employer instance
+   uses the portal palette for its navigation, fields and progress markers. */
+.form :global(button[class*='bg-[#']) { background: var(--employer-primary); color: var(--employer-on-primary); }
+.form :global([aria-label='Form progress']) button > span:first-child { background: var(--employer-soft); border-color: var(--employer-line); color: var(--employer-muted); }
+.form :global([aria-label='Form progress']) button[aria-current] > span:first-child { background: var(--employer-primary); border-color: var(--employer-primary); color: var(--employer-on-primary); --tw-ring-color: var(--employer-line); --tw-ring-offset-color: var(--employer-surface); }
+.form :global([aria-label='Form progress']) button > span:last-child { color: var(--employer-muted); }
+.form :global([aria-label='Form progress']) button[aria-current] > span:last-child { color: var(--employer-primary); }
+.form :global(.bg-white) { background: var(--employer-surface); }
+.form :is(h1, h2, label) { color: var(--employer-ink); }
+.form :is(input, textarea, select) { background: var(--employer-surface); border-color: var(--employer-line); color: var(--employer-ink); }
+.form :is(input, textarea, select):disabled { background: var(--employer-background); }

@@ -1,5 +1,7 @@
 from . import working_hours_holidays
 from . import reward_tracking
+from . import employer_contracts
+from . import employer_meetings
 from .coach_availability import coach_available_slots, case_owner_available_slots
 from . import presentation_design
 from . import personal_learning
@@ -180,6 +182,9 @@ urlpatterns = [
     # Declared before "employers/<int:pk>/" is irrelevant (different prefix), but
     # the signature route is declared before the learner route for clarity.
     path("employer-portal/<int:employer_id>/", employer_portal.employer_portal, name="employer-portal"),
+    path("employer-portal/<int:employer_id>/meetings/", employer_meetings.employer_meetings, name="employer-meetings"),
+    path("employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/contracts/",
+         employer_contracts.employer_learner_contracts, name="employer-learner-contracts"),
     path(
         "employer-portal/<int:employer_id>/documents/",
         employer_portal.employer_portal_documents,
@@ -240,6 +245,8 @@ urlpatterns = [
          employer_portal.employer_dashboard_metrics, name="employer-dashboard-metrics"),
     path("employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/progress-reviews/",
          employer_portal.employer_portal_progress_reviews, name="employer-progress-reviews"),
+    path("employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/mcm-timeline/",
+         employer_portal.employer_portal_mcm_timeline, name="employer-mcm-timeline"),
     path("employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/progress-reviews/<path:event_key>/pdf/",
          employer_portal.employer_portal_progress_reviews, {"as_pdf": True}, name="employer-progress-review-pdf"),
     path("employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/progress-reviews/<path:event_key>/artifacts/",
