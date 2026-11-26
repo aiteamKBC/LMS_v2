@@ -5,13 +5,16 @@ adapters select the learner perspective; they never invoke learner HTTP views
 or the legacy builder's activation, hydration and snapshot persistence.
 """
 from old_otjh.service import ServiceError
-from django.db import connections
+from django.db import DatabaseError, connections
+import logging
 from curriculum_api.learning_storage import read_sql
 
 from . import canonical_learning, dashboard_tabs
 from .employer_course_visibility import free_course_module_sql
 from .identity import learner_profile_for_source
 from .journal_sources import learner_journal_reads
+
+logger = logging.getLogger(__name__)
 
 
 def without_free_courses(payload):
@@ -101,7 +104,42 @@ def read_schedule(source, section):
     with learner_journal_reads():
         # The header must resolve imported memberships as well as native plans.
         _prepare_source(source)
-        return without_action_links(without_free_courses(read_schedule_dashboard(source, section=section)))
+        payload = without_action_links(without_free_courses(read_schedule_dashboard(source, section=section)))
+        if section != 'contract':
+            payload['holidayCalendar'] = read_holiday_calendar(source, payload.get('modules') or [])
+        return payload
+
+
+def read_holiday_calendar(source, modules):
+    """All selected cohort holidays, including dates with no teaching slot.
+
+    Called only after employer ownership and canonical enrolment checks. Read
+    cohorts from that learner's placement and already-authorized assignments;
+    never publish the unrestricted organisation calendar or draft holiday notes.
+    """
+    from curriculum_api.views import cohort_selected_holidays_by_cohort
+    from curriculum_api.country_calendars import CalendarUnavailable
+
+    profile = getattr(source, '_case_file_profile', None)
+    cohort_ids = {str(profile.cohort_id)} if profile is not None and profile.cohort_id else set()
+    module_ids = [str(module['id']) for module in modules if module.get('id')]
+    try:
+        if module_ids:
+            with connections['enrolment'].cursor() as cursor:
+                cursor.execute(read_sql('''SELECT DISTINCT cohort_id FROM curriculum.modules
+                    WHERE module_catalogue_id=ANY(%s) AND cohort_id IS NOT NULL''', cursor.db), [module_ids])
+                cohort_ids.update(str(row[0]) for row in cursor.fetchall() if row[0])
+        grouped = cohort_selected_holidays_by_cohort(sorted(cohort_ids))
+    except (DatabaseError, CalendarUnavailable):
+        logger.warning('Could not read the employer learner holiday calendar.', exc_info=True)
+        return {'available': False, 'holidays': []}
+    holidays = {}
+    for items in grouped.values():
+        for item in items:
+            holiday = {key: str(item.get(key) or '') for key in ('id', 'label', 'startDate', 'endDate')}
+            key = tuple(holiday.values())
+            holidays[key] = holiday
+    return {'available': bool(grouped), 'holidays': sorted(holidays.values(), key=lambda item: (item['startDate'], item['label']))}
 
 
 def read_plan(source):

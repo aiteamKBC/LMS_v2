@@ -13,7 +13,7 @@
 
 import type { LearnerDetail, LearnerKind } from '@/api/learnerDetail';
 import type { HomeProgress, OverviewWeek } from '@/api/learnerOverview';
-import type { TrainingPlanContract, TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
+import type { PlanSlotHoliday, TrainingPlanContract, TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
 import type { MonthlyLogHours, LogSummary, LogDetail } from '@/features/monthly-logs/api';
 import type { ActivityContent } from '@/features/old-otjh/api';
 import type { ReviewFormResponse } from '@/api/reviewForm';
@@ -412,8 +412,12 @@ export function fetchEmployerLearnerAttendance(employerId: string, kind: Learner
   return overviewPart<{ attendance: EmployerLearnerAttendance | null }>(employerId, kind, learnerId, 'attendance', signal);
 }
 
+export type EmployerLearnerSchedule = TrainingPlanDashboard & {
+  holidayCalendar?: { available: boolean; holidays: PlanSlotHoliday[] };
+};
+
 export function fetchEmployerLearnerSchedule(employerId: string, kind: LearnerKind, learnerId: string, signal?: AbortSignal) {
-  return overviewPart<TrainingPlanDashboard>(employerId, kind, learnerId, 'schedule', signal);
+  return overviewPart<EmployerLearnerSchedule>(employerId, kind, learnerId, 'schedule', signal);
 }
 
 export function fetchEmployerLearnerContract(employerId: string, kind: LearnerKind, learnerId: string, signal?: AbortSignal) {

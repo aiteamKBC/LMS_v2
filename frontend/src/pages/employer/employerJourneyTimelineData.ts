@@ -80,8 +80,12 @@ export function buildJourneyTimeline(allLearners: EmployerLearnerCard[], learner
     const facts = new Map(overviewModulesForDisplay(resource?.data?.modules || []).map(module => [module.id, module]));
     const entries = [...new Map((resource?.data?.programme || []).map(row => [row.id, row])).values()].map(row => {
       const fact = facts.get(row.id);
-      const entry: JourneyEntry = { ...row, percent: row.percent != null && Number.isFinite(row.percent)
-        ? Math.max(0, Math.min(100, row.percent)) : null,
+      // Use the learner card's hours and the same rounding/cap as HoursProgress.
+      // Programme activity progress and the overview ledger are separate metrics.
+      const actual = fact?.hoursProgress?.actual, planned = fact?.hoursProgress?.planned;
+      const entry: JourneyEntry = { ...row, percent: actual != null && Number.isFinite(actual)
+        && planned != null && Number.isFinite(planned) && planned > 0
+        ? Math.min(100, Math.round(actual / planned * 10000) / 100) : null,
         start: moduleDate(fact?.start), end: moduleDate(fact?.end), facts: fact };
       const group = modules.get(row.id) || { id: row.id, title: row.title, start: '', end: '',
         hue: hues.get(row.id) ?? 270, programmes: new Set<string>(), entries: [] };

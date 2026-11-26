@@ -585,7 +585,7 @@ def load_context(source, owner, subject_id=None, *, purpose='catalogue', records
 @weekly_read_scope()
 @request_read_scope()
 @schedule_read_scope()
-def read_catalogue(source, kind, owner, *, upcoming_only=False, ksb_only=False):
+def read_catalogue(source, kind, owner, *, upcoming_only=False, card_metrics_only=False):
     from .subject_store import covers_for
     assigned, ids, records, native, courses, definitions, done, started, hours, metadata, credits = load_context(
         source, owner, approved_replacements_only=True)
@@ -619,10 +619,10 @@ def read_catalogue(source, kind, owner, *, upcoming_only=False, ksb_only=False):
             cards = [card for card in cards if (card.get('moduleId') or (
                 card['id'][8:] if card['id'].startswith('current:') else None)) not in free_ids]
             summary = card_totals(cards)
-    if ksb_only:
-        # Employer observers need the exact learner card population and points,
+    if card_metrics_only:
+        # Employer observers need the exact learner card points and hours,
         # without covers, upcoming navigation or programme-wide hour reads.
-        return {'modules': [{key: card.get(key) for key in ('id', 'moduleId', 'ksbProgress')}
+        return {'modules': [{key: card.get(key) for key in ('id', 'moduleId', 'ksbProgress', 'actualHours', 'planModule')}
                             for card in cards]}
     if upcoming_only:
         # Reuse native completion before selecting deadlines, just as the

@@ -1,17 +1,17 @@
-"""Read-only assignment and learner KSB counts for the employer overview."""
+"""Read-only assignments and learner card metrics for the employer overview."""
 from copy import copy
 
 from django.db import connections
 
 
-def module_ksbs(source, kind, owner, modules):
-    """Reuse My Learning's assigned points, completion and historical lineage."""
+def module_learning_metrics(source, kind, owner, modules):
+    """Reuse My Learning's points, recorded hours and planned hour targets."""
     from .my_learning import read_catalogue
 
     if not modules:
         return {}
     # The catalogue installs request caches; keep the outer Overview snapshot.
-    cards = read_catalogue(copy(source), kind, owner, ksb_only=True)['modules']
+    cards = read_catalogue(copy(source), kind, owner, card_metrics_only=True)['modules']
     by_id = {card['id']: card for card in cards}
     by_module = {}
     for card in cards:
@@ -25,8 +25,12 @@ def module_ksbs(source, kind, owner, modules):
             matches = by_module.get(str(module['moduleId']), [])
             card = matches[0] if len(matches) == 1 else None
         metric = (card or {}).get('ksbProgress') or {}
-        result[module['id']] = ({key: metric[key] for key in ('completed', 'total')}
-                                if metric.get('status') in ('ready', 'empty') else None)
+        result[module['id']] = {
+            'ksb': ({key: metric[key] for key in ('completed', 'total')}
+                    if metric.get('status') in ('ready', 'empty') else None),
+            'hoursProgress': {'actual': card.get('actualHours'),
+                              'planned': (card.get('planModule') or {}).get('total_otjh')} if card else None,
+        }
     return result
 
 

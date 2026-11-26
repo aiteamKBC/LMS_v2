@@ -9,6 +9,8 @@ export type OverviewModule = {
   assignments?: { submitted: number; total: number };
   attendance: { attended: number; total: number } | null;
   hours: { actual: number | null; planned: number | null };
+  /** Opt-in employer summary; the same actual and planned hours as My Learning. */
+  hoursProgress?: { actual: number | null; planned: number | null } | null;
   ksb: { completed: number; total: number } | null;
   deliveryEnd?: string;
   duplicates?: Array<{ key: string; completed: boolean; date: string }>;

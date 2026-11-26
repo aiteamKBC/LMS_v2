@@ -223,11 +223,11 @@ def read_overview(source, kind, owner, profile, request, *, employer_performance
     historical_hours = defaultdict(list)
     for row in actual_rows:
         historical_hours[row['groupId']].append(row['hours'])
-    assignments = ksbs = None
+    assignments = learning_metrics = None
     if employer_performance:
-        from .employer_performance import module_assignments, module_ksbs
+        from .employer_performance import module_assignments, module_learning_metrics
         assignments = module_assignments(source, kind, displayed, components=native.get('components', []))
-        ksbs = module_ksbs(source, kind, owner, displayed)
+        learning_metrics = module_learning_metrics(source, kind, owner, displayed)
     chart_modules = []
     for module in displayed:
         entry = ledger.get(str(module['moduleId']))
@@ -240,7 +240,7 @@ def read_overview(source, kind, owner, profile, request, *, employer_performance
             'ksb': {key: entry['ksb'][key] for key in ('completed', 'total')} if entry else None})
         if assignments is not None:
             chart_modules[-1]['assignments'] = assignments[module['id']]
-            chart_modules[-1]['ksb'] = ksbs[module['id']]
+            chart_modules[-1].update(learning_metrics[module['id']])
         duplicate_rows = [a for a in module['_subject']['activities'] if duplicates.get(a.get('dedupe'), 0) > 1]
         if duplicate_rows:
             # Only cross-subject duplicate identities leave the reader. Browser

@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react';
-import { fetchEmployerLearnerSchedule, type EmployerLearnerCard } from '@/api/employerPortal';
-import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
+import { fetchEmployerLearnerSchedule, type EmployerLearnerCard, type EmployerLearnerSchedule } from '@/api/employerPortal';
 import { learnerKey, type Loadable } from './employerDashboardData';
 
-export type JourneySchedules = Record<string, Loadable<TrainingPlanDashboard>>;
+export type JourneySchedules = Record<string, Loadable<EmployerLearnerSchedule>>;
 
 /** Reuse the employer's authorized, read-only curriculum schedule projection. */
 export function useEmployerJourneyHolidays(employerId: string, learners: EmployerLearnerCard[]) {
