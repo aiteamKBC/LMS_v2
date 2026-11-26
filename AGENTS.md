@@ -92,7 +92,7 @@ While required answers are pending, continue independent read-only investigation
 
 ## 2. Git and concurrent work
 
-- From 13 October 2026, the owner authorizes scoped commits, pushes to existing branches, pull requests and merges into main for requested work in https://github.com/aiteamKBC/LMS_v2. This authorization does not permit automatically creating a branch for each feature. Respect repository permissions, required reviews and checks; never bypass protections or force-push main.
+- From 26 November 2026, work locally by default. The owner revokes the previous standing authorization for commits, pushes, pull requests, merges, and deployments. Do not commit, push, upload/publish project files or artifacts, open/update a PR, merge, deploy, or release unless the teammate explicitly requests that specific action for the current work. A request to fix code, resolve conflicts, run tests, or fix CI does not authorize publishing. Prepare and validate the local result, then wait for explicit instructions. This rule applies to all projects and delegated agents; do not infer permission from silence, credentials, an existing PR, or earlier tasks. Retain required reviews and checks; never bypass protections or force-push main.
 
 - From 17 October 2026, work on the teammate's current branch in the current working folder. Do not create a new branch or worktree for a feature, fix, or other task, and do not switch branches, unless the teammate explicitly requests that action. This replaces the earlier requirement to use an isolated checkout and a new feature branch for each task. Keep the change focused; report its scope, test evidence and affected areas in the applicable pull request so the team can review and coordinate.
 
@@ -104,7 +104,7 @@ While required answers are pending, continue independent read-only investigation
 
 - Before a schema-changing release, verify the database target, backup/restore point and migration plan. Keep the previous commit/build and rollback procedure. After deployment verify service health and affected learner workflows; record the PR, merge commit, deployed commit, build and check results.
 
-- This workflow is ongoing authorization for the requested scope, not permission to include unrelated changes, expose credentials or learner data, or bypass required checks. Do not push secrets, private runtime files, learner data or the entire local work/memory folder into this public repository.
+- The deployment procedure above describes how to deploy only after explicit authorization; it is not standing permission to publish or deploy. Do not include unrelated changes, expose credentials or learner data, or bypass required checks. Do not push secrets, private runtime files, learner data or the entire local work/memory folder into this public repository.
 
 - Read-only Git commands such as status, diffs, and history are allowed.
 
