@@ -9,6 +9,7 @@ import {
 } from '@/api/employerPortal';
 import { useToast } from "@/hooks/useToast";
 import { btnSecondary } from '@/pages/users/components/ui';
+import styles from './EmployerLearnerPage.module.css';
 
 // ============================================================================
 // Assignments: everything this learner has handed in, and the files they
@@ -17,12 +18,12 @@ import { btnSecondary } from '@/pages/users/components/ui';
 // ============================================================================
 
 const STATUS: Record<string, { label: string; tone: string }> = {
-  submitted_for_tutor_review: { label: 'Awaiting marking', tone: 'bg-amber-50 text-amber-800 border-amber-200/60' },
-  escalated: { label: 'Under review', tone: 'bg-amber-50 text-amber-800 border-amber-200/60' },
-  accepted: { label: 'Accepted', tone: 'bg-emerald-50 text-emerald-700 border-emerald-200/60' },
-  partial: { label: 'Partially accepted', tone: 'bg-sky-50 text-sky-800 border-sky-200/60' },
-  referred: { label: 'Referred', tone: 'bg-red-50 text-red-700 border-red-200/60' },
-  rejected: { label: 'Not accepted', tone: 'bg-red-50 text-red-700 border-red-200/60' },
+  submitted_for_tutor_review: { label: 'Awaiting marking', tone: 'warning' },
+  escalated: { label: 'Under review', tone: 'warning' },
+  accepted: { label: 'Accepted', tone: 'success' },
+  partial: { label: 'Partially accepted', tone: 'neutral' },
+  referred: { label: 'Referred', tone: 'danger' },
+  rejected: { label: 'Not accepted', tone: 'danger' },
 };
 
 function statusChip(status: string) {
@@ -30,7 +31,7 @@ function statusChip(status: string) {
   if (known) return known;
   // Legacy Aptem statuses arrive as free text; show them as written.
   const label = status.replace(/[_-]+/g, ' ').trim();
-  return { label: label ? label[0].toUpperCase() + label.slice(1) : 'Submitted', tone: 'bg-background-100 text-foreground-600 border-foreground-200/60' };
+  return { label: label ? label[0].toUpperCase() + label.slice(1) : 'Submitted', tone: 'neutral' };
 }
 
 function submittedDate(value: string | null) {
@@ -147,8 +148,8 @@ export function EmployerAssignmentsTab({ employerId, kind, learnerId, learnerNam
   const withFiles = assignments.filter((a) => a.files.length > 0).length;
 
   return (
-    <section className="rounded-2xl border border-foreground-200/60 bg-background-50 card-premium" aria-label="Assignments">
-      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-foreground-100 px-4 py-3">
+    <section className={styles.assignments} aria-label="Assignments">
+      <header className={styles.assignmentHeader}>
         <div>
           <h2 className="text-[14px] font-heading font-semibold text-foreground-900">Submitted assignments</h2>
           <p className="text-[12px] text-foreground-500">
@@ -160,16 +161,16 @@ export function EmployerAssignmentsTab({ employerId, kind, learnerId, learnerNam
 
       {assignments.length === 0 ? (
         <p className="px-4 py-10 text-center text-[13px] text-foreground-400">
-          No assignments have been handed in yet. They appear here once {learnerName} submits one.
+          No assignments assigned yet
         </p>
       ) : (
         <div className="divide-y divide-foreground-100">
           {groupAssignments(assignments).map((module) => (
             <section key={module.title} aria-label={module.title}>
-              <h3 className="flex items-center gap-2 bg-background-100/70 px-4 py-2.5 text-[13px] font-heading font-semibold text-foreground-900">
+              <h3 className={styles.assignmentModule}>
                 <i className="ri-book-open-line text-primary-600" aria-hidden="true" />
                 <span className="min-w-0 truncate" title={module.title}>{module.title}</span>
-                <span className="shrink-0 rounded-full bg-primary-50 px-2 py-0.5 text-[10px] font-semibold text-primary-700">
+                <span className={styles.assignmentCount}>
                   {module.count} assignment{module.count === 1 ? '' : 's'}
                 </span>
               </h3>
@@ -200,8 +201,8 @@ function AssignmentRow({ assignment, opening, onOpen }: {
   // The module heads its group; the row adds only where in it the work sits.
   const context = assignment.weekTitle;
   return (
-    <li className="flex flex-wrap items-start justify-between gap-3 px-4 py-3">
-      <span className="flex min-w-0 items-start gap-2.5">
+    <li className={styles.assignmentRow}>
+      <span className={styles.assignmentIdentity}>
         <i className="ri-file-upload-line mt-0.5 shrink-0 text-foreground-400" aria-hidden="true" />
         <span className="min-w-0">
           <span className="block truncate text-[13px] font-medium text-foreground-800" title={assignment.title}>{assignment.title}</span>
@@ -210,7 +211,7 @@ function AssignmentRow({ assignment, opening, onOpen }: {
         </span>
       </span>
       <span className="flex flex-wrap items-center justify-end gap-2">
-        <span className={`whitespace-nowrap rounded-full border px-2 py-0.5 text-[10px] font-semibold ${chip.tone}`}>{chip.label}</span>
+        <span className={styles.assignmentStatus} data-tone={chip.tone}>{chip.label}</span>
         {assignment.files.length === 0 ? (
           <span className="text-[11px] italic text-foreground-400">No file uploaded</span>
         ) : assignment.files.map((file) => {
@@ -222,7 +223,7 @@ function AssignmentRow({ assignment, opening, onOpen }: {
               onClick={() => onOpen(file)}
               disabled={opening === key}
               title={file.name}
-              className="inline-flex max-w-[16rem] items-center gap-1.5 rounded-lg border border-foreground-200 px-2.5 py-1 text-[12px] font-medium text-foreground-600 transition-smooth hover:border-primary-300 hover:bg-primary-50/60 hover:text-primary-700 cursor-pointer disabled:opacity-60"
+              className={styles.assignmentFile}
             >
               {opening === key
                 ? <LoaderCircle aria-hidden="true" className="h-4 w-4 shrink-0 animate-spin" />

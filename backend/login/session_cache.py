@@ -183,8 +183,3 @@ def connect_signals():
                        dispatch_uid=f'login-session-cache:account:{signal is post_save}')
         signal.connect(_on_session_write, sender=LoginSession, weak=False,
                        dispatch_uid=f'login-session-cache:session:{signal is post_save}')
-
-
-def reset_for_tests():
-    with _hint_lock:
-        _account_hint.clear()

@@ -183,11 +183,6 @@ def pending_count():
         return len(_pending)
 
 
-def reset_for_tests():
-    with _pending_lock:
-        _pending.clear()
-
-
 class VersionBumpQuerySetMixin:
     """Bulk writes bump the cache versions of the records they touch.
 

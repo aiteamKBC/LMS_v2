@@ -5,10 +5,67 @@ adapters select the learner perspective; they never invoke learner HTTP views
 or the legacy builder's activation, hydration and snapshot persistence.
 """
 from old_otjh.service import ServiceError
+from django.db import DatabaseError, connections
+import logging
+from curriculum_api.learning_storage import read_sql
 
 from . import canonical_learning, dashboard_tabs
+from .employer_course_visibility import free_course_module_sql
 from .identity import learner_profile_for_source
 from .journal_sources import learner_journal_reads
+
+logger = logging.getLogger(__name__)
+
+
+def without_free_courses(payload):
+    """Filter employer projections only; retain the learner's stored assignments."""
+    def references(row, section):
+        values = [row.get(key) for key in ('moduleId', 'module_id', 'moduleCatalogueId', 'catalogueId')]
+        identity = row.get('id')
+        if section in ('modules', 'programme', 'selectedModule') or str(identity or '').startswith(('current:', 'legacy:')):
+            values.append(identity)
+        return {str(value).removeprefix('current:') for value in values if value is not None and value != ''}
+
+    ids = set()
+    def collect(value, section='modules'):
+        if isinstance(value, dict):
+            ids.update(references(value, section))
+            for key, item in value.items():
+                collect(item, key)
+        elif isinstance(value, list):
+            for item in value:
+                collect(item, section)
+    collect(payload)
+    rows = []
+    if ids:
+        with connections['enrolment'].cursor() as cursor:
+            cursor.execute(read_sql(f'''SELECT m.module_catalogue_id, m.title,
+                {free_course_module_sql(cursor.db)} AS is_free,
+                m.source_type, m.source_id
+                FROM curriculum.modules m WHERE m.module_catalogue_id=ANY(%s)
+                  OR (m.source_type='mba-legacy' AND 'legacy:' || m.source_id=ANY(%s))''',
+                cursor.db), [sorted(ids), sorted(ids)])
+            rows = cursor.fetchall()
+    excluded = {str(module_id) for module_id, _, is_free, _, _ in rows if is_free}
+    excluded.update(f'legacy:{source_id}' for _, _, is_free, kind, source_id in rows
+                    if is_free and kind == 'mba-legacy' and source_id)
+    visible_titles = {title for _, title, is_free, _, _ in rows if not is_free}
+    excluded_titles = {title for _, title, is_free, _, _ in rows if is_free} - visible_titles
+
+    def hidden(value, section):
+        return isinstance(value, dict) and (bool(references(value, section) & excluded)
+            or value.get('isFreeCourse') is True or value.get('sourceType', value.get('source_type')) == 'free_course')
+
+    def filtered(value, section='modules'):
+        if isinstance(value, dict):
+            return {key: [] if key in ('freeCourses', 'standaloneCourses')
+                    else None if hidden(item, key) else filtered(item, key)
+                    for key, item in value.items()}
+        if isinstance(value, list):
+            return [filtered(item, section) for item in value if not hidden(item, section)
+                    and not (section == 'modules' and isinstance(item, str) and item in excluded_titles)]
+        return value
+    return filtered(payload)
 
 
 def without_action_links(value):
@@ -27,7 +84,8 @@ def read_dashboard(source, kind, tab, request):
     with learner_journal_reads():
         # read_tab verifies the canonical profile against this exact enrolment,
         # uses heal=False and installs the same request caches as the learner.
-        return without_action_links(dashboard_tabs.read_tab(source, kind, tab, request))
+        options = {'employer_performance': True} if tab == 'overview' and request.GET.get('performance') == '1' else {}
+        return without_action_links(without_free_courses(dashboard_tabs.read_tab(source, kind, tab, request, **options)))
 
 
 def _prepare_source(source):
@@ -46,7 +104,42 @@ def read_schedule(source, section):
     with learner_journal_reads():
         # The header must resolve imported memberships as well as native plans.
         _prepare_source(source)
-        return without_action_links(read_schedule_dashboard(source, section=section))
+        payload = without_action_links(without_free_courses(read_schedule_dashboard(source, section=section)))
+        if section != 'contract':
+            payload['holidayCalendar'] = read_holiday_calendar(source, payload.get('modules') or [])
+        return payload
+
+
+def read_holiday_calendar(source, modules):
+    """All selected cohort holidays, including dates with no teaching slot.
+
+    Called only after employer ownership and canonical enrolment checks. Read
+    cohorts from that learner's placement and already-authorized assignments;
+    never publish the unrestricted organisation calendar or draft holiday notes.
+    """
+    from curriculum_api.views import cohort_selected_holidays_by_cohort
+    from curriculum_api.country_calendars import CalendarUnavailable
+
+    profile = getattr(source, '_case_file_profile', None)
+    cohort_ids = {str(profile.cohort_id)} if profile is not None and profile.cohort_id else set()
+    module_ids = [str(module['id']) for module in modules if module.get('id')]
+    try:
+        if module_ids:
+            with connections['enrolment'].cursor() as cursor:
+                cursor.execute(read_sql('''SELECT DISTINCT cohort_id FROM curriculum.modules
+                    WHERE module_catalogue_id=ANY(%s) AND cohort_id IS NOT NULL''', cursor.db), [module_ids])
+                cohort_ids.update(str(row[0]) for row in cursor.fetchall() if row[0])
+        grouped = cohort_selected_holidays_by_cohort(sorted(cohort_ids))
+    except (DatabaseError, CalendarUnavailable):
+        logger.warning('Could not read the employer learner holiday calendar.', exc_info=True)
+        return {'available': False, 'holidays': []}
+    holidays = {}
+    for items in grouped.values():
+        for item in items:
+            holiday = {key: str(item.get(key) or '') for key in ('id', 'label', 'startDate', 'endDate')}
+            key = tuple(holiday.values())
+            holidays[key] = holiday
+    return {'available': bool(grouped), 'holidays': sorted(holidays.values(), key=lambda item: (item['startDate'], item['label']))}
 
 
 def read_plan(source):
@@ -62,6 +155,7 @@ def read_plan(source):
                                                  include_component_details=True, strict=True)
         for key in ('modules', 'week', 'components', 'retiredQuizComponents'):
             detail[key] = content[key]
+        detail = without_free_courses(detail)
         detail['components'], detail['totalExpectedOtjh'] = _annotate_otjh(detail['components'])
         _apply_live_otjh_snapshot(detail, _live_otjh_snapshot(detail, profile))
         return without_action_links(detail)

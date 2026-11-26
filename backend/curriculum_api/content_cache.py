@@ -402,13 +402,3 @@ def retire_all():
         transaction.on_commit(lambda: cache_versions.bump_generation(NAMESPACE))
     except Exception:
         cache_versions.bump_generation(NAMESPACE)
-
-
-def reset_for_tests():
-    with _state_lock:
-        _state['collation_ok'] = None
-        _build_locks.clear()
-    with _otjh_lock:
-        _otjh_local.update(generation=None, expires=0.0, index=None)
-    _pending.modules = set()
-    _pending.active = False

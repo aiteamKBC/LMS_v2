@@ -102,12 +102,6 @@ export default [
       'no-undef': 'error',
     },
   },
-  {
-    files: ['src/**/*.{test,spec}.{ts,tsx}'],
-    languageOptions: {
-      globals: globals.node,
-    },
-  },
   // Only enforce this rule for the router config file to avoid false positives elsewhere.
   {
     files: ['src/router/config.tsx'],

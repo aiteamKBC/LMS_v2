@@ -24,7 +24,16 @@
   }
 
   .kbc-workspace-sidebar :is(.kbc-learner-sidebar-pattern, .kbc-sidebar-theme-pattern) {
-    opacity: 0 !important;
+    /* Fade the decoration into the spare space above Sign out. */
+    inset: auto 0 5rem !important;
+    height: 62%;
+    background-image: url('/assets/sidebar-geometric-pattern.svg') !important;
+    background-position: center bottom !important;
+    background-repeat: repeat !important;
+    background-size: 96px 96px !important;
+    opacity: .16 !important;
+    mask-image: linear-gradient(to bottom, transparent, black 45%);
+    pointer-events: none;
   }
 
   .kbc-workspace-sidebar :is(.kbc-sidebar-theme-brand, .kbc-sidebar-header) {

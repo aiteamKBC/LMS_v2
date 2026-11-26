@@ -1,0 +1,18 @@
+/* The early workspace colour layer takes precedence over legacy important
+   focus styles. This marker exists only while an employer portal is mounted;
+   document scope includes its portalled dialogs and menus. Keyboard navigation
+   removes the marker and restores the existing focus treatment. */
+@layer workspace-colour {
+  @media screen {
+    html:root[data-employer-pointer-focus] body :focus,
+    html:root[data-employer-pointer-focus] body [data-search-field]:focus-within {
+      outline: none !important;
+      box-shadow: none !important;
+    }
+
+    html:root[data-employer-pointer-focus] body [data-search-field]:focus-within,
+    html:root[data-employer-pointer-focus] body :is(input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']), textarea, select, [role='combobox']):focus:not([aria-invalid='true']):not(:user-invalid) {
+      border-color: var(--employer-line) !important;
+    }
+  }
+}

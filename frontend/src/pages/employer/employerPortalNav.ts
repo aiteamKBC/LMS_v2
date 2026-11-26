@@ -1,6 +1,7 @@
 import type { SidebarNavItem } from '@/components/feature/Sidebar';
 import { useAuth } from "@/hooks/useAuth";
 import { useLocation } from 'react-router-dom';
+import { useEmployerPointerFocus } from './useEmployerPointerFocus';
 
 /**
  * One destination per menu item, so the sidebar's highlight and the content
@@ -10,9 +11,9 @@ import { useLocation } from 'react-router-dom';
  */
 export function employerPortalNav(employerId: string): SidebarNavItem[] {
   return [
-    { id: 'employer-portal-home', label: 'Home', icon: 'ri-home-line', href: `/employers/${employerId}` },
+    { id: 'employer-portal-home', label: 'Overview', icon: 'ri-home-line', href: `/employers/${employerId}` },
     { id: 'employer-portal-learners', label: 'My learners', icon: 'ri-group-line', href: `/employers/${employerId}/learners` },
-    { id: 'employer-portal-reviews', label: 'Progress & Gateway reviews', icon: 'ri-calendar-check-line', href: `/employers/${employerId}/reviews` },
+    { id: 'employer-portal-reviews', label: 'Reviews', icon: 'ri-calendar-check-line', href: `/employers/${employerId}/reviews` },
     { id: 'employer-portal-feedback', label: 'Feedback', icon: 'ri-chat-1-line', href: `/employers/${employerId}/feedback` },
     { id: 'employer-portal-documents', label: 'Documents', icon: 'ri-draft-line', href: `/employers/${employerId}/documents` },
   ];
@@ -26,6 +27,7 @@ export function employerPortalNav(employerId: string): SidebarNavItem[] {
  * learner workspace's look; only the name in the header follows the session.
  */
 export function useEmployerPortalChrome(employerId: string, employerName?: string) {
+  useEmployerPointerFocus();
   const { auth } = useAuth();
   const { pathname, search, state } = useLocation();
   const root = `/employers/${employerId}`;

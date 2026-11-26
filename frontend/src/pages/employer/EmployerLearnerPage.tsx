@@ -5,6 +5,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { PageContainer } from '@/components/ui/PageContainer';
+import { AppIcon } from '@/components/feature/AppIcon';
 import {
   fetchEmployerLearner,
   fetchEmployerLearnerPlan,
@@ -26,6 +27,7 @@ import { useEmployerPortalChrome } from './employerPortalNav';
 import { EmployerAssignmentsTab } from './EmployerAssignmentsTab';
 import { EmployerMonthlyLogsTab } from './EmployerMonthlyLogsTab';
 import { EmployerProgressReviewsTab } from './EmployerProgressReviewsTab';
+import styles from './EmployerLearnerPage.module.css';
 
 // ============================================================================
 // One learner, as their employer sees them.
@@ -140,7 +142,8 @@ function EmployerLearnerContent() {
 
   return (
     <WorkspaceShell {...shell} pageTitle="Learner" pageSubtitle={learner?.name ?? 'Learner'}>
-      <PageContainer>
+      <PageContainer className={styles.page}>
+        <div id="employer-learner-profile" className={styles.content} data-employer-theme="learner">
         {loading && (
           <div
 
@@ -168,26 +171,22 @@ function EmployerLearnerContent() {
               onBack={backToLearners}
             />
 
-            <nav className="flex w-full flex-nowrap items-center gap-1 overflow-x-auto border-b border-foreground-100 pb-2" aria-label="Learner sections">
+            <nav className={styles.tabs} aria-label="Learner sections">
               {TABS.map((t) => (
                 <button
                   key={t.key}
                   onClick={() => setTab(t.key)}
                   aria-current={tab === t.key ? 'page' : undefined}
-                  className={`inline-flex min-w-max flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 py-2 text-[12px] font-semibold transition-smooth cursor-pointer lg:px-3 lg:text-[13px] ${
-                    tab === t.key
-                      ? 'bg-primary-600 text-white'
-                      : 'text-foreground-500 hover:bg-background-100 hover:text-foreground-700'
-                  }`}
+                  className={styles.tab}
                 >
-                  <i className={`${t.icon} text-[14px]`} />{t.label}
+                  <AppIcon className={t.icon} aria-hidden="true" />{t.label}
                   {/* Paperwork not yet signed by this employer stays visible
                       from every tab, now that it has a tab of its own —
                       including items not ready to sign yet. */}
                   {t.key === 'documents' && unsignedNote && (
                     <span
                       data-testid="documents-unsigned-dot"
-                      className="ml-0.5 h-2 w-2 shrink-0 rounded-full bg-red-500 ring-2 ring-white/70"
+                      className={styles.unsignedDot}
                       title={unsignedNote}
                     >
                       <span className="sr-only">{unsignedNote}</span>
@@ -197,6 +196,7 @@ function EmployerLearnerContent() {
               ))}
             </nav>
 
+            <div className={styles.tabContent}>
             {tab === 'overview' && <EmployerLearningOverview key={`${employerId}:${kind}:${learnerId}`}
               employerId={employerId} kind={kind} learnerId={learnerId} />}
 
@@ -210,7 +210,7 @@ function EmployerLearnerContent() {
             {tab === 'documents' && (
               <div className="space-y-4">
                 {outstanding > 0 && (
-                  <div className="rounded-xl border border-amber-300/70 bg-amber-50/70 px-4 py-3 flex items-center gap-2.5">
+                  <div className={styles.signatureNotice}>
                     <i className="ri-error-warning-line text-amber-600 shrink-0" />
                     <p className="text-[13px] text-amber-900">
                       <strong>{outstanding} document{outstanding === 1 ? '' : 's'}</strong> need your signature.
@@ -242,10 +242,14 @@ function EmployerLearnerContent() {
             )}
 
             {tab === 'ksbs' && !planError && (
-              <KsbProgressBody real={plan} loading={planPending} showHero={false} audience="observer" />
+              <div className={styles.ksbContent}>
+                <KsbProgressBody real={plan} loading={planPending} showHero={false} audience="observer" />
+              </div>
             )}
+            </div>
           </>
         )}
+        </div>
       </PageContainer>
 
       {signingActions.preview && <EmployerDocumentPreview employerId={employerId}
