@@ -167,7 +167,7 @@ function isMedia(value: unknown): value is CoachingMedia {
       && optionalInstant(value.check.checkedAt)
       && (value.check.reason === undefined || ['no-teams-link', 'no-recordings-returned'].includes(String(value.check.reason)))))
     && value.recordings.every(row => object(row) && typeof row.id === 'string' && states.includes(String(row.state))
-      && (row.source === undefined || [null, 'microsoft'].includes(row.source as string | null)))
+      && (row.source === undefined || [null, 'microsoft', 'bunny'].includes(row.source as string | null)))
     && value.readyCount === value.recordings.filter(row => row.state === 'ready').length;
 }
 function isMeeting(row: unknown): row is CoachingMeeting {

@@ -19,8 +19,55 @@ const roster = (): CoachLearners => ({ ...query, coach: { email: 'coach@example.
     startsAt: '2026-10-20T09:00:00Z', endsAt: '2026-10-20T10:00:00Z', reviewCompletedAt: null, recordUpdatedAt: null, periodBasis: 'session' }] }],
   coverage: { offset: 0, totalLearners: 1, nextOffset: null } });
 
+const recordedMeeting = (source: 'bunny' | 'microsoft' | null | undefined): CoachingCalendar['meetings'][number] => ({
+  meetingId: 'a'.repeat(32), calendarEventId: 'calendar-event', coachEmail: 'coach@example.invalid',
+  eventKey: null, candidateEventKeys: [], learnerIds: [], family: null,
+  startsAt: '2026-10-20T09:00:00Z', endsAt: '2026-10-20T10:00:00Z', phase: 'ended', match: 'external',
+  readyToAction: true, recordingsReference: 'saved-reference',
+  media: { state: 'ready', readyCount: 1, recordings: [{ id: 'recording', state: 'ready', source }] },
+});
+
 describe('Coaching calendar client', () => {
   beforeEach(() => { clearAllCachedResources(); vi.mocked(learningFetch).mockReset(); vi.mocked(coachFetch).mockReset(); });
+
+  it.each(['bunny', 'microsoft', null, undefined] as const)('loads a calendar containing a %s recording source', async source => {
+    const meeting = recordedMeeting(source);
+    const sync = { pending: false, pendingCalendars: 0, pendingEvidence: 0, lastSuccessfulAt: null,
+      directoryHash: 'directory', directoryUnchanged: false };
+    vi.mocked(learningFetch).mockResolvedValueOnce(response(page({ meetings: [meeting], sync })));
+    const result = await loadCoachingCalendar(query, undefined, { background: true });
+    expect(result.meetings).toEqual([meeting]);
+    expect(result.meetings[0].readyToAction).toBe(true);
+  });
+
+  it.each(['bunny', 'microsoft', null, undefined] as const)('loads linked meeting playback metadata from a %s recording source', async source => {
+    const meeting = recordedMeeting(source);
+    vi.mocked(learningFetch).mockResolvedValueOnce(response({ meeting,
+      coach: { email: meeting.coachEmail, name: 'Coach' }, learners: [], syncedAt: '2026-10-20T12:00:00Z' }));
+    const result = await loadLinkedCoachingMeeting(meeting.meetingId!, '2026-10-20', 'UTC');
+    expect(result.meeting.media).toEqual(meeting.media);
+  });
+
+  it.each(['bunny', 'microsoft', null, undefined] as const)('loads session details containing a %s recording source', async source => {
+    const media = recordedMeeting(source).media;
+    vi.mocked(learningFetch).mockResolvedValueOnce(response({ eventKey: 'event', media, partial: false,
+      attendance: { state: 'pending', reportCount: 0, rows: [] } }));
+    expect((await loadCoachingSession('event')).media).toEqual(media);
+  });
+
+  it('rejects an unsupported recording source in calendars, linked meetings and details', async () => {
+    const saved = recordedMeeting('bunny');
+    const media = { ...saved.media, recordings: [{ ...saved.media.recordings[0], source: 'unsupported-provider' }] };
+    const meeting = { ...saved, media };
+    vi.mocked(learningFetch).mockResolvedValueOnce(response({ ...page(), meetings: [meeting] }));
+    await expect(loadCoachingCalendar(query)).rejects.toThrow('could not be loaded');
+    vi.mocked(learningFetch).mockResolvedValueOnce(response({ meeting,
+      coach: { email: saved.coachEmail, name: 'Coach' }, learners: [], syncedAt: '2026-10-20T12:00:00Z' }));
+    await expect(loadLinkedCoachingMeeting(saved.meetingId!, '2026-10-20', 'UTC')).rejects.toThrow('different or invalid');
+    vi.mocked(learningFetch).mockResolvedValueOnce(response({ eventKey: 'event', media, partial: false,
+      attendance: { state: 'pending', reportCount: 0, rows: [] } }));
+    await expect(loadCoachingSession('event')).rejects.toThrow('could not be loaded');
+  });
 
   it('reads the coach directory only without starting a background calendar request', async () => {
     vi.mocked(learningFetch).mockResolvedValueOnce(response(page()));
