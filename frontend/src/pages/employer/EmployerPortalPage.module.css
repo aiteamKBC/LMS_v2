@@ -244,7 +244,15 @@ button.statCard:hover { border-color: var(--tone); box-shadow: 0 7px 22px #45208
 .learnerModulesHeading > strong { padding: 2px 8px; border-radius: var(--lms-radius, 16px); background: var(--employer-soft); }
 .learnerModulesName { margin: 2px 0 10px; color: var(--employer-muted); font-size: 12px; }
 .learnerModules { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; border-radius: 8px; }
-.learnerModules li { padding: 8px 10px; border: 1px solid var(--employer-line); border-radius: var(--lms-radius, 16px); background: var(--employer-soft); line-height: 1.45; overflow-wrap: anywhere; }
+.learnerModules li { min-width: 0; }
+.learnerModules li > button { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; padding: 8px 10px; border: 1px solid var(--employer-line); border-radius: var(--lms-radius, 16px); background: var(--employer-soft); color: var(--employer-ink); font: inherit; text-align: start; line-height: 1.45; overflow-wrap: anywhere; cursor: pointer; }
+.learnerModules li > button:hover, .learnerModules li > button[aria-pressed='true'] { border-color: var(--employer-primary); color: var(--employer-primary); background: var(--employer-surface); }
+.learnerModules li > button:focus-visible { outline: 2px solid var(--employer-primary); outline-offset: 2px; }
+.learnerModules li > button > svg { flex-shrink: 0; }
+.page .learnerModulesTrigger { max-width: 130px; }
+.learnerModulesTrigger > svg, .learnerModuleCount { flex-shrink: 0; }
+.learnerModuleSelection { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.learnerModuleScope { display: block; max-width: 160px; margin-bottom: 6px; color: var(--employer-muted); font-size: 10px; }
 .assessmentLink { display: inline-block; margin-top: 6px; color: var(--purple); font-size: .85em; }
 .progressCell strong { display: block; margin-bottom: 6px; font-size: 12px; }
 .progressCell > small + small { display: block; margin-top: 2px; }
@@ -650,6 +658,17 @@ button.statCard:hover { border-color: var(--tone); box-shadow: 0 7px 22px #45208
   .page * { scroll-behavior: auto !important; transition: none !important; }
 }
 
+.employerActionsGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; gap: 20px; min-width: 0; }
+.employerActionsGrid > .panel { display: flex; flex-direction: column; min-width: 0; }
+.employerActionsGrid .meetingList { max-height: 420px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; align-content: start; }
+.employerActionsGrid .meetingItem { flex-wrap: wrap; gap: 12px; }
+.employerActionsGrid .meetingActions { margin-inline-start: auto; }
+.signatureStatus { display: inline-flex; align-items: center; gap: 6px; width: fit-content; color: var(--employer-gold-ink); font-size: 12px; font-weight: 650; }
+.signatureEmpty { display: flex; align-items: center; gap: 8px; color: var(--employer-success); line-height: 1.6; }
+.page .allDocumentsLink { align-self: flex-start; margin: auto 20px 16px; }
+@container (max-width: 900px) {
+  .employerActionsGrid { grid-template-columns: minmax(0, 1fr); }
+}
 .meetingList { display: grid; gap: 12px; padding: 16px 20px; }
 .meetingItem {
   position: relative;

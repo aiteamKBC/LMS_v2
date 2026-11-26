@@ -44,6 +44,14 @@ export type EmployerProgressReviews = {
   definitions: Record<string, LearnerReviewDefinition | null>;
 };
 
+export type EmployerMcmTimelineEvent = Pick<LearnerCalendarEvent,
+  'eventKey' | 'sequence' | 'occurrenceNumber' | 'status' | 'bookingStatus' | 'date' | 'targetDate' | 'scheduledDate'>;
+
+export function fetchEmployerMcmTimeline(employerId: string, kind: LearnerKind, learnerId: string, signal?: AbortSignal) {
+  return request<{ events: EmployerMcmTimelineEvent[] }>(
+    `${BASE}/${employerId}/learner/${kind}/${learnerId}/mcm-timeline/`, { signal });
+}
+
 export function fetchEmployerProgressReviews(employerId: string, kind: LearnerKind, learnerId: string, signal?: AbortSignal) {
   return request<EmployerProgressReviews>(`${BASE}/${employerId}/learner/${kind}/${learnerId}/progress-reviews/`, { signal });
 }

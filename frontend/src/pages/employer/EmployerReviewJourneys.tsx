@@ -4,6 +4,7 @@ import { ArrowRight, BookOpen, CalendarDays, Check, Circle, CircleAlert, Clipboa
 import type { EmployerLearnerCard } from '@/api/employerPortal';
 import { formatReviewDate, isGatewayReview, learnerHref, learnerReviewHref, learnerKey, nextReview, orderReviewJourney, reviewDate, reviewLabels, reviewState, type DashboardReviews } from './employerDashboardData';
 import styles from './EmployerReviewJourneys.module.css';
+import { EmployerMcmTimeline } from './EmployerMcmTimeline';
 import { isAptemReview } from '@/pages/learner/progress-reviews/reviewPresentation';
 import selection from '@/pages/learner/reviews/reviewMarkerSelection.module.css';
 import { completedReviewTimelineStatus, reviewTimelineStatus, type TimelineStatus } from '@/pages/learner/reviews/reviewTimelineStatus';
@@ -71,76 +72,78 @@ export function EmployerReviewJourneys({ employerId, learners, totalLearners, re
         const href = learnerHref(employerId, learner, 'reviews');
         const initials = learner.name.split(/\s+/).filter(Boolean).slice(0, 2).map(word => word[0]).join('').toUpperCase();
         return (
-          <article key={learnerKey(learner)} className={styles.learner} aria-label={`${learner.name} reviews`}>
-            <header className={styles.learnerHeader}>
-              <div className={styles.identity}>
-                <span className={styles.avatar} aria-hidden>{initials || '?'}</span>
-                <div>
-                  <h3><Link to={href}>{learner.name}</Link></h3>
-                  <div className={styles.metadata}>
-                    <span><BookOpen size={14} aria-hidden />{learner.programme || 'Programme not assigned'}</span>
-                    <span><Layers size={14} aria-hidden />{learner.cohort || 'Cohort not assigned'}</span>
+          <div key={learnerKey(learner)} className={styles.learnerJourneys}>
+            <article className={styles.learner} aria-label={`${learner.name} reviews`}>
+              <header className={styles.learnerHeader}>
+                <div className={styles.identity}>
+                  <span className={styles.avatar} aria-hidden>{initials || '?'}</span>
+                  <div>
+                    <h3><Link to={href}>{learner.name}</Link></h3>
+                    <div className={styles.metadata}>
+                      <span><BookOpen size={14} aria-hidden />{learner.programme || 'Programme not assigned'}</span>
+                      <span><Layers size={14} aria-hidden />{learner.cohort || 'Cohort not assigned'}</span>
+                    </div>
                   </div>
                 </div>
-              </div>
-              <div className={styles.actions}>
-                {ready && events.length > 0 && <span className={styles.completedNotice}><Check size={14} aria-hidden />{completed} of {events.length} completed</span>}
-                {ready && signatures > 0 && <span className={styles.signatureNotice}><ClipboardPenLine size={15} aria-hidden />{signatures} awaiting your signature</span>}
-                <Link className={styles.openButton} to={href} aria-label={`View reviews for ${learner.name}`}>
-                  View reviews{ready ? ` (${events.length})` : ''}<ArrowRight size={16} aria-hidden />
-                </Link>
-              </div>
-            </header>
+                <div className={styles.actions}>
+                  {ready && events.length > 0 && <span className={styles.completedNotice}><Check size={14} aria-hidden />{completed} of {events.length} completed</span>}
+                  {ready && signatures > 0 && <span className={styles.signatureNotice}><ClipboardPenLine size={15} aria-hidden />{signatures} awaiting your signature</span>}
+                  <Link className={styles.openButton} to={href} aria-label={`View reviews for ${learner.name}`}>
+                    View reviews{ready ? ` (${events.length})` : ''}<ArrowRight size={16} aria-hidden />
+                  </Link>
+                </div>
+              </header>
 
-            {ready ? events.length ? (
-              <>
-                <div className={styles.timelineHeader}><div><p className={styles.eyebrow}>YOUR LEARNER'S REVIEW JOURNEY</p><h4>Progress review timeline</h4></div><span className={styles.count}>{events.length} {events.length === 1 ? 'review' : 'reviews'}</span></div>
-                <div className={styles.timelineScroll} role="region" aria-label={`${learner.name} review timeline`} tabIndex={0}>
-                  <ol className={styles.timeline}>
-                    {events.map((event, index) => {
-                      const state = reviewState(event);
-                      const tone = timelineStatus(event);
-                      const date = reviewDate(event);
-                      const StatusIcon = timelineStatusIcons[tone];
-                      const title = isGatewayReview(event) ? event.title || 'Gateway Review' : `Review ${index + 1}`;
-                      return (
-                        <li key={event.eventKey} data-status={state} data-tone={tone} data-active={event.eventKey === upcomingKey} data-selection={isAptemReview(event) ? 'marker' : undefined}>
-                          <Link to={learnerReviewHref(employerId, learner, event.eventKey)} className={`${styles.review} ${selection.control}`} data-selection={isAptemReview(event) ? 'marker' : undefined} aria-current={event.eventKey === upcomingKey ? 'step' : undefined} aria-label={`${learner.name}: ${title}, ${reviewLabels[state]}, ${formatReviewDate(date)}`}>
-                            <span className={styles.date}>{date ? formatReviewDate(date) : 'Date to confirm'}</span>
-                            <span className={`${styles.marker} ${selection.marker}`}><StatusIcon size={14} strokeWidth={2.4} aria-hidden /></span>
-                            <span className={styles.title}>{title}</span>
-                          </Link>
-                        </li>
-                      );
-                    })}
-                  </ol>
+              <div className={styles.timelineHeader}>
+                <div><p className={styles.eyebrow}>YOUR LEARNER'S REVIEW JOURNEY</p><h4>Progress review timeline</h4></div>
+                <div className={styles.timelineMeta}>
+                  <p className={styles.attendeeNote}><Users size={15} aria-hidden /><span>Attendees: <strong>Learner, Coach and Employer.</strong></span></p>
+                  {ready && <span className={styles.count}>{events.length} {events.length === 1 ? 'review' : 'reviews'}</span>}
                 </div>
-                <div className={styles.attendanceGuide}>
-                  <h4><Users size={16} aria-hidden />Who should attend?</h4>
-                  <div className={styles.attendanceTables}>
-                    {[{ title: 'Monthly coaching meeting (MCM)', employerRequired: false },
-                      { title: 'Progress review (PR)', employerRequired: true }].map(meeting => (
-                      <div key={meeting.title} className={styles.attendanceTable}>
-                        <table>
-                          <caption>{meeting.title}</caption>
-                          <thead><tr><th scope="col">Attendee</th><th scope="col">Attendance</th></tr></thead>
-                          <tbody>
-                            <tr><th scope="row">Learner (employee)</th><td><span className={styles.requiredAttendance}><Check size={13} aria-hidden />Required</span></td></tr>
-                            <tr><th scope="row">Coach</th><td><span className={styles.requiredAttendance}><Check size={13} aria-hidden />Required</span></td></tr>
-                            <tr><th scope="row">Employer / line manager</th><td>{meeting.employerRequired
-                              ? <span className={styles.requiredAttendance}><Check size={13} aria-hidden />Required</span>
-                              : <span className={styles.optionalAttendance}>Not required</span>}</td></tr>
-                          </tbody>
-                        </table>
-                      </div>
-                    ))}
+              </div>
+              {ready ? events.length ? (
+                <>
+                  <div className={styles.timelineScroll} role="region" aria-label={`${learner.name} review timeline`} tabIndex={0}>
+                    <ol className={styles.timeline}>
+                      {events.map((event, index) => {
+                        const state = reviewState(event);
+                        const tone = timelineStatus(event);
+                        const date = reviewDate(event);
+                        const StatusIcon = timelineStatusIcons[tone];
+                        const title = isGatewayReview(event) ? event.title || 'Gateway Review' : `Review ${index + 1}`;
+                        return (
+                          <li key={event.eventKey} data-status={state} data-tone={tone} data-active={event.eventKey === upcomingKey} data-selection={isAptemReview(event) ? 'marker' : undefined}>
+                            <Link to={learnerReviewHref(employerId, learner, event.eventKey)} className={`${styles.review} ${selection.control}`} data-selection={isAptemReview(event) ? 'marker' : undefined} aria-current={event.eventKey === upcomingKey ? 'step' : undefined} aria-label={`${learner.name}: ${title}, ${reviewLabels[state]}, ${formatReviewDate(date)}`}>
+                              <span className={styles.date}>{date ? formatReviewDate(date) : 'Date to confirm'}</span>
+                              <span className={`${styles.marker} ${selection.marker}`}><StatusIcon size={14} strokeWidth={2.4} aria-hidden /></span>
+                              <span className={styles.title}>{title}</span>
+                            </Link>
+                          </li>
+                        );
+                      })}
+                    </ol>
+                  </div>
+                </>
+              ) : <p className={styles.notice}><CalendarDays size={19} aria-hidden />No progress reviews planned yet.</p>
+                : resource?.status === 'error' ? <div className={styles.error} role="alert"><CircleAlert size={20} aria-hidden /><p>Reviews could not be loaded for this learner.</p><button type="button" className={styles.retry} onClick={onRetry}>Retry reviews</button></div>
+                  : <p className={styles.notice} ><LoadingSkeleton label="Loading progress reviews…" variant="rows" /></p>}
+            </article>
+            <article className={styles.learner} aria-label={`${learner.name} coaching journey`}>
+              <header className={styles.learnerHeader}>
+                <div className={styles.identity}>
+                  <span className={styles.avatar} aria-hidden>{initials || '?'}</span>
+                  <div>
+                    <h3>{learner.name}</h3>
+                    <div className={styles.metadata}>
+                      <span><BookOpen size={14} aria-hidden />{learner.programme || 'Programme not assigned'}</span>
+                      <span><Layers size={14} aria-hidden />{learner.cohort || 'Cohort not assigned'}</span>
+                    </div>
                   </div>
                 </div>
-              </>
-            ) : <p className={styles.notice}><CalendarDays size={19} aria-hidden />No progress reviews planned yet.</p>
-              : resource?.status === 'error' ? <div className={styles.error} role="alert"><CircleAlert size={20} aria-hidden /><p>Reviews could not be loaded for this learner.</p><button type="button" className={styles.retry} onClick={onRetry}>Retry reviews</button></div>
-                : <p className={styles.notice} ><LoadingSkeleton label="Loading progress reviews…" variant="rows" /></p>}
-          </article>
+              </header>
+              <EmployerMcmTimeline employerId={employerId} learner={learner} />
+            </article>
+          </div>
         );
       })}
     </section>

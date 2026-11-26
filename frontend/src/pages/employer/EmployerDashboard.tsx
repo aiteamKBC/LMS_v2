@@ -9,6 +9,7 @@ import { formatReviewDate, learnerHref, learnerKey, londonToday, nextReview, rel
 import styles from './EmployerPortalPage.module.css';
 import { EmployerReviewJourneys } from './EmployerReviewJourneys';
 import { EmployerMeetings } from './EmployerMeetings';
+import { EmployerSignatures } from './EmployerSignatures';
 import { EmployerJourneyTimeline } from './EmployerJourneyTimeline';
 import { EmployerLearnerAssessmentCell } from './EmployerLearnerAssessmentCell';
 import { learnerRecordedDates } from '@/lib/learnerRecordedDates';
@@ -18,6 +19,7 @@ import { EmployerPerformanceCards } from './EmployerPerformance';
 import { EmployerModuleColumnChart } from './EmployerModuleColumnChart';
 import { EmployerModuleProgressTable } from './EmployerModuleProgressTable';
 import { EmployerStatDialog, type StatDialogRow } from './EmployerStatDialog';
+import { finite, ratio } from './employerPerformanceData';
 
 /**
  * `home` is the whole overview. The other two are the sidebar's own sections,
@@ -109,6 +111,7 @@ export function EmployerDashboard({ data, metrics, attendance: attendanceByLearn
   const [programme, setProgramme] = useState(paramProgramme);
   const [cohort, setCohort] = useState('');
   const [moduleFilter, setModuleFilter] = useState('');
+  const [learnerModules, setLearnerModules] = useState<Record<string, string>>({});
   const [progress, setProgress] = useState('');
   const [status, setStatus] = useState(paramStatus);
   const [upcoming, setUpcoming] = useState(paramUpcoming);
@@ -127,6 +130,7 @@ export function EmployerDashboard({ data, metrics, attendance: attendanceByLearn
   const clearFilters = () => {
     setQuery(''); setProgress(''); setProgramme(''); setCohort(''); setModuleFilter(''); setStatus(''); setUpcoming('any'); setPage(1);
     setTableNameFilter('');
+    setLearnerModules({});
     // Keep the address honest: a cleared form must not be reapplied on reload.
     if (params.toString()) setParams({}, { replace: true });
   };
@@ -225,6 +229,12 @@ export function EmployerDashboard({ data, metrics, attendance: attendanceByLearn
         const dates = learnerRecordedDates(learner);
         const learningResource = learning.records[learnerKey(learner)];
         const modules = [...new Map((learningResource?.data?.programme || []).map(module => [module.id, module])).values()];
+        const selectionKey = `${employerId}:${learnerKey(learner)}`;
+        const selectedModule = modules.find(module => module.id === learnerModules[selectionKey]);
+        const moduleFacts = selectedModule
+          ? learningResource?.data?.modules.find(module => module.id === selectedModule.id) : undefined;
+        const moduleAttendance = moduleFacts?.attendance;
+        const moduleAttendancePercent = ratio(moduleAttendance?.attended, moduleAttendance?.total);
         const resource = reviews[learnerKey(learner)];
         const event = nextReview(resource?.data, today);
         const date = event ? reviewDate(event) : null;
@@ -257,24 +267,41 @@ export function EmployerDashboard({ data, metrics, attendance: attendanceByLearn
             ? <LoadingSkeleton label={`Loading ${learner.name} modules`} variant="text" />
             : learningResource.status === 'error' || !learningResource.data
               ? <span className={styles.unavailable}>Not available</span>
-              : modules.length ? <FloatingMenu label={`View ${learner.name} modules (${modules.length})`} panelLabel={`${learner.name} modules`}
-                trigger={<><span className={styles.learnerModuleCount}>{modules.length}</span><span>{modules.length === 1 ? 'module' : 'modules'}</span><ChevronDown size={15} aria-hidden="true" /></>}
+              : modules.length ? <FloatingMenu label={`View ${learner.name} modules (${modules.length})${selectedModule ? `: ${selectedModule.title}` : ''}`} panelLabel={`${learner.name} modules`}
+                trigger={<><span className={styles.learnerModuleCount}>{modules.length}</span><span className={styles.learnerModuleSelection}>{selectedModule?.title || (modules.length === 1 ? 'module' : 'modules')}</span><ChevronDown size={15} aria-hidden="true" /></>}
                 triggerClassName={styles.learnerModulesTrigger} panelClassName={styles.learnerModulesPanel} align="start" maxHeight={360}>
+                {close => <>
                 <div className={styles.learnerModulesHeading}><span><BookOpen size={17} aria-hidden="true" />Modules</span><strong>{modules.length}</strong></div>
                 <p className={styles.learnerModulesName}>{learner.name}</p>
-                <ul className={styles.learnerModules} aria-label={`${learner.name} modules`} tabIndex={0}>{modules.map(module => <li key={module.id}>{module.title}</li>)}</ul>
+                <p className={styles.learnerModulesName}>Select a module to view its assignments and attendance.</p>
+                <ul className={styles.learnerModules} aria-label={`${learner.name} modules`}>
+                  {[{ id: '', title: 'All modules' }, ...modules].map(module => <li key={module.id}>
+                    <button type="button" aria-pressed={(selectedModule?.id || '') === module.id}
+                      onClick={() => { setLearnerModules(current => ({ ...current, [selectionKey]: module.id })); close(); }}>
+                      <span>{module.title}</span>{(selectedModule?.id || '') === module.id && <CircleCheck size={15} aria-hidden="true" />}
+                    </button>
+                  </li>)}
+                </ul>
+                </>}
               </FloatingMenu>
                 : <span className={styles.unavailable} title="No modules assigned">0 modules</span>}</td>
           <td>{learner.cohort || 'Not assigned'}</td>
           <td className={styles.learnerDate}>{dates.start ? formatProgrammeStartDate(dates.start) : <span className={styles.unavailable}>Not recorded</span>}</td>
           <td className={styles.learnerDate}>{dates.end ? formatProgrammeStartDate(dates.end) : <span className={styles.unavailable}>Not recorded</span>}</td>
-          <EmployerLearnerAssessmentCell employerId={employerId} learner={learner} resource={learning.records[learnerKey(learner)]} />
+          <EmployerLearnerAssessmentCell employerId={employerId} learner={learner} resource={learningResource} moduleId={selectedModule?.id} />
           <td><div className={styles.progressCell}>
             {percent != null ? <><strong>{percentLabel(percent)}</strong><ProgressBar value={Math.max(0, Math.min(100, percent))} label={`${learner.name} OTJ progress`} target={target} /></>
               : <span className={styles.unavailable}>Not available</span>}
             {otjh && <small title="Completed OTJ hours / total planned hours">{otjh.actual == null ? '—' : progressNumber.format(otjh.actual)} / {otjh.planned == null ? '—' : progressNumber.format(otjh.planned)} OTJ hours</small>}
           </div></td>
-          <td>{attendancePercent != null ? <div className={styles.progressCell} title={attendanceHelp}>
+          <td>{selectedModule ? moduleAttendancePercent != null ? <div className={styles.progressCell} title="Recorded sessions attended / total recorded sessions for the selected module">
+            <small className={styles.learnerModuleScope}>{selectedModule.title}</small>
+            <strong>{percentLabel(moduleAttendancePercent)}</strong>
+            <ProgressBar value={moduleAttendancePercent} label={`${learner.name} · ${selectedModule.title} attendance`} />
+            <small>{progressNumber.format(moduleAttendance!.attended)} / {progressNumber.format(moduleAttendance!.total)} sessions</small>
+          </div> : <span className={styles.unavailable}>{moduleFacts && (moduleAttendance === null || (moduleAttendance && finite(moduleAttendance.total) && moduleAttendance.total === 0))
+            ? 'No attendance records yet' : 'Not available'}</span>
+          : attendancePercent != null ? <div className={styles.progressCell} title={attendanceHelp}>
             <div className={styles.attendanceHeading}><strong>{percentLabel(attendancePercent)}</strong>
               <span className={styles.attendanceMode}>{attendanceMode}</span></div>
             <ProgressBar value={attendancePercent} label={`${learner.name} attendance`} />
@@ -346,7 +373,10 @@ export function EmployerDashboard({ data, metrics, attendance: attendanceByLearn
     {isHome && <>{learnerFilters}<EmployerPerformanceCards employerId={employerId} learners={filtered} records={learning.records} attendance={attendanceByLearner} reviews={reviews} /></>}
 
     {(metrics.status === 'error' || reviewsFailed || attendanceFailed) && <div className={styles.dataNotice} role="alert"><CircleAlert size={18} /><p>{metrics.status === 'error' && 'Learner status could not be loaded. '}{attendanceFailed && 'Some attendance records could not be loaded. '}{reviewsFailed && 'Some progress reviews could not be loaded. '}Available records are still shown.</p><button type="button" onClick={onRetry}>Try again</button></div>}
-    {(isHome || view === 'reviews') && <EmployerMeetings employerId={employerId} learners={learners} reviews={reviews} today={today} returnState={location.state} />}
+    {(isHome || view === 'reviews') && <div className={styles.employerActionsGrid}>
+      <EmployerMeetings employerId={employerId} learners={learners} reviews={reviews} today={today} returnState={location.state} />
+      <EmployerSignatures key={employerId} employerId={employerId} returnState={location.state} onSigned={onRetry} />
+    </div>}
     {isHome && <EmployerJourneyTimeline employerId={employerId} learners={learners} filtered={filtered} records={learning.records} onRetry={learning.retry} moduleId={moduleFilter} />}
     {!isHome && learnerFilters}
     {isHome && moduleFilter && learners.some(learner => learning.records[learnerKey(learner)]?.status === 'error') && <div className={styles.dataNotice} role="alert"><CircleAlert size={18} /><p>Some module records could not be loaded. Only learners confirmed in the selected module are shown.</p><button type="button" onClick={learning.retry}>Retry module membership</button></div>}

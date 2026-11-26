@@ -61,10 +61,6 @@
 .unplacedLearners { display: flex; flex-wrap: wrap; gap: 8px; padding: 14px 24px 0; }
 .unplacedLearners a { display: flex; flex-direction: column; gap: 4px; padding: 8px 11px; border: 1px solid var(--employer-line); border-radius: 8px; color: var(--employer-ink); text-decoration: none; font-size: 10px; }
 .unplacedLearners a span { color: var(--employer-muted); }
-.footer { display: flex; justify-content: space-between; gap: 18px; flex-wrap: wrap; padding: 16px 24px; background: var(--employer-surface); }
-.legend { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; font-size: 10px; color: var(--employer-ink); }
-.legend > span { display: flex; align-items: center; gap: 5px; }
-.footer p { max-width: 520px; margin: 0; font-size: 10px; line-height: 1.7; color: var(--employer-muted); }
 .notice { display: flex; align-items: center; gap: 8px; margin: 0 24px 16px; padding: 10px; border-radius: 8px; background: var(--employer-warning-soft); color: var(--employer-warning); font-size: 11px; }
 .notice p { flex: 1; margin: 0; }
 .notice button { padding: 4px 9px; border: 1px solid currentColor; border-radius: 5px; background: transparent; color: inherit; cursor: pointer; }
@@ -100,6 +96,4 @@
   .arrows { margin-left: auto; }
   .intro { padding: 0 14px 14px; }
   .unplacedLearners { padding: 14px 14px 0; }
-  .footer { padding: 14px; gap: 12px; }
-  .legend { gap: 10px; }
 }

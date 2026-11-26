@@ -704,10 +704,11 @@ def _read_employer_module_progress(source, profile):
     """Read one learner's catalogue rollup in an isolated worker."""
     from django.db import close_old_connections, connections
     from .module_progress import canonical_module_progress
+    from .employer_learning import without_free_courses
 
     close_old_connections()
     try:
-        return canonical_module_progress(source, profile)
+        return without_free_courses(canonical_module_progress(source, profile))
     finally:
         connections.close_all()
 
@@ -1472,6 +1473,38 @@ def _employer_progress_review_rows(learner, event_key=None, month=None):
 
 @csrf_exempt
 @employer_or_staff()
+def employer_portal_mcm_timeline(request, employer_id, kind, learner_id):
+    """Dates/status only for an owned learner's coach-and-learner meetings."""
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+    learner, err = _owned_learner(employer_id, kind, learner_id)
+    if err is not None:
+        return err
+    from .calendar import _calendar_profile, coaching_events_for_learner
+
+    try:
+        profile = _calendar_profile(learner, learner.pk)
+        events = coaching_events_for_learner(
+            learner, profile, only_sources={"mcr"}, dates_only=True, header_only=True,
+        )
+        # Explicit projection: no meeting links, notes, answers, forms or artifacts.
+        fields = ("eventKey", "sequence", "occurrenceNumber", "status", "bookingStatus",
+                  "date", "targetDate", "scheduledDate")
+        rows = [{key: event.get(key) for key in fields} for event in events
+                if review_event_category(event) == "mcr"
+                and not any(_s(event.get(field)).lower().replace("_", "-").replace(" ", "-")
+                            in {"cancelled", "deleted", "superseded"}
+                            for field in ("status", "bookingStatus"))]
+    except DatabaseError:
+        logger.exception("employer_portal_mcm_timeline: dates unavailable for %s", learner.pk)
+        return _error("Could not load monthly coaching meetings. Please try again.", 503)
+    response = JsonResponse({"events": rows})
+    response["Cache-Control"] = "private, no-store"
+    return response
+
+
+@csrf_exempt
+@employer_or_staff()
 def employer_portal_progress_reviews(request, employer_id, kind, learner_id, event_key=None, as_pdf=False):
     """Same programme review source as the learner, with employer visibility."""
     if request.method != "GET":
@@ -1676,10 +1709,15 @@ def employer_portal_monthly_logs(request, employer_id, kind, learner_id, month=N
 
 #: A learner's handed-in assignments: every status except an unsent draft.
 _SUBMITTED_ASSIGNMENTS_SQL = """
-    select activity_id, activity_title, module_title, week_title, status, submitted_at, date_completed
-    from "Learner"."learning_reflection_submissions"
-    where learner_kind = %s and learner_id = %s and activity_type = 'assignment' and status <> 'draft'
-    order by coalesce(submitted_at, date_completed) desc nulls last, activity_title
+    select s.activity_id, s.activity_title, s.module_title, s.week_title, s.status, s.submitted_at, s.date_completed
+    from "Learner"."learning_reflection_submissions" s
+    where s.learner_kind = %s and s.learner_id = %s and s.activity_type = 'assignment' and s.status <> 'draft'
+      and not exists (
+        select 1 from curriculum.components c
+        join curriculum.modules m on m.module_catalogue_id = c.module_catalogue_id
+        where c.id = s.activity_id and {free_course_module}
+      )
+    order by coalesce(s.submitted_at, s.date_completed) desc nulls last, s.activity_title
 """
 
 #: Scanned-clean uploads, keyed by the activity they were uploaded to.
@@ -1704,9 +1742,12 @@ def _learner_assignments(kind, learner):
     from django.db import connections
 
     from . import legacy_assignments
+    from .employer_course_visibility import free_course_module_sql
+    from curriculum_api.learning_storage import read_sql
 
     with connections["enrolment"].cursor() as cur:
-        cur.execute(_SUBMITTED_ASSIGNMENTS_SQL, [kind, str(learner.pk)])
+        cur.execute(read_sql(_SUBMITTED_ASSIGNMENTS_SQL.format(
+            free_course_module=free_course_module_sql(cur.db)), cur.db), [kind, str(learner.pk)])
         submissions = cur.fetchall()
         files_by_activity = {}
         activity_ids = [row[0] for row in submissions]

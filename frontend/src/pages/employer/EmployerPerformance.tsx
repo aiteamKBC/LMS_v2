@@ -39,17 +39,17 @@ export function EmployerPerformanceCards({ employerId, learners, records, attend
         <span className={styles.label}>{card.label}</span><strong>{card.pending && card.value === 'Unavailable' ? 'Loading…' : card.value}</strong>
         <small>{card.detail}</small>
       </button>)}
-      <article className={styles.card} data-tone="overall" aria-label={`Average performance: ${performanceValue}`} aria-busy={performanceLoading || undefined}>
-        <span className={styles.icon}><Sparkles size={20} aria-hidden="true" /></span>
-        <span className={styles.label}>Average performance</span><strong>{performanceLoading ? 'Loading…' : performanceValue}</strong>
-        <small>{performanceLoading ? 'Loading percentages' : summary.performance.available ? `Average of ${summary.performance.available} percentage indicators` : 'No percentages available'}</small>
-      </article>
       {cards.slice(3).map((card, index) => <button key={card.label} type="button" className={styles.card} data-tone={card.tone}
         onClick={() => setOpen(index + 3)} aria-label={`${card.label}: ${card.pending && card.value === 'Unavailable' ? 'Loading' : card.value}`} aria-busy={card.pending || undefined}>
         <span className={styles.icon}><card.icon size={20} aria-hidden="true" /></span>
         <span className={styles.label}>{card.label}</span><strong>{card.pending && card.value === 'Unavailable' ? 'Loading…' : card.value}</strong>
         <small>{card.detail}</small>
       </button>)}
+      <article className={styles.card} data-tone="overall" aria-label={`Average performance: ${performanceValue}`} aria-busy={performanceLoading || undefined}>
+        <span className={styles.icon}><Sparkles size={20} aria-hidden="true" /></span>
+        <span className={styles.label}>Average performance</span><strong>{performanceLoading ? 'Loading…' : performanceValue}</strong>
+        <small>{performanceLoading ? 'Loading performance' : summary.performance.available ? `Average of ${summary.performance.available} performance indicators` : 'No performance data available'}</small>
+      </article>
     </section>
     {selected && <EmployerStatDialog title={selected.label} caption="Progress for the learners in your current filters. Unavailable records are excluded from each indicator."
       emptyMessage="No learners to show." onClose={() => setOpen(null)} rows={summary.rows.map(row => {

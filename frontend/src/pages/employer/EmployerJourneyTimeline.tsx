@@ -243,7 +243,5 @@ export function EmployerJourneyTimeline({ employerId, learners, filtered, record
     </div> : !loading && <div className={styles.empty}><Route size={32} /><h3>{failed ? 'Journey data unavailable' : 'No modules to show'}</h3><p>{failed ? 'Retry to load learner journeys.' : 'Assigned modules will appear here. Try clearing your filters.'}</p></div>}
     {unplacedLearners.length > 0 && <div className={styles.unplacedLearners} aria-label="Learners awaiting journey data">{unplacedLearners.map(({ learner, status }) =>
       <Link key={learnerKey(learner)} to={learnerHref(employerId, learner, 'plan')} state={location.state}><strong>{learner.name}</strong><span>{status === 'error' ? 'Progress unavailable' : status === 'loading' ? 'Loading progress…' : 'No assigned modules'}</span></Link>)}</div>}
-    <footer className={styles.footer}><div className={styles.legend}><span><MapPin size={16} />One main position per learner</span><span><SkipForward size={15} />Skipped modules</span><span><GitFork size={15} />Parallel study below</span></div>
-      <p>Pins sit side by side; connectors point to recorded progress. Overlapping unfinished modules with progress appear on the parallel route with independent percentages. Earlier unfinished modules with later progress show as skipped. Undated modules do not imply either.</p></footer>
   </section>;
 }

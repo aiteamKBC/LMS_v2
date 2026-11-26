@@ -161,7 +161,7 @@ export function EmployerAssignmentsTab({ employerId, kind, learnerId, learnerNam
 
       {assignments.length === 0 ? (
         <p className="px-4 py-10 text-center text-[13px] text-foreground-400">
-          No assignments have been handed in yet. They appear here once {learnerName} submits one.
+          No assignments assigned yet
         </p>
       ) : (
         <div className="divide-y divide-foreground-100">

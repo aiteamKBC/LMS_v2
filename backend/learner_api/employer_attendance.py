@@ -15,14 +15,16 @@ def read_plan_session_target(source):
     from curriculum_api.learning_storage import read_sql
     from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
     from .attendance_assignments import assigned_module_ids
+    from .employer_course_visibility import free_course_module_sql
     from .training_plan_dashboard import is_educational_live_session_week, rows
 
     ids = assigned_module_ids(source)
     if not ids:
         return None
     with connections['enrolment'].cursor() as cur:
-        cur.execute(read_sql('''SELECT m.module_catalogue_id AS id,m.sessions_number
+        cur.execute(read_sql(f'''SELECT m.module_catalogue_id AS id,m.sessions_number
             FROM curriculum.modules m WHERE m.module_catalogue_id=ANY(%s)
+              AND NOT coalesce({free_course_module_sql(cur.db)}, false)
               AND (m.deleted_at IS NULL OR COALESCE(m.deleted_via_parent,'')<>'')''', cur.db), [ids])
         modules = {row['id']: row for row in rows(cur)}
         cur.execute(read_sql(f'''SELECT w.module_catalogue_id,w.title,count(c.id) AS sessions

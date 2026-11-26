@@ -34,7 +34,7 @@ export function employerPerformance(learners: EmployerLearnerCard[], records: Em
       hours: finite(learner.otjhProgress?.actual) ? learner.otjhProgress.actual : null,
       otj: ratio(learner.otjhProgress?.actual, learner.otjhProgress?.planned),
       ksb: ratio(payload?.metrics?.ksb?.completed, payload?.metrics?.ksb?.total),
-      reviews: payload?.reviews?.percent ?? null };
+      reviews: ratio(payload?.reviews?.completed, payload?.reviews?.total) };
   });
   const rates = [mean(rows.map(row => row.attendance)), mean(rows.map(row => row.assignments)),
     mean(rows.map(row => row.otj)), mean(rows.map(row => row.ksb)), mean(rows.map(row => row.reviews))];
@@ -43,8 +43,8 @@ export function employerPerformance(learners: EmployerLearnerCard[], records: Em
     return resource?.status === 'ready' ? resource.data || [] : [];
   });
   const submissions = rows.map(row => row.submittedAssignments).filter(finite);
-  // Only the percentage cards contribute; assignment and review cards show counts.
-  const performance = mean([rates[0].value, rates[2].value, rates[3].value]);
+  // Give all five indicators equal weight; assignment and review cards still show counts.
+  const performance = mean(rates.map(rate => rate.value));
   return { rows, rates, performance, hours: mean(rows.map(row => row.hours)),
     submissions: { value: submissions.length ? submissions.reduce((sum, value) => sum + value, 0) : null, available: submissions.length },
     reviewCount: events.length, completedReviews: events.filter(event => reviewState(event) === 'completed').length,
