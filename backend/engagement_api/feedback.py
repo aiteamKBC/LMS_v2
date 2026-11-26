@@ -1668,20 +1668,37 @@ def form_recipients(request, pk):
         form = FeedbackForm.objects.get(pk=pk)
     except FeedbackForm.DoesNotExist:
         return json_error('Feedback form not found.', status=404)
-    if request.GET.get('groupBy') == 'coach':
+    grouping = request.GET.get('groupBy')
+    if grouping in {'coach', 'day'}:
         if form.form_type != 'post_mcm_review':
-            return json_error('Coach grouping is available for Monthly Coaching Meeting feedback only.')
+            return json_error('This grouping is available for Monthly Coaching Meeting feedback only.')
         try:
             page = max(int(request.GET.get('page', 1)), 1)
             page_size = min(max(int(request.GET.get('pageSize', 25)), 1), 100)
         except (TypeError, ValueError):
             return json_error('Page values must be integers.')
+        if grouping == 'day':
+            from .recipient_daily import assignment_range, daily_mcm_recipients, report_date
+            try:
+                start, end = assignment_range(request.GET)
+                day = _clean(request.GET.get('day'))
+                if day:
+                    report_date(day)
+                day_page = max(int(request.GET.get('dayPage', 1)), 1)
+            except (TypeError, ValueError) as exc:
+                return json_error(str(exc))
         rows = _form_recipient_rows(form)
         # One scoped scalar lookup, including both learner types. No ownership,
         # review history, assignment or response records are changed by this view.
         learner_ids = {row['learnerId'] for row in rows}
         coaches = {str(learner['id']): learner for learner in
                    EnrolmentUser.all_learners.filter(id__in=learner_ids).values('id', 'coach_name', 'coach_email')}
+        if grouping == 'day':
+            return JsonResponse(daily_mcm_recipients(
+                rows, coaches, start=start, end=end, search=_clean(request.GET.get('search')),
+                coach_key=_clean(request.GET.get('coach')), day=day, day_page=day_page,
+                page=page, page_size=page_size,
+            ))
         from .recipient_coaches import group_mcm_recipients
         return JsonResponse(group_mcm_recipients(
             rows, coaches, search=_clean(request.GET.get('search')),
