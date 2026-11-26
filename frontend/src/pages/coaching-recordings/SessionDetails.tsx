@@ -28,7 +28,7 @@ export default function SessionDetails({ eventKey, analysisContext, analysisEven
   const [playing, setPlaying] = useState('');
   const [playError, setPlayError] = useState('');
   const [preparing, setPreparing] = useState(false);
-  const [playback, setPlayback] = useState<{ url: string; reference?: string; attempt: number } | null>(null);
+  const [playback, setPlayback] = useState<{ url: string; reference?: string; kind?: 'bunny'; attempt: number } | null>(null);
   const playbackRequest = useRef<AbortController | null>(null);
   const playbackAttempt = useRef(0);
   const video = useRef<HTMLVideoElement>(null);
@@ -59,7 +59,7 @@ export default function SessionDetails({ eventKey, analysisContext, analysisEven
     setPlaying(id); setPlayError(''); setPlayback(null); setPreparing(true); setCaptionError(false); setCaptionRetry(0);
     try {
       const result = await prepareRecordingPlayback({ eventKey: data.eventKey, recordingId: id,
-        reference, occurrence }, controller.signal);
+        reference, occurrence, ...(data.media.recordings.find(file => file.id === id)?.source === 'bunny' ? { source: 'bunny' as const } : {}) }, controller.signal);
       if (!controller.signal.aborted) setPlayback({ ...result, attempt });
     } catch (reason) {
       if (!controller.signal.aborted) setPlayError(reason instanceof Error ? reason.message : 'This recording could not be played. Retry playback.');
@@ -124,7 +124,10 @@ export default function SessionDetails({ eventKey, analysisContext, analysisEven
       })}</ul>
       {playing && data.media.recordings.some(file => file.id === playing && file.state === 'ready') && <div className="mt-4">
         {preparing && <p role="status" className="text-sm">Preparing recording…</p>}
-        {playback && <video ref={video} key={playback.attempt} aria-label="Coaching recording player" className="aspect-video w-full rounded-lg bg-black" controls autoPlay={!section || section === 'recordings'} preload="metadata"
+        {playback?.kind === 'bunny' && (!section || section === 'recordings') && <iframe key={playback.attempt}
+          title="Coaching recording player" src={playback.url} className="aspect-video w-full rounded-lg border-0 bg-black"
+          allow="autoplay; encrypted-media; picture-in-picture" allowFullScreen referrerPolicy="strict-origin-when-cross-origin" />}
+        {playback && playback.kind !== 'bunny' && <video ref={video} key={playback.attempt} aria-label="Coaching recording player" className="aspect-video w-full rounded-lg bg-black" controls autoPlay={!section || section === 'recordings'} preload="metadata"
           src={playback.url}
           onErrorCapture={event => { if ((event.target as HTMLElement).tagName === 'TRACK') setCaptionError(true); }}
           onError={event => { if (event.target === event.currentTarget) setPlayError('This recording could not be played. Retry playback to reload the video.'); }}>

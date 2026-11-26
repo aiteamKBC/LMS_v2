@@ -85,7 +85,7 @@ describe('assigned Module Builder free courses', () => {
 describe('standalone free-course certificates', () => {
   const template = { id: 1, version: 2, title: 'Achievement', minimumProgress: 80, requireFinalTest: true };
   const course = (completed: number, total = 5): FreeCourse => ({ ...legacy, weeks: [{ weekId: 'W1', weekNumber: 1, weekTitle: 'Learning', displayOrder: 1,
-    activities: Array.from({ length: total }, (_, i) => ({ componentId: `C${i}`, title: `Reading ${i}`, type: 'reading', contentHtml: '<p>Read this lesson.</p>', completed: i < completed })) }] });
+    activities: Array.from({ length: total }, (_, i) => ({ componentId: `C${i}`, title: `Reading ${i}`, type: 'reading', expectedOtjh: 1, contentHtml: '<p>Read this lesson.</p>', completed: i < completed })) }] });
   function setup(completed: number, published = true, total = 5) {
     vi.mocked(fetch).mockImplementation(async input => new Response(JSON.stringify(String(input).endsWith('/issue/')
       ? { certificate: { verificationUrl: '/verify-certificate/synthetic' }, issued: true }
@@ -114,6 +114,36 @@ describe('standalone free-course certificates', () => {
     expect(screen.queryByRole('button', { name: 'Get certificate' })).not.toBeInTheDocument();
     fireEvent.click(complete);
     expect(await screen.findByRole('button', { name: 'Get certificate' })).toBeVisible();
+  });
+
+  it.each(['commercial', 'apprenticeship'] as const)('unlocks from Required activities while retaining ordinary %s course progress', async kind => {
+    const mixed = course(4);
+    mixed.weeks[0].activities.push(...Array.from({ length: 5 }, (_, i) => ({ componentId: `O${i}`, title: `Extra ${i}`,
+      type: 'reading', expectedOtjh: 0, contentHtml: '<p>Extra</p>', completed: false })));
+    vi.mocked(fetch).mockImplementation(async input => new Response(JSON.stringify(String(input).includes('/certificates/')
+      ? { template, csrfToken: 'csrf' } : { freeCourses: [mixed] })));
+    renderCourses(kind);
+    expect(await screen.findByRole('button', { name: 'Get certificate' })).toBeVisible();
+    expect(screen.getByRole('progressbar', { name: 'Legacy skills progress' })).toHaveAttribute('aria-valuenow', '40');
+  });
+
+  it('keeps certificates locked if only optional activities are completed', async () => {
+    const optional = course(5);
+    optional.weeks[0].activities.forEach(activity => { activity.expectedOtjh = 0; });
+    vi.mocked(fetch).mockImplementation(async input => new Response(JSON.stringify(String(input).includes('/certificates/')
+      ? { template: { ...template, minimumProgress: 0 }, csrfToken: 'csrf' } : { freeCourses: [optional] })));
+    renderCourses();
+    expect(await screen.findByRole('progressbar', { name: 'Legacy skills progress' })).toHaveAttribute('aria-valuenow', '100');
+    expect(screen.queryByRole('button', { name: 'Get certificate' })).not.toBeInTheDocument();
+  });
+
+  it('keeps an existing free-course certificate visible below a newer threshold', async () => {
+    vi.mocked(fetch).mockImplementation(async input => new Response(JSON.stringify(String(input).includes('/certificates/')
+      ? { template: { ...template, minimumProgress: 100, issuedModuleRefs: ['free:OLD-1'] }, csrfToken: 'csrf-token' }
+      : { freeCourses: [course(4)] })));
+    renderCourses();
+    expect(await screen.findByRole('button', { name: 'View certificate' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Get certificate' })).not.toBeInTheDocument();
   });
 
   it('does not offer a certificate without a published template', async () => {

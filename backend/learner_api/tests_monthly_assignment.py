@@ -35,7 +35,7 @@ class MonthlyAssignmentTests(SimpleTestCase):
         return payload
 
     def checks(self, payload, **kwargs):
-        return {c["key"]: c["passed"] for c in assignment_checks(payload, evidence_ids=kwargs.get("evidence_ids", {"file-1"}), meeting_booked=kwargs.get("meeting_booked", True), allowed_ksbs={"K1"}, claimed_hours=kwargs.get("claimed_hours", {}), today=kwargs.get("today", date(2026, 11, 26)))}
+        return {c["key"]: c["passed"] for c in assignment_checks(payload, evidence_ids=kwargs.get("evidence_ids", {"file-1"}), meeting_booked=kwargs.get("meeting_booked", True), allowed_ksbs={"K1"}, claimed_hours=kwargs.get("claimed_hours", {}), today=kwargs.get("today"))}
 
     def test_complete_submission_has_thirteen_passing_checks_and_no_six_hour_cap(self):
         checks = self.checks(self.payload())
@@ -47,21 +47,21 @@ class MonthlyAssignmentTests(SimpleTestCase):
         self.assertTrue(checks.pop("evidence"))
         self.assertFalse(any(checks.values()))
 
-    def test_topic_time_must_match_total_and_can_cross_submission_month(self):
+    def test_topic_time_must_match_total_and_stay_on_or_before_today(self):
         payload = self.payload()
         payload['actualTimeHours'] = '3.75'
         rows = [dict(topic='Research', hours='1.5', date='2026-09-01'),
-                dict(topic='Writing', hours='2.25', date='2026-11-19')]
+                dict(topic='Writing', hours='2.25', date='2026-10-01')]
         payload['monthlyAssignment']['timeEntries'] = rows
-        self.assertTrue(self.checks(payload)['hours'])
-        for invalid in [dict(date='2026-11-27'), dict(date='2026-09-31'), dict(date='2026-09-05'), dict(date='2026-09-06'),
+        self.assertTrue(self.checks(payload, today=date(2026, 11, 23))['hours'])
+        for invalid in [dict(date='2026-12-01'), dict(date='2026-09-31'), dict(date='2026-09-05'), dict(date='2026-09-06'),
                         dict(topic=' '), dict(hours='-1'), dict(hours='NaN')]:
             with self.subTest(invalid=invalid):
                 changed = deepcopy(payload)
                 changed['monthlyAssignment']['timeEntries'][0].update(invalid)
-                self.assertFalse(self.checks(changed)['hours'])
+                self.assertFalse(self.checks(changed, today=date(2026, 11, 23))['hours'])
         payload['actualTimeHours'] = '4'
-        self.assertFalse(self.checks(payload)['hours'])
+        self.assertFalse(self.checks(payload, today=date(2026, 11, 23))['hours'])
         payload['monthlyAssignment']['timeEntries'] = []
         self.assertFalse(self.checks(payload)['hours'])
 
@@ -74,7 +74,7 @@ class MonthlyAssignmentTests(SimpleTestCase):
         self.assertFalse(self.checks(payload, today=date(2026, 12, 31))['hours'])
         payload['monthlyAssignment']['month'] = '2025-12'
         payload['monthlyAssignment']['timeEntries'][0]['date'] = '2025-12-24'
-        self.assertTrue(self.checks(payload)['hours'])
+        self.assertTrue(self.checks(payload, today=date(2026, 12, 31))['hours'])
 
     def test_eight_hour_limit_is_per_working_day_not_per_assignment(self):
         payload = self.payload()

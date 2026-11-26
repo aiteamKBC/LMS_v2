@@ -8,6 +8,8 @@ const DASHBOARD_OVERVIEW_READ_TIMEOUT_MS = 120_000;
 const ACTIVITY_DETAIL_READ_TIMEOUT_MS = 120_000;
 const TRAINING_READ_TIMEOUT_MS = 120_000;
 const MONTHLY_READ_TIMEOUT_MS = 120_000;
+const PLAN_DETAIL_READ_TIMEOUT_MS = 120_000;
+const EVIDENCE_LIST_READ_TIMEOUT_MS = 120_000;
 const TRANSIENT_READ_RETRY_DELAY_MS = 600;
 
 export class LearnerReadError extends Error {
@@ -83,12 +85,22 @@ async function fetchJson(key: string): Promise<unknown> {
   // Monthly plans share the connection checkout and canonical hours reads.
   // Cover both display contracts, with a bounded wait and user-driven retry.
   const monthlyRead = /^\/learner_api\/dashboard\/(commercial|apprenticeship)\/[^/?]+\/monthly\/(?:plan\/)?(?:\?|$)/.test(url);
+  // Monthly Submission reads the complete plan through content=summary.
+  // Compact content still needs connection checkout and plan aggregation,
+  // so allow the same bounded budget as My Learning. Identity-only summaries
+  // and calendar reads retain their shorter deadlines.
+  const planDetail = /^\/learner_api\/learner-detail\/(commercial|apprenticeship)\/[^/?]+\/\?/.test(url)
+    && new URLSearchParams(url.split('?')[1]).get('content') === 'summary';
   const timeoutMs = /^\/learner_api\/my-learning\//.test(url)
     ? MY_LEARNING_READ_TIMEOUT_MS
     : /^\/learner_api\/dashboard\/(commercial|apprenticeship)\/[^/?]+\/overview\/(?:\?|$)/.test(url)
       ? DASHBOARD_OVERVIEW_READ_TIMEOUT_MS
       : trainingRead ? TRAINING_READ_TIMEOUT_MS
         : monthlyRead ? MONTHLY_READ_TIMEOUT_MS
+      // Listing evidence also waits for the enrolment connection. Limit this
+      // allowance to list reads; download links keep the normal deadline.
+      : /^\/learner_api\/evidence\/(commercial|apprenticeship)\/[^/?]+\/(?:\?|$)/.test(url) ? EVIDENCE_LIST_READ_TIMEOUT_MS
+        : planDetail ? PLAN_DETAIL_READ_TIMEOUT_MS
         : activityDetail ? ACTIVITY_DETAIL_READ_TIMEOUT_MS
         : /^\/learner_api\/(student-activity|metrics)\//.test(url)
           ? LEARNER_SOURCE_READ_TIMEOUT_MS : LEARNER_READ_TIMEOUT_MS;

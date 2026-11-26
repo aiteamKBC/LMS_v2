@@ -48,6 +48,13 @@ class CategoryTests(unittest.TestCase):
         self.assertEqual((legacy['category'], legacy['detail']), ('unknown', 'Storage unavailable.'))
         self.assertIsNone(parse_sync_error('  '))
 
+    def test_attendance_diagnostics_distinguish_uploads_from_export_failures(self):
+        issue = parse_sync_error('Could not archive attendance for session 1 during uploading_csv (HttpResponseError, HTTP 403). Check worker logs and storage access.')
+        self.assertEqual((issue['category'], issue['stage'], issue['httpStatus'], issue['errorType']),
+                         ('storage', 'uploading_csv', 403, 'HttpResponseError'))
+        issue = parse_sync_error('Could not archive attendance for session 1 during exporting (KeyError). Check worker logs and storage access.')
+        self.assertEqual((issue['category'], issue['stage'], issue['errorType']), ('unknown', 'exporting', 'KeyError'))
+
 
 class SyncIssueTests(unittest.TestCase):
     def rows(self):

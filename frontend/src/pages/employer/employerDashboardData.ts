@@ -1,13 +1,14 @@
 import type { EmployerDashboardMetrics, EmployerLearnerAttendance, EmployerLearnerCard } from '@/api/employerPortal';
 import type { LearnerCalendarEvent } from '@/api/learnerCalendar';
 import { reviewCategory } from '@/lib/reviewCategory';
+import { reviewAttendanceResult } from '@/lib/reviewAttendance';
 
 export type Loadable<T> = { status: 'loading' | 'ready' | 'error'; data?: T; error?: string };
 export type DashboardReviews = Record<string, Loadable<LearnerCalendarEvent[]>>;
 export type DashboardReviewSummaries = Record<string, Loadable<LearnerCalendarEvent[]>>;
 export type DashboardAttendance = Record<string, Loadable<EmployerLearnerAttendance | null>>;
 export const learnerKey = (learner: EmployerLearnerCard) => `${learner.kind}:${learner.id}`;
-export const learnerHref = (employerId: string, learner: EmployerLearnerCard, tab?: string) =>
+export const learnerHref = (employerId: string, learner: Pick<EmployerLearnerCard, 'kind' | 'id'>, tab?: string) =>
   `/employers/${employerId}/learner/${learner.kind}/${learner.id}${tab ? `?tab=${tab}` : ''}`;
 export const learnerReviewHref = (employerId: string, learner: EmployerLearnerCard, eventKey: string) =>
   `${learnerHref(employerId, learner, 'reviews')}&reviewId=${encodeURIComponent(eventKey)}`;
@@ -62,8 +63,25 @@ export function orderReviewJourney(events: readonly LearnerCalendarEvent[]) {
     || (a.occurrenceNumber ?? a.sequence) - (b.occurrenceNumber ?? b.sequence));
 }
 
-export function nextReview(events: LearnerCalendarEvent[] = []) {
-  return events.find(isOpenReview);
+export function nextReview(events: LearnerCalendarEvent[] = [], today = londonToday()) {
+  const journey = orderReviewJourney(events);
+  const attended = (event: LearnerCalendarEvent) => reviewAttendanceResult(event) === 'attended';
+  const available = (event: LearnerCalendarEvent) => isOpenReview(event) && !attended(event);
+  // The next actual appointment takes priority over earlier plan dates and
+  // stale scheduled bookings whose appointment date has already passed.
+  const booked = journey.filter(event => available(event) && event.scheduledDate && event.scheduledDate >= today
+    && ['scheduled', 'in-progress'].includes(reviewState(event)))
+    .sort((a, b) => a.scheduledDate!.localeCompare(b.scheduledDate!)
+      || (a.scheduledTime || '').localeCompare(b.scheduledTime || ''));
+  if (booked.length) return booked[0];
+
+  // Attendance can precede form completion, including reviews held without
+  // a booking. Continue after the latest review that has taken place.
+  let lastTaken = -1;
+  journey.forEach((event, index) => {
+    if (attended(event) || ['completed', 'signature', 'signatures'].includes(reviewState(event))) lastTaken = index;
+  });
+  return journey.slice(lastTaken + 1).find(available);
 }
 
 export function programmePercent(metrics: EmployerDashboardMetrics | undefined, id: string) {

@@ -175,7 +175,7 @@ def _progress(profile, *, active_only=False, include_activity_times=False):
     return quizzes, list(videos.values()), list(components.values())
 
 
-def build_learning_content_summary(source, pk, *, learning_summary=False, assigned_modules=None, strict=False, week_ids=None, identities_only=False, progress=None, compact_content=False, preserve_legacy=False, include_component_details=False, resolved_metadata=None):
+def build_learning_content_summary(source, pk, *, learning_summary=False, assigned_modules=None, strict=False, week_ids=None, identities_only=False, progress=None, compact_content=False, preserve_legacy=False, include_component_details=False, resolved_metadata=None, include_presentation=True):
     from learner_api.projection_performance import projection_stage
 
     # Same readers as build_learner_detail, without its write-on-read repairs.
@@ -204,16 +204,24 @@ def build_learning_content_summary(source, pk, *, learning_summary=False, assign
         projection_options['resolved_metadata'] = resolved_metadata
     if identities_only and preserve_legacy:
         projection_options['catalogue_facts'] = True
+    if not include_presentation:
+        projection_options['include_presentation'] = False
     with projection_stage('native_content'):
         modules, weeks, components = _resolve_from_master(
             modules, weeks, components, assigned_modules=assigned, compact=True,
-            live_session_ids=False, expected_otjh=not identities_only, **projection_options, **strict_options)
+            live_session_ids=False, expected_otjh=not identities_only or preserve_legacy, **projection_options, **strict_options)
+    if identities_only and preserve_legacy:
+        # Certificate counts need the same Required flag as the activity viewer.
+        # Master rows already carry it; only id-less snapshots need a lookup.
+        _annotate_otjh([c for c in components if "expectedOtjh" not in c])
     if not identities_only:
         components = _apply_programme_assignment_template(components, getattr(source, "programme", ""))
         _annotate_otjh([c for c in components if "expectedOtjh" not in c])
     quiz_options = {"native_week_ids": True} if identities_only or week_ids is not None else {}
     if resolved_metadata is not None and 'quiz_modules' in resolved_metadata:
         quiz_options['resolved_metadata'] = resolved_metadata
+    if identities_only and preserve_legacy and not include_presentation:
+        quiz_options['reuse_loaded_quizzes'] = True
     with projection_stage('native_quizzes'):
         weeks, components = _append_week_quizzes(weeks, components, assigned_modules=assigned, **strict_options, **quiz_options)
 
@@ -230,7 +238,9 @@ def build_learning_content_summary(source, pk, *, learning_summary=False, assign
             retain_quiz_progress(detail, completed_only=True, **strict_options)
     if week_ids is not None:
         components = [c for c in components if str(c.get("weekId")) in set(map(str, week_ids))]
-    if not identities_only or preserve_legacy:
+    # Catalogue identities (including retained legacy snapshots) feed counts,
+    # dates and links only. Recording readiness belongs to material reads.
+    if not identities_only:
         from .live_session_access import annotate_access
         components = annotate_access(source, components)
     result = {

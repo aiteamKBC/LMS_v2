@@ -459,6 +459,12 @@ function moduleSnapshot(module: ModuleCatalogueItem | null) {
   return module ? JSON.stringify(recalculateModule(module)) : '';
 }
 
+// Keep the full saved snapshot for restore/merge and in-flight reply guards.
+// Read-only planner metadata must not turn an untouched module into a draft.
+function hasAuthoredModuleChanges(module: ModuleCatalogueItem | null, savedSnapshot: string) {
+  return Boolean(module && savedSnapshot && !sameAuthoredModule(module, JSON.parse(savedSnapshot) as ModuleCatalogueItem));
+}
+
 /**
  * Does this module already have a Teams calendar?
  *
@@ -1628,9 +1634,8 @@ function ModuleBuilderContent() {
   const pointDrafts = useWeekPointDrafts(workingModule?.catalogueId || workingModule?.id || '', workingModule?.weekStructure.map(week => week.id) || []);
   const { save: savePointDrafts, discard: discardPointDrafts, update: updatePointDrafts, signature: pointDraftSignature } = pointDrafts;
   const workingModuleSnapshot = useMemo(() => moduleSnapshot(workingModule), [workingModule]);
-  const hasUnsavedWorkingModuleChanges = Boolean(
-    workingModule && savedModuleSnapshotRef.current && workingModuleSnapshot !== savedModuleSnapshotRef.current,
-  ) || videoFiles.hasPending || Boolean(pointDraftSignature);
+  const hasUnsavedWorkingModuleChanges = hasAuthoredModuleChanges(workingModule, savedModuleSnapshotRef.current)
+    || videoFiles.hasPending || Boolean(pointDraftSignature);
   const workspaceSaveSnapshot = workingModuleSnapshot + pointDraftSignature;
   const workspaceSaveStatus: WorkspaceSaveStatus = workingModuleProgrammeArchived
     ? 'locked'
@@ -2942,6 +2947,21 @@ function ModuleBuilderContent() {
 
   const confirmDeleteModule = async (module: ModuleCatalogueItem) => {
     if (deletingModuleId) return;
+    const hasUpcomingTeamsSessions = teamsMeetings.some(summary => (
+      normaliseDeepLinkValue(summary.moduleCatalogueId) === normaliseDeepLinkValue(module.catalogueId)
+      && summary.upcomingCount > 0
+    ));
+    if (hasUpcomingTeamsSessions) {
+      setActionMessage(null);
+      setActionMessageRetry(null);
+      await showCurriculumAlert({
+        title: 'Module could not be archived',
+        text: 'This module has an active Teams calendar with future sessions. Cancel the Teams calendar before archiving the module.',
+        icon: 'error',
+        timer: 6000,
+      });
+      return;
+    }
     const weekCount = module.weekStructure.length || module.weeks || 0;
     const componentCount = module.lessonCount || module.weekStructure.reduce((total, week) => total + week.components.length, 0);
     await showCurriculumConfirm({
@@ -2954,6 +2974,14 @@ function ModuleBuilderContent() {
       successText: `${module.title} is in the archive, with everything authored under it.`,
       onConfirm: async () => {
         await deleteModule(module);
+      },
+      onConfirmError: error => {
+        setActionMessage(null);
+        setActionMessageRetry(null);
+        return {
+          title: 'Module could not be archived',
+          text: error instanceof Error ? error.message : 'This module could not be archived. Please try again.',
+        };
       },
     });
   };
@@ -3295,7 +3323,7 @@ function ModuleBuilderContent() {
     if (!current) return;
     const structureId = moduleStructureIdentifier(current);
     if (!structureId) return;
-    const dirty = Boolean(savedModuleSnapshotRef.current && moduleSnapshot(current) !== savedModuleSnapshotRef.current);
+    const dirty = hasAuthoredModuleChanges(current, savedModuleSnapshotRef.current);
     if (!dirty) {
       // A failed read leaves the workspace as it was; the drawer has still
       // saved, and the banner or the next write says so.
@@ -3353,7 +3381,7 @@ function ModuleBuilderContent() {
       }
       return;
     }
-    const dirty = Boolean(savedModuleSnapshotRef.current && moduleSnapshot(current) !== savedModuleSnapshotRef.current);
+    const dirty = hasAuthoredModuleChanges(current, savedModuleSnapshotRef.current);
     // A live poll that finds the module as it already is (this tab's own save,
     // or a write elsewhere in its group) changes nothing and reloads nothing.
     // Coming back to the tab still refreshes the catalogue, as it always did.
@@ -4001,6 +4029,9 @@ function ModuleBuilderContent() {
           <TeamsMeetingModal
             module={workingModule}
             unsavedChanges={hasUnsavedWorkingModuleChanges}
+            onSaveModule={saveWorkingModuleNow}
+            moduleSaving={saving}
+            moduleSaveError={actionMessage || saveFailure?.message}
             onRestored={restored => {
               if (restored.catalogueId !== workingModule.catalogueId) return;
               const next = recalculateModule({ ...workingModule, ...restored, sourceModule: workingModule.sourceModule || restored.sourceModule });
@@ -4033,7 +4064,7 @@ function ModuleBuilderContent() {
             onSeriesLinked={restored => {
               if (restored.catalogueId !== workingModuleRef.current?.catalogueId) return;
               const current = workingModuleRef.current;
-              if (savedModuleSnapshotRef.current && moduleSnapshot(current) !== savedModuleSnapshotRef.current) {
+              if (hasAuthoredModuleChanges(current, savedModuleSnapshotRef.current)) {
                 setActionMessage('The series was linked. Your newer unsaved edits were kept; save or reload this module to refresh its calendar.');
                 setReplaceTeamsLinksOpen(false);
                 return;
@@ -8691,7 +8722,13 @@ function ModuleCatalogueCard({
                   Active
                 </span>}
                 <span className={catalogueStyles.learnerBadge}>
-                  <ModuleLearnerCount moduleId={moduleLearnerIdentifier(module)} moduleName={module.title} onOpen={onLearners} refreshKey={module.sourceModule} />
+                  <ModuleLearnerCount
+                    moduleId={moduleLearnerIdentifier(module)}
+                    moduleName={module.title}
+                    onOpen={onLearners}
+                    refreshKey={module.sourceModule}
+                    enabled={module.isFreeCourse || Boolean(module.deliveryUsages?.length)}
+                  />
                 </span>
                 {!hasContent && (
                   <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-700 ring-1 ring-amber-100">
@@ -8896,17 +8933,29 @@ function ModuleKsbMapModal({ module, sourceLabels, ksbSets, standards, programme
     });
     return touched.size;
   }, [filteredRows]);
-  return (
-    <div className="fixed inset-0 z-[88] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm" onClick={onClose}>
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [onClose]);
+  const dialog = (
+    <div role="dialog" aria-modal="true" aria-labelledby="module-ksb-map-title" className="fixed inset-0 z-[110] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm" onClick={onClose}>
       <div className="flex max-h-[88vh] w-full max-w-7xl flex-col overflow-hidden rounded-2xl bg-background-50 shadow-2xl" onClick={event => event.stopPropagation()}>
         <div className="border-b border-background-200 bg-primary-950 px-5 py-4 text-white">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
               <p className="text-[10px] font-bold uppercase tracking-wide text-white/60">KSB Coverage</p>
-              <h3 className="mt-1 truncate text-base font-heading font-bold text-white">{module.title}</h3>
+              <h3 id="module-ksb-map-title" className="mt-1 truncate text-base font-heading font-bold text-white">{module.title}</h3>
               <p className="mt-1 text-[11px] font-semibold text-white/70">Applied KSBs, placement, weight and OTJH for this module.</p>
             </div>
-            <button onClick={onClose} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-white/10 text-white transition-smooth hover:bg-white/20">
+            <button type="button" aria-label="Close module KSB review" onClick={onClose} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-white/10 text-white transition-smooth hover:bg-white/20">
               <AppIcon className="ri-close-line"></AppIcon>
             </button>
           </div>
@@ -8970,6 +9019,7 @@ function ModuleKsbMapModal({ module, sourceLabels, ksbSets, standards, programme
       </div>
     </div>
   );
+  return typeof document === 'undefined' ? dialog : createPortal(dialog, document.body);
 }
 
 function ProgrammeKsbMapModal({ programmeName, modules, sourceLabels, onClose }: {

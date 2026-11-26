@@ -9,6 +9,7 @@ import { fetchLearnerFirstSession } from '../learnerCalendar';
 import { updateLearnerCoach } from '../coach';
 import { updateEnrolmentUser } from '../enrolmentUsers';
 import { getSummary, RecordError } from '@/features/old-otjh/api';
+import { fetchEvidence } from '../evidence';
 
 const reply = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status });
 const pending = <T,>() => {
@@ -88,15 +89,37 @@ describe('learner data transport', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it.each(['commercial', 'apprenticeship'] as const)('allows a slow evidence list to finish and bounds a stuck list (%s)', async kind => {
+    vi.useFakeTimers();
+    const network = pending<Response>();
+    vi.mocked(fetch).mockReturnValueOnce(network.promise);
+    const request = fetchEvidence(kind, '125', { sectionRef: 'ASSIGNMENT-1' });
+    const settled = request.then(value => value, error => error);
+    await vi.advanceTimersByTimeAsync(85_000);
+    expect(vi.mocked(fetch).mock.calls[0][1]?.signal?.aborted).toBe(false);
+    network.resolve(reply({ results: [{ id: 'file-1', sectionRef: 'ASSIGNMENT-1' }] }));
+    await expect(settled).resolves.toEqual([{ id: 'file-1', sectionRef: 'ASSIGNMENT-1' }]);
+    vi.mocked(fetch).mockReturnValueOnce(new Promise(() => {}));
+    const stuck = expect(fetchEvidence(kind, '125', { sectionRef: 'ASSIGNMENT-2' })).rejects.toMatchObject({ code: 'timeout' });
+    await vi.advanceTimersByTimeAsync(120_000);
+    await stuck;
+    expect(vi.mocked(fetch).mock.calls[1][1]?.signal?.aborted).toBe(true);
+    vi.mocked(fetch).mockResolvedValueOnce(reply({ results: [] }));
+    await expect(fetchEvidence(kind, '125', { sectionRef: 'ASSIGNMENT-2' })).resolves.toEqual([]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it.each([
     '/learner_api/dashboard/apprenticeship/125/monthly/unrelated/',
     '/learner_api/calendar/commercial/125/first-session/',
-    '/learner_api/learner-detail/commercial/125/?content=summary',
+    '/learner_api/learner-summary/commercial/125/',
     '/learner_api/learner-detail/commercial/125/?content=quiz',
     '/learner_api/learner-detail/commercial/125/?content=quiz-list',
     '/learner_api/learner-detail/commercial/125/?content=reading&component_id=C1',
     '/learner_api/learner-detail/commercial/125/',
     '/learner_api/calendar/commercial/125/first-session/?content=activity',
+    '/learner_api/calendar/commercial/125/first-session/?content=summary',
+    '/learner_api/evidence/commercial/125/file-id/download/',
   ])('keeps the existing deadline for %s', async url => {
     vi.useFakeTimers();
     vi.mocked(fetch).mockReturnValueOnce(new Promise(() => {}));
@@ -105,6 +128,33 @@ describe('learner data transport', () => {
     await failed;
     expect(vi.mocked(fetch).mock.calls[0][1]?.signal?.aborted).toBe(true);
   });
+
+  it.each(['commercial', 'apprenticeship'] as const)(
+    'loads monthly assignment plan details after 45s and still bounds and retries a stuck summary (%s)', async kind => {
+      vi.useFakeTimers();
+      const network = pending<Response>();
+      const plan = { id: '125', components: [{ componentId: 'A1', type: 'assignment', title: 'Monthly assignment' }] };
+      vi.mocked(fetch).mockReturnValueOnce(network.promise);
+      const request = fetchLearnerDetail(kind, '125');
+      const settled = request.then(value => value, error => error);
+      await vi.advanceTimersByTimeAsync(85_000);
+      expect(vi.mocked(fetch).mock.calls[0][1]?.signal?.aborted).toBe(false);
+      network.resolve(reply(plan));
+      await expect(settled).resolves.toEqual(plan);
+
+      vi.mocked(fetch).mockReturnValueOnce(new Promise(() => {}));
+      const stuck = expect(fetchLearnerDetail(kind, '126')).rejects.toMatchObject({ code: 'timeout' });
+      await vi.advanceTimersByTimeAsync(120_000);
+      await stuck;
+      expect(vi.mocked(fetch).mock.calls[1][1]?.signal?.aborted).toBe(true);
+
+      const recovered = { ...plan, id: '126' };
+      vi.mocked(fetch).mockResolvedValueOnce(reply(recovered));
+      await expect(fetchLearnerDetail(kind, '126', { revalidate: true })).resolves.toEqual(recovered);
+      expect(fetch).toHaveBeenCalledTimes(3);
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
 
   it.each(['commercial', 'apprenticeship'] as const)(
     'loads an activity after a slow connection checkout and bounds/retries a stuck activity (%s)', async kind => {

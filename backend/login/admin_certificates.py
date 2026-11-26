@@ -14,7 +14,8 @@ from django.views.decorators.csrf import csrf_exempt
 
 from .permissions import require_role
 from .platform_admin import _reject_cross_site
-from learner_api.certificates import _certificate_dict, _json_dict
+from learner_api.certificates import _certificate_dict, _current_certificate, _json_dict
+from learner_api.certificate_display import editable_values
 
 
 FIELDS = {'learnerName': 255, 'courseTitle': 255, 'title': 200, 'bodyText': 2000,
@@ -23,7 +24,7 @@ REQUIRED = {'learnerName', 'courseTitle', 'title', 'bodyText'}
 SELECT = '''SELECT lc.id,lc.certificate_number,lc.template_id,lc.template_version,
     lc.progress_percent,lc.snapshot,lc.issued_at,lc.pdf_blob_url,lc.verification_token,
     lc.module_ref,lc.module_title,lc.status,lc.learner_kind,
-    ct.title,ct.body_text,ct.layout_config,lc.revoked_at,lc.revoke_reason
+    ct.title,ct.body_text,ct.layout_config,lc.revoked_at,lc.revoke_reason,lc.learner_id
     FROM "Learner".learner_certificates lc
     JOIN "Learner".certificate_templates ct ON ct.id=lc.template_id'''
 
@@ -37,7 +38,7 @@ def _record(row):
     snapshot = result['snapshot']
     layout = _json_dict(snapshot.get('layoutConfig')) or _json_dict(row[15])
     learner = _json_dict(snapshot.get('learner'))
-    result.update(status=row[11], learnerKind=row[12],
+    result.update(status=row[11], learnerKind=row[12], learnerId=row[18],
                   revokedAt=row[16].isoformat() if row[16] else None, revokeReason=row[17] or '',
                   editable={
                       'learnerName': learner.get('name') or '',
@@ -47,6 +48,15 @@ def _record(row):
                       'instructorName': layout.get('instructorName', ''),
                       'instructorLabel': layout.get('instructorLabel', 'Instructor'),
                   }, layoutConfig=layout)
+    return result
+
+
+def _display_record(cursor, record):
+    if record['status'] != 'issued':
+        return record
+    result = _current_certificate(cursor, record, record['learnerKind'], record['learnerId'])
+    result['editable'] = editable_values(result)
+    result['layoutConfig'] = _json_dict(result['snapshot'].get('layoutConfig'))
     return result
 
 
@@ -156,7 +166,7 @@ def issued_certificate(request, certificate_id):
                 record = _read(cursor, certificate_id)
                 if not record:
                     return _error('Certificate not found.', 404)
-                return JsonResponse({'certificate': record, 'history': _history(cursor, certificate_id)})
+                return JsonResponse({'certificate': _display_record(cursor, record), 'history': _history(cursor, certificate_id)})
         with transaction.atomic(using='enrolment'), connections['enrolment'].cursor() as cursor:
             record = _read(cursor, certificate_id, lock=True)
             if not record:
@@ -165,15 +175,17 @@ def issued_certificate(request, certificate_id):
                 return _error('This certificate changed. Reload it and review the latest copy before saving.', 409)
             if record['status'] != 'issued':
                 return _error('Only an active certificate can be corrected or revoked.', 409)
-            before = deepcopy(record)
+            stored_before = deepcopy(record)
+            before = _display_record(cursor, record) if body['action'] == 'correct' else deepcopy(record)
             snapshot = deepcopy(record['snapshot'])
-            changed = {key: value for key, value in body['changes'].items() if value != record['editable'][key]}
+            changed = {key: value for key, value in body['changes'].items() if value != before['editable'][key]}
             if body['action'] == 'correct' and not changed:
                 return _error('Change at least one certificate field before saving.')
             now = timezone.now()
             actor = request.login_account.email
             if body['action'] == 'correct':
                 snapshot['certificateRevision'] = record['revision'] + 1
+                snapshot['certificateOverrides'] = {**before['snapshot']['certificateOverrides'], **changed}
                 if 'learnerName' in changed:
                     snapshot['learner'] = {**_json_dict(snapshot.get('learner')), 'name': changed['learnerName']}
                 if 'courseTitle' in changed:
@@ -197,11 +209,13 @@ def issued_certificate(request, certificate_id):
                     SET status='revoked',revoked_by=%s,revoked_at=%s,revoke_reason=%s
                     WHERE id=%s''', [actor, now, body['reason'], certificate_id])
             record = _read(cursor, certificate_id)
+            record = _display_record(cursor, record)
             cursor.execute('''INSERT INTO "Learner".certificate_audit_logs
                 (actor_email,action,template_id,certificate_id,details)
                 VALUES (%s,%s,%s,%s,%s::jsonb)''',
                 [actor, 'certificate-corrected' if body['action'] == 'correct' else 'certificate-revoked',
-                 record['templateId'], certificate_id, json.dumps(dict(reason=body['reason'], before=before, after=record, changedFields=list(changed)))])
+                 record['templateId'], certificate_id, json.dumps(dict(reason=body['reason'], before=before, after=record,
+                     storedBefore=stored_before, changedFields=list(changed)))])
             history = _history(cursor, certificate_id)
         return JsonResponse({'certificate': record, 'history': history})
     except DatabaseError:

@@ -189,7 +189,8 @@ describe('ModuleFormDrawer', () => {
     renderDrawer({ module: stale });
 
     const weekStart = await screen.findByRole('combobox', { name: /Study week starts on/i });
-    expect(weekStart).toHaveTextContent('Monday');
+    // The control exists before the asynchronous saved-record read is adopted.
+    await waitFor(() => expect(weekStart).toHaveTextContent('Monday'));
     expect(weekStart).toBeDisabled();
     const weeks = screen.getByRole('spinbutton', { name: /weeks/i });
     await userEvent.clear(weeks);

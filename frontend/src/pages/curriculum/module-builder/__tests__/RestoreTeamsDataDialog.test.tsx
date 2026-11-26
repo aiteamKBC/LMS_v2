@@ -77,4 +77,23 @@ describe('RestoreTeamsDataDialog', () => {
     expect(screen.getByText(/Save your module changes before restoring/)).toBeInTheDocument();
     expect(restoreModuleTeamsMeeting).not.toHaveBeenCalled();
   });
+
+  it('can align existing links to week dates without creating components', async () => {
+    render(<RestoreTeamsDataDialog module={module} onClose={vi.fn()} onRestored={vi.fn()} />);
+    const align = await screen.findByRole('checkbox', { name: /Match existing meetings to week delivery dates/ });
+    await userEvent.click(align);
+    await userEvent.click(screen.getByRole('button', { name: 'Align week dates and links' }));
+    await waitFor(() => expect(restoreModuleTeamsMeeting).toHaveBeenCalledWith('MOD-RESTORE', { alignToWeekPlan: true }));
+  });
+
+  it('reports unmatched links as partial success', async () => {
+    restoreModuleTeamsMeeting.mockResolvedValue({
+      restored: true, updatedComponents: 2, createdComponents: 0,
+      unresolvedComponentIds: ['COMP-MISSING'], module: { ...module, weekStructure: [] },
+    });
+    render(<RestoreTeamsDataDialog module={module} onClose={vi.fn()} onRestored={vi.fn()} />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Restore Teams data here' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('1 live session has no unique matching meeting');
+    expect(screen.queryByText('Teams data is back in this module')).not.toBeInTheDocument();
+  });
 });

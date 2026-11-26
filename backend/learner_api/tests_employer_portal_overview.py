@@ -39,7 +39,9 @@ class EmployerPortalOverviewTests(SimpleTestCase):
             mock.patch.object(employer_portal, "_employer_or_404", return_value=(SimpleNamespace(pk=9), None)),
             mock.patch.object(employer_portal, "SOURCE_MODELS", {"commercial": _model(self.learner)}),
             mock.patch("learner_api.employer_learning.canonical_learning.require_profile", return_value={'id': 55, 'enrolment_id': 101}),
-            mock.patch("learner_api.employer_learning.learner_profile_for_source", return_value=SimpleNamespace(pk=55, enrolment_id=101)),
+            mock.patch("learner_api.employer_learning.learner_profile_for_source", return_value=SimpleNamespace(pk=55, enrolment_id=101, cohort_id=None)),
+            mock.patch("learner_api.employer_learning.connections", {"enrolment": SimpleNamespace(cursor=lambda: _Cursor([], []))}),
+            mock.patch("curriculum_api.views.cohort_selected_holidays_by_cohort", return_value={}),
             mock.patch.dict("os.environ", {"LEARNER_API_REQUIRE_AUTH": "1"}),
         ]
         for patch in patches:
@@ -612,6 +614,7 @@ class _Cursor:
 
     def __init__(self, results, calls):
         self.results, self.calls = list(results), calls
+        self.db = SimpleNamespace(vendor='sqlite')
 
     def __enter__(self):
         return self

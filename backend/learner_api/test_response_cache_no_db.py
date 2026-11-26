@@ -84,6 +84,42 @@ class ResponseCacheTests(unittest.TestCase):
             self.view(request(), kind='commercial', pk=7)
         self.assertEqual(self.calls, 2)
 
+    def test_opt_in_default_is_limited_to_the_selected_reader(self):
+        @response_cache.cached_learner_read('weekly', default_ttl=30)
+        def weekly(req, kind, pk):
+            self.calls += 1
+            return JsonResponse({'n': self.calls})
+
+        with mock.patch.dict(os.environ):
+            os.environ.pop('LEARNER_RESPONSE_CACHE_SECONDS', None)
+            first = weekly(request(), kind='commercial', pk=7)
+            second = weekly(request(), kind='commercial', pk=7)
+            self.assertEqual(first.content, second.content)
+            self.assertEqual(second['X-Learner-Cache'], 'hit')
+            self.assertEqual(self.calls, 1)
+            self.view(request(), kind='commercial', pk=7)
+            self.view(request(), kind='commercial', pk=7)
+            self.assertEqual(self.calls, 3)
+            response_cache.bump_learner('commercial', 7)
+            weekly(request(), kind='commercial', pk=7)
+            self.assertEqual(self.calls, 4)
+
+    def test_explicit_disable_and_expiry_override_the_reader_default(self):
+        @response_cache.cached_learner_read('weekly', default_ttl=30)
+        def weekly(req, kind, pk):
+            self.calls += 1
+            return JsonResponse({'n': self.calls})
+
+        with mock.patch.dict(os.environ, {'LEARNER_RESPONSE_CACHE_SECONDS': '0'}):
+            weekly(request(), kind='commercial', pk=7)
+            weekly(request(), kind='commercial', pk=7)
+        self.assertEqual(self.calls, 2)
+        weekly(request(), kind='commercial', pk=7)
+        stored = cache.get(response_cache._key(request(), 'weekly', 'commercial', 7))
+        cache.set(response_cache._key(request(), 'weekly', 'commercial', 7), stored, timeout=-1)
+        weekly(request(), kind='commercial', pk=7)
+        self.assertEqual(self.calls, 4)
+
     def test_concurrent_requests_wait_for_one_build(self):
         @response_cache.cached_learner_read('test')
         def slow(req, kind, pk):

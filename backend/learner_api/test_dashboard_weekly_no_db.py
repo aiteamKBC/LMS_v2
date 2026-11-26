@@ -63,6 +63,15 @@ class RecordedKsbMappingTests(SimpleTestCase):
 
 
 class DashboardWeeklyTests(SimpleTestCase):
+    def test_module_navigation_is_opt_in_and_preserves_manual_selection(self):
+        source = SimpleNamespace(pk=265)
+        with patch.object(weekly.canonical_learning, 'require_profile', return_value={'id': 17}), \
+             patch.object(weekly, 'learner_profile_for_source', return_value=SimpleNamespace(pk=17, enrolment_id=265)), \
+             patch.object(weekly, 'read_weekly_learning', return_value={'modules': [], 'weeks': [], 'selectedWeek': None}) as read:
+            weekly.read_dashboard_weekly(source, 265, module_id='M1', module_navigation=True, prefer_current=False)
+        self.assertEqual(read.call_args.kwargs, {'module_id': 'M1', 'include_weeks': True,
+            'include_actions': True, 'module_navigation': True, 'prefer_current': False})
+
     def test_reflection_choices_are_scoped_and_do_not_promote_drafts_or_pending_work(self):
         records = [
             {'activity_id': 'C1', 'status': 'draft', 'ksb_codes': ['K1', 'K1', ' S2 ']},

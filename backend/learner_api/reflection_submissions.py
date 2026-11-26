@@ -35,6 +35,14 @@ def _list(value):
     return value if isinstance(value, list) else []
 
 
+def corrected_timer_display_seconds(content, status):
+    """A staff display correction never replaces the recorded elapsed time."""
+    if status not in ("submitted_for_tutor_review", "accepted", "partial"):
+        return None
+    seconds = _dict(_dict(content).get("timerDisplayCorrection")).get("displaySeconds")
+    return seconds if type(seconds) is int and seconds >= 0 else None
+
+
 def _activity_title(payload, assignment_topic):
     """The coach's queue title: "Title - Topic 2: Name", without an empty name."""
     title = _text(payload.get("activityTitle"))
@@ -611,7 +619,9 @@ def get_reflection_submission(request):
                 states = []
                 for identity, status, content, submitted_at in cur.fetchall():
                     content = json.loads(content) if isinstance(content, str) else content or {}
+                    display_seconds = corrected_timer_display_seconds(content, status)
                     states.append({"topicId": identity, "status": status, "elapsedSeconds": content.get("assignmentElapsedSeconds", 0),
+                                   **({"displayElapsedSeconds": display_seconds} if display_seconds is not None else {}),
                                    "month": _dict(content.get("monthlyAssignment")).get("month"),
                                    "meetingKey": _dict(content.get("monthlyAssignment")).get("meetingKey") or "",
                                    "submittedAt": submitted_at.isoformat() if submitted_at else None})

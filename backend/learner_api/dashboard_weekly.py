@@ -19,6 +19,8 @@ from .projection_performance import measure_projection
 from .weekly_learning import _weekly_component
 from .learner_detail import _resolve_from_master, _apply_programme_assignment_template
 from .submission_visibility import VISIBLE_SUBMISSION_SQL
+from .weekly_read_cache import weekly_read_scope
+from old_otjh.repository import request_read_scope
 
 WEEKLY_SOURCE_FIELDS = ('id', 'aptem_id', 'learner_type', 'username', 'email', 'programme', 'cohort', 'group')
 
@@ -87,7 +89,9 @@ def _selection(week_id, module_id):
     return f'{mid}:{int(slot)}'
 
 
-def read_dashboard_weekly(source, pk, *, week_id=None, module_id=None):
+@weekly_read_scope()
+@request_read_scope()
+def read_dashboard_weekly(source, pk, *, week_id=None, module_id=None, module_navigation=False, prefer_current=True):
     owner = canonical_learning.require_profile(pk)
     profile = learner_profile_for_source(source, pk, heal=False, fields=('id', 'enrolment_id'))
     if profile is None or profile.pk != owner['id'] or profile.enrolment_id != pk:
@@ -97,7 +101,9 @@ def read_dashboard_weekly(source, pk, *, week_id=None, module_id=None):
     selection = _selection(week_id, module_id)
     try:
         payload = read_weekly_learning(SimpleNamespace(source=source, profile=profile), selection,
-                                      module_id=module_id, include_weeks=week_id is None, include_actions=True)
+                                      module_id=module_id, include_weeks=week_id is None, include_actions=True,
+                                      **({'module_navigation': True, 'prefer_current': prefer_current}
+                                         if module_navigation and week_id is None else {}))
     except LookupError:
         raise ServiceError('Week not found.', 'not_found', 404)
     selected = payload['selectedWeek']
@@ -135,7 +141,7 @@ def read_dashboard_weekly(source, pk, *, week_id=None, module_id=None):
 @learner_self_or_staff(kwarg='pk')
 @require_GET
 @journal_sources.learner_journal_view
-@cached_learner_read('dashboard-weekly')
+@cached_learner_read('dashboard-weekly', default_ttl=30)
 def dashboard_weekly(request, kind, pk, week_id=None):
     model = SOURCE_MODELS.get(kind)
     if model is None:
@@ -145,7 +151,9 @@ def dashboard_weekly(request, kind, pk, week_id=None):
             source = assignment_projection(model.all_learners.only(*WEEKLY_SOURCE_FIELDS)).get(pk=pk)
             source.training_plan = source._weekly_training_plan
             source.learning_plan = source._weekly_learning_plan
-            payload = read_dashboard_weekly(source, pk, week_id=week_id, module_id=request.GET.get('moduleId'))
+            payload = read_dashboard_weekly(source, pk, week_id=week_id, module_id=request.GET.get('moduleId'),
+                **({'module_navigation': True, 'prefer_current': request.GET.get('preferCurrent') != '0'}
+                   if request.GET.get('navigation') == 'module' and week_id is None else {}))
             response = JsonResponse(payload)
     except model.DoesNotExist:
         return JsonResponse({'error': 'Learner not found.'}, status=404)

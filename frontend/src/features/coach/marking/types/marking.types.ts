@@ -3,6 +3,32 @@ import type { MarkingKind } from '@/lib/markingKind';
 export type MarkingQueueFilter = 'all' | 'pending' | 'overdue' | 'accepted' | 'referred';
 export type MarkingScope = 'official' | 'personal';
 
+/** One answer within a step. ``text`` is always present; list formats also carry ``items``. */
+export interface MarkingSectionEntry {
+  label: string;
+  text: string;
+  format?: 'text' | 'value' | 'checks' | 'time' | 'ksbs' | 'evidence' | 'slides';
+  items?: Array<{
+    label?: string; passed?: boolean;
+    date?: string; topic?: string; hours?: string;
+    code?: string; explanation?: string;
+    name?: string; url?: string; points?: string;
+    title?: string; body?: string;
+  }>;
+}
+
+export interface MarkingSection {
+  step: number;
+  title: string;
+  entries: MarkingSectionEntry[];
+}
+
+/** A monthly report's answers for the two review tabs: steps 2-4 and steps 5-8. */
+export interface MonthlySections {
+  assignment: MarkingSection[];
+  reflection: MarkingSection[];
+}
+
 export interface MarkingSubmission {
   version?: number;
   id: string;

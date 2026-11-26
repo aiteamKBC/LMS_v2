@@ -119,6 +119,56 @@ class MonthlyLogsProjectionTests(SimpleTestCase):
         with patch.object(logs, 'query', side_effect=[[], []]), patch.object(canonical, 'targets_for', return_value={}):
             self.assertIsNone(logs.project_year(self.learner, 2026)['summary']['trainingPlanHours'])
 
+    def test_unallocated_json_text_matches_decoded_rows_for_each_learner(self):
+        # PostgreSQL's configured JSON text loader also applies to jsonb_agg.
+        # Keep undated credit and known/unknown actual time exactly as stored.
+        for owner_id, enrolment_id, kind in ((70, 7, 'commercial'), (80, 8, 'apprenticeship')):
+            owner = {'id': owner_id, 'enrolment_id': enrolment_id, 'programme_id': 'P', 'learner_type': kind}
+            learner = {**self.learner, 'id': enrolment_id, '_canonical_profile': owner}
+            undated = [
+                {'id': owner_id * 10, 'title': 'Synthetic undated activity',
+                 'actual_hours': 1.25, 'actual_hours_recorded': True},
+                {'id': owner_id * 10 + 1, 'title': 'Synthetic unknown time',
+                 'actual_hours': 0, 'actual_hours_recorded': False},
+            ]
+            outputs = []
+            for encoded in (False, True):
+                with self.subTest(kind=kind, encoded=encoded):
+                    activities = [
+                        {'month': '', 'activities': 2, 'accepted_hours': 1.25,
+                         'unallocated_activities': json.dumps(undated) if encoded else undated},
+                        {'month': '2026-10', 'activities': 1, 'accepted_hours': 2,
+                         'unallocated_activities': None},
+                    ]
+                    with patch.object(logs, 'query', side_effect=[activities, []]) as reads, \
+                         patch.object(logs, 'pending_hour_records', return_value={owner_id: []}), \
+                         patch.object(canonical, 'targets_for', return_value={'2026-10': 5}), \
+                         patch.object(logs.timezone, 'localdate', return_value=date(2026, 10, 31)):
+                        result = logs.project_year(learner, 2026)
+                    self.assertEqual(result['unallocatedActivities'], undated)
+                    self.assertEqual(result['summary']['acceptedOtjhHours'], 3.25)
+                    self.assertEqual(result['summary']['trainingPlanHours'], 5)
+                    self.assertEqual([row['month'] for row in result['months']], ['2026-10'])
+                    self.assertEqual(result['months'][0]['acceptedOtjhHours'], 2)
+                    for call in reads.call_args_list:
+                        self.assertEqual(call.args[1], [owner_id])
+                        self.assertNotRegex(call.args[0].upper(), r'\b(INSERT|UPDATE|DELETE|CREATE)\b')
+                    outputs.append(result)
+            self.assertEqual(outputs[0], outputs[1])
+
+    def test_empty_unallocated_json_preserves_month_totals(self):
+        for value in (None, [], '[]', 'null'):
+            with self.subTest(value=value), \
+                 patch.object(logs, 'query', side_effect=[[
+                     {'month': '2026-10', 'activities': 1, 'accepted_hours': 2,
+                      'unallocated_activities': value}], []]), \
+                 patch.object(canonical, 'targets_for', return_value={}), \
+                 patch.object(logs.timezone, 'localdate', return_value=date(2026, 10, 31)):
+                result = logs.project_year(self.learner, 2026)
+                self.assertEqual(result['unallocatedActivities'], [])
+                self.assertEqual(result['summary']['acceptedOtjhHours'], 2)
+                self.assertIsNone(result['summary']['trainingPlanHours'])
+
     def test_unallocated_review_keeps_unknowns_and_excludes_already_projected_saves(self):
         unknown = {'id': 1, 'title': 'Undated activity', 'actual_hours': 0, 'actual_hours_recorded': False}
         native = {**unknown, 'id': 2, 'title': 'Current native save'}

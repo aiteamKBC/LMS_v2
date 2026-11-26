@@ -8,6 +8,41 @@ from learner_api import teams_attendance
 
 
 class TeamsAttendanceModuleRosterTests(SimpleTestCase):
+    def test_attendance_session_query_compiles_with_real_model_fields(self):
+        # Compile the real ORM selection used by reporting. A mocked queryset
+        # alone accepts nonexistent fields and hides failures before SQL runs.
+        real_queryset = teams_attendance.LiveSession.objects.using("default")
+        queryset = MagicMock()
+
+        def compile_selection(*fields):
+            sql, _params = real_queryset.only(*fields).query.get_compiler(using="default").as_sql()
+            self.assertIn('"co_organizers"', sql)
+            return []
+
+        queryset.only.side_effect = compile_selection
+        with patch.object(teams_attendance.router, "db_for_read", return_value="default"), \
+                patch("learner_api.alternative_recovery.approved_alternative_guests", return_value={}), \
+                patch.object(teams_attendance.LiveSession.objects, "using", return_value=queryset):
+            self.assertEqual(teams_attendance.fetch_verified_teams_attendance_rows(all_learners=True), [])
+        queryset.only.assert_called_once()
+
+    def test_saved_co_organizer_is_not_matched_to_a_similarly_named_learner(self):
+        session = teams_attendance.LiveSession(
+            organizer_email="organizer@example.test", presenters=[],
+            co_organizers=[" Staff@Example.Test "],
+        )
+        participant = {
+            "id": "row-1", "occurrence_id": "session-1", "role": "presenter",
+            "email": "staff@example.test", "display_name": "Eva Morgan",
+        }
+        resolved = teams_attendance.apply_reviewed_identities(
+            [participant],
+            learners={"eva.morgan@example.test": {"name": "Eva Morgan", "learnerProfileId": 7}},
+            protected_emails=teams_attendance.series_identity_emails(session),
+        )
+        self.assertEqual(resolved[0]["email"], "staff@example.test")
+        self.assertIsNone(resolved[0]["identityRule"])
+
     def test_module_roster_excludes_organizer_presenter_and_unassigned_guest(self):
         session = SimpleNamespace(
             module_catalogue_id="MOD-1",

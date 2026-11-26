@@ -16,7 +16,7 @@ import { LearnerLoadError } from '@/components/feature/LearnerLoadError';
 import type { PageTabItem } from '@/components/ui/PageTabs';
 import { RowAction } from '@/components/ui/ActionRow';
 import {
-  fetchAttendanceWorkspace, isManuallyConfirmedLecture, peekAttendanceWorkspace,
+  fetchAttendanceWorkspace, peekAttendanceWorkspace,
   type AttendanceLecture,
 } from '@/api/attendanceLectures';
 import AbsenceReportForm from './components/AbsenceReportForm';
@@ -105,7 +105,7 @@ export default function AttendancePage() {
     return allLectures.filter(row => selectedModule === 'all' || moduleIds.includes(row.moduleId));
   }, [allLectures, selectedModule, moduleOptions]);
   const visibleLectures = useMemo(
-    () => lectures.filter(row => row.status !== 'cancelled' && !isManuallyConfirmedLecture(row)),
+    () => lectures.filter(row => row.status !== 'cancelled'),
     [lectures],
   );
   const counts = useMemo(() => lectureCounts(visibleLectures), [visibleLectures]);

@@ -4,6 +4,24 @@ import { feedbackApi, type FeedbackFormInput } from './feedback';
 afterEach(() => vi.unstubAllGlobals());
 
 describe('feedback API write protection', () => {
+  it('requests daily MCM assignments with dates, coach, search and independent pagination read-only', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ days: [] }) });
+    vi.stubGlobal('fetch', fetchMock);
+    await feedbackApi.recipientsByDay(7, { period: 'custom', from: '2026-11-01', to: '2026-11-25', search: 'A & B', coach: 'email:a+b@example.test', day: '2026-11-25', dayPage: 2, page: 3 });
+    const url = new URL(fetchMock.mock.calls[0][0], 'https://example.test');
+    expect(url.pathname).toBe('/engagement_api/feedback/forms/7/recipients/');
+    expect(Object.fromEntries(url.searchParams)).toEqual({ groupBy: 'day', pageSize: '25', period: 'custom', from: '2026-11-01', to: '2026-11-25', search: 'A & B', coach: 'email:a+b@example.test', day: '2026-11-25', dayPage: '2', page: '3' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][1].method).toBeUndefined();
+    expect(fetchMock.mock.calls[0][1].credentials).toBe('include');
+  });
+  it('requests paginated MCM learners using the current coach identity', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ coaches: [] }) });
+    vi.stubGlobal('fetch', fetchMock);
+    await feedbackApi.recipientsByCoach(7, 'Student & Coach', 'email:coach+one@example.test', 2);
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith('/engagement_api/feedback/forms/7/recipients/?groupBy=coach&search=Student+%26+Coach&coach=email%3Acoach%2Bone%40example.test&page=2&pageSize=25', expect.objectContaining({ credentials: 'include' }));
+    expect(fetchMock.mock.calls[0][1].method).toBeUndefined();
+  });
   it('gets a CSRF token and sends it with form saves', async () => {
     const input: FeedbackFormInput = {
       title: 'Learner feedback', formType: 'post_lecture', deliveryScope: 'module', programmeId: 'PROG-1',

@@ -33,6 +33,8 @@ class DeliveryCalendarProjectionTests(SimpleTestCase):
         self.source_authoring_reader = views.get_authoring_module_rows
         patches={
             'authoring_fetch_all':self.fetch, 'get_holiday_rows':lambda:copy.deepcopy(self.holidays),
+            'fetch_all':self.fetch_calendar_sql,
+            'learning_read_table':lambda table:views.table_name(table),
             'get_holiday_rows_safe':lambda:copy.deepcopy(self.holidays), 'ensure_module_authoring_tables':lambda:None,
             'safe_module_index_rows':lambda:copy.deepcopy(self.modules), 'module_index_rows':lambda **kwargs:copy.deepcopy(self.modules),
             'get_authoring_module_rows':lambda:copy.deepcopy(self.modules),
@@ -47,6 +49,21 @@ class DeliveryCalendarProjectionTests(SimpleTestCase):
             p=patch.object(views,name,value); p.start(); self.addCleanup(p.stop)
         p=patch.object(learner_assignment_counts_sql,'bulk_assigned_learner_counts_sql',lambda *a,**kw:{})
         p.start(); self.addCleanup(p.stop)
+    def fetch_calendar_sql(self, sql, params):
+        # The focused PostgreSQL reader projects JSON in SQL. Supply only its
+        # I/O boundary here; the real planner/serializers still run on the rows.
+        from .calendar_read_rows import CALENDAR_SETTINGS, COMPONENT_COLUMNS
+        self.assertIn('jsonb_each', sql)
+        self.assertIn(views.table_name(views.AUTHORING_COMPONENTS_TABLE), sql)
+        self.assertEqual(params[0], list(CALENDAR_SETTINGS))
+        rows = self.fetch(views.AUTHORING_COMPONENTS_TABLE, 'module_catalogue_id in fixture', params[1:])
+        projected = []
+        for row in rows:
+            settings = row.get('settings_json') or {}
+            settings = json.loads(settings) if isinstance(settings, str) else settings
+            projected.append({**{key:row[key] for key in COMPONENT_COLUMNS if key in row},
+                              'settings_json':{key:value for key,value in settings.items() if key in CALENDAR_SETTINGS}})
+        return projected
     def source_rows(self, table):
         data={views.AUTHORING_MODULES_TABLE:self.modules, views.GROUPS_TABLE:self.groups,
               views.COHORT_AUTHORING_DETAILS_TABLE:self.cohorts, views.AUTHORING_WEEKS_TABLE:self.weeks,

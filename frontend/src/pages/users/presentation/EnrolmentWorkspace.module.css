@@ -250,8 +250,27 @@
 /* Shares grid cell 6 with the Actions cell; positioned so it paints above it (as the old <details> did). */
 .shell .users .userTable .rowMoreTrigger { position: relative; }
 .shell .users .userTable .rowMoreTrigger[aria-expanded="true"] { border-color: #5d2e88; background: #f4edf9; color: #5d2e88; }
-.rowMoreMenu[role="group"] { max-width: min(22rem,calc(100vw - 1rem)); gap: .5rem; padding: .625rem; font-size: .8125rem; border-color: var(--enrolment-border, #ded4eb); }
-.rowMoreMenu > button, .rowMoreMenu > span { justify-content: flex-start; }
+.rowMoreMenu[role="group"] { min-width: min(13.5rem,calc(100vw - 1rem)); max-width: min(22rem,calc(100vw - 1rem)); gap: .25rem; padding: .375rem; font-size: .8125rem; border-color: var(--enrolment-border, #ded4eb); }
+/* These actions are portalled out of the page; give every item the same menu layout. */
+.rowMoreMenu[role="group"] > button,
+.rowMoreMenu[role="group"] > span > button {
+  display: flex; align-items: center; justify-content: flex-start; gap: .625rem;
+  width: 100%; min-height: 2.5rem; padding: .5rem .75rem;
+  border: 0; border-radius: .625rem; background: transparent;
+  /* Override the shared padded-action shadow, including its hover state. */
+  box-shadow: none !important;
+  color: #47394e; font: 500 .8125rem/1.5 var(--font-body);
+  text-align: left; text-decoration: none; white-space: nowrap; cursor: pointer;
+  transition: background-color 150ms ease, color 150ms ease;
+}
+.rowMoreMenu[role="group"] > button:hover:not(:disabled),
+.rowMoreMenu[role="group"] > span > button:hover:not(:disabled) { background: #f2eaf9; color: #542b76; }
+.rowMoreMenu[role="group"] > button:global(.text-red-600) { color: #b42318; }
+.rowMoreMenu[role="group"] > button:global(.text-red-600):hover:not(:disabled) { background: #fef3f2; color: #b42318; }
+.rowMoreMenu[role="group"] > span { width: 100%; min-width: 0; }
+.rowMoreMenu[role="group"] > button > svg,
+.rowMoreMenu[role="group"] > span > button > :is(svg,i) { flex-shrink: 0; width: 1rem; height: 1rem; font-size: 1rem; }
+.rowMoreMenu[role="group"] button:disabled { cursor: not-allowed; opacity: .5; }
 .sessionFilters { grid-template-columns: repeat(3,minmax(0,1fr)); align-items: end; gap: .75rem; }
 .sessionFilters > fieldset { display: contents; }
 .sessionFilters > button { grid-column: 1 / -1; justify-self: end; box-shadow: none; }
@@ -316,6 +335,8 @@
 .wizard > div > div > div:has([aria-label="Enrolment steps"]) > div { box-shadow: none; border-color: #ded4eb; border-radius: var(--lms-radius, 16px); }
 @media (min-width: 1024px) {
   .sidebar { display: flex; width: var(--enrolment-sidebar-width); transition: width 180ms ease; }
+  /* Match the shared topbar's .5rem inset without clipping the sidebar footer. */
+  .directoryShell .sidebar { inset-block: .5rem; height: auto; }
   .content { margin-left: calc(var(--enrolment-sidebar-width) + 1rem); }
 }
 @media (max-width: 1279px) {

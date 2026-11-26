@@ -1,5 +1,7 @@
 from . import working_hours_holidays
 from . import reward_tracking
+from . import employer_contracts
+from . import employer_meetings
 from .coach_availability import coach_available_slots, case_owner_available_slots
 from . import presentation_design
 from . import personal_learning
@@ -42,6 +44,7 @@ from .my_learning import my_learning
 from . import progress_transfer
 from . import support_tickets
 from . import reading_ocr
+from . import user_archive
 
 from curriculum_api import session_results
 from .session_recovery import link_catchup
@@ -110,6 +113,8 @@ urlpatterns = [
     path("enrolment-users/import/", learner_import.import_students, name="enrolment-users-import"),
     path("enrolment-users/options/", views.enrolment_user_options, name="enrolment-user-options"),
     path("enrolment-users/<int:pk>/", views.enrolment_user_detail, name="enrolment-user-detail"),
+    path("enrolment-users/<int:pk>/archive/", user_archive.archive_user, name="enrolment-user-archive"),
+    path("enrolment-users/<int:pk>/restore/", user_archive.restore_user, name="enrolment-user-restore"),
     path("enrolment-users/<int:pk>/fields/", views.enrolment_user_fields, name="enrolment-user-fields"),
     path("enrolment-users/<int:pk>/finish/", views.enrolment_user_finish, name="enrolment-user-finish"),
     # The learner's learning plan: their group's modules, editable within the
@@ -177,6 +182,9 @@ urlpatterns = [
     # Declared before "employers/<int:pk>/" is irrelevant (different prefix), but
     # the signature route is declared before the learner route for clarity.
     path("employer-portal/<int:employer_id>/", employer_portal.employer_portal, name="employer-portal"),
+    path("employer-portal/<int:employer_id>/meetings/", employer_meetings.employer_meetings, name="employer-meetings"),
+    path("employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/contracts/",
+         employer_contracts.employer_learner_contracts, name="employer-learner-contracts"),
     path(
         "employer-portal/<int:employer_id>/documents/",
         employer_portal.employer_portal_documents,
@@ -237,6 +245,8 @@ urlpatterns = [
          employer_portal.employer_dashboard_metrics, name="employer-dashboard-metrics"),
     path("employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/progress-reviews/",
          employer_portal.employer_portal_progress_reviews, name="employer-progress-reviews"),
+    path("employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/mcm-timeline/",
+         employer_portal.employer_portal_mcm_timeline, name="employer-mcm-timeline"),
     path("employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/progress-reviews/<path:event_key>/pdf/",
          employer_portal.employer_portal_progress_reviews, {"as_pdf": True}, name="employer-progress-review-pdf"),
     path("employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/progress-reviews/<path:event_key>/artifacts/",

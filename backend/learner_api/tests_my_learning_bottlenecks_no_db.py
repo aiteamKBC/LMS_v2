@@ -22,6 +22,12 @@ class ReadSet:
     def only(self, *args):
         self.only_fields = args
         return self
+    def annotate(self, **kwargs):
+        self.annotations = kwargs
+        for row in self.rows:
+            for field in kwargs:
+                setattr(row, field, row.raw_data)
+        return self
     def order_by(self, *args): return self
     def values(self, *args): return []  # Unevaluated SQL subquery stand-in.
     def values_list(self, *args):
@@ -136,6 +142,16 @@ class BottleneckReadParityTests(SimpleTestCase):
         self.assertNotIn('attendees', sets['series'].only_fields)
         self.assertIn('module_title', sets['series'].only_fields)
 
+    def test_progress_reader_projects_identity_without_loading_duplicate_raw_evidence(self):
+        rows, _, sets = self.attendance(True)
+        self.assertEqual(rows[0]['attendance_status'], 'present')
+        self.assertNotIn('raw_data', sets['evidence'].only_fields)
+        self.assertIn('intervals', sets['evidence'].only_fields)
+        self.assertIn('total_attendance_seconds', sets['evidence'].only_fields)
+        self.assertIn('_identity_raw_data', sets['evidence'].annotations)
+        _, _, full_sets = self.attendance(False)
+        self.assertIn('raw_data', full_sets['evidence'].only_fields)
+
     def test_same_module_occurrences_reuse_full_identity_roster_without_changing_presence(self):
         rows, _, sets = self.attendance(True, extra=True)
         self.assertEqual(len(rows), 2)
@@ -173,14 +189,50 @@ class BottleneckReadParityTests(SimpleTestCase):
                   'components': [{'componentTitle': 'Historical'}]}]}
         plan = [{'moduleId': 'M1', 'moduleTitle': 'Native', 'weeks': [
             {'weekId': 'W1', 'components': [{'componentId': str(i)} for i in range(1000)]}]}, legacy]
+        def required_hours(components):
+            for component in components:
+                component['expectedOtjh'] = 0.5
+            return components, 0.5
         with patch.object(weekly, 'get_training_plan', return_value=plan), \
              patch.object(weekly, 'flatten_training_plan', wraps=flatten_training_plan) as flatten, \
              patch('learner_api.learner_detail._resolve_from_master', side_effect=lambda m,w,c,**kw: (m,w,c)), \
+             patch('learner_api.learner_detail._annotate_otjh', side_effect=required_hours) as annotate, \
              patch('learner_api.learner_detail._append_week_quizzes', side_effect=lambda w,c,**kw: (w,c)):
             result = weekly.build_learning_content_summary(source, 7, assigned_modules=[{'moduleId': 'M1'}],
                 identities_only=True, preserve_legacy=True, strict=True, resolved_metadata={}, progress=([],[],[]))
         flatten.assert_called_once_with([legacy])
         self.assertEqual(result['components'][0]['component'], 'Historical')
+        self.assertEqual(result['components'][0]['expectedOtjh'], 0.5)
+        self.assertEqual([c['component'] for c in annotate.call_args.args[0]], ['Historical'])
+        annotate.assert_called_once()
+
+    def test_catalogue_keeps_legacy_components_without_loading_recording_access(self):
+        from . import weekly_learning as weekly
+        source = SimpleNamespace(id=7, programme='', cohort='', group='')
+        components = [{'componentId': 'LIVE', 'type': 'live_session', 'component': 'Lecture'},
+                      {'component': 'Historical reading', 'type': 'reading'}]
+        for identities_only in (True, False):
+            with self.subTest(identities_only=identities_only), ExitStack() as stack:
+                stack.enter_context(patch.object(weekly, 'get_training_plan', return_value=[]))
+                stack.enter_context(patch('learner_api.learner_detail._resolve_from_master',
+                    return_value=([], [], deepcopy(components))))
+                stack.enter_context(patch('learner_api.learner_detail._append_week_quizzes',
+                    side_effect=lambda w,c,**kw: (w,c)))
+                stack.enter_context(patch('learner_api.learner_detail._apply_programme_assignment_template',
+                    side_effect=lambda c,*args: c))
+                stack.enter_context(patch('learner_api.learner_detail._annotate_otjh'))
+                access = stack.enter_context(patch('learner_api.live_session_access.annotate_access',
+                    side_effect=lambda s,c: [{**item, 'liveSessionAccess': {'allowed': False}} for item in c]))
+                result = weekly.build_learning_content_summary(source, 7, assigned_modules=[],
+                    identities_only=identities_only, preserve_legacy=True, strict=True,
+                    include_component_details=True, progress=([],[],[]))
+                self.assertEqual([c['component'] for c in result['components']],
+                                 ['Lecture', 'Historical reading'])
+                if identities_only:
+                    access.assert_not_called()
+                else:
+                    access.assert_called_once()
+                    self.assertFalse(result['components'][0]['liveSessionAccess']['allowed'])
 
     def test_native_read_supplies_separate_text_schedule_facts_without_extra_select(self):
         from . import learner_detail
@@ -203,6 +255,61 @@ class BottleneckReadParityTests(SimpleTestCase):
         sql = cursor.execute.call_args.args[0]
         self.assertIn("settings_json->>'dueTiming'", sql)
         self.assertIn('visible_parent.module_catalogue_id=components.module_catalogue_id', sql)
+
+    def test_catalogue_omits_presentation_but_keeps_recording_links_and_schedule(self):
+        from . import learner_detail
+        settings = {'pointNumber': 3, 'teamsSessionNumber': 2,
+                    'teamsLiveSessionId': 'S1', 'sessionDate': '2026-10-01'}
+        recording = {'pointNumber': 4, 'linkedLiveSessionComponentId': 'LIVE',
+                     'linkedLiveSessionModuleId': 'M1'}
+        rows = [('LIVE', 'W1', 'M1', 'live_session', 'Live', '', settings,
+                 None, 0, None, False, None, False, {'sessionDate': '2026-10-01'}),
+                ('REC', 'W1', 'M1', 'recording_placeholder', 'Recording', '', recording,
+                 None, 1, None, False, None, False, {})]
+        results, metadata = [], []
+        for include_presentation in (True, False):
+            cursor, connection = MagicMock(), MagicMock()
+            cursor.fetchall.return_value = deepcopy(rows)
+            connection.cursor.return_value.__enter__.return_value = cursor
+            resolved = {'module_titles': {'M1': 'Module'},
+                        'weeks': [('W1', 'M1', 'Week 1', 1, 0)],
+                        'live_credit_components': [], 'schedule_components': []}
+            with patch.object(learner_detail, 'connections', {'enrolment': connection}):
+                results.append(learner_detail._resolve_from_master([], [], [],
+                    assigned_modules=[{'moduleId': 'M1'}], compact=True, identities_only=True,
+                    catalogue_facts=True, live_session_ids=False, resolved_metadata=resolved,
+                    strict=True, include_presentation=include_presentation))
+            metadata.append(resolved)
+            sql = cursor.execute.call_args.args[0]
+            self.assertEqual("'_pointLegacySettings'" in sql, include_presentation)
+            self.assertEqual("'_audioAlternativeLegacy'" in sql, include_presentation)
+            self.assertIn("'linkedLiveSessionComponentId'", sql)
+        self.assertEqual(results[0][2][0]['pointNumber'], 3)
+        self.assertEqual(results[1][2][1]['linkedSessionComponentId'], 'LIVE')
+        without_points = [{key: value for key, value in row.items() if key != 'pointNumber'}
+                          for row in results[0][2]]
+        self.assertEqual(results[1], (results[0][0], results[0][1], without_points))
+        self.assertEqual(metadata[0], metadata[1])
+
+    def test_lean_catalogue_keeps_cleared_quiz_link_authoritative(self):
+        from . import learner_detail
+        cursor, connection = MagicMock(), MagicMock()
+        cursor.fetchall.side_effect = [[('C1', 'W1', 'M1', 'quiz', 'Quiz', '',
+            {'linkedQuizId': None}, None, 0, None, False, None, False, {})],
+            [('C1', 8, 8, 'Old linked quiz', 2, 10, 'minutes')]]
+        connection.cursor.return_value.__enter__.return_value = cursor
+        metadata = {'module_titles': {'M1': 'Module'}, 'weeks': [('W1', 'M1', 'Week 1', 1, 0)],
+                    'live_credit_components': [], 'schedule_components': []}
+        with patch.object(learner_detail, 'connections', {'enrolment': connection}):
+            result = learner_detail._resolve_from_master([], [], [], assigned_modules=[{'moduleId': 'M1'}],
+                compact=True, identities_only=True, catalogue_facts=True, live_session_ids=False,
+                resolved_metadata=metadata, strict=True, include_presentation=False)
+        self.assertFalse(result[2][0]['isQuiz'])
+        self.assertIsNone(result[2][0]['quizMeta'])
+        sql = cursor.execute.call_args_list[0].args[0]
+        self.assertIn(" || CASE WHEN settings_json::jsonb ? 'linkedQuizId' THEN", sql)
+        self.assertIn('jsonb_strip_nulls(', sql)
+        self.assertEqual(cursor.execute.call_count, 2)
 
     def test_register_reuses_canonical_owner_but_keeps_corrections(self):
         from . import attendance_lectures as lectures

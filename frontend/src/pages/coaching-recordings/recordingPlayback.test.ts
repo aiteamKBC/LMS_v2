@@ -81,4 +81,38 @@ describe('recording playback preparation', () => {
     await vi.advanceTimersByTimeAsync(45000);
     await result;
   });
+
+  const manifest = () => ({ kind: 'bunny', libraryId: '999001', videoId: '11111111-2222-3333-4444-555555555555',
+    url: `https://iframe.mediadelivery.net/embed/999001/11111111-2222-3333-4444-555555555555?token=${'a'.repeat(64)}&expires=${Math.floor(Date.now() / 1000) + 3600}` });
+
+  it('renews authorization and uses the protected Bunny iframe without downloading media through the LMS', async () => {
+    const value = linked(); value.meeting.media.recordings[0].source = 'bunny';
+    vi.mocked(loadLinkedCoachingMeeting).mockResolvedValue(value);
+    request.mockResolvedValue(Response.json(manifest()));
+    const result = await prepareRecordingPlayback(input, new AbortController().signal);
+    expect(result.kind).toBe('bunny');
+    expect(result.url).toBe(manifest().url);
+    expect(request).toHaveBeenCalledOnce();
+    expect(request.mock.calls[0][0]).toContain('format=playback');
+    expect(request.mock.calls[0][1]).not.toHaveProperty('headers');
+  });
+
+  it.each(['host', 'path', 'library', 'token', 'expiry', 'invalid-expiry', 'credential'])(
+    'refuses a Bunny manifest with invalid %s', async change => {
+      const value = manifest();
+      if (change === 'host') value.url = value.url.replace('iframe.mediadelivery.net', 'other.invalid');
+      if (change === 'path') value.url = value.url.replace('/embed/', '/play/');
+      if (change === 'library') value.libraryId = '999002';
+      if (change === 'token') value.url = value.url.replace('a'.repeat(64), 'invalid');
+      if (change === 'expiry') value.url = value.url.replace(/expires=\d+/, 'expires=1');
+      if (change === 'invalid-expiry') value.url = value.url.replace(/expires=\d+/, 'expires=invalid');
+      if (change === 'credential') value.url = value.url.replace('https://', 'https://someone@');
+      request.mockResolvedValue(Response.json(value));
+      await expect(prepareRecordingPlayback({ ...input, source: 'bunny' }, new AbortController().signal)).rejects.toThrow('could not be verified');
+    });
+
+  it.each([401, 403, 409, 503])('does not mount Bunny playback after HTTP %s', async status => {
+    request.mockResolvedValue(Response.json({}, { status }));
+    await expect(prepareRecordingPlayback({ ...input, source: 'bunny' }, new AbortController().signal)).rejects.toThrow();
+  });
 });

@@ -4,8 +4,10 @@ from collections import defaultdict
 
 from django.db import DatabaseError, connections, transaction
 from .session_results_policy import attendance_name_key
+from learner_api.weekly_read_cache import reuse_weekly_read
 
 
+@reuse_weekly_read
 def identity_rules(module_ids, database='default'):
     if not module_ids:
         return []

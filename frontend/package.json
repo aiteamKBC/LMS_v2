@@ -79,7 +79,8 @@
     "e2e:apprentice": "playwright test --project=apprentice",
     "e2e:staff": "playwright test --project=staff",
     "e2e:employer": "playwright test --project=employer",
-    "e2e:verify": "playwright test --project=verify"
+    "e2e:verify": "playwright test --project=verify",
+    "test:assignment-timer": "vitest run src/pages/learner/video-watch/TopicAssignment.test.tsx src/pages/learner/video-watch/useAssignmentTimer.test.ts src/pages/learner/video-watch/AssignmentCoachingBooking.test.tsx src/pages/learner/video-watch/AssignmentSubmissionWizard.test.tsx src/lib/__tests__/assignmentTopics.test.ts src/api/reflectionSubmission.test.ts --maxWorkers=2"
   },
   "type": "module",
   "version": "0.0.0"

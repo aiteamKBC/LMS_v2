@@ -31,7 +31,9 @@ _ARCHIVE = re.compile(
 # Interim wording used briefly for a recording 404 before categories existed.
 _MISSING = re.compile(r'Teams could not find (?P<type>recording|transcript) (?P<id>\S+) \(HTTP (?P<status>\d{3})\)')
 _TIMING = re.compile(r'Could not prepare transcript timing for (?P<id>\S+?)\.')
-_ATTENDANCE_ARCHIVE = re.compile(r'Could not archive attendance for session (?P<number>\d+)')
+_ATTENDANCE_ARCHIVE = re.compile(
+    r'Could not archive attendance for session (?P<number>\d+)'
+    r'(?: during (?P<stage>\w+) \((?P<error>[A-Za-z_][\w.]*)(?:, HTTP (?P<status>\d{3}))?\))?')
 _GRAPH = re.compile(r'(?P<label>Attendance reporting|Attendance|Recording|Transcript) sync failed(?: \(HTTP (?P<status>\d{3})\))?')
 
 
@@ -79,8 +81,11 @@ def parse_sync_error(text):
     if match := _TIMING.search(text):
         return _issue('storage', file_type='transcript', artifact_id=match['id'], stage='finalizing', detail=text)
     if match := _ATTENDANCE_ARCHIVE.search(text):
-        return _issue('storage', file_type='attendance', session_number=int(match['number']),
-                      stage='uploading', detail=text)
+        status = int(match['status']) if match['status'] else None
+        stage = match['stage'] or 'uploading'
+        category = 'storage' if stage in {'preparing', 'uploading', 'uploading_csv', 'uploading_original'} else category_for(status, match['error'] or '', stage)
+        return _issue(category, file_type='attendance', session_number=int(match['number']),
+                      status=status, stage=stage, error_type=match['error'], detail=text)
     if match := _GRAPH.search(text):
         status = int(match['status']) if match['status'] else None
         file_type = 'attendance' if match['label'].startswith('Attendance') else match['label'].lower()

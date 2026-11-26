@@ -73,10 +73,11 @@ export function AssignmentEvidence({
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const loadVersion = useRef(0);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const loadSequence = useRef(0);
   // Callers pass an inline arrow, so keep it in a ref: depending on the prop
   // directly would give `load` a new identity every render and re-fire the
   // mount effect in a loop.
@@ -86,22 +87,43 @@ export function AssignmentEvidence({
   useEffect(() => { onUploadCompletedRef.current = onUploadCompleted; }, [onUploadCompleted]);
 
   const load = useCallback(() => {
-    const sequence = ++loadSequence.current;
+    const version = ++loadVersion.current;
     setLoading(true);
-    setError(null);
+    setLoadError(null);
     fetchEvidence(kind, learnerId, { sectionRef: componentId })
       .then((rows) => {
-        if (sequence !== loadSequence.current) return;
-        setFiles(rows);
-        // A replacement can have the same count as the previous list. Notify
-        // with the actual identities, outside React's state updater.
-        onUploadedRef.current?.(rows);
+        if (version !== loadVersion.current) return;
+        setFiles((prev) => {
+          // A file finishing its scan changes whether the completion criteria
+          // are met, so tell the caller when the approved count moves.
+          const was = prev.filter((f) => f.status === 'approved').length;
+          const now = rows.filter((f) => f.status === 'approved').length;
+          if (now !== was) onUploadedRef.current?.(rows);
+          return rows;
+        });
       })
-      .catch((e) => { if (sequence === loadSequence.current) setError(e instanceof Error ? e.message : 'Could not load evidence.'); })
-      .finally(() => { if (sequence === loadSequence.current) setLoading(false); });
+      .catch((e) => {
+        if (version === loadVersion.current) setLoadError(e instanceof Error ? e.message : 'Could not load evidence.');
+      })
+      .finally(() => { if (version === loadVersion.current) setLoading(false); });
+    return () => { ++loadVersion.current; };
   }, [kind, learnerId, componentId]);
 
-  useEffect(() => { load(); return () => { loadSequence.current += 1; }; }, [load]);
+  useEffect(() => {
+    setFiles([]);
+    setError(null);
+    return load();
+  }, [load]);
+
+  // Poll while any file is still being scanned, so status flips pending -> approved/rejected.
+  useEffect(() => {
+    if (!files.some((f) => f.status === 'pending')) return;
+    const refreshPendingFiles = () => {
+      if (document.visibilityState !== 'hidden') load();
+    };
+    const t = window.setInterval(refreshPendingFiles, 10000);
+    return () => window.clearInterval(t);
+  }, [files, load]);
 
   const handleFile = async (file: File) => {
     setError(null);
@@ -153,7 +175,6 @@ export function AssignmentEvidence({
 
   if (!showPanel) {
     return (
-      <>
       <input
         ref={inputRef}
         id={inputId}
@@ -163,9 +184,6 @@ export function AssignmentEvidence({
         className="hidden"
         onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }}
       />
-      {error && <p role="alert" className="text-xs text-red-600">{error}</p>}
-      {(error || files.some(file => file.status === 'pending')) && <button type="button" disabled={loading} onClick={load} className="text-xs font-semibold underline">Refresh files</button>}
-      </>
     );
   }
 
@@ -173,7 +191,6 @@ export function AssignmentEvidence({
     <div>
       <div className="flex items-center justify-between gap-3 mb-2">
         <p className="text-[11px] font-semibold uppercase tracking-wider text-foreground-400">Upload evidence</p>
-        <button type="button" disabled={loading} onClick={load} className="text-xs font-semibold text-primary-700 disabled:opacity-50">Refresh files</button>
         {!readOnly && (
           <label className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-600 hover:text-emerald-700 cursor-pointer">
             <AppIcon className="ri-upload-2-line" /> {uploading ? 'Uploading…' : 'Choose file'}
@@ -191,13 +208,16 @@ export function AssignmentEvidence({
       </div>
       <p className="text-[11px] text-foreground-400 mb-3">Word, PowerPoint, PDF, PNG, JPEG or MP4, up to 50 MB.</p>
 
-      {error && <p role="alert" className="text-xs font-medium text-red-600 mb-3">{error}</p>}
-      {files.some(file => file.status === 'pending') && <p role="status" className="mb-3 text-xs text-amber-700">File checks are pending. Select Refresh files to check their status.</p>}
+      {error && <p className="text-xs font-medium text-red-600 mb-3">{error}</p>}
+      {loadError && <div role="alert" className="text-xs font-medium text-red-600 mb-3">
+        <p>{loadError}</p>
+        <button type="button" onClick={load} className="mt-2 underline font-semibold">Retry loading evidence</button>
+      </div>}
 
       {loading ? (
         <p className="text-xs text-foreground-400"><LoadingSkeleton label="Loading evidence…" variant="rows" /></p>
       ) : files.length === 0 ? (
-        <p className="text-xs text-foreground-400">No evidence uploaded yet.</p>
+        !loadError && <p className="text-xs text-foreground-400">No evidence uploaded yet.</p>
       ) : (
         <ul className="space-y-2">
           {files.map((f) => {

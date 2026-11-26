@@ -150,7 +150,12 @@ def recording_completion_evidence(kind, learner_id, occurrence_ids):
     ids = sorted({str(value) for value in occurrence_ids if value})
     if not ids:
         return {}
-    artifacts = read('''SELECT a.*, r.status AS archive_status,r.updated_at AS archive_updated_at,o.scheduled_start
+    # Completion needs recording identity/provider metadata and saved readiness,
+    # never transcript bodies/timelines or archive payloads. Keep transcript
+    # identities so an occurrence with no recording still reports ready=False.
+    artifacts = read('''SELECT a.id,a.occurrence_id,a.artifact_type,a.created_at,
+        CASE WHEN a.artifact_type='recording' THEN a.metadata ELSE NULL END AS metadata,
+        r.status AS archive_status,r.updated_at AS archive_updated_at,o.scheduled_start
         FROM curriculum.live_session_artifacts a
         JOIN curriculum.live_session_occurrences o ON o.id=a.occurrence_id
         LEFT JOIN curriculum.session_result_archive r ON r.artifact_id=a.id

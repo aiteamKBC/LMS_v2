@@ -1,7 +1,7 @@
 import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowRight, Bell, ChevronDown, CircleHelp, Compass, LogOut, MessageSquare, Settings, UserRound } from 'lucide-react';
+import { ArrowRight, Bell, BookOpen, ChevronDown, CircleHelp, Compass, LogOut, MessageSquare, Settings, UserRound } from 'lucide-react';
 import { useAuth } from "@/hooks/useAuth";
 import { useTheme } from '@/hooks/useTheme';
 import { Modal } from '@/pages/users/components/Modal';
@@ -108,6 +108,11 @@ export function StudentHomeHeader({ name, homeHref, identity, events, loading, e
         </g>
       </svg>
       <div className={styles.headerActions}>
+        <a className={`${styles.headerAction} ${styles.headerResource}`}
+          href="https://library.kentbusinesscollege.net/resources"
+          target="_blank" rel="noopener noreferrer" aria-label="Library (opens in a new tab)">
+          <BookOpen aria-hidden="true"/><span>Library</span>
+        </a>
         <button type="button" className={styles.headerAction} aria-label={unread ? `Notifications, ${unread} new` : 'Notifications'}
           aria-haspopup="dialog" aria-expanded={panel === 'notifications'} onClick={event => openPanel('notifications', event.currentTarget)}>
           <span className={styles.notificationBell}><Bell aria-hidden="true"/>{unread > 0 && <span className={styles.notificationDot} aria-hidden="true"/>}</span>

@@ -69,9 +69,9 @@ jobs:
           # A PR is compared with where it branched off, not with newer main
           FROM=$(git merge-base "$BASE" "$REF")
           FILES=$(git diff --name-only "$FROM" "$REF")
-          echo "$FILES" | grep -qE '^\.github/(workflows/teams-checks\.yml|ci/teams_files\.txt)$' && all "the Teams checks themselves changed"
+          grep -qE '^\.github/(workflows/teams-checks\.yml|ci/teams_files\.txt)$' <<< "$FILES" && all "the Teams checks themselves changed"
           f=false; b=false
-          echo "$FILES" | grep -q '^frontend/' && f=true
+          grep -q '^frontend/' <<< "$FILES" && f=true
           TEAMS=$(echo "$FILES" | grep -Ef <(grep -vE '^\s*(#|$)' .github/ci/teams_files.txt) || true)
           [ -n "$TEAMS" ] && b=true && f=true
           echo "frontend=$f" >> "$GITHUB_OUTPUT"; echo "backend=$b" >> "$GITHUB_OUTPUT"

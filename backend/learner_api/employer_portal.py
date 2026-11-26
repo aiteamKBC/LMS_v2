@@ -364,7 +364,7 @@ def _written_agreement_signing_row(doc):
     }
 
 
-def _active_documents(model, keys):
+def _active_documents(model, keys, *, strict_read=False):
     """{(kind, learner_id): the active row of `model`}, in one query.
 
     The models order newest first, so the first row seen per learner is the
@@ -382,16 +382,18 @@ def _active_documents(model, keys):
             found.setdefault((doc.learner_kind, doc.learner_id), doc)
         return found
     except DatabaseError:
+        if strict_read:
+            raise
         logger.exception("_active_documents: %s lookup failed for %s", model.__name__, keys)
         return {}
 
 
-def _document_signing_rows(kind, learner_id):
+def _document_signing_rows(kind, learner_id, *, strict_read=False):
     """One learner's signable documents. See _document_signing_rows_for."""
-    return _document_signing_rows_for([(kind, learner_id)])[(kind, learner_id)]
+    return _document_signing_rows_for([(kind, learner_id)], strict_read=strict_read)[(kind, learner_id)]
 
 
-def _document_signing_rows_for(keys):
+def _document_signing_rows_for(keys, *, strict_read=False):
     """{(kind, learner_id): signable documents} for many learners at once.
 
     The Apprenticeship Agreement, Training Plan and Written Agreement come
@@ -415,14 +417,15 @@ def _document_signing_rows_for(keys):
         (TrainingPlanDocument, _training_plan_signing_row),
         (WrittenAgreement, _written_agreement_signing_row),
     ):
-        for key, doc in _active_documents(model, keys).items():
+        for key, doc in _active_documents(model, keys, strict_read=strict_read).items():
             if key in out:
                 out[key].append(to_row(doc))
 
     learner_ids = list(dict.fromkeys(learner_id for _kind, learner_id in keys))
     placeholders = ", ".join(["%s"] * len(learner_ids))
     try:
-        ensure_enrolment_documents_table()
+        if not strict_read:
+            ensure_enrolment_documents_table()
         with connections["enrolment"].cursor() as cur:
             cur.execute(
                 f'''
@@ -438,6 +441,8 @@ def _document_signing_rows_for(keys):
             )
             rows = cur.fetchall()
     except DatabaseError:
+        if strict_read:
+            raise
         logger.exception("_document_signing_rows_for: lookup failed for %s", keys)
         return out
 
@@ -524,6 +529,8 @@ def _learner_cards(employer_id):
             "cohort": _s(learner.cohort),
             "programmeStatus": status,
             "onboardingStatus": _s(learner.onboarding_status),
+            "learnerStartDate": _s(learner.learner_start_date),
+            "learnerEndDate": _s(learner.learner_end_date),
             # Drives which panel the learner page leads with. Both are shown
             # either way — see the module docstring.
             "isActive": status.lower() == ACTIVE_STATUS,
@@ -540,6 +547,7 @@ def _attach_learner_otjh_progress(cards, learners):
         return
 
     from . import canonical_learning
+    from .dashboard_metrics import coach_otjh_target_to_date
     from .journal_sources import learner_journal_reads
     from .training_plan_dashboard import plan_planned_hours
 
@@ -556,7 +564,7 @@ def _attach_learner_otjh_progress(cards, learners):
     profiles_by_learner = {}
     duplicate_profiles = set()
     profiles = LearnerProfile.objects.filter(enrolment_id__in=learner_ids).values(
-        'id', 'enrolment_id',
+        'id', 'enrolment_id', 'start_date', 'end_date',
     )
     for profile in profiles:
         enrolment_id = profile['enrolment_id']
@@ -591,7 +599,12 @@ def _attach_learner_otjh_progress(cards, learners):
                             "employer list OTJ plan unavailable for learner %s", learner.pk,
                         )
             percent = round(actual / planned * 100, 2) if actual is not None and planned else None
-            progress = {'actual': actual, 'planned': planned, 'percent': percent}
+            owner = profiles_by_learner.get(learner.pk)
+            target = coach_otjh_target_to_date(
+                learner, {'actual': actual, 'planned': planned}, owner=owner,
+            ) if owner is not None else None
+            progress = {'actual': actual, 'planned': planned, 'percent': percent,
+                        'targetToDate': target}
         card = cards_by_learner.get(int(learner.pk))
         if card is not None:
             card['otjhProgress'] = progress
@@ -691,10 +704,11 @@ def _read_employer_module_progress(source, profile):
     """Read one learner's catalogue rollup in an isolated worker."""
     from django.db import close_old_connections, connections
     from .module_progress import canonical_module_progress
+    from .employer_learning import without_free_courses
 
     close_old_connections()
     try:
-        return canonical_module_progress(source, profile)
+        return without_free_courses(canonical_module_progress(source, profile))
     finally:
         connections.close_all()
 
@@ -1149,10 +1163,6 @@ def employer_portal_learner_plan(request, employer_id, kind, learner_id):
 #: the learner's timeline and progress rather than a second calculation of them.
 OVERVIEW_PARTS = frozenset({"week", "schedule", "contract", "hours", "photo", "attendance", "dashboard", "training"})
 
-#: Attendance-register totals the dashboard's Attendance figure needs. The
-#: employer gets the counts only, never the per-session register behind them.
-_ATTENDANCE_FIELDS = ("sessions", "present", "absent", "late", "attendanceRate")
-
 #: Monthly-log fields the dashboard's hours figures need. The employer gets the
 #: per-month totals only, never the activity rows or signatures behind them.
 _HOURS_MONTH_FIELDS = ("month", "source", "training_plan_target", "not_accepted_hours", "actual_hours")
@@ -1183,16 +1193,9 @@ def _overview_part(part, learner, kind=None):
         from .employer_learning import read_schedule
         return read_schedule(learner, 'contract' if part == 'contract' else 'overview')
     if part == "attendance":
-        from .attendance import _summarize_attendance
-        from .attendance_lectures import lecture_register
+        from .employer_attendance import read_attendance
 
-        # The same register the learner's dashboard and the coach case file
-        # count, so all three show one figure. Timetabled sessions are not
-        # attendance: a class with no register entry is neither attended nor
-        # missed. Read-only: catch-up outcomes are settled by the learner's
-        # own reads, not by their employer viewing the page.
-        summary = _summarize_attendance(lecture_register(learner))
-        return {"attendance": {key: summary[key] for key in _ATTENDANCE_FIELDS} if summary else None}
+        return {"attendance": read_attendance(learner, kind)}
 
     from old_otjh import service as old_service
     from . import monthly_log_sources, monthly_logs
@@ -1470,6 +1473,38 @@ def _employer_progress_review_rows(learner, event_key=None, month=None):
 
 @csrf_exempt
 @employer_or_staff()
+def employer_portal_mcm_timeline(request, employer_id, kind, learner_id):
+    """Dates/status only for an owned learner's coach-and-learner meetings."""
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+    learner, err = _owned_learner(employer_id, kind, learner_id)
+    if err is not None:
+        return err
+    from .calendar import _calendar_profile, coaching_events_for_learner
+
+    try:
+        profile = _calendar_profile(learner, learner.pk)
+        events = coaching_events_for_learner(
+            learner, profile, only_sources={"mcr"}, dates_only=True, header_only=True,
+        )
+        # Explicit projection: no meeting links, notes, answers, forms or artifacts.
+        fields = ("eventKey", "sequence", "occurrenceNumber", "status", "bookingStatus",
+                  "date", "targetDate", "scheduledDate")
+        rows = [{key: event.get(key) for key in fields} for event in events
+                if review_event_category(event) == "mcr"
+                and not any(_s(event.get(field)).lower().replace("_", "-").replace(" ", "-")
+                            in {"cancelled", "deleted", "superseded"}
+                            for field in ("status", "bookingStatus"))]
+    except DatabaseError:
+        logger.exception("employer_portal_mcm_timeline: dates unavailable for %s", learner.pk)
+        return _error("Could not load monthly coaching meetings. Please try again.", 503)
+    response = JsonResponse({"events": rows})
+    response["Cache-Control"] = "private, no-store"
+    return response
+
+
+@csrf_exempt
+@employer_or_staff()
 def employer_portal_progress_reviews(request, employer_id, kind, learner_id, event_key=None, as_pdf=False):
     """Same programme review source as the learner, with employer visibility."""
     if request.method != "GET":
@@ -1674,10 +1709,15 @@ def employer_portal_monthly_logs(request, employer_id, kind, learner_id, month=N
 
 #: A learner's handed-in assignments: every status except an unsent draft.
 _SUBMITTED_ASSIGNMENTS_SQL = """
-    select activity_id, activity_title, module_title, week_title, status, submitted_at, date_completed
-    from "Learner"."learning_reflection_submissions"
-    where learner_kind = %s and learner_id = %s and activity_type = 'assignment' and status <> 'draft'
-    order by coalesce(submitted_at, date_completed) desc nulls last, activity_title
+    select s.activity_id, s.activity_title, s.module_title, s.week_title, s.status, s.submitted_at, s.date_completed
+    from "Learner"."learning_reflection_submissions" s
+    where s.learner_kind = %s and s.learner_id = %s and s.activity_type = 'assignment' and s.status <> 'draft'
+      and not exists (
+        select 1 from curriculum.components c
+        join curriculum.modules m on m.module_catalogue_id = c.module_catalogue_id
+        where c.id = s.activity_id and {free_course_module}
+      )
+    order by coalesce(s.submitted_at, s.date_completed) desc nulls last, s.activity_title
 """
 
 #: Scanned-clean uploads, keyed by the activity they were uploaded to.
@@ -1702,9 +1742,12 @@ def _learner_assignments(kind, learner):
     from django.db import connections
 
     from . import legacy_assignments
+    from .employer_course_visibility import free_course_module_sql
+    from curriculum_api.learning_storage import read_sql
 
     with connections["enrolment"].cursor() as cur:
-        cur.execute(_SUBMITTED_ASSIGNMENTS_SQL, [kind, str(learner.pk)])
+        cur.execute(read_sql(_SUBMITTED_ASSIGNMENTS_SQL.format(
+            free_course_module=free_course_module_sql(cur.db)), cur.db), [kind, str(learner.pk)])
         submissions = cur.fetchall()
         files_by_activity = {}
         activity_ids = [row[0] for row in submissions]

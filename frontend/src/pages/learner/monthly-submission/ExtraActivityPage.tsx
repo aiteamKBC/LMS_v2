@@ -83,7 +83,6 @@ export function ExtraActivityForm({ kind, learnerId, savedId, initialActivityId,
   const locked = Boolean(addedBy) || ['accepted', 'submitted_for_tutor_review'].includes(status);
   const disabled = !isInitialized || staffPreview || locked || busy || loading || loadFailed;
   const validMonth = /^(?!0000)\d{4}-(0[1-9]|1[0-2])$/.test(monthly.month);
-  const datesOutsideMonth = validMonth && (monthly.timeEntries || []).some(entry => entry.date && !entry.date.startsWith(`${monthly.month}-`));
   useEffect(() => {
     if (!restoreSavedDraft) return;
     let active = true;
@@ -221,7 +220,6 @@ export function ExtraActivityForm({ kind, learnerId, savedId, initialActivityId,
           onChange={event => { changed(); setMonthly(current => ({ ...current, month: event.target.value })); }} />
         <p id="extra-activity-month-help" className="mt-2 text-sm text-slate-600">New activities start in the current UK month. You can select a different month.</p>
         {!validMonth && <p role="alert" className="mt-2 text-sm text-red-700">Choose a valid activity month.</p>}
-        {datesOutsideMonth && <p role="alert" className="mt-2 text-sm text-amber-800">Some activity dates are outside the selected month. Update them in KSBs &amp; hours claimed before submitting. Your entered hours are kept.</p>}
       </div>
       <div className={styles.extraSteps}><div className={styles.extraStepHeading}><strong>Step {step + 1} of 4</strong><span>{steps[step]}</span></div>
       <div className={styles.extraProgress} aria-hidden="true"><span style={{ width: `${(step + 1) * 25}%` }} /></div>

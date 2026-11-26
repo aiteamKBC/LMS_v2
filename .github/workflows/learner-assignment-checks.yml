@@ -1,0 +1,69 @@
+name: Learner assignment checks
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'backend/learner_api/reflection_submissions.py'
+      - 'backend/learner_api/test_assignment_timer_display_no_db.py'
+      - 'frontend/src/api/assignmentTopics.ts'
+      - 'frontend/src/api/reflectionSubmission*'
+      - 'frontend/src/lib/assignmentTopics.ts'
+      - 'frontend/src/pages/learner/video-watch/**'
+      - 'frontend/package*.json'
+      - 'frontend/vitest.config.ts'
+      - 'frontend/eslint.config.ts'
+      - 'frontend/src/test/setup.ts'
+      - '.github/ci/test_learner_assignment_release.py'
+      - '.github/workflows/learner-assignment-checks.yml'
+      - '.github/workflows/deploy-aws.yml'
+  workflow_call:
+    inputs:
+      ref:
+        description: Commit to verify
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  ASSIGNMENT_CHECK_REF: ${{ inputs.ref || github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  frontend:
+    name: Assignment timer, submission and booking regressions
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.ASSIGNMENT_CHECK_REF }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run type-check
+      - run: npm run lint
+      - run: npm run test:assignment-timer
+      - run: npm run build
+
+  backend:
+    name: Assignment timer display and release scope without database
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.ASSIGNMENT_CHECK_REF }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Pure assignment display regression tests
+        run: python -B -m unittest discover -s backend/learner_api -p test_assignment_timer_display_no_db.py -v
+      - name: Large change-list and deployment gate regressions (mock commands)
+        run: python -B -m unittest discover -s .github/ci -p test_learner_assignment_release.py -v

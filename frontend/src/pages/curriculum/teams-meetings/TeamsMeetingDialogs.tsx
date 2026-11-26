@@ -361,9 +361,10 @@ export interface TeamsDialogSecondTab {
   render: () => ReactNode;
 }
 
-export function TeamsMeetingDialogs({ workspace, secondTab }: {
+export function TeamsMeetingDialogs({ workspace, secondTab, moduleSaveAction }: {
   workspace: TeamsMeetingsWorkspace;
   secondTab?: TeamsDialogSecondTab;
+  moduleSaveAction?: { saving: boolean; label: string; error: string; onSave: () => void };
 }) {
   const [activeTab, setActiveTab] = useState<'calendar' | 'second'>('calendar');
   const [forwardOpen, setForwardOpen] = useState(false);
@@ -373,6 +374,8 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
   const [forwardNotice, setForwardNotice] = useState('');
   const [updateConfirmOpen, setUpdateConfirmOpen] = useState(false);
   const actionFeedbackId = useId();
+  const invitationFeedbackId = useId();
+  const moduleSaveFeedbackId = useId();
   const actionFeedbackRef = useRef<HTMLParagraphElement>(null);
   const onSecondTab = Boolean(secondTab) && activeTab === 'second';
   // Coming back from the additional-meeting tab: a week may have been booked or
@@ -405,10 +408,17 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
     || (externalCalendar && !selected?.summary ? 'Check this module\'s saved meeting links before updating its existing Teams calendar.' : '')
     || (selected && !(selectedForDisplay || selected).sessions.length
       ? 'This module has no saved live sessions. Add a Live session, save the module, then reopen Teams.' : '');
-  const actionError = selected?.summary ? updateDrawer.error
+  const updateWaitReason = !selected?.summary || updateProgress ? ''
+    : detailLoading ? 'Loading the saved meeting details. Save will be available when loading finishes.'
+      : updateDrawer.saving ? 'Checking the saved meeting before saving your changes. Your edits are kept.'
+        : busy ? 'A Teams calendar action is in progress. Wait for it to finish before saving.' : '';
+  const actionError = selected?.summary ? updateDrawer.error || detailError
     : createProgress || (createRecovery && createRecovery.phase !== 'failed') ? ''
       : createRecovery?.phase === 'failed' ? createRecovery.message : createDrawer.error;
-  const actionMessage = actionBlockedReason || actionError;
+  const actionMessage = actionBlockedReason || updateWaitReason || actionError;
+  const invitationError = updateDrawer.error || detailError;
+  const invitationMessage = actionBlockedReason || updateWaitReason || invitationError
+    || (originalRolesBlocked ? 'Meeting permissions must be verified before saving. Use Retry role check above.' : '');
   const explainBlockedAction = () => actionFeedbackRef.current?.focus({ preventScroll: true });
   // Who the author has typed in but not saved. Named under the comparison so a
   // reader can see why Microsoft does not have them.
@@ -465,6 +475,7 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                and a wide box around two sentences is what made this look bare. */
             size={selected.summary && teamsLoaded ? 'max-w-5xl' : 'max-w-3xl'}
             onClose={requestCloseSelected}
+            dismissible={!moduleSaveAction?.saving}
             /* The footer drives the module's own calendar. The second tab has
                its own button inside it, so this is hidden rather than left
                there acting on a calendar the reader is not looking at. */
@@ -475,6 +486,17 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                   className="w-full max-h-32 overflow-y-auto rounded-lg border border-primary-200 bg-primary-50 p-3 text-[12px] font-semibold leading-relaxed text-foreground-700 outline-none focus:ring-2 focus:ring-primary-300">
                   <AppIcon className="ri-information-line mr-1.5" aria-hidden="true" />{actionMessage}
                 </p>}
+                {moduleSaveAction && <div className="w-full space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                  {moduleSaveAction.error && <p id={moduleSaveFeedbackId} role="alert" className="text-[12px] text-red-700">{moduleSaveAction.error}</p>}
+                  <button type="button" onClick={moduleSaveAction.onSave}
+                    disabled={moduleSaveAction.saving || Boolean(busy) || updateDrawer.saving || Boolean(updateProgress) || createDrawer.saving}
+                    aria-describedby={moduleSaveAction.error ? moduleSaveFeedbackId : actionFeedbackId}
+                    className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-primary-600 px-3 py-2 text-[12px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-50">
+                    <AppIcon className={moduleSaveAction.saving ? 'ri-loader-4-line animate-spin' : 'ri-save-line'} />
+                    {moduleSaveAction.label}
+                  </button>
+                  <p className="text-[11px] text-amber-900">This saves the module first and keeps your meeting edits here. Then use Save without notifying or Save and email added people to save those changes.</p>
+                </div>}
                 {/* Only the actions this module can actually take: a footer of
                     greyed-out buttons reads as broken rather than as guidance.
                     Closing is the title bar's X — no second Close down here. */}
@@ -1039,12 +1061,26 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                       Save without notifying saves added people without an LMS email. Microsoft may still send a calendar update. Use Save and email added people to request their LMS schedule email.
                     </p>
                   )}
+                  {invitationMessage && (
+                    <p id={invitationFeedbackId} role="status" aria-label="Teams save status" aria-live="polite" aria-atomic="true"
+                      className={`rounded-lg border p-3 text-[12px] leading-relaxed ${invitationError && !updateWaitReason && !actionBlockedReason
+                        ? 'border-red-200 bg-red-50 text-red-700'
+                        : 'border-primary-200 bg-primary-50 text-foreground-700'}`}>
+                      {invitationMessage}
+                      {detailError && !detailLoading && (
+                        <button type="button" onClick={() => void loadDetail(selected.summary!.liveSessionId)}
+                          disabled={Boolean(busy) || updateDrawer.saving || Boolean(updateProgress)}
+                          className="ml-2 font-semibold underline disabled:opacity-50">Retry meeting details</button>
+                      )}
+                    </p>
+                  )}
                   <div className="flex flex-wrap items-center justify-end gap-3">
                     {updateDrawer.dirty && <span className="text-[11px] font-semibold text-amber-700">Changes not sent yet</span>}
                     <button
                       type="button"
                       onClick={() => void saveInvitations(selected)}
                       disabled={peopleRefreshing || !updateDrawer.dirty || updateDrawer.saving || Boolean(busy) || (Boolean(blockedReason) || originalCalendarBlocked || originalRolesBlocked) || detailLoading || !graphConfigured}
+                      aria-describedby={invitationMessage ? invitationFeedbackId : undefined}
                       title="Save people and settings without an LMS email. Microsoft may send a calendar update. Session dates and join links stay unchanged."
                       className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[12px] font-bold text-primary-700 transition-smooth hover:bg-primary-100 disabled:cursor-not-allowed disabled:opacity-50"
                     >
@@ -1056,6 +1092,7 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                         type="button"
                         onClick={() => void saveInvitations(selected, { invite: true })}
                         disabled={peopleRefreshing || !updateDrawer.dirty || updateDrawer.saving || Boolean(busy) || (Boolean(blockedReason) || originalCalendarBlocked || originalRolesBlocked) || detailLoading || !graphConfigured}
+                        aria-describedby={invitationMessage ? invitationFeedbackId : undefined}
                         title="Save these changes, then send an individual LMS schedule email to the people you added. No LMS email is sent to existing invitees, and no session date moves."
                         className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[12px] font-bold text-white shadow-sm transition-colors hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
                       >

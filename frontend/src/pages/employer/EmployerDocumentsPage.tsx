@@ -73,7 +73,7 @@ export default function EmployerDocumentsPage() {
   return (
     <WorkspaceShell {...shell} pageTitle="All documents" pageSubtitle={data?.employer.name ?? 'Employer'}>
       <PageContainer>
-        <div className={styles.page}>
+        <div className={styles.page} data-employer-theme>
           <section className={styles.hero} aria-labelledby="documents-title">
             <div className={styles.heroCopy}>
               <span className={styles.eyebrow}>Documents</span>

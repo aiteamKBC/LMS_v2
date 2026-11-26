@@ -3,7 +3,7 @@ import { readLearnerJson } from './learnerRead';
 import type { CertificateTemplate } from './platformAdmin';
 
 export type CertificateTemplateSummary = Pick<CertificateTemplate,
-  'id' | 'version' | 'title' | 'minimumProgress' | 'requireFinalTest'>;
+  'id' | 'version' | 'title' | 'minimumProgress' | 'requireFinalTest'> & { issuedModuleRefs?: string[] };
 
 export interface LearnerCertificateEligibility {
   eligible: boolean;
@@ -31,6 +31,11 @@ export interface LearnerCertificate {
   templateId: number;
   templateVersion: number;
   progressPercent: number;
+  progressAtIssue?: number;
+  otjHours?: number | null;
+  displayTemplateId?: number;
+  displayTemplateVersion?: number;
+  refreshWarnings?: string[];
   snapshot: {
     certificateTitle?: string;
     bodyText?: string;
@@ -40,6 +45,7 @@ export interface LearnerCertificate {
     moduleRef?: string;
     moduleTitle?: string;
     progressPercent?: number;
+    otjHours?: number | null;
     minimumProgress?: number;
     finalTestPassed?: boolean;
   };

@@ -123,7 +123,7 @@ def install_request_caches(source):
     source._training_activity_dates = None
 
 
-def read_tab(source, kind, tab, request, *, canonical_contract=False):
+def read_tab(source, kind, tab, request, *, canonical_contract=False, employer_performance=False):
     from .identity import learner_profile_for_source
 
     owner = canonical.require_profile(source.pk)
@@ -146,7 +146,8 @@ def read_tab(source, kind, tab, request, *, canonical_contract=False):
                             **({'canonical_contract': True} if canonical_contract else {}))
     if tab == 'overview':
         from .dashboard_overview import read_overview
-        return read_overview(source, kind, owner, profile, request)
+        return read_overview(source, kind, owner, profile, request,
+                             **({'employer_performance': True} if employer_performance else {}))
     raise LookupError('Dashboard not found.')
 
 

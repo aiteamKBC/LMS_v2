@@ -77,7 +77,10 @@ def main():
     settings.DATABASES['enrolment']['TEST'] = {'MIRROR': 'default'}
     # Engagement's migrations extend an externally provisioned reward wallet;
     # these Teams suites do not exercise rewards or validate their migrations.
-    settings.MIGRATION_MODULES = {**settings.MIGRATION_MODULES, 'engagement_api': None}
+    # Learner's free-course migrations now depend on the intentionally disabled
+    # curriculum migration graph. As documented above, this isolated runner
+    # provisions current models/fixtures rather than validating migration history.
+    settings.MIGRATION_MODULES = {**settings.MIGRATION_MODULES, 'engagement_api': None, 'learner_api': None}
     settings.TEST_RUNNER = 'login.test_runner.EnrolmentTestRunner'
 
     original_connect = psycopg.Connection.connect
