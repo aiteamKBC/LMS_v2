@@ -37,11 +37,11 @@ LEARNERS = {
 # for anyone else from a free-text employment field.
 WEEKLY_CAPS = {4626: Decimal("13")}
 
-MANUAL = 'structured_manual_activities.manual_learner_activities'
+MANUAL = '"Learner".learner_journal_rows'
 from learner_api.journal_sources import table as journal_table
 ROW_KSB = journal_table('learner_journal_row_ksbs')
 LEARNER_KSB = journal_table('learner_activity_ksbs')
-REVISIONS = 'structured_manual_activities.manual_activity_hours_revision'
+REVISIONS = '"Learner".manual_activity_hours_revision'
 AUDIT_TABLE = 'structured_manual_activities.monthly_log_reconciliation_audit'
 
 
@@ -248,9 +248,12 @@ class Command(BaseCommand):
                            ORDER BY m.aptem_id,m.month,m.id''', [aptem_ids, END_MONTH])
         rows = self._dicts(cursor)
         # The row-level revision history is the authority for approved fields.
-        cursor.execute(f'''SELECT row_id, proposed_actual_hours, proposed_planned_hours
-                           FROM {REVISIONS}
-                           WHERE aptem_id=ANY(%s) AND status='approved' ''', [aptem_ids])
+        cursor.execute(f'''SELECT r.row_id, r.proposed_actual_hours, r.proposed_planned_hours
+                           FROM {REVISIONS} r
+                           JOIN "Learner".learners l ON l.id=r.learner_id
+                           JOIN {MANUAL} j ON j.id=r.row_id AND j.learner_id=r.learner_id
+                           WHERE l.aptem_id=ANY(%s) AND r.status='approved'
+                             AND j.deleted_at IS NULL ''', [aptem_ids])
         approved_actual, approved_planned = set(), set()
         for row_id, actual, planned in cursor.fetchall():
             if actual is not None:

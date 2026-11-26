@@ -37,6 +37,8 @@ def main():
             'curriculum_api.test_bunny_programme_collections',
             'curriculum_api.test_bunny_module_collections',
             'curriculum_api.test_bunny_live_recording_collections',
+            'curriculum_api.test_live_recording_routing',
+            'curriculum_api.test_recording_direct_fetch',
             'curriculum_api.test_video_uploads',
             'curriculum_api.test_session_bunny',
             'curriculum_api.test_session_captions',

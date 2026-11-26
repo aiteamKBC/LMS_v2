@@ -65,9 +65,13 @@ def resolve_recording_download(url, token):
 
 
 @contextmanager
-def download_recording(url, token, progress=None):
+def download_recording(url, token, progress=None, *, _sharepoint_source=False):
     """Retry independent ranges; discard partial ranges and temporary files."""
-    if not safe_recording_url(url) or urlsplit(url).hostname != 'graph.microsoft.com':
+    if not safe_recording_url(url):
+        raise VideoImportError('The stored Microsoft recording identity is invalid.')
+    hostname = urlsplit(url).hostname or ''
+    if hostname != 'graph.microsoft.com' and not (
+            _sharepoint_source and hostname.endswith('.sharepoint.com')):
         raise VideoImportError('The stored Microsoft recording identity is invalid.')
     opener = build_opener(RecordingRedirect())
     with tempfile.TemporaryFile(dir=os.environ.get('SESSION_RECORDINGS_TEMP_DIR') or None) as stream:
@@ -80,11 +84,13 @@ def download_recording(url, token, progress=None):
                 if progress:
                     progress.update('downloading', offset, total, force=True)
                 try:
-                    request = Request(url, headers={
-                        'Authorization': 'Bearer ' + token,
+                    headers = {
                         'Range': f'bytes={offset}-{offset + RANGE_BYTES - 1}',
                         'Accept-Encoding': 'identity', 'Accept': 'video/mp4',
-                    })
+                    }
+                    if hostname == 'graph.microsoft.com' and token:
+                        headers['Authorization'] = 'Bearer ' + token
+                    request = Request(url, headers=headers)
                     with opener.open(request, timeout=120) as response:
                         if not safe_recording_url(response.geturl()):
                             raise VideoImportError('Microsoft returned an unsafe recording source.')

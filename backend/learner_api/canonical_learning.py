@@ -134,13 +134,24 @@ def programme_planned_hours(learner_id, *, owner=None):
     return round(hours, 4) if isfinite(hours) and hours >= 0 else None
 
 
-def profile_by_aptem(aptem_id):
+def profile_by_aptem(aptem_id, *, cursor=None):
     """For already-authorized Audit callers; never use an Aptem ID as a PK."""
-    records = query(f'''SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,l.full_name AS name,
-        p.name AS programme,{_owner_coach_sql()},l.email,l.start_date,l.end_date,l.learner_type
+    coach_columns = (_owner_coach_sql() if cursor is None else
+                     '(SELECT c.name FROM curriculum.coaches c WHERE c.id=l.coach_id) AS coach_name,'
+                     '(SELECT c.email FROM curriculum.coaches c WHERE c.id=l.coach_id) AS coach_email')
+    sql = f'''SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,l.full_name AS name,
+        p.name AS programme,{coach_columns},l.email,l.start_date,l.end_date,l.learner_type
         FROM "Learner".learners l
         LEFT JOIN curriculum.programmes p ON p.programme_id=l.programme_id
-        WHERE l.aptem_id=%s''', [aptem_id])
+        WHERE l.aptem_id=%s'''
+    if cursor is None:
+        records = query(sql, [aptem_id])
+    else:
+        # Audit mounts must resolve identity on the same database/transaction
+        # as their revision writes, including the isolated hours-test mount.
+        cursor.execute(sql, [aptem_id])
+        columns = [column[0] for column in cursor.description]
+        records = [dict(zip(columns, row)) for row in cursor.fetchall()]
     if len(records) != 1:
         raise ServiceError('The consolidated learner identity needs review.', 'identity_review_required', 409)
     return records[0]

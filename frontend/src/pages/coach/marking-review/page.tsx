@@ -11,6 +11,7 @@ import styles from './markingReview.module.css';
 import { AssignmentAttemptHistory } from '@/components/feature/AssignmentAttemptHistory';
 import type { SubmissionAttempt } from '@/api/assignmentAttempts';
 import { fetchMarkingDetail, fetchMarkingSidebarQueue } from '@/features/coach/marking/api/markingApi';
+import type { MonthlySections } from '@/features/coach/marking/types/marking.types';
 import { readExtraActivities, readExtraActivityDetail } from '../extra-activities/api';
 import { loadLearningReflectionSubmission, type StoredLearningReflectionSubmission } from '@/api/reflectionSubmission';
 import { CoachPresentationDownload } from './CoachPresentationDownload';
@@ -20,6 +21,7 @@ import { CoachFeedbackEditor } from '@/components/feature/CoachFeedbackEditor';
 import { FormattedFeedback } from '@/components/feature/FormattedFeedback';
 import { feedbackHtmlToPlainText } from '@/lib/feedbackHtml';
 import { MarkingInstructionsPanel } from './MarkingInstructionsPanel';
+import { MarkingPartSections } from './MarkingPartSections';
 
 const coachNav = roleNavMap.coach;
 async function personalEvidence(submissionId: string, fileId?: string) {
@@ -30,6 +32,8 @@ async function personalEvidence(submissionId: string, fileId?: string) {
 }
 
 interface Submission {
+  /** Present for a monthly (nine-step) assignment report: the content of the two review tabs. */
+  monthlySections?: MonthlySections;
   ksbReview?: KsbReview;
   submissionAttempts?: SubmissionAttempt[];
   version?: number;
@@ -81,7 +85,13 @@ interface QueueSummary {
 
 type ReviewDecision = 'accepted' | 'rejected' | 'referred';
 type WorkspaceTab = 'submission' | 'evidence' | 'history';
-type QueueKind = 'all' | 'assignment' | 'reflection';
+/** A monthly report: steps 2-4, steps 5-8, then one feedback and decision for the whole report. */
+type MonthlyTab = 'assignment' | 'reflection' | 'feedback';
+const MONTHLY_TABS: Array<[MonthlyTab, string, string]> = [
+  ['assignment', 'Assignment, KSBs & evidence', 'Steps 2–4'],
+  ['reflection', 'Reflection', 'Steps 5–8'],
+  ['feedback', 'Feedback', 'Whole report'],
+];
 
 function statusLabel(status: string) {
   if (status === 'ksb_review') return 'KSB review required';
@@ -108,6 +118,10 @@ function fileSize(bytes: number) {
 
 function isAssignment(item: Submission) {
   return ['assignment', 'extra_activity'].includes((item.activityType || '').toLowerCase());
+}
+
+function kindLabel(item: Submission) {
+  return item.activityType === 'extra_activity' ? 'Extra activity' : isAssignment(item) ? 'Assignment' : 'Reflection';
 }
 
 export default function CoachMarkingReviewPage() {
@@ -143,8 +157,8 @@ export default function CoachMarkingReviewPage() {
   const [promptError, setPromptError] = useState('');
   const [promptUpload, setPromptUpload] = useState<File | null>(null);
   const [search, setSearch] = useState('');
-  const [queueKind, setQueueKind] = useState<QueueKind>('all');
   const [tab, setTab] = useState<WorkspaceTab>('submission');
+  const [monthlyTab, setMonthlyTab] = useState<MonthlyTab>('assignment');
 
   const loadSequence = useRef(0);
   const load = useCallback(async () => {
@@ -169,6 +183,7 @@ export default function CoachMarkingReviewPage() {
       setFeedback(detailItem?.coachFeedback ?? '');
       setPromptUpload(null);
       setSelected(detailItem);
+      setMonthlyTab('assignment');
 
       try {
         const queueData = extraActivities ? await readExtraActivities(new URLSearchParams({ status: 'all', page: '1' })).then(data => ({
@@ -250,13 +265,11 @@ export default function CoachMarkingReviewPage() {
       : queueItems;
     const term = search.trim().toLowerCase();
     return currentItems.filter(item => {
-      const kindMatches = queueKind === 'all'
-        || (queueKind === 'assignment' ? isAssignment(item) : !isAssignment(item));
       const searchMatches = !term || [item.learner, item.programme, item.activityTitle, item.module]
         .some(value => value?.toLowerCase().includes(term));
-      return kindMatches && searchMatches;
+      return searchMatches;
     });
-  }, [queueItems, queueKind, search, selected]);
+  }, [queueItems, search, selected]);
 
   const markedToday = useMemo(() => {
     const today = new Date().toDateString();
@@ -345,6 +358,94 @@ export default function CoachMarkingReviewPage() {
     }
   };
 
+  const uploadedEvidence = selected ? (
+    <>
+    <div className={styles.sectionHeading}><div><h4>Uploaded evidence</h4><p>Documents attached to this activity.</p></div><span>{evidence.length} files</span></div>
+    {evidence.length ? (
+      <ul className={styles.evidenceList}>
+        {evidence.map(record => {
+          const approved = record.status === 'approved';
+          return (
+            <li key={record.id}>
+              <i className="ri-file-text-line" aria-hidden="true" />
+              <div><strong>{record.filename}</strong><span>{[record.contentType, fileSize(record.sizeBytes)].filter(Boolean).join(' · ')}</span></div>
+              {approved ? <button type="button" disabled={downloading === record.id} onClick={() => void openEvidence(record)}>{downloading === record.id ? 'Opening…' : 'Open file'}</button> : <em>{record.status === 'rejected' ? 'Failed scan' : 'Awaiting scan'}</em>}
+            </li>
+          );
+        })}
+      </ul>
+    ) : <p className={styles.emptyText}>{evidenceError || 'No document was uploaded with this submission.'}</p>}
+    {evidenceError && evidence.length > 0 && <p className={styles.inlineError}>{evidenceError}</p>}
+    </>
+  ) : null;
+
+  const declarationGrid = selected ? (
+    <div className={styles.declarationGrid}>
+      <span>Completed: <strong>{formatDate(selected.dateCompleted)}</strong></span>
+      <span>Paid hours: <strong>{selected.completedDuringPaidHours || '—'}</strong></span>
+      <span>OTJH confirmed: <strong>{selected.otjhConfirmed ? 'Yes' : 'No'}</strong></span>
+      <span>Declaration signed: <strong>{selected.signedDeclaration ? 'Yes' : 'No'}</strong></span>
+    </div>
+  ) : null;
+
+  const presentationDownload = selected?.activityType === 'assignment' ? (
+    <CoachPresentationDownload
+      key={`${coach.email}:${personal}:${selected.id}:${selected.version ?? selected.submittedAt ?? ''}`}
+      scope={personal ? 'personal' : 'official'} submissionId={selected.id}
+      submittedAt={selected.submittedAt} version={selected.version}
+    />
+  ) : null;
+
+  const ksbReviewPanel = selected?.ksbReview ? (
+    <KsbReviewPanel key={`${selected.id}:${selected.ksbReview.revision}:${selected.ksbReview.status}`}
+      submissionId={selected.id} review={selected.ksbReview} onSaved={() => void load()} />
+  ) : null;
+
+  // A monthly report shows this in its Feedback tab; everything else shows it below the submission.
+  const feedbackPanel = selected && selected.ksbReview?.status !== 'pending' ? (
+      <section className={styles.feedbackPanel}>
+        <div className={styles.feedbackHeading}>
+          <div><p>Coach feedback</p><h4>{extraActivities ? 'Record feedback and make the final decision' : 'Review the AI draft and make the final decision'}</h4></div>
+          {!personal && !extraActivities && <div className={styles.feedbackActions}>
+            <button type="button" disabled={generating || saving} onClick={() => void generateAiFeedback()}>
+              <i className={generating ? 'ri-loader-4-line' : 'ri-sparkling-line'} aria-hidden="true" />
+              {generating ? 'Generating…' : 'Generate AI draft'}
+            </button>
+          </div>}
+        </div>
+        <CoachFeedbackEditor value={feedback} onChange={setFeedback} disabled={saving} />
+        {aiNotice && <p className={styles.aiNotice}><i className="ri-sparkling-line" aria-hidden="true" /> {aiNotice}</p>}
+        {error && <p className={styles.inlineError}>{error}</p>}
+  
+        {!personal && !extraActivities && <MarkingInstructionsPanel key={selected.id} edited={promptEdited} guidanceAttached={Boolean(promptUpload)}>
+          <p>{promptAvailable ? `These ${promptKind === 'assignment' ? 'assignment marking' : 'reflection validation'} instructions apply to the next draft only.` : 'No saved prompt is available. You can supply instructions for this draft.'}</p>
+          <textarea aria-label="AI marking instructions" value={prompt} onChange={event => setPrompt(event.target.value)} rows={8} spellCheck={false} placeholder="Write the instructions the AI should mark against…" />
+          <label className={styles.promptUpload}>
+            <span><i className="ri-attachment-2" aria-hidden="true" /> Upload marking guidance</span>
+            <input aria-label="Upload marking guidance" type="file" accept=".pdf,.docx,.txt,.md,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown" onChange={event => {
+              setPromptUpload(event.target.files?.[0] || null);
+              setPromptError('');
+              event.currentTarget.value = '';
+            }} />
+            <small>PDF or Word (.docx), up to 5 MB. Used for this draft only.</small>
+          </label>
+          {promptUpload && <div className={styles.promptFile}><i className="ri-file-text-line" aria-hidden="true" /><span>{promptUpload.name} · used for this draft</span><button type="button" onClick={() => setPromptUpload(null)}>Remove</button></div>}
+          <div className={styles.promptMeta}>
+            <span>{promptFile || 'No prompt file'} · {prompt.length.toLocaleString()} characters</span>
+            <button type="button" disabled={!defaultPrompt || prompt === defaultPrompt} onClick={() => setPrompt(defaultPrompt)}>Reset to default</button>
+          </div>
+          {promptCleared && <p>The saved prompt will be used because this field is empty.</p>}
+          {promptError && <p className={styles.inlineError}>{promptError}</p>}
+        </MarkingInstructionsPanel>}
+  
+        {selected.monthlySections && <p className={styles.aiNotice}><i className="ri-information-line" aria-hidden="true" /> This feedback and decision cover the whole monthly report: the assignment, KSBs &amp; evidence (steps 2–4) and the reflection (steps 5–8). The AI draft is written from both.</p>}
+        <div className={styles.decisionRow}>
+          <button type="button" className={styles.reject} disabled={saving || (selected.activityType === 'extra_activity' && !extraDocument)} onClick={() => void saveDecision(personal ? 'referred' : 'rejected')}><i className="ri-arrow-go-back-line" aria-hidden="true" /> {personal ? 'Return for improvement' : 'Refer back with feedback'}</button>
+          <button type="button" className={styles.accept} disabled={saving || (selected.activityType === 'extra_activity' && !extraDocument)} onClick={() => void saveDecision('accepted')}><i className={saving ? 'ri-loader-4-line' : 'ri-shield-check-line'} aria-hidden="true" /> {selected.activityType === 'extra_activity' ? 'Accept extra activity and send feedback' : 'Accept assignment and send feedback'}</button>
+        </div>
+      </section>
+  ) : null;
+
   return (
     <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle="Marking workspace" pageSubtitle="Review evidence and record your professional judgement" userName={coach.name} userRole="Progress Coach">
       <div className={styles.page}>
@@ -384,15 +485,10 @@ export default function CoachMarkingReviewPage() {
                 <span className="sr-only">Search marking queue</span>
                 <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search learner or activity" />
               </label>
-              {!extraActivities && <div className={styles.queueFilters} role="group" aria-label="Filter marking queue by type">
-                {(['all', 'assignment', 'reflection'] as QueueKind[]).map(value => (
-                  <button type="button" key={value} aria-pressed={queueKind === value} onClick={() => setQueueKind(value)}>{value === 'all' ? 'All' : `${value[0].toUpperCase()}${value.slice(1)}s`}</button>
-                ))}
-              </div>}
               <div className={styles.queueList}>
                 {visibleQueue.map(item => (
                   <button type="button" key={item.id} className={styles.queueItem} aria-current={item.id === selected.id ? 'true' : undefined} onClick={() => navigate(extraActivities ? `/coach/extra-activities/${item.id}` : `/coach/marking-queue/${item.id}`)}>
-                    <span className={styles.queueItemTop}><strong>{item.learner}</strong><em>{item.activityType === 'extra_activity' ? 'Extra activity' : isAssignment(item) ? 'Assignment' : 'Reflection'}</em></span>
+                    <span className={styles.queueItemTop}><strong>{item.learner}</strong><em>{kindLabel(item)}</em></span>
                     <span className={styles.queueTitle}>{item.activityTitle}</span>
                     <span className={styles.queueMeta}>Submitted {item.submittedDisplay}</span>
                     <span className={styles.queueStatus} data-overdue={item.isOverdue || undefined}>{item.isOverdue ? `Overdue ${item.elapsedDays}d` : statusLabel(item.status)}</span>
@@ -406,7 +502,7 @@ export default function CoachMarkingReviewPage() {
               <section className={styles.submissionHeader}>
                 <div className={styles.personRow}>
                   <div><h2>{selected.learner}</h2><p>{selected.programme || 'Learner programme'}</p></div>
-                  <span>{selected.activityType === 'extra_activity' ? 'Extra activity' : isAssignment(selected) ? 'Assignment' : 'Reflection'}</span>
+                  <span>{kindLabel(selected)}</span>
                 </div>
                 <h3>{selected.activityTitle}</h3>
                 <dl className={styles.metrics}>
@@ -421,11 +517,7 @@ export default function CoachMarkingReviewPage() {
               {!personal && ['session', 'recording', 'video'].includes(selected.activityType) && <SavedReflection
                 timeOnly learnerKind={selected.learnerKind} learnerId={selected.learnerId}
                 activityType={selected.activityType} activityId={selected.activityId} />}
-              {selected.activityType === 'assignment' && <CoachPresentationDownload
-                key={`${coach.email}:${personal}:${selected.id}:${selected.version ?? selected.submittedAt ?? ''}`}
-                scope={personal ? 'personal' : 'official'} submissionId={selected.id}
-                submittedAt={selected.submittedAt} version={selected.version}
-              />}
+              {selected.activityType === 'assignment' && !selected.monthlySections && presentationDownload}
               {selected.activityType === 'extra_activity' && <section className={styles.responseBlock}>
                 <strong>Extra activity</strong>
                 {extraDocumentError && <p role="alert">{extraDocumentError}</p>}
@@ -433,6 +525,33 @@ export default function CoachMarkingReviewPage() {
                 {extraDocument && <><strong>Activity description</strong><p className="whitespace-pre-wrap">{extraDocument.assignmentAnswer}</p><strong>What the learner learned</strong><p className="whitespace-pre-wrap">{extraDocument.whatYouLearned}</p></>}
               </section>}
 
+              {selected.monthlySections ? <>
+              <div className={`${styles.tabs} ${styles.monthlyTabs}`} role="tablist" aria-label="Monthly report">
+                {MONTHLY_TABS.map(([value, label, steps]) => (
+                  <button type="button" role="tab" id={`monthly-tab-${value}`} aria-controls={`monthly-panel-${value}`} aria-selected={monthlyTab === value} key={value} onClick={() => setMonthlyTab(value)}>
+                    <span>{label}</span><small>{steps}</small>
+                  </button>
+                ))}
+              </div>
+              {monthlyTab === 'assignment' && (
+                <section className={styles.tabPanel} role="tabpanel" id="monthly-panel-assignment" aria-labelledby="monthly-tab-assignment">
+                  <MarkingPartSections key={`${selected.id}:assignment`} label="Assignment, KSBs & evidence steps" sections={selected.monthlySections.assignment}
+                    extras={{ 3: uploadedEvidence, 4: declarationGrid }} />
+                </section>
+              )}
+              {monthlyTab === 'reflection' && (
+                <section className={styles.tabPanel} role="tabpanel" id="monthly-panel-reflection" aria-labelledby="monthly-tab-reflection">
+                  <MarkingPartSections key={`${selected.id}:reflection`} label="Reflection steps" sections={selected.monthlySections.reflection}
+                    extras={{ 8: presentationDownload }} />
+                </section>
+              )}
+              {monthlyTab === 'feedback' && (
+                <section className={styles.tabPanel} role="tabpanel" id="monthly-panel-feedback" aria-labelledby="monthly-tab-feedback">
+                  {ksbReviewPanel}
+                  {feedbackPanel}
+                </section>
+              )}
+              </> : <>
               <div className={styles.tabs} role="tablist" aria-label="Submission detail">
                 {([
                   ['submission', 'Submission'],
@@ -466,33 +585,13 @@ export default function CoachMarkingReviewPage() {
                     <header><strong>Employer and business impact</strong></header>
                     <p>{[selected.selectedBenefits.join(', '), selected.benefitExplanation].filter(Boolean).join(' — ') || 'No employer benefit was supplied.'}</p>
                   </article>
-                  <div className={styles.declarationGrid}>
-                    <span>Completed: <strong>{formatDate(selected.dateCompleted)}</strong></span>
-                    <span>Paid hours: <strong>{selected.completedDuringPaidHours || '—'}</strong></span>
-                    <span>OTJH confirmed: <strong>{selected.otjhConfirmed ? 'Yes' : 'No'}</strong></span>
-                    <span>Declaration signed: <strong>{selected.signedDeclaration ? 'Yes' : 'No'}</strong></span>
-                  </div>
+                  {declarationGrid}
                 </section>
               )}
 
               {tab === 'evidence' && (
                 <section className={styles.tabPanel} role="tabpanel">
-                  <div className={styles.sectionHeading}><div><h4>Uploaded evidence</h4><p>Documents attached to this activity.</p></div><span>{evidence.length} files</span></div>
-                  {evidence.length ? (
-                    <ul className={styles.evidenceList}>
-                      {evidence.map(record => {
-                        const approved = record.status === 'approved';
-                        return (
-                          <li key={record.id}>
-                            <i className="ri-file-text-line" aria-hidden="true" />
-                            <div><strong>{record.filename}</strong><span>{[record.contentType, fileSize(record.sizeBytes)].filter(Boolean).join(' · ')}</span></div>
-                            {approved ? <button type="button" disabled={downloading === record.id} onClick={() => void openEvidence(record)}>{downloading === record.id ? 'Opening…' : 'Open file'}</button> : <em>{record.status === 'rejected' ? 'Failed scan' : 'Awaiting scan'}</em>}
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  ) : <p className={styles.emptyText}>{evidenceError || 'No document was uploaded with this submission.'}</p>}
-                  {evidenceError && evidence.length > 0 && <p className={styles.inlineError}>{evidenceError}</p>}
+                  {uploadedEvidence}
 
                   <div className={styles.sectionHeading}><div><h4>{selected.ksbReview?.status === 'pending' ? 'Original learner KSB claims — awaiting review' : 'Claimed KSBs'}</h4><p>Knowledge, skills and behaviours recorded for this activity.</p></div></div>
                   <div className={styles.ksbList}>
@@ -519,48 +618,9 @@ export default function CoachMarkingReviewPage() {
                 </section>
               )}
 
-              {selected.ksbReview && <KsbReviewPanel key={`${selected.id}:${selected.ksbReview.revision}:${selected.ksbReview.status}`}
-                submissionId={selected.id} review={selected.ksbReview} onSaved={() => void load()} />}
-              {selected.ksbReview?.status !== 'pending' && <section className={styles.feedbackPanel}>
-                <div className={styles.feedbackHeading}>
-                  <div><p>Coach feedback</p><h4>{extraActivities ? 'Record feedback and make the final decision' : 'Review the AI draft and make the final decision'}</h4></div>
-                  {!personal && !extraActivities && <div className={styles.feedbackActions}>
-                    <button type="button" disabled={generating || saving} onClick={() => void generateAiFeedback()}>
-                      <i className={generating ? 'ri-loader-4-line' : 'ri-sparkling-line'} aria-hidden="true" />
-                      {generating ? 'Generating…' : 'Generate AI draft'}
-                    </button>
-                  </div>}
-                </div>
-                <CoachFeedbackEditor value={feedback} onChange={setFeedback} disabled={saving} />
-                {aiNotice && <p className={styles.aiNotice}><i className="ri-sparkling-line" aria-hidden="true" /> {aiNotice}</p>}
-                {error && <p className={styles.inlineError}>{error}</p>}
-
-                {!personal && !extraActivities && <MarkingInstructionsPanel key={selected.id} edited={promptEdited} guidanceAttached={Boolean(promptUpload)}>
-                  <p>{promptAvailable ? `These ${promptKind === 'assignment' ? 'assignment marking' : 'reflection validation'} instructions apply to the next draft only.` : 'No saved prompt is available. You can supply instructions for this draft.'}</p>
-                  <textarea aria-label="AI marking instructions" value={prompt} onChange={event => setPrompt(event.target.value)} rows={8} spellCheck={false} placeholder="Write the instructions the AI should mark against…" />
-                  <label className={styles.promptUpload}>
-                    <span><i className="ri-attachment-2" aria-hidden="true" /> Upload marking guidance</span>
-                    <input aria-label="Upload marking guidance" type="file" accept=".pdf,.docx,.txt,.md,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown" onChange={event => {
-                      setPromptUpload(event.target.files?.[0] || null);
-                      setPromptError('');
-                      event.currentTarget.value = '';
-                    }} />
-                    <small>PDF or Word (.docx), up to 5 MB. Used for this draft only.</small>
-                  </label>
-                  {promptUpload && <div className={styles.promptFile}><i className="ri-file-text-line" aria-hidden="true" /><span>{promptUpload.name} · used for this draft</span><button type="button" onClick={() => setPromptUpload(null)}>Remove</button></div>}
-                  <div className={styles.promptMeta}>
-                    <span>{promptFile || 'No prompt file'} · {prompt.length.toLocaleString()} characters</span>
-                    <button type="button" disabled={!defaultPrompt || prompt === defaultPrompt} onClick={() => setPrompt(defaultPrompt)}>Reset to default</button>
-                  </div>
-                  {promptCleared && <p>The saved prompt will be used because this field is empty.</p>}
-                  {promptError && <p className={styles.inlineError}>{promptError}</p>}
-                </MarkingInstructionsPanel>}
-
-                <div className={styles.decisionRow}>
-                  <button type="button" className={styles.reject} disabled={saving || (selected.activityType === 'extra_activity' && !extraDocument)} onClick={() => void saveDecision(personal ? 'referred' : 'rejected')}><i className="ri-arrow-go-back-line" aria-hidden="true" /> {personal ? 'Return for improvement' : 'Refer back with feedback'}</button>
-                  <button type="button" className={styles.accept} disabled={saving || (selected.activityType === 'extra_activity' && !extraDocument)} onClick={() => void saveDecision('accepted')}><i className={saving ? 'ri-loader-4-line' : 'ri-shield-check-line'} aria-hidden="true" /> {selected.activityType === 'extra_activity' ? 'Accept extra activity and send feedback' : 'Accept assignment and send feedback'}</button>
-                </div>
-              </section>}
+              {ksbReviewPanel}
+              {feedbackPanel}
+              </>}
             </main>
           </div>
         )}

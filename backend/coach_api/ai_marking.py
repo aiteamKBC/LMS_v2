@@ -841,7 +841,16 @@ def _load_scoped_submission(request, submission_id):
     if not value:
         return None, _error("That submission could not be found.", 404, "not_found")
 
-    return serialize_marking_submission(dict(zip(columns, value))), None
+    row = dict(zip(columns, value))
+    submission = serialize_marking_submission(row)
+    # A monthly report's answers live in its nine-step payload, not the generic
+    # reflection columns; carry them so the draft can be written from them.
+    from .marking_parts import monthly_sections
+
+    sections = monthly_sections(row)
+    if sections is not None:
+        submission["monthlySections"] = sections
+    return submission, None
 
 
 def _is_assignment(submission):
@@ -1023,6 +1032,12 @@ def coach_marking_ai_feedback(request, submission_id):
     # _is_assignment, from the same list the prompt endpoint uses, so the text
     # the coach was shown is the text that marks their submission.
     from .ai_reflection import generate_reflection_feedback
+    from .marking_parts import ai_submission
+
+    # One draft for the whole monthly report, written from both tabs: the
+    # assignment, KSBs & evidence (steps 2-4) and the reflection (steps 5-8).
+    if submission.get("monthlySections"):
+        submission = ai_submission(submission)
 
     try:
         if _is_assignment(submission):

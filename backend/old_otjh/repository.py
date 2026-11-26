@@ -236,8 +236,11 @@ def finalizations(aptem_id):
 
 def pending_revisions(aptem_id):
     return query('''SELECT selected_month AS month, count(*) AS count
-        FROM structured_manual_activities.manual_activity_hours_revision
-        WHERE aptem_id=%s AND status='pending' GROUP BY selected_month''', [aptem_id])
+        FROM "Learner".manual_activity_hours_revision r
+        JOIN "Learner".learners l ON l.id=r.learner_id
+        JOIN "Learner".learner_journal_rows j ON j.id=r.row_id AND j.learner_id=r.learner_id
+        WHERE l.aptem_id=%s AND r.status='pending' AND j.deleted_at IS NULL
+        GROUP BY selected_month''', [aptem_id])
 
 
 def _demo_lms_rows(rows, learner, month, *, formula_note='FORMULA PREVIEW ONLY — calculated value',

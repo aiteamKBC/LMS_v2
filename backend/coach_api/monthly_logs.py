@@ -74,6 +74,10 @@ def year_activities(owner):
             FROM "Learner".learner_progress_entries
             WHERE learner_id=%s AND deleted_at IS NULL) p
         GROUP BY reporting_month''', [owner['id']])
+    # The PostgreSQL JSON text loader also handles aggregates. Decode before
+    # iterating, preserving undated activities and their stored hours.
+    for row in activities:
+        row['unallocated_activities'] = logs.sources.decoded(row.get('unallocated_activities'), [])
     by_month = {row['month']: dict(row) for row in activities}
     unallocated = {str(item['id']): item for row in activities
                    for item in row.get('unallocated_activities') or []}

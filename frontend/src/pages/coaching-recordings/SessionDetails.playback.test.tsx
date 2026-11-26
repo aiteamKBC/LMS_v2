@@ -20,6 +20,23 @@ beforeEach(() => {
   vi.mocked(prepareRecordingPlayback).mockResolvedValue({ url: '/video?reference=fresh', reference: 'fresh' });
 });
 
+it('mounts the protected Bunny player only in recordings and removes it when hidden', async () => {
+  vi.mocked(loadCoachingSession).mockResolvedValue({ ...details, media: { ...details.media,
+    recordings: [{ id: 'file', state: 'ready', source: 'bunny' }] } });
+  vi.mocked(prepareRecordingPlayback).mockResolvedValue({ url: 'https://iframe.mediadelivery.net/embed/999001/synthetic?token=signed',
+    reference: 'fresh', kind: 'bunny' });
+  const view = render(<SessionDetails {...props} section="recordings" />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Play recording 1' }));
+  const iframe = await screen.findByTitle('Coaching recording player');
+  expect(iframe.tagName).toBe('IFRAME');
+  expect(prepareRecordingPlayback).toHaveBeenCalledWith(expect.objectContaining({ source: 'bunny' }), expect.any(AbortSignal));
+  view.rerender(<SessionDetails {...props} section="attendance" />);
+  expect(screen.queryByTitle('Coaching recording player')).not.toBeInTheDocument();
+  view.rerender(<SessionDetails {...props} section="recordings" />);
+  expect(screen.getByTitle('Coaching recording player')).toHaveAttribute('src', iframe.getAttribute('src'));
+  expect(prepareRecordingPlayback).toHaveBeenCalledOnce();
+});
+
 it('pauses a hidden player and preserves its prepared source and attendance when changing tabs', async () => {
   const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
   try {
