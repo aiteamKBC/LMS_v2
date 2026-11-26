@@ -31,7 +31,7 @@
 .columnPlot { position: relative; min-width: 0; }
 .columnGroups { display: grid; gap: 16px; position: relative; }
 .columnModule { min-width: 0; text-align: center; }
-.chartPanel .columnModule .columnModuleTitle { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; margin: 6px 4px 0; font-size: 11px; font-weight: 650; line-height: 1.35; overflow-wrap: anywhere; }
+.chartPanel .columnModule .columnModuleTitle { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; margin: 6px 4px 0; font-size: 10px; font-weight: 650; line-height: 1.35; overflow-wrap: anywhere; }
 .columnLegend { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px 12px; margin: 0; padding: 0; list-style: none; max-width: 520px; }
 .columnLegend li { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; color: var(--muted); }
 .columnLegend span { width: 8px; height: 8px; border-radius: 2px; background: var(--employer-series-1); }

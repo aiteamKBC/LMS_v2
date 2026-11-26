@@ -31,7 +31,7 @@
 .moduleStats > span:last-child { display: flex; align-items: center; gap: 2px; }
 .pinField { position: relative; height: 170px; flex: 0 0 170px; }
 .sharedRail { position: absolute; top: 73px; inset-inline: 0; height: 4px; background: var(--module-color); opacity: .55; }
-.scale { position: absolute; bottom: 12px; inset-inline: 48px; display: flex; justify-content: space-between; font-size: 9px; color: var(--employer-muted); }
+.scale { position: absolute; top: 135px; inset-inline: 48px; display: flex; justify-content: space-between; font-size: 11px; font-weight: 650; line-height: 1.4; color: var(--employer-ink); }
 .connectors { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
 .connectors line { stroke: var(--module-color); stroke-width: 1; opacity: .45; }
 .pin { position: absolute; top: 20px; z-index: 1; width: 88px; transform: translateX(-50%); display: flex; align-items: center; flex-direction: column; border: 0; padding: 0; background: transparent; color: var(--module-color); cursor: pointer; }
@@ -43,7 +43,8 @@
 .pin[data-state='next'] .pinHead::before { opacity: .65; }
 .pin[data-state='parallel'] .pinCaption { background: var(--employer-soft); }
 .pin:hover .pinHead, .pin:focus-visible .pinHead { filter: drop-shadow(0 3px 4px #0004); }
-.pinName { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; max-width: 84px; height: 28px; margin-top: 8px; font-size: 10px; font-weight: 650; line-height: 14px; color: var(--employer-ink); }
+.pinName { position: absolute; bottom: calc(100% + 4px); left: 50%; transform: translateX(-50%); width: 84px; font-size: 10px; font-weight: 650; line-height: 14px; color: var(--employer-ink); }
+.pinName > span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 .pinCaption { display: flex; align-items: center; gap: 2px; white-space: nowrap; margin-top: 14px; padding: 3px 5px; border-radius: 5px; background: var(--employer-surface); font-size: 9px; line-height: 1; font-weight: 700; }
 .noPins { position: absolute; top: 95px; inset-inline: 18px; margin: 0; text-align: center; color: var(--employer-muted); font-size: 10px; }
 .parallelHeading { grid-column: 1 / -1; display: flex; align-items: center; gap: 9px; padding: 14px 18px; border-block: 1px solid var(--employer-line); color: var(--employer-primary); background: var(--employer-surface); }
