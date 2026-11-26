@@ -57,7 +57,8 @@ export interface AttendanceCandidate {
   learnerProfileId: number; email: string; name: string;
 }
 export interface SessionFile {
-  id: string; type: 'recording' | 'transcript'; state: 'pending' | 'ready' | 'failed';
+  id: string; type: 'recording' | 'transcript' | 'attachment'; state: 'pending' | 'ready' | 'failed';
+  fileName?: string; contentType?: string; sizeBytes?: number;
   playbackProvider?: 'bunny';
   createdAt?: string; text?: string | null;
   hiddenFromLearners?: boolean;
@@ -155,8 +156,17 @@ export const loadModuleSessions = (moduleId: string, signal?: AbortSignal) =>
   read<ModuleSessionResults>(`/curriculum_api/curriculum/modules/${encodeURIComponent(moduleId)}/session-results/`, signal);
 export const loadSessionResult = (seriesId: string, number: number, learner?: SessionLearner, signal?: AbortSignal, moduleId?: string) => {
   const context = !learner && moduleId ? `?moduleId=${encodeURIComponent(moduleId)}` : '';
-  return read<{ sessions: SessionResult[]; job?: SessionSyncJob | null }>(`${sessionBase(seriesId, learner)}/sessions/${number}/${context}`, signal);
+  return read<{ sessions: SessionResult[]; job?: SessionSyncJob | null; attachmentSettings?: SessionAttachmentSettings }>(`${sessionBase(seriesId, learner)}/sessions/${number}/${context}`, signal);
 };
+export interface SessionAttachmentSettings { maxBytes: number; automaticImport: boolean; storageProvider: 'bunny' | 'lms' | 'unavailable' }
+export async function uploadSessionAttachment(seriesId: string, number: number, file: File) {
+  const body = new FormData();
+  body.append('file', file);
+  const response = await coachFetch(`${sessionBase(seriesId)}/sessions/${number}/attachments/`, { method: 'POST', body });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || 'The session attachment could not be saved.');
+  return payload as { id: string; state: 'ready' };
+}
 export const sessionFileUrl = (seriesId: string, file: SessionFile, learner?: SessionLearner, text = false) =>
   personalLearningUrl(`${sessionBase(seriesId, learner)}/artifacts/${encodeURIComponent(file.id)}/${text ? '?format=txt' : ''}`);
 export const loadRecordingPlayer = (seriesId: string, file: SessionFile, learner?: SessionLearner, signal?: AbortSignal) =>

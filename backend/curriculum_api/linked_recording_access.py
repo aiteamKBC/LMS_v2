@@ -61,16 +61,18 @@ def linked_session_numbers(module_ids, series_id):
     return numbers
 
 
-def artifact_session_number(series_id, artifact_id):
+def artifact_session_number(series_id, artifact_id, *, include_attachments=False):
     """The session number of the recording/transcript ``artifact_id`` in ``series_id``, or None.
 
-    Only those two kinds: the link shares what was recorded, never anything
-    else a session may come to hold.
+    Recording-only links retain the two original kinds. An explicitly authorized
+    additional meeting may also expose its session resources.
     """
     rows = read('''SELECT o.session_number FROM curriculum.live_session_artifacts a
         JOIN curriculum.live_session_occurrences o ON o.id=a.occurrence_id
         WHERE a.id=%s AND o.live_session_id=%s
-          AND a.artifact_type IN ('recording','transcript')''', [artifact_id, series_id])
+          AND a.artifact_type IN ''' + (
+              "('recording','transcript','attachment')" if include_attachments else "('recording','transcript')"),
+        [artifact_id, series_id])
     return int(rows[0]['session_number']) if rows and rows[0].get('session_number') else None
 
 
@@ -79,4 +81,7 @@ def linked_artifact_allowed(series, artifact_id):
     numbers = series.get('linked_session_numbers')
     if numbers is None:
         return True  # the learner's own (or shared) series: unchanged rules
+    from .session_attachment_policy import recording_only_access
+    if not recording_only_access(series):
+        return artifact_session_number(series['id'], artifact_id, include_attachments=True) in numbers
     return artifact_session_number(series['id'], artifact_id) in numbers

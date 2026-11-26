@@ -21,6 +21,26 @@ beforeEach(() => { vi.clearAllMocks(); vi.stubGlobal('fetch', fetchMock); fetchM
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe('Saved session results', () => {
+  it('shows occurrence attachments below a dated recording even when uploaded on a different day', async () => {
+    fetchMock.mockImplementation(() => ok({ sessions: [{ ...session, artifacts: [
+      { ...session.artifacts[0], createdAt: '2026-09-01T09:30:00Z' },
+      { id: 'FILE-1', type: 'attachment', state: 'ready', fileName: 'Lesson.pdf', createdAt: '2026-09-03T10:00:00Z' },
+    ] }] }));
+    render(<MemoryRouter><SessionResults seriesId="S1" sessionNumber={1} recordingDate="2026-09-01" learner={{ kind: 'commercial', id: '7' }} /></MemoryRouter>);
+    const download = await screen.findByRole('link', { name: 'Download Lesson.pdf' });
+    expect(download).toHaveAttribute('href', '/learner_api/session-results/commercial/7/S1/artifacts/FILE-1/');
+    expect(screen.queryByLabelText('Add session attachment')).not.toBeInTheDocument();
+  });
+
+  it('keeps a saved recording ready when an independent attachment needs retry', async () => {
+    fetchMock.mockImplementation(() => ok({ sessions: [{ ...session, artifacts: [...session.artifacts,
+      { id: 'FILE-1', type: 'attachment', state: 'failed', fileName: 'Lesson.pdf' }] }],
+      job: { live_session_id: 'S1', state: 'failed', last_error: 'Attachment storage needs retry.' } }));
+    render(<MemoryRouter><SessionResults seriesId="S1" sessionNumber={1} /></MemoryRouter>);
+    expect(await screen.findByText('The recording and attendance for this session are saved.')).toBeInTheDocument();
+    expect(screen.getByText('Saving needs retry')).toBeInTheDocument();
+  });
+
   it('accepts a curriculum display label while requesting the original session identity', async () => {
     const saved = { ...session, title: 'Stored module title' };
     fetchMock.mockImplementation(() => ok({ sessions: [saved] }));
