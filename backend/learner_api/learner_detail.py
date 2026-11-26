@@ -2575,6 +2575,12 @@ def learner_detail(request, kind, pk):
         return _error(f"Database error: {exc}", 502)
 
     try:
+        if request.GET.get("content") == "quiz-list":
+            from .learner_quizzes import read_quiz_list
+            with measure_projection('learner-quiz-list', kind=kind, learner_id=pk):
+                response = JsonResponse(read_quiz_list(source, pk))
+            response['Cache-Control'] = 'private, no-store'
+            return response
         if request.GET.get("content") == "reading":
             reading = _reading_content(source, request.GET.get("component_id"))
             if reading is None:

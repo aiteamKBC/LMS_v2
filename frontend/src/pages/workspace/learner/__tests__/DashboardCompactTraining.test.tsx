@@ -36,6 +36,21 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe('compact Training Plan', () => {
+  it('shows the timeline while the selected module detail loads separately', async () => {
+    let finish!: (response: Response) => void;
+    vi.mocked(fetch).mockImplementation(async url => {
+      if (String(url).includes('/modules/')) return new Promise(resolve => { finish = resolve; });
+      return new Response(JSON.stringify({ ...initial(), selectedModule: null, selectedModuleDeferred: true }));
+    });
+    mount();
+    expect(await screen.findByText('3 assigned modules', { exact: false })).toBeVisible();
+    await waitFor(() => expect(requests().filter(url => url.includes('/modules/'))).toHaveLength(1));
+    expect(screen.queryByText('Description M1')).not.toBeInTheDocument();
+    await act(async () => { finish(new Response(JSON.stringify(module('M1')))); });
+    expect(await screen.findByText('Description M1')).toBeVisible();
+    expect(requests()).toHaveLength(2);
+  });
+
   it('stops its clock when hidden and resumes it when active', async () => {
     const start = vi.spyOn(window, 'setInterval');
     const stop = vi.spyOn(window, 'clearInterval');
@@ -66,7 +81,7 @@ describe('compact Training Plan', () => {
   it('loads only the requested deep-link module and includes subject/month in the initial URL', async () => {
     mount({}, '/?subject=current%3AM2&month=2026-11');
     await screen.findByText('Description M2');
-    expect(requests()).toEqual(['/learner_api/dashboard/commercial/265/training/?subject=current%3AM2&month=2026-11&programmeStartDate=2026-10-01']);
+    expect(requests()).toEqual(['/learner_api/dashboard/commercial/265/training/?deferSelected=1&subject=current%3AM2&month=2026-11&programmeStartDate=2026-10-01']);
   });
 
   it('partitions cached module details by learner', async () => {

@@ -1,11 +1,34 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { AssignmentEvidence } from './AssignmentEvidence';
 import { fetchEvidence, uploadEvidence, deleteEvidence, type EvidenceRecord, type UploadEvidenceResult } from '@/api/evidence';
 
 vi.mock('@/api/evidence', () => ({ fetchEvidence: vi.fn(), uploadEvidence: vi.fn(), getEvidenceDownloadUrl: vi.fn(), deleteEvidence: vi.fn() }));
-afterEach(() => { cleanup(); vi.clearAllMocks(); });
+afterEach(() => { cleanup(); vi.clearAllMocks(); vi.useRealTimers(); });
 beforeEach(() => { vi.mocked(fetchEvidence).mockReset().mockResolvedValue([]); vi.mocked(uploadEvidence).mockReset(); });
+
+it('refreshes pending files only on request and reports replacements even when their count is unchanged', async () => {
+  const pending = { id: 'pending', filename: 'Pending.pdf', status: 'pending', sizeBytes: 12 } as EvidenceRecord;
+  vi.mocked(fetchEvidence).mockResolvedValueOnce([pending]).mockResolvedValueOnce([{ ...pending, id: 'replacement', filename: 'Replacement.pdf', status: 'approved' }]);
+  const changed = vi.fn();
+  render(<AssignmentEvidence kind="commercial" learnerId="101" componentId="COMP-1" trainingPlanDetails={{}} onUploaded={changed} />);
+  await screen.findByText('Pending.pdf');
+  vi.useFakeTimers();
+  await act(async () => { vi.advanceTimersByTime(60_000); });
+  expect(fetchEvidence).toHaveBeenCalledTimes(1);
+  vi.useRealTimers();
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh files' }));
+  await screen.findByText('Replacement.pdf');
+  expect(changed).toHaveBeenLastCalledWith([expect.objectContaining({ id: 'replacement' })]);
+});
+
+it('keeps failures visible when used behind a custom upload button', async () => {
+  vi.mocked(uploadEvidence).mockRejectedValue(new Error('Upload did not finish.'));
+  const { container } = render(<AssignmentEvidence kind="commercial" learnerId="101" componentId="COMP-1" trainingPlanDetails={{}} showPanel={false} />);
+  await waitFor(() => expect(fetchEvidence).toHaveBeenCalledOnce());
+  fireEvent.change(container.querySelector('input[type="file"]')!, { target: { files: [new File(['synthetic'], 'Work.pdf', { type: 'application/pdf' })] } });
+  expect(await screen.findByRole('alert')).toHaveTextContent('Upload did not finish.');
+});
 
 it('identifies only the explicit new upload, while preserving notifications for existing approved files', async () => {
   const old = { id: 'old-file', filename: 'Existing.pdf', status: 'approved', sectionRef: 'extra:synthetic', sizeBytes: 12 } as EvidenceRecord;

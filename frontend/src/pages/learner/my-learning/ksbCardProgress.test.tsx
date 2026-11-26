@@ -49,4 +49,25 @@ describe('My Learning subject KSB progress', () => {
     expect(screen.getByText('No KSBs mapped')).toBeVisible();
     expect(screen.getByRole('progressbar', { name: /KSBs achieved/ })).not.toHaveAttribute('aria-valuenow');
   });
+
+  it.each([null, { completed: 3, total: 4, percent: 75, status: 'ready' }] as (ProgressMetric | null)[])(
+    'keeps verified previous learning visible separately from KSB achievement (%j)', metric => {
+      const onOpen = vi.fn();
+      render(<MemoryRouter><SubjectCard subject={{ ...subject, id: 'legacy:50', source: 'legacy', acceptedHours: 2 }}
+        ksbProgress={metric} onOpen={onOpen} template={null} csrfToken="" /></MemoryRouter>);
+      expect(screen.getByText('2 of 4 completed')).toBeVisible();
+      expect(screen.getByRole('progressbar', { name: 'Synthetic subject previous learning activities progress' }))
+        .toHaveAttribute('aria-valuenow', '50');
+      const ksb = screen.getByRole('progressbar', { name: 'Synthetic subject KSBs achieved' });
+      if (metric) expect(ksb).toHaveAttribute('aria-valuenow', '75');
+      else {
+        expect(ksb).not.toHaveAttribute('aria-valuenow');
+        expect(screen.getByText('KSB progress unavailable')).toBeVisible();
+      }
+      expect(screen.getByText('Completed 2h')).toBeVisible();
+      expect(screen.getByText('Planned Unavailable')).toBeVisible();
+      expect(screen.getByText('Review only')).toBeVisible();
+      fireEvent.click(screen.getByRole('button', { name: /Open subject/ }));
+      expect(onOpen).toHaveBeenCalledOnce();
+    });
 });

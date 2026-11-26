@@ -2,11 +2,29 @@ import { useState } from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { AssignmentTimeEntries } from './AssignmentTimeEntries';
+import { fetchLearnerCalendarEvents } from '@/api/learnerCalendar';
 import { assignmentMonthBounds, assignmentTimeHours } from "./AssignmentTimeEntries.helpers";
 afterEach(cleanup);
 vi.mock('@/api/learnerCalendar', () => ({ fetchLearnerCalendarEvents: vi.fn().mockResolvedValue({ bookingCalendar: {
   coveredYears: [2026], bankHolidays: [{ date: '2026-12-25', title: 'Christmas Day' }, { date: '2026-12-28', title: 'Boxing Day (substitute day)' }],
 } }) }));
+
+it('records later work against an earlier assignment without changing its month or daily hours', async () => {
+  vi.mocked(fetchLearnerCalendarEvents).mockResolvedValueOnce({ events: [], bookingCalendar: {
+    today: '2026-11-26', coveredYears: [2026], bankHolidays: [],
+  } } as Awaited<ReturnType<typeof fetchLearnerCalendarEvents>>);
+  const changed = vi.fn();
+  render(<AssignmentTimeEntries kind="commercial" learnerId="1" month="2026-10"
+    entries={[{ topic: 'Research', hours: '8', date: '2026-10-15' }]} onChange={changed} disabled={false} />);
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Date 1' })).toBeEnabled());
+  fireEvent.click(screen.getByRole('button', { name: 'Date 1' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Next month' }));
+  expect(screen.getByRole('button', { name: 'Next month' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: '2026-11-27' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: '2026-11-21' })).toBeDisabled();
+  fireEvent.click(screen.getByRole('button', { name: '2026-11-19' }));
+  expect(changed).toHaveBeenCalledExactlyOnceWith([{ topic: 'Research', hours: '8', date: '2026-11-19' }]);
+});
 it('removes the last topic without recreating a blank row and adds exactly one when requested', () => {
   function Form() {
     const [entries, setEntries] = useState([{ topic: 'Research', hours: '1.5', date: '2026-09-01' }]);

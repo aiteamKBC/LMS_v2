@@ -6,6 +6,7 @@ export const LEARNER_SOURCE_READ_TIMEOUT_MS = 180_000;
 export const MY_LEARNING_READ_TIMEOUT_MS = 120_000;
 const DASHBOARD_OVERVIEW_READ_TIMEOUT_MS = 120_000;
 const ACTIVITY_DETAIL_READ_TIMEOUT_MS = 120_000;
+const TRAINING_READ_TIMEOUT_MS = 120_000;
 const TRANSIENT_READ_RETRY_DELAY_MS = 600;
 
 export class LearnerReadError extends Error {
@@ -74,11 +75,16 @@ async function fetchJson(key: string): Promise<unknown> {
   // selected content. Allow connection checkout plus that read to finish.
   const activityDetail = /^\/learner_api\/learner-detail\/(commercial|apprenticeship)\/[^/?]+\/\?/.test(url)
     && new URLSearchParams(url.split('?')[1]).get('content') === 'activity';
+  // The timeline also reconciles historical completion and signed-month facts.
+  // Allow connection checkout plus that read, as for the selected module.
+  // Calendar and quiz requests keep their own deadlines.
+  const trainingRead = /^\/learner_api\/dashboard\/(commercial|apprenticeship)\/[^/?]+\/training\/(?:modules\/[^/?]+\/)?(?:\?|$)/.test(url);
   const timeoutMs = /^\/learner_api\/my-learning\//.test(url)
     ? MY_LEARNING_READ_TIMEOUT_MS
     : /^\/learner_api\/dashboard\/(commercial|apprenticeship)\/[^/?]+\/overview\/(?:\?|$)/.test(url)
       ? DASHBOARD_OVERVIEW_READ_TIMEOUT_MS
-      : activityDetail ? ACTIVITY_DETAIL_READ_TIMEOUT_MS
+      : trainingRead ? TRAINING_READ_TIMEOUT_MS
+        : activityDetail ? ACTIVITY_DETAIL_READ_TIMEOUT_MS
         : /^\/learner_api\/(student-activity|metrics)\//.test(url)
           ? LEARNER_SOURCE_READ_TIMEOUT_MS : LEARNER_READ_TIMEOUT_MS;
   const controller = new AbortController();

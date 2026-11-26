@@ -57,6 +57,35 @@ beforeEach(() => {
 afterEach(() => { clearAllCachedResources(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('compact My Learning route', () => {
+  it.each(['commercial', 'apprenticeship'] as const)('loads the quizzes tab without the full learner summary (%s)', async kind => {
+    vi.mocked(fetch).mockImplementation(async input => {
+      const url = String(input);
+      if (!url.endsWith('/7/?content=quiz-list')) throw new Error(`Unexpected API request: ${url}`);
+      return reply({ id: '7', name: 'Synthetic learner', programme: 'Programme', cohort: '',
+        components: [{ componentId: 'Q1', module: 'Module', week: 'Week 1', component: 'Knowledge quiz',
+          isQuiz: true, quizMeta: { quizId: 21, questions: 5 } }],
+        quizAttempts: [{ quizId: 21, componentId: 'Q1', passed: true, grade: null, startedAt: '', submittedAt: '' }] });
+    });
+    route(`/learner/my-learning/${kind}/7?tab=quizzes`);
+    expect(await screen.findByText('Knowledge quiz')).toBeVisible();
+    const row = screen.getByText('Knowledge quiz').closest('tr')!;
+    expect(within(row).getByText('Completed')).toBeVisible();
+    expect(within(row).queryByText('0%')).not.toBeInTheDocument();
+    expect(urls()).toEqual([expect.stringContaining(`/learner-detail/${kind}/7/?content=quiz-list`)]);
+  });
+
+  it('retries a failed quiz list only after the learner clicks Retry', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(reply({ error: 'Quiz service unavailable' }));
+    route('/learner/my-learning/commercial/7?tab=quizzes');
+    expect(await screen.findByText('Could not load your quizzes. Please try again.')).toBeVisible();
+    expect(fetch).toHaveBeenCalledTimes(1);
+    vi.mocked(fetch).mockResolvedValueOnce(reply({ id: '7', name: 'Learner', programme: '', cohort: '', components: [], quizAttempts: [] }));
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(await screen.findByText('No quizzes linked yet')).toBeVisible();
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(urls().every(url => url.includes('content=quiz-list'))).toBe(true);
+  });
+
   it.each(['commercial', 'apprenticeship'] as const)('shows certificates for an old course and inside an assigned builder free course (%s)', async kind => {
     const catalogue = makeCatalogue(kind);
     catalogue.modules = [{ ...catalogue.modules[1], completedActivityCount: 3, progress: 100, status: 'Completed' }];

@@ -249,9 +249,9 @@ export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template,
           <div><dt><Video size={14} aria-hidden="true" />Sessions</dt><dd>{sessionCount == null ? 'Not set' : `${sessionCount} ${sessionCount === 1 ? 'session' : 'sessions'}`}</dd></div>
         </dl>
         <p className={styles.cardDescription}>Explore your learning materials and activities.</p>
-        <div className={styles.cardProgress}>{ksbProgress !== undefined
-          ? <KsbProgress metric={ksbProgress} label={`${subject.title} KSBs achieved`} />
-          : <Progress done={completed} total={total} compact aggregate={subject.aggregateProgress ?? subject.card?.progress} label={`${subject.title} ${subject.source === 'legacy' ? 'previous learning' : 'current plan'} activities progress`} />}
+        <div className={`${styles.cardProgress}${subject.source === 'legacy' ? ' space-y-3' : ''}`}>
+          {(subject.source === 'legacy' || ksbProgress === undefined) && <Progress done={completed} total={total} compact aggregate={subject.aggregateProgress ?? subject.card?.progress} label={`${subject.title} ${subject.source === 'legacy' ? 'previous learning' : 'current plan'} activities progress`} />}
+          {ksbProgress !== undefined && <KsbProgress metric={ksbProgress} label={`${subject.title} KSBs achieved`} />}
           <HoursProgress completed={completedHours} planned={plannedHours} label={`${subject.title} hours progress`} />
           {subject.recordedHistory && <p className="mt-2 text-xs text-foreground-500">Recorded activities only · Full catalogue: {subject.catalogueCount ?? 0}</p>}
         </div>

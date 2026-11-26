@@ -361,6 +361,48 @@ describe('monthly assignment drafts', () => {
     expect(screen.getByText(/Recovered your most recent unsaved changes/)).toBeInTheDocument();
   });
 
+  it('waits for navigation saves before reopening the same assignment', async () => {
+    let finish!: (value: { id: string; status: string }) => void;
+    vi.mocked(saveLearningReflectionSubmission).mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+    const first = render(<AssignmentSubmissionWizard {...props} />);
+    fireEvent.change(await screen.findByLabelText(/Your answer \(/), { target: { value: 'My latest answer before navigation' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+    await waitFor(() => expect(saveLearningReflectionSubmission).toHaveBeenCalledOnce());
+    first.unmount();
+    render(<AssignmentSubmissionWizard {...props} />);
+    await act(async () => { await Promise.resolve(); });
+    expect(loadLearningReflectionSubmission).toHaveBeenCalledOnce();
+    await act(async () => { finish({ id: 'submission-1', status: 'draft' }); });
+    expect(await screen.findByLabelText(/Your answer \(/)).toHaveValue('My latest answer before navigation');
+    expect(loadLearningReflectionSubmission).toHaveBeenLastCalledWith(expect.objectContaining({ activityId: 'COMP-1' }), { revalidate: true });
+  });
+
+  it('keeps the final draft with its original assignment when navigation changes the activity', async () => {
+    const view = render(<AssignmentSubmissionWizard {...props} />);
+    fireEvent.change(await screen.findByLabelText(/Your answer \(/), { target: { value: 'Answer for the first assignment' } });
+    view.rerender(<AssignmentSubmissionWizard {...props} componentId="COMP-2" />);
+    expect(await screen.findByLabelText(/Your answer \(/)).toHaveValue('');
+    await waitFor(() => expect(saveLearningReflectionSubmission).toHaveBeenCalledWith(expect.objectContaining({
+      activityId: 'COMP-1', assignmentAnswer: 'Answer for the first assignment',
+    })));
+    expect(vi.mocked(saveLearningReflectionSubmission).mock.calls.some(([draft]) =>
+      draft.activityId === 'COMP-2' && draft.assignmentAnswer === 'Answer for the first assignment')).toBe(false);
+  });
+
+  it('does not claim newer edits are saved when an older save finishes', async () => {
+    let finish!: (value: { id: string; status: string }) => void;
+    vi.mocked(saveLearningReflectionSubmission).mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+    render(<AssignmentSubmissionWizard {...props} />);
+    const input = await screen.findByLabelText(/Your answer \(/);
+    fireEvent.change(input, { target: { value: 'First edit' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+    await waitFor(() => expect(saveLearningReflectionSubmission).toHaveBeenCalledOnce());
+    fireEvent.change(input, { target: { value: 'Newer unsaved edit' } });
+    await act(async () => { finish({ id: 'submission-1', status: 'draft' }); });
+    expect(screen.queryByText('Draft saved')).not.toBeInTheDocument();
+    expect(JSON.parse(sessionStorage.getItem('monthly-assignment-draft:commercial:1:COMP-1')!).payload.assignmentAnswer).toBe('Newer unsaved edit');
+  });
+
   it('keeps submit locked until checking, then uses the atomic completion endpoint only', async () => {
     render(<AssignmentSubmissionWizard {...props} />);
     await enterTopicTime();

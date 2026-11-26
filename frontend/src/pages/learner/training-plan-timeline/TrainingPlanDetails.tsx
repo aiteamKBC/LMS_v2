@@ -153,6 +153,7 @@ export function TrainingPlanDetails({ data: baseData, subjects, kind, learnerId,
     });
   }, [minMonth, maxMonth]);
   const selected = modules.find(module => module.id === selectedId)
+    || modules.find(module => module.id.startsWith('current:') && module.start && module.start.slice(0, 7) <= selectedMonth && module.end.slice(0, 7) >= selectedMonth)
     || modules.find(module => module.start && module.start.slice(0, 7) <= selectedMonth && module.end.slice(0, 7) >= selectedMonth);
   const sessions = uniquePlanSessions(modules);
   const metrics = monthMetrics(selectedMonth, modules, data);

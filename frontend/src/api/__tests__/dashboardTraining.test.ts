@@ -13,6 +13,17 @@ beforeEach(() => { clearAllCachedResources(); vi.stubGlobal('fetch', vi.fn()); }
 afterEach(() => { clearAllCachedResources(); vi.unstubAllGlobals(); });
 
 describe('Training snapshot ownership', () => {
+  it('accepts an explicitly deferred detail only for a module on this timeline', async () => {
+    const deferred = { ...payload(), timeline: { ...payload().timeline, modules: [module()] },
+      selectedModule: null, selectedModuleDeferred: true };
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify(deferred)));
+    expect((await dashboardTraining.read('commercial', '7')).selectedModule).toBeNull();
+    expect(String(vi.mocked(fetch).mock.calls[0][0])).toContain('deferSelected=1');
+    expect(peekTrainingModule('commercial', '7', 'current:M1')).toBeUndefined();
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({ ...deferred, selectedModuleId: 'current:OTHER' })));
+    await expect(dashboardTraining.read('commercial', '8')).rejects.toThrow('Could not load your training dashboard');
+  });
+
   it('shows a cached initial snapshot synchronously and isolates filters and learners', async () => {
     vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify(payload())));
     const first = await dashboardTraining.read('commercial', '7');

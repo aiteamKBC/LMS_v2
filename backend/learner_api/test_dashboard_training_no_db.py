@@ -11,6 +11,60 @@ from . import dashboard_training as training
 
 
 class TrainingProjectionTests(SimpleTestCase):
+    def test_verified_successor_uses_current_components_without_borrowing_old_completion(self):
+        from copy import deepcopy
+        learning = {
+            'activity': {'progress_basis': 'catalogue_activities', 'subjects': [
+                {'id': 1, 'name': 'Previous course', 'module_id': 'NEW'},
+                {'id': 2, 'name': 'Imported course', 'module_id': 'IMPORTED'}],
+                'activities': [
+                    {'group_id': 1, 'activity_id': 'old', 'completed': True},
+                    {'group_id': 2, 'activity_id': 'imported', 'completed': True}]},
+            'detail': {'components': [{'moduleId': 'NEW', 'componentId': 'new', 'component': 'New activity'},
+                                      {'moduleId': 'IMPORTED', 'componentId': 'copy', 'component': 'Copy'}]},
+            'metadata': {'current_subjects': [{'id': 'NEW', 'title': 'Current course'}, {'id': 'IMPORTED', 'title': 'Imported course'}]}}
+        original = deepcopy(learning)
+        result = training.training_subjects(learning, {'current:NEW': 'legacy:1'})
+        self.assertEqual({s['id'] for s in result}, {'current:NEW', 'legacy:2'})
+        current = next(s for s in result if s['id'] == 'current:NEW')
+        self.assertEqual([a['id'] for a in current['activities']], ['new'])
+        self.assertFalse(current['activities'][0].get('completed'))
+        self.assertEqual(learning, original)
+        # No verified relationship: preserve the existing historical display.
+        self.assertEqual({s['id'] for s in training.training_subjects(learning, {})}, {'legacy:1', 'legacy:2'})
+        # Previous learning remains available through an explicitly selected ID.
+        history = training.training_subjects(learning, {'current:NEW': 'legacy:1'}, subject_id='legacy:1')
+        self.assertEqual(next(s for s in history if s['id'] == 'legacy:1')['activities'][0]['id'], 'old')
+
+    def test_current_plan_is_default_while_explicit_history_selection_is_preserved(self):
+        connection = MagicMock()
+        modules = {'M': {'id': 'M', 'title': 'Course', 'start_date': '2026-01-01', 'end_date': '2026-12-31'}}
+        subjects = [{'id': key, 'moduleId': 'M', 'title': 'Course', 'activities': []}
+                    for key in ('legacy:1', 'current:M')]
+        with patch.object(training, 'connections', {'enrolment': connection}), \
+             patch.object(training.canonical, 'entries_for', return_value=[]), \
+             patch.object(training.canonical, 'targets_for', return_value={}), \
+             patch.object(training.schedule, 'plan_module_ids', return_value=(['M'], {})), \
+             patch.object(training, 'module_rows', return_value=modules), \
+             patch.object(training.schedule, '_plan_session_rows', return_value=[]), \
+             patch.object(training, 'learning_facts', return_value=(subjects, {})) as facts, \
+             patch.object(training.schedule, 'plan_reviews', return_value=[]), \
+             patch.object(training.schedule, 'current_coach', return_value={'coach_name': 'Coach', 'coach_email': ''}), \
+             patch.object(training, 'selected_detail', side_effect=lambda *args: {'id': args[4]['id']}) as details:
+            for requested, expected in (('', 'current:M'), ('legacy:1', 'legacy:1')):
+                request = RequestFactory().get('/', {'subject': requested, 'month': '2026-10'})
+                result = training.read_training(SimpleNamespace(pk=265, email=''), 'commercial', {}, None, request)
+                self.assertEqual(result['selectedModuleId'], expected)
+                self.assertEqual(facts.call_args.kwargs['subject_id'], requested or None)
+            details.reset_mock()
+            request = RequestFactory().get('/', {'month': '2026-10', 'deferSelected': '1'})
+            deferred = training.read_training(SimpleNamespace(pk=265, email=''), 'commercial', {}, None, request)
+            self.assertEqual(deferred['selectedModuleId'], 'current:M')
+            self.assertIsNone(deferred['selectedModule'])
+            self.assertIs(deferred['selectedModuleDeferred'], True)
+            self.assertEqual(len(deferred['timeline']['modules']), 2)
+            details.assert_not_called()
+
     def test_week_session_counts_are_grouped_once_without_changing_scope(self):
         cursor = MagicMock()
         cursor.description = []
@@ -47,6 +101,20 @@ class TrainingProjectionTests(SimpleTestCase):
         self.assertEqual(native['retiredQuizComponents'], [])
         selected = next(s for s in subjects if s['id'] == 'current:M2')
         self.assertEqual([a['id'] for a in selected['activities']], ['C2'])
+
+    def test_completed_quiz_does_not_credit_another_component_reusing_its_quiz(self):
+        from . import weekly_learning, student_activity_access, student_activity, builder_activity_dates
+        native = {'components': [
+            {'moduleId': 'M', 'componentId': ref, 'component': ref, 'isQuiz': True, 'quizMeta': {'quizId': 10}}
+            for ref in ('DONE', 'TODO')], 'quizAttempts': [{'quizId': 10, 'componentId': 'DONE', 'passed': True}]}
+        with patch.object(training, 'connections', {'enrolment': MagicMock()}), \
+             patch.object(weekly_learning, 'build_learning_content_summary', return_value=native), \
+             patch.object(student_activity_access, 'student_activity_available', return_value=False), \
+             patch.object(student_activity, 'builder_subject_links', return_value={}), \
+             patch.object(builder_activity_dates, 'read_builder_activity_dates', return_value={}):
+            subjects, _ = training.learning_facts(SimpleNamespace(pk=17, aptem_id=None), {}, None, [], ['M'])
+        activities = next(s for s in subjects if s['id'] == 'current:M')['activities']
+        self.assertEqual({a['id']: a['completed'] for a in activities}, {'DONE': True, 'TODO': False})
 
     def test_initial_request_loads_only_explicit_selected_module(self):
         request = RequestFactory().get('/', {'subject': 'current:M2'})

@@ -1,4 +1,5 @@
 import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
+import { saveAssignmentDraft, waitForAssignmentDraft } from './assignmentDraftWrites';
 import type { ComponentProps } from 'react';
 import { presentTopic, type AssignmentResourceLink, type AssignmentTopic } from '@/lib/assignmentTopics';
 import { TopicAssignment } from './TopicAssignment';
@@ -8,7 +9,6 @@ import DOMPurify from 'dompurify';
 import type { ComponentKsbMapping, LearnerKind } from '@/api/learnerDetail';
 import {
   loadLearningReflectionSubmission,
-  saveLearningReflectionSubmission,
   type LearningReflectionSubmissionInput,
   type HistoricalAssignmentContent,
 } from '@/api/reflectionSubmission';
@@ -182,7 +182,6 @@ export function AssignmentSubmissionForm({
   const loadedRef = useRef(false);
   const saveVersionRef = useRef(0);
   const submittingRef = useRef(false);
-  const saveQueueRef = useRef<Promise<unknown>>(Promise.resolve());
   const latestDraftRef = useRef<LearningReflectionSubmissionInput | null>(null);
   const lockedRef = useRef(false);
   const mountedRef = useRef(true);
@@ -286,10 +285,10 @@ export function AssignmentSubmissionForm({
       // typing. Queue it after earlier writes so it cannot be overwritten.
       if (loadedRef.current && !lockedRef.current && !submittingRef.current && latestDraftRef.current) {
         const snapshot = latestDraftRef.current;
-        saveQueueRef.current = saveQueueRef.current.catch(() => undefined).then(() => saveLearningReflectionSubmission(snapshot)).catch(() => undefined);
+        void saveAssignmentDraft(recoveryKey, snapshot).catch(() => undefined);
       }
     };
-  }, []);
+  }, [recoveryKey]);
 
   useEffect(() => {
     let active = true;
@@ -297,13 +296,13 @@ export function AssignmentSubmissionForm({
     setLoadFailed(false);
     setLoading(true);
     setChecks([]);
-    loadLearningReflectionSubmission({
+    waitForAssignmentDraft(recoveryKey).then(() => active ? loadLearningReflectionSubmission({
       learnerKind: kind,
       learnerId,
       activityType: 'assignment',
       activityId: componentId,
       ...(assignmentTopicId ? { assignmentTopicId } : {}),
-    })
+    }, { revalidate: true }) : null)
       .then(submission => {
         if (!active) return;
         loadedRef.current = true;
@@ -362,14 +361,13 @@ export function AssignmentSubmissionForm({
     setSaveError('');
     try {
       // Queue writes, not just responses: old drafts must never arrive last.
-      const request = saveQueueRef.current.catch(() => undefined).then(() => saveLearningReflectionSubmission(snapshot));
-      saveQueueRef.current = request;
-      const result = await request;
+      const result = await saveAssignmentDraft(recoveryKey, snapshot);
       if (version !== saveVersionRef.current || !mountedRef.current) return true;
       setStatus(result.status || 'draft');
       if (result.submissionAttempts) setSubmissionAttempts(result.submissionAttempts);
-      setDraftSaved(true);
-      setRecoveredDraft(false);
+      const currentSaved = JSON.stringify(latestDraftRef.current) === JSON.stringify(snapshot);
+      setDraftSaved(currentSaved);
+      if (currentSaved) setRecoveredDraft(false);
       try {
         const local = JSON.parse(sessionStorage.getItem(recoveryKey) || 'null');
         if (JSON.stringify(local?.payload) === JSON.stringify(snapshot)) sessionStorage.removeItem(recoveryKey);
@@ -391,9 +389,10 @@ export function AssignmentSubmissionForm({
     try { sessionStorage.setItem(recoveryKey, JSON.stringify({ at: Date.now(), payload: latestDraftRef.current })); } catch { /* Draft still saves to the server. */ }
     const timeout = window.setTimeout(() => { void saveDraft(false); }, 900);
     return () => window.clearTimeout(timeout);
-    // The identifying fields are stable for the lifetime of this wizard.
+    // Save edits and navigation, not timer ticks. The latest time is included
+    // in these saves and the navigation flush without recurring API writes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [answers, monthly, step, evidenceFiles, Math.floor((timeSeconds || 0) / 30), Math.floor((elapsedSeconds || 0) / 30), locked]);
+  }, [answers, monthly, step, evidenceFiles, locked]);
 
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => {
@@ -461,10 +460,9 @@ export function AssignmentSubmissionForm({
     setSavingDraft(true);
     setSaveError('');
     try {
-      await saveQueueRef.current.catch(() => undefined);
       // The completion endpoint saves progress and submits this saved draft
       // atomically. Never use a second POST that could fail after completion.
-      await saveLearningReflectionSubmission(payload('draft'));
+      await saveAssignmentDraft(recoveryKey, payload('draft'));
       if (!await runChecks()) {
         setStep(7);
         setSaveError('Your draft is saved. Complete the outstanding checks before submitting.');
@@ -802,6 +800,6 @@ export function AssignmentSubmissionWizard(props: ComponentProps<typeof Assignme
     return <TopicAssignment key={`${props.kind}:${props.learnerId}:${props.componentId}`} {...props} topics={props.topics} />;
   }
   const only = props.topics?.length === 1 ? presentTopic(props.topics[0]) : null;
-  return <AssignmentSubmissionForm {...props} instructionsHtml={props.instructionsHtml ?? only?.instructions}
+  return <AssignmentSubmissionForm key={`${props.kind}:${props.learnerId}:${props.componentId}:${props.assignmentTopicId || ''}`} {...props} instructionsHtml={props.instructionsHtml ?? only?.instructions}
     resourceLinks={props.resourceLinks ?? only?.links} />;
 }

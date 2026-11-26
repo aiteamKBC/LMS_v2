@@ -1,10 +1,24 @@
 """Synthetic, network-free tests for evidence-based pass flag repair."""
 from copy import deepcopy
 import unittest
-from repair_legacy_quiz_pass_flags import plan_flags, verify_preserved
+from repair_legacy_quiz_pass_flags import course_states, plan_flags, verify_preserved
 
 
 class PassFlagTests(unittest.TestCase):
+    def test_course_scope_uses_only_the_identified_learners_owned_courses(self):
+        state = {'courses': [{'id': 10, 'source_course_ref': '50', 'source_system': 'old_lms'},
+                             {'id': 11, 'source_course_ref': '51', 'source_system': 'old_lms'}],
+                 'definitions': [{'id': 100, 'source_course_id': 10}, {'id': 101, 'source_course_id': 11}],
+                 'owner': {'id': 1}, 'progress': [{'id': 1000, 'learner_id': 1}]}
+        before = deepcopy(state)
+        scoped = course_states(state, [50])
+        self.assertEqual(set(scoped), {50})
+        self.assertEqual(scoped[50]['definitions'], [{'id': 100, 'source_course_id': 10}])
+        self.assertEqual(scoped[50]['progress'], state['progress'])
+        self.assertEqual(state, before)
+        with self.assertRaises(ValueError):
+            course_states(state, [52])
+
     def setUp(self):
         self.state = {'owner': {'id': 1}, 'course': {'source_course_ref': '50'},
             'identity': {'source_learner_id': '3', 'source_payload': {'source_email': 'test@example.invalid'}},

@@ -6,7 +6,9 @@ export function assignmentDateRestriction(date: string, rules: BookingCalendarRu
   const day = new Date(`${date}T12:00:00Z`).getUTCDay();
   if (day === 0 || day === 6) return 'Weekend';
   if (!rules || !rules.coveredYears.includes(Number(date.slice(0, 4)))) return 'Holiday calendar unavailable';
-  return rules.bankHolidays.find(item => item.date === date)?.title || '';
+  const holiday = rules.bankHolidays.find(item => item.date === date)?.title;
+  if (holiday) return holiday;
+  return rules.today && date > rules.today ? 'Future dates unavailable' : '';
 }
 
 
@@ -15,6 +17,21 @@ export function assignmentMonthBounds(month: string) {
   const [year, number] = month.split('-').map(Number);
   const days = new Date(Date.UTC(year, number, 0)).getUTCDate();
   return { min: `${month}-01`, max: `${month}-${days}` };
+}
+
+
+export function shiftAssignmentMonth(month: string, offset: number) {
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return month;
+  const [year, number] = month.split('-').map(Number);
+  const shifted = new Date(Date.UTC(year, number - 1 + offset, 1));
+  return `${shifted.getUTCFullYear()}-${String(shifted.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+
+export function clampAssignmentCalendarMonth(month: string, latestMonth: string) {
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return latestMonth;
+  if (/^\d{4}-(0[1-9]|1[0-2])$/.test(latestMonth) && month > latestMonth) return latestMonth;
+  return month;
 }
 
 
