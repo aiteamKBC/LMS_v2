@@ -1,7 +1,7 @@
 import { learningFetch } from '@/lib/personalLearning';
 import { invalidateLearnerReads } from './learnerRead';
 
-export interface AssignmentTopicState { topicId: string; status: string; elapsedSeconds: number; month?: string; meetingKey?: string; submittedAt?: string }
+export interface AssignmentTopicState { topicId: string; status: string; elapsedSeconds: number; displayElapsedSeconds?: number; month?: string; meetingKey?: string; submittedAt?: string }
 export interface AssignmentTopicIdentity { learnerKind: 'commercial' | 'apprenticeship'; learnerId: string; activityId: string }
 
 export async function loadAssignmentTopicStates(input: AssignmentTopicIdentity): Promise<AssignmentTopicState[]> {

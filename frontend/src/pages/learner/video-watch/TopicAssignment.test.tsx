@@ -68,6 +68,17 @@ it('keeps the preview of a submitted topic accessible if its curriculum content 
   expect(selectAssignmentTopic).not.toHaveBeenCalled();
 });
 
+it('shows a submitted timer display correction without changing the recorded topic time', async () => {
+  localStorage.setItem('assignment-work-time:v1:commercial:synthetic-1:A1', String(426695));
+  vi.mocked(loadAssignmentTopicStates).mockResolvedValue([{ topicId: '1', status: 'submitted_for_tutor_review', elapsedSeconds: 426695, displayElapsedSeconds: 28800 }]);
+  render(<TopicAssignment {...props} topics={[topics[0]]} />);
+  const timer = await screen.findByRole('timer', { name: 'Time on this activity: 08 hours, 00 minutes, 00 seconds' });
+  expect(timer).toBeVisible();
+  expect(localStorage.getItem('assignment-work-time:v1:commercial:synthetic-1:A1')).toBe('28800');
+  fireEvent.click(screen.getByRole('button', { name: 'Preview your submission' }));
+  expect(timer).toHaveAccessibleName('Time on this activity: 08 hours, 00 minutes, 00 seconds');
+});
+
 it('opens both instruction PDFs with reading tools and keeps files scoped to the selected topic', async () => {
   const files = ['brief', 'guidance'].map(name => ({ url: `/curriculum_api/curriculum/uploads/${name}.pdf`, fileName: `${name}.pdf`, contentType: 'application/pdf', size: 10 }));
   const choices = assignmentTopics([
