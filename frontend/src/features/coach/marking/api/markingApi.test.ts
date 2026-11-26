@@ -26,7 +26,8 @@ describe('Marking API contract', () => {
     await fetchMarkingSidebarQueue('official');
     expect(coachFetch.mock.calls.map(call => call[0])).toEqual([
       '/coach_api/coach/marking-queue/submission-1',
-      '/coach_api/coach/marking-queue?status=all&page=1&page_size=25',
+      // Assignments only: activity reflections are no longer marked on this page.
+      '/coach_api/coach/marking-queue?status=all&kind=assignment&page=1&page_size=25',
     ]);
   });
 });

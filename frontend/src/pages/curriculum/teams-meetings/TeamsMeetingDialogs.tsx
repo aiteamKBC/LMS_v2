@@ -361,9 +361,10 @@ export interface TeamsDialogSecondTab {
   render: () => ReactNode;
 }
 
-export function TeamsMeetingDialogs({ workspace, secondTab }: {
+export function TeamsMeetingDialogs({ workspace, secondTab, moduleSaveAction }: {
   workspace: TeamsMeetingsWorkspace;
   secondTab?: TeamsDialogSecondTab;
+  moduleSaveAction?: { saving: boolean; label: string; error: string; onSave: () => void };
 }) {
   const [activeTab, setActiveTab] = useState<'calendar' | 'second'>('calendar');
   const [forwardOpen, setForwardOpen] = useState(false);
@@ -374,6 +375,7 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
   const [updateConfirmOpen, setUpdateConfirmOpen] = useState(false);
   const actionFeedbackId = useId();
   const invitationFeedbackId = useId();
+  const moduleSaveFeedbackId = useId();
   const actionFeedbackRef = useRef<HTMLParagraphElement>(null);
   const onSecondTab = Boolean(secondTab) && activeTab === 'second';
   // Coming back from the additional-meeting tab: a week may have been booked or
@@ -473,6 +475,7 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                and a wide box around two sentences is what made this look bare. */
             size={selected.summary && teamsLoaded ? 'max-w-5xl' : 'max-w-3xl'}
             onClose={requestCloseSelected}
+            dismissible={!moduleSaveAction?.saving}
             /* The footer drives the module's own calendar. The second tab has
                its own button inside it, so this is hidden rather than left
                there acting on a calendar the reader is not looking at. */
@@ -483,6 +486,17 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                   className="w-full max-h-32 overflow-y-auto rounded-lg border border-primary-200 bg-primary-50 p-3 text-[12px] font-semibold leading-relaxed text-foreground-700 outline-none focus:ring-2 focus:ring-primary-300">
                   <AppIcon className="ri-information-line mr-1.5" aria-hidden="true" />{actionMessage}
                 </p>}
+                {moduleSaveAction && <div className="w-full space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                  {moduleSaveAction.error && <p id={moduleSaveFeedbackId} role="alert" className="text-[12px] text-red-700">{moduleSaveAction.error}</p>}
+                  <button type="button" onClick={moduleSaveAction.onSave}
+                    disabled={moduleSaveAction.saving || Boolean(busy) || updateDrawer.saving || Boolean(updateProgress) || createDrawer.saving}
+                    aria-describedby={moduleSaveAction.error ? moduleSaveFeedbackId : actionFeedbackId}
+                    className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-primary-600 px-3 py-2 text-[12px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-50">
+                    <AppIcon className={moduleSaveAction.saving ? 'ri-loader-4-line animate-spin' : 'ri-save-line'} />
+                    {moduleSaveAction.label}
+                  </button>
+                  <p className="text-[11px] text-amber-900">This saves the module first and keeps your meeting edits here. Then use Save without notifying or Save and email added people to save those changes.</p>
+                </div>}
                 {/* Only the actions this module can actually take: a footer of
                     greyed-out buttons reads as broken rather than as guidance.
                     Closing is the title bar's X — no second Close down here. */}

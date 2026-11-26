@@ -568,14 +568,16 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
         // regression test in teamsMeetingsPage.test.tsx exists to prevent.
         fetchCurriculumSessions(signal, { skipCache: true, moduleCatalogueId: scopeModuleId || undefined }),
       ]);
-      if (signal?.aborted) return;
+      if (signal?.aborted) return false;
       setSummaries(nextSummaries);
       setSessions(nextSessions);
       setTeamsError(null);
       setTeamsLoaded(true);
+      return true;
     } catch (err) {
-      if (signal?.aborted) return;
+      if (signal?.aborted) return false;
       setTeamsError(err instanceof Error ? err.message : 'Unable to load the tracked Teams meetings.');
+      return false;
     } finally {
       if (!signal?.aborted) setTeamsLoading(false);
     }

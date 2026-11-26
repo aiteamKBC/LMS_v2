@@ -13,10 +13,14 @@ def saved_evidence(record, job, *, learner_ids=None, part='all'):
     if part == 'attendance' or data['transcript']:
         return data
     try:
-        transcript = local_transcript(record) or cached_microsoft_transcript(record, job)
+        from .recordings_bunny import saved_transcript
+        transcript = local_transcript(record) or saved_transcript(record, job) or cached_microsoft_transcript(record, job)
     except (DatabaseError, ValueError):
         log.warning('Local coaching transcript could not be read.')
-        transcript = cached_microsoft_transcript(record, job)
+        try:
+            transcript = saved_transcript(record, job) or cached_microsoft_transcript(record, job)
+        except (DatabaseError, ValueError):
+            transcript = cached_microsoft_transcript(record, job)
     return {**data, 'state': 'matched', 'analysisState': data['state'], 'transcript': transcript} if transcript else data
 
 

@@ -9,12 +9,12 @@ vi.mock('@/lib/curriculumApi', () => ({ importCountryCalendar: vi.fn() }));
 const england: CurriculumHoliday[] = [{ id: 'uk', label: 'UK public day', startDate: '2026-09-22', endDate: '2026-09-22', source: 'gov.uk' }];
 const saudi: CurriculumHoliday[] = [{ id: 'sa', label: 'Saudi public day', startDate: '2026-09-23', endDate: '2026-09-23', source: 'calendarific', country: 'SA' }];
 
-function Harness({ module = false, inheritedPolicy = null }: { module?: boolean; inheritedPolicy?: DeliveryCalendarPolicy | null }) {
+function Harness({ module = false, inheritedPolicy = null, inheritedExcludedIds = [] }: { module?: boolean; inheritedPolicy?: DeliveryCalendarPolicy | null; inheritedExcludedIds?: string[] }) {
   const [value, setValue] = useState<DeliveryCalendarPolicy | null>(null);
   const [rows, setRows] = useState<CurriculumHoliday[]>([]);
   const [ready, setReady] = useState(true);
   return <><DeliveryCalendarEditor value={value} onChange={setValue} legacyHolidays={england} module={module}
-    inheritedPolicy={inheritedPolicy} startDate="2026-09-01" endDate="2026-09-30" onHolidaysChange={setRows} onReadyChange={setReady} />
+    inheritedPolicy={inheritedPolicy} inheritedExcludedIds={inheritedExcludedIds} startDate="2026-09-01" endDate="2026-09-30" onHolidaysChange={setRows} onReadyChange={setReady} />
     <output data-testid="policy">{JSON.stringify(value)}</output><output data-testid="effective">{JSON.stringify(rows)}</output><output data-testid="ready">{String(ready)}</output></>;
 }
 
@@ -38,6 +38,31 @@ describe('delivery calendar choices', () => {
     fireEvent.click(screen.getByLabelText('Saturday'));
     expect(JSON.parse(screen.getByTestId('policy').textContent || '{}').weekendDays).toEqual(['Friday']);
     expect(importCountryCalendar).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows custom holidays on the default calendar without saving a change merely by opening the form', () => {
+    render(<Harness />);
+    fireEvent.click(screen.getByRole('button', { name: 'Add custom holiday' }));
+    expect(screen.getByRole('textbox', { name: 'Holiday name' })).toBeVisible();
+    expect(screen.getByTestId('policy').textContent).toBe('null');
+    fireEvent.click(screen.getByRole('button', { name: 'Hide custom holiday form' }));
+    expect(screen.getByTestId('policy').textContent).toBe('null');
+  });
+
+  it('adds a module holiday directly from inheritance while preserving the country, exclusions and cohort', async () => {
+    const inherited = calendarPreset('SA');
+    render(<Harness module inheritedPolicy={inherited} inheritedExcludedIds={['sa']} />);
+    await waitFor(() => expect(screen.getByTestId('ready').textContent).toBe('true'));
+    fireEvent.click(screen.getByRole('button', { name: 'Add custom holiday' }));
+    expect(screen.getByTestId('policy').textContent).toBe('null');
+    fireEvent.change(screen.getByRole('textbox', { name: 'Holiday name' }), { target: { value: 'Reading break' } });
+    fireEvent.change(screen.getByLabelText('First day off'), { target: { value: '2026-09-24' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add holiday' }));
+    const selected = JSON.parse(screen.getByTestId('policy').textContent || '{}');
+    expect(selected).toMatchObject({ country: 'SA', weekendDays: ['Friday', 'Saturday'], excludedHolidayIds: ['sa'],
+      manualHolidays: [{ label: 'Reading break', startDate: '2026-09-24', endDate: '2026-09-24' }] });
+    expect(inherited).toEqual(calendarPreset('SA'));
+    await waitFor(() => expect(screen.getByTestId('effective').textContent).not.toContain('Saudi public day'));
   });
 
   it('unticks a public holiday without changing the provider data', async () => {
@@ -67,14 +92,14 @@ describe('delivery calendar choices', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Customize this module' }));
     const original = screen.getByTestId('policy').textContent;
     expect(screen.queryByRole('textbox', { name: 'Holiday name' })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Add an extra holiday (optional)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add custom holiday' }));
     fireEvent.change(screen.getByRole('textbox', { name: 'Holiday name' }), { target: { value: 'College break' } });
     fireEvent.change(screen.getByLabelText('First day off'), { target: { value: '2026-09-24' } });
     fireEvent.change(screen.getByLabelText('Last day off (optional)'), { target: { value: '2026-09-25' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Hide extra holiday form' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Hide custom holiday form' }));
     expect(screen.queryByRole('textbox', { name: 'Holiday name' })).not.toBeInTheDocument();
     expect(screen.getByTestId('policy').textContent).toBe(original);
-    fireEvent.click(screen.getByRole('button', { name: 'Add an extra holiday (optional)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add custom holiday' }));
     expect(screen.getByRole('textbox', { name: 'Holiday name' })).toHaveValue('College break');
     expect(screen.getByLabelText('First day off')).toHaveValue('2026-09-24');
     expect(screen.getByLabelText('Last day off (optional)')).toHaveValue('2026-09-25');
@@ -86,13 +111,13 @@ describe('delivery calendar choices', () => {
     render(<Harness module inheritedPolicy={inherited} />);
     await waitFor(() => expect(screen.getByTestId('effective').textContent).toContain('Saudi public day'));
     fireEvent.click(screen.getByRole('button', { name: 'Customize this module' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Add an extra holiday (optional)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add custom holiday' }));
     fireEvent.change(screen.getByRole('textbox', { name: 'Holiday name' }), { target: { value: 'College break' } });
     fireEvent.change(screen.getByLabelText('First day off'), { target: { value: '2026-09-24' } });
     fireEvent.change(screen.getByLabelText('Last day off (optional)'), { target: { value: '2026-09-25' } });
     fireEvent.click(screen.getByRole('button', { name: 'Add holiday' }));
     expect(screen.queryByRole('textbox', { name: 'Holiday name' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Add an extra holiday (optional)' })).toHaveFocus();
+    expect(screen.getByRole('button', { name: 'Add custom holiday' })).toHaveFocus();
     fireEvent.click(screen.getByRole('checkbox', { name: 'Apply public holidays' }));
     const selected = JSON.parse(screen.getByTestId('policy').textContent || '{}');
     expect(selected).toMatchObject({ country: 'SA', weekendDays: ['Friday', 'Saturday'], observePublicHolidays: false,
@@ -106,7 +131,7 @@ describe('delivery calendar choices', () => {
   it('preserves an extra holiday draft through a country change and saves a single-day break', async () => {
     render(<Harness />);
     fireEvent.click(screen.getByRole('button', { name: 'Customize England calendar' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Add an extra holiday (optional)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add custom holiday' }));
     fireEvent.change(screen.getByRole('textbox', { name: 'Holiday name' }), { target: { value: 'Campus break' } });
     fireEvent.change(screen.getByLabelText('First day off'), { target: { value: '2026-09-24' } });
     fireEvent.change(screen.getByLabelText('Country'), { target: { value: 'SA' } });
@@ -119,7 +144,7 @@ describe('delivery calendar choices', () => {
     expect(selected).toMatchObject({ country: 'GB', weekendDays: ['Saturday', 'Sunday'],
       manualHolidays: [{ label: 'Campus break', startDate: '2026-09-24', endDate: '2026-09-24', source: 'authored' }] });
     await waitFor(() => expect(screen.getByTestId('effective').textContent).toContain('Campus break'));
-    fireEvent.click(screen.getByRole('button', { name: 'Add an extra holiday (optional)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add custom holiday' }));
     expect(screen.getByRole('textbox', { name: 'Holiday name' })).toHaveValue('');
   });
 

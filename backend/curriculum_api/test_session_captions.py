@@ -44,6 +44,23 @@ class SessionCaptionTests(TestCase):
         self.client.create.assert_not_called()
         self.client.upload.assert_not_called()
 
+    def test_caption_writes_use_materialized_keyset_pages_not_a_named_cursor(self):
+        from django.db.models.query import QuerySet
+        recordings=[self.recording]
+        assets=[]
+        for index in range(captions.CAPTION_PAGE_SIZE+2):
+            identity=f'PART-{index}'
+            recordings.append({**self.recording,'id':identity,'graph_artifact_id':identity})
+            assets.append(CurriculumVideoImport(target_kind='live_session',target_id='S',component_id=identity,
+                fingerprint=f'synthetic-caption-part-{index}',title='Synthetic lecture part',video_id=VIDEO,status='ready',
+                scope={'series_id':'S','occurrence_id':'O','graph_artifact_id':identity}))
+        CurriculumVideoImport.objects.bulk_create(assets)
+        with patch.object(QuerySet,'iterator',side_effect=AssertionError('Named cursor forbidden')), \
+             patch.object(captions,'recording_captions',return_value='WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nSynthetic\n'):
+            captions.sync_series_captions('S',[*recordings,self.transcript])
+        self.assertEqual(self.client.caption.call_count,len(recordings))
+        self.assertEqual(CurriculumVideoImport.objects.filter(scope__lmsEnglishCaptions__state='ready').count(),len(recordings))
+
     def test_late_transcript_can_arrive_after_ready_video(self):
         self.transcript['metadata'] = {}
         self.assertEqual(self.sync()['state'], 'waiting')
@@ -98,6 +115,7 @@ class SessionCaptionTests(TestCase):
         command = worker.Command()
         command.stdout = Mock()
         with patch.object(worker, 'connections', {'default': connection}), \
+                patch.object(worker, 'archive_runtime_preflight', return_value='synthetic:instance:1:s3'), \
                 patch.object(worker.transaction, 'atomic', return_value=nullcontext()), \
                 patch.object(captions, 'sync_pending_captions') as pending:
             command.handle(provision_container=False, scheduled=False, live_session_ids=['S'], limit=2)

@@ -13,8 +13,22 @@ export type CoachLogDetail = { summary: LogSummary; detail: LogDetail };
 
 async function read<T>(path: string): Promise<T> {
   const response = await coachFetch(`/coach_api/coach/monthly-logs/${path}`);
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error || data.detail || `Request failed with ${response.status}`);
+  const invalidResponse = 'The server returned an invalid monthly logs response. Please refresh and try again.';
+  const requestFailed = `Monthly logs could not be loaded (HTTP ${response.status}). Please try again.`;
+  let data: unknown;
+  try {
+    data = await response.json();
+  } catch {
+    throw new Error(response.ok ? invalidResponse : requestFailed);
+  }
+  const payload = data && typeof data === 'object' && !Array.isArray(data)
+    ? data as { error?: unknown; detail?: unknown } : null;
+  if (!response.ok) {
+    const message = typeof payload?.error === 'string' && payload.error
+      || typeof payload?.detail === 'string' && payload.detail;
+    throw new Error(message || requestFailed);
+  }
+  if (!payload) throw new Error(invalidResponse);
   return data as T;
 }
 

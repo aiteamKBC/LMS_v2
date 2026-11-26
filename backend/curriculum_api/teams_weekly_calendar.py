@@ -352,7 +352,8 @@ def save_weekday_calendar(payload, graph_settings, series=None):
                 pruned, holiday_warnings = v.prune_study_week_fillers(
                     microsoft_graph_request, owner, event_id,
                     v.clean_str(series.get('module_catalogue_id') or combined.get('moduleCatalogueId')),
-                    targets, graph_settings, stored_rows, allow_delete=not people_only,
+                    targets, graph_settings, stored_rows, allow_delete=not people_only and (creating or notify_attendees),
+                    allow_uninvited_delete=not people_only,
                 )
                 warnings.extend(holiday_warnings)
                 leftover_slots.extend(v.flag_teams_occurrence_leftovers(
