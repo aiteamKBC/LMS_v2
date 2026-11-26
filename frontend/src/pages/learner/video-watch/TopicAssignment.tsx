@@ -40,6 +40,7 @@ export function TopicAssignment({ topics, ...props }: FormProps & { topics: Assi
   const activeTopic = choices.find(topic => topic.id === opened);
   const activeShown = useMemo(() => activeTopic ? presentTopic(activeTopic) : null, [activeTopic]);
   const readonly = submitted(states.find(state => state.topicId === opened)?.status);
+  const openedDisplaySeconds = readonly ? states.find(state => state.topicId === opened)?.displayElapsedSeconds : undefined;
   const complete = states.some(state => submitted(state.status));
   const chosenLocked = submitted(states.find(state => state.topicId === chosen?.id)?.status);
   const canOpen = (topic: AssignmentTopic) => topicHasContent(topic) || draft?.topicId === topic.id;
@@ -54,7 +55,11 @@ export function TopicAssignment({ topics, ...props }: FormProps & { topics: Assi
       if (old) { setLegacy(true); return; }
       const pending = rows.find(row => row.topicId && !submitted(row.status));
       if (pending) { setSelected(pending.topicId); timer.restore(pending.elapsedSeconds, false); }
-      else timer.restore(Math.max(0, ...rows.map(row => row.elapsedSeconds || 0)), !rows.some(row => submitted(row.status)));
+      else {
+        const corrected = rows.some(row => submitted(row.status) && row.displayElapsedSeconds !== undefined);
+        const seconds = Math.max(0, ...rows.map(row => submitted(row.status) ? row.displayElapsedSeconds ?? row.elapsedSeconds : row.elapsedSeconds));
+        timer.restore(seconds, !rows.some(row => submitted(row.status)), corrected);
+      }
     }).catch(reason => { if (live) { draftLoadFailed.current = true; setError(reason instanceof Error ? reason.message : 'Could not load your topics.'); } })
       .finally(() => { if (live) setLoading(false); });
     return () => { live = false; };
@@ -102,7 +107,7 @@ export function TopicAssignment({ topics, ...props }: FormProps & { topics: Assi
         <AssignmentSubmissionForm {...props} key={opened}
           title={props.title}
           assignmentTopicId={opened} elapsedSeconds={timer.elapsed}
-          onRestoreElapsed={seconds => timer.restore(seconds, timer.running)}
+          onRestoreElapsed={seconds => timer.restore(openedDisplaySeconds ?? seconds, timer.running, openedDisplaySeconds !== undefined)}
           onManualDraftSaved={timer.pause}
           onShowInstructions={() => { setOpened(''); timer.pause(); }}
           questionHtml={activeShown.question} questionText={activeShown.question}

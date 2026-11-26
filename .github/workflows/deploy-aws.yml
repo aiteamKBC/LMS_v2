@@ -102,11 +102,11 @@ jobs:
           if [ -z "$BASE" ] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then all "no earlier successful deploy found"; fi
           echo "base=$BASE" >> "$GITHUB_OUTPUT"
           FILES=$(git diff --name-only "$BASE" "$COMMIT")
-          echo "Changed since $BASE (last successful deploy):"; echo "$FILES" | sed 's/^/  /' | head -50
-          echo "$FILES" | grep -q '^\.github/' && all "CI files changed"
+          echo "Changed since $BASE (last successful deploy):"; printf '%s\n' "$FILES" | sed -n '1,50{s/^/  /;p;}'
+          grep -q '^\.github/' <<< "$FILES" && all "CI files changed"
           b=false; f=false
-          echo "$FILES" | grep -q '^backend/' && b=true
-          echo "$FILES" | grep -q '^frontend/' && f=true
+          grep -q '^backend/' <<< "$FILES" && b=true
+          grep -q '^frontend/' <<< "$FILES" && f=true
           echo "backend=$b" >> "$GITHUB_OUTPUT"; echo "frontend=$f" >> "$GITHUB_OUTPUT"
           echo "backend=$b frontend=$f"
 
@@ -254,10 +254,18 @@ jobs:
     name: Calendar deployment guards
     uses: ./.github/workflows/calendar-deployment-checks.yml
 
+  assignment-checks:
+    name: Learner assignment regression guards
+    needs: changes
+    if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true'
+    uses: ./.github/workflows/learner-assignment-checks.yml
+    with:
+      ref: ${{ needs.changes.outputs.commit }}
+
   # ------------------------------------------------------------------ deploy
   deploy:
     name: Deploy to AWS
-    needs: [changes, backend, frontend, security, release-guards]
+    needs: [changes, backend, frontend, security, release-guards, assignment-checks]
     # Runs when the changed parts passed; parts that didn't change are skipped
     if: >-
       !cancelled()
