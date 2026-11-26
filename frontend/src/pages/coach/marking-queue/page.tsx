@@ -26,7 +26,8 @@ export default function CoachMarkingQueue() {
   const navigate = useNavigate();
   const coach = useCoachIdentity();
   const [filter, setFilter] = useState<MarkingQueueFilter>('pending');
-  const [kind, setKind] = useState<MarkingKind>('assignment');
+  // Only assignment submissions are marked here; activity reflections are not part of this page.
+  const kind: MarkingKind = 'assignment';
   const [page, setPage] = useState(1);
   const queue = useMarkingQueue({ scope: personal ? 'personal' : 'official', status: filter, kind, page }, coach.isInitialized && Boolean(coach.email));
   const { items, summary, pagination, refresh: loadQueue } = queue;
@@ -64,14 +65,6 @@ export default function CoachMarkingQueue() {
         </header>
 
         <section className={styles.controls} aria-label="Marking queue filters">
-          <div className={styles.kindTabs} role="group" aria-label="Submission type">
-            <button type="button" aria-pressed={kind === 'assignment'} onClick={() => { setKind('assignment'); setPage(1); }}>
-              Assignments <span>{summary.assignmentItems}</span>
-            </button>
-            <button type="button" aria-pressed={kind === 'reflection'} onClick={() => { setKind('reflection'); setPage(1); }}>
-              Reflections <span>{summary.reflectionItems}</span>
-            </button>
-          </div>
           <div className={styles.statusTabs} role="group" aria-label="Submission status">
             {FILTERS.map(option => (
               <button key={option.value} type="button" aria-pressed={filter === option.value} onClick={() => { setFilter(option.value); setPage(1); }}>
@@ -99,12 +92,12 @@ export default function CoachMarkingQueue() {
           <div className={styles.state}>
             <i className="ri-checkbox-circle-line" aria-hidden="true" />
             <h2>No submissions in this view</h2>
-            <p>Change the type or status filter to see other marking work.</p>
+            <p>Change the status filter to see other marking work.</p>
           </div>
         ) : (
           <div className={styles.cardList}>
             {items.map(item => (
-              <article className={styles.submissionCard} key={`${item.id}:${item.markingPart ?? ''}`}>
+              <article className={styles.submissionCard} key={item.id}>
                 <div className={styles.cardTop}>
                   <div className={styles.cardContent}>
                     <div className={styles.tags}>
@@ -123,7 +116,7 @@ export default function CoachMarkingQueue() {
                     <span className={styles.quality} title="Learner submission quality score">
                       <i className="ri-sparkling-line" aria-hidden="true" /> Quality {item.qualityScore}%
                     </span>
-                    <button type="button" onClick={() => navigate(`/coach/marking-queue/${item.id}${item.markingPart ? `?part=${item.markingPart}` : scopeQuery}`)}>
+                    <button type="button" onClick={() => navigate(`/coach/marking-queue/${item.id}${scopeQuery}`)}>
                       {item.reviewedBy ? 'Review' : 'View'}
                       <i className="ri-arrow-right-line" aria-hidden="true" />
                     </button>

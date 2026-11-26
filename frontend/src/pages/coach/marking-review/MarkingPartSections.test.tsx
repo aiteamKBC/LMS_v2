@@ -37,39 +37,47 @@ const sections: MarkingSection[] = [
   },
 ];
 
+const LABEL = 'Assignment, KSBs & evidence steps';
+
 function openTab(name: RegExp) {
-  fireEvent.click(within(screen.getByRole('tablist', { name: 'Steps in this part' })).getByRole('tab', { name }));
+  fireEvent.click(within(screen.getByRole('tablist', { name: LABEL })).getByRole('tab', { name }));
 }
 
 describe('MarkingPartSections', () => {
-  it('shows each step in its own tab, with feedback as the tab after the steps', () => {
-    render(<MarkingPartSections sections={sections} feedback={<p>Feedback panel</p>} />);
+  it('shows each step in its own sub-tab, one at a time', () => {
+    render(<MarkingPartSections label={LABEL} sections={sections} />);
 
-    const tabs = within(screen.getByRole('tablist', { name: 'Steps in this part' })).getAllByRole('tab');
-    expect(tabs.map(tab => tab.textContent)).toEqual(['2Assignment answer', '3Evidence & cross-referencing', '4KSBs & hours claimed', 'Feedback & decision']);
+    const tabs = within(screen.getByRole('tablist', { name: LABEL })).getAllByRole('tab');
+    expect(tabs.map(tab => tab.textContent)).toEqual(['2Assignment answer', '3Evidence & cross-referencing', '4KSBs & hours claimed']);
     expect(tabs[0]).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('heading', { level: 4, name: 'Assignment answer' })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'KSBs & hours claimed' })).not.toBeInTheDocument();
-    expect(screen.queryByText('Feedback panel')).not.toBeInTheDocument();
 
-    openTab(/Feedback & decision/);
-    expect(screen.getByText('Feedback panel')).toBeInTheDocument();
+    openTab(/KSBs & hours claimed/);
+    expect(screen.getByRole('heading', { name: 'KSBs & hours claimed' })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { level: 4, name: 'Assignment answer' })).not.toBeInTheDocument();
   });
 
   it('moves between step tabs with the arrow keys', () => {
-    render(<MarkingPartSections sections={sections} feedback={<p>Feedback panel</p>} />);
-    const tablist = screen.getByRole('tablist', { name: 'Steps in this part' });
+    render(<MarkingPartSections label={LABEL} sections={sections} />);
+    const tablist = screen.getByRole('tablist', { name: LABEL });
     fireEvent.keyDown(tablist, { key: 'ArrowRight' });
     expect(screen.getByRole('heading', { name: 'Evidence & cross-referencing' })).toBeInTheDocument();
     fireEvent.keyDown(tablist, { key: 'End' });
-    expect(screen.getByText('Feedback panel')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'KSBs & hours claimed' })).toBeInTheDocument();
     fireEvent.keyDown(tablist, { key: 'ArrowRight' });
     expect(screen.getByRole('heading', { level: 4, name: 'Assignment answer' })).toBeInTheDocument();
   });
 
+  it('adds page content to a step', () => {
+    render(<MarkingPartSections label={LABEL} sections={sections} extras={{ 3: <p>Uploaded files list</p> }} />);
+    expect(screen.queryByText('Uploaded files list')).not.toBeInTheDocument();
+    openTab(/Evidence & cross-referencing/);
+    expect(screen.getByText('Uploaded files list')).toBeInTheDocument();
+  });
+
   it('lays each answer out by the kind of answer it holds', () => {
-    render(<MarkingPartSections sections={sections} />);
+    render(<MarkingPartSections label={LABEL} sections={sections} />);
 
     openTab(/KSBs & hours claimed/);
     const table = screen.getByRole('table');
@@ -86,7 +94,7 @@ describe('MarkingPartSections', () => {
   });
 
   it('collapses long answers until the coach expands them', () => {
-    render(<MarkingPartSections sections={sections} />);
+    render(<MarkingPartSections label={LABEL} sections={sections} />);
     const toggle = screen.getByRole('button', { name: 'Show full answer' });
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
     fireEvent.click(toggle);
@@ -95,7 +103,7 @@ describe('MarkingPartSections', () => {
   });
 
   it('says so when a step was left empty', () => {
-    render(<MarkingPartSections sections={[{ step: 6, title: 'Impact & employer benefit', entries: [] }]} />);
+    render(<MarkingPartSections label={LABEL} sections={[{ step: 6, title: 'Impact & employer benefit', entries: [] }]} />);
     expect(screen.getByText('Nothing was entered for this step.')).toBeInTheDocument();
   });
 });

@@ -2,8 +2,6 @@ import type { MarkingKind } from '@/lib/markingKind';
 
 export type MarkingQueueFilter = 'all' | 'pending' | 'overdue' | 'accepted' | 'referred';
 export type MarkingScope = 'official' | 'personal';
-/** Which half of a monthly report a queue item marks. Absent for every other submission. */
-export type MarkingPart = 'assignment' | 'reflection';
 
 /** One answer within a step. ``text`` is always present; list formats also carry ``items``. */
 export interface MarkingSectionEntry {
@@ -23,6 +21,12 @@ export interface MarkingSection {
   step: number;
   title: string;
   entries: MarkingSectionEntry[];
+}
+
+/** A monthly report's answers for the two review tabs: steps 2-4 and steps 5-8. */
+export interface MonthlySections {
+  assignment: MarkingSection[];
+  reflection: MarkingSection[];
 }
 
 export interface MarkingSubmission {
@@ -45,10 +49,6 @@ export interface MarkingSubmission {
   submittedDisplay: string;
   elapsedDays: number;
   isOverdue: boolean;
-  markingPart?: MarkingPart;
-  markingPartLabel?: string;
-  markingSections?: MarkingSection[];
-  contentPreview?: string;
 }
 
 export interface MarkingQueueSummary {
