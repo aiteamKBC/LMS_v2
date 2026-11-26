@@ -2,7 +2,9 @@ import { useId, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { Check, Search } from 'lucide-react';
 import type { EmployerLearnerCard } from '@/api/employerPortal';
+import { overviewModulesForDisplay } from '@/pages/workspace/learner/overviewFacts';
 import { learnerHref, learnerKey } from './employerDashboardData';
+import { moduleDate } from './employerModuleTimelineData';
 import type { EmployerLearningRecords } from './useEmployerLearningSummary';
 import styles from './EmployerModuleProgressTable.module.css';
 
@@ -21,21 +23,33 @@ export function EmployerModuleProgressTable({ employerId, learners, records, mod
   const headingId = useId();
   const helpId = useId();
   const [query, setQuery] = useState('');
-  const modules = new Map<string, { id: string; title: string }>();
+  const modules = new Map<string, { id: string; title: string; start: string; started: boolean }>();
   const rows = learners.map(learner => {
     const resource = records[learnerKey(learner)];
     const progress = new Map<string, number | null>();
     if (resource?.status === 'ready') {
+      const facts = new Map(overviewModulesForDisplay(resource.data?.modules || []).map(module => [module.id, module]));
       for (const module of resource.data?.programme || []) {
         if ((moduleId && module.id !== moduleId) || progress.has(module.id)) continue;
-        modules.set(module.id, { id: module.id, title: module.title });
-        progress.set(module.id, module.percent != null && Number.isFinite(module.percent)
-          ? Math.max(0, Math.min(100, module.percent)) : null);
+        const percent = module.percent != null && Number.isFinite(module.percent)
+          ? Math.max(0, Math.min(100, module.percent)) : null;
+        const fact = facts.get(module.id);
+        const start = moduleDate(fact?.start);
+        const started = (fact?.attendance?.attended || 0) > 0 || (percent || 0) > 0;
+        const column = modules.get(module.id) || { id: module.id, title: module.title, start: '', started: false };
+        // A shared column uses the earliest study date among learners who started it.
+        if (started && !column.started) column.start = start;
+        else if (started === column.started && start && (!column.start || start < column.start)) column.start = start;
+        column.started ||= started;
+        modules.set(module.id, column);
+        progress.set(module.id, percent);
       }
     }
     return { learner, resource, progress };
   });
-  const columns = [...modules.values()].sort((a, b) => a.title.localeCompare(b.title) || a.id.localeCompare(b.id));
+  const columns = [...modules.values()].sort((a, b) => Number(b.started) - Number(a.started)
+    || Number(!a.start) - Number(!b.start) || a.start.localeCompare(b.start)
+    || a.title.localeCompare(b.title) || a.id.localeCompare(b.id));
   const search = query.trim().toLocaleLowerCase();
   const visible = rows.filter(({ learner }) => !search || `${learner.name} ${learner.email}`.toLocaleLowerCase().includes(search));
   const loading = rows.some(({ resource }) => !resource || resource.status === 'loading');

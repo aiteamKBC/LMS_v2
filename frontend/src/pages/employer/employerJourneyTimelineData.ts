@@ -72,7 +72,8 @@ export function journeyParallelPins(entries: JourneyEntry[], pins: JourneyPin[])
 export function buildJourneyTimeline(allLearners: EmployerLearnerCard[], learners: EmployerLearnerCard[], records: EmployerLearningRecords) {
   // Assign colours before filtering so a module keeps its colour across learner/module filters.
   const ids = [...new Set(allLearners.flatMap(learner => records[learnerKey(learner)]?.data?.programme.map(row => row.id) || []))].sort();
-  const hues = new Map(ids.map((id, index) => [id, Math.round((270 + index * 137.508) % 360)]));
+  const palette = [310, 65, 264, 187];
+  const hues = new Map(ids.map((id, index) => [id, palette[index % palette.length]]));
   const modules = new Map<string, JourneyModule>();
   const rows = learners.map(learner => {
     const resource = records[learnerKey(learner)];
