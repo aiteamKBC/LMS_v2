@@ -23,6 +23,7 @@ SUITES = (
     'curriculum_api.tests.TeamsAttendanceRosterTests',
     'curriculum_api.tests.CurriculumTeamsMeetingTests',
     'curriculum_api.tests.TeamsCalendarSyncVerdictTests',
+    'curriculum_api.test_session_artifact_recovery',
     'coach_api.tests.CoachTimetableWindowTests',
     'coach_api.tests.CoachTimetableBookingConflictTests',
     'coach_api.tests.CoachMeetingArtifactTests',

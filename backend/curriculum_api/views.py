@@ -45,7 +45,7 @@ from .course_pricing import API_FIELDS as COURSE_PRICING_FIELDS, pricing_payload
 from .teams_weekly_calendar import calendar_groups, save_weekday_calendar, stored_calendar_series, graph_event_utc
 from .teams_options_retry import microsoft_update_summary
 from .session_overrides import apply_session_overrides, override_clock, session_overrides
-from .session_artifact_placement import recording_matches_occurrence
+from .session_artifact_placement import recording_matches_occurrence, overlapping_artifact_occurrence
 from .study_week_teams import prune_study_week_fillers
 from .attendance_identity import keep_directory_lookup, resolve_directory_accounts
 from .teams_calendar_checks import (CalendarMismatch, attendee_differences, attendees_already_match, calendar_targets, event_organizer_address,
@@ -4930,7 +4930,7 @@ def upsert_live_session_artifact(occurrence, artifact_type, artifact):
             # of one type are written one at a time; the lock ends with the transaction.
             cursor.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',
                            [f"live-session-artifact|{occurrence['id']}|{artifact_type}"])
-        cursor.execute(f'SELECT metadata FROM {authoring_table_name(LIVE_SESSION_ARTIFACTS_TABLE)} '
+        cursor.execute(f'SELECT metadata, id FROM {authoring_table_name(LIVE_SESSION_ARTIFACTS_TABLE)} '
                        'WHERE occurrence_id=%s AND artifact_type=%s AND graph_artifact_id=%s' + lock,
                        [occurrence['id'], artifact_type, graph_id])
         existing = cursor.fetchone()
@@ -4958,6 +4958,9 @@ def upsert_live_session_artifact(occurrence, artifact_type, artifact):
             )
             return True
         if existing:
+            # A reviewed occurrence repair retains the artifact's original ID,
+            # archive and learner links on every later discovery/retry.
+            payload['id'] = existing[1]
             saved_metadata = parse_json_value(existing[0], {})
             metadata['lmsHiddenFromLearners'] = saved_metadata.get('lmsHiddenFromLearners') is True
             if 'lmsTranscriptTimeline' in saved_metadata:
@@ -5404,9 +5407,15 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
                         same_ids = {row['occurrence_id'] for row in same}
                         stored = next((row for row in group if row['id'] in same_ids), None)
                     occurrence, launch = (stored, None) if stored else launch_linked_live_occurrence(group, timestamp, launches)
-                    if (artifact_type == 'recording' and occurrence and not stored
+                    if (occurrence and not stored
                             and not recording_matches_occurrence(artifact, occurrence, linked_by_launch=bool(launch))):
-                        continue
+                        # Recurring weeks share a Teams URL. Opening a future
+                        # week's Join button must not discard today's recording
+                        # or file its transcript under that future week.
+                        occurrence = overlapping_artifact_occurrence(artifact, group)
+                        launch = None
+                        if not occurrence:
+                            continue
                     # Recordings are matched by their start; judge delivery by their actual end.
                     if occurrence and not stored and launch is None and run_not_delivery(
                             occurrence, parse_graph_datetime(artifact.get('createdDateTime')) or timestamp,
