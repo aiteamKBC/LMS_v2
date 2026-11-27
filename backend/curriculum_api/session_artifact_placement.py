@@ -35,3 +35,26 @@ def recording_matches_occurrence(recording, occurrence, *, linked_by_launch=Fals
     if linked_by_launch:
         return True
     return abs((started or finished) - scheduled) <= MAX_UNLINKED_START_OFFSET
+
+
+def overlapping_artifact_occurrence(artifact, occurrences):
+    """Recover only a unique planned slot when a Join click names a future week.
+
+    The caller supplies occurrences from the same Graph meeting. A click on a
+    different week's shared Join URL cannot override an actual lecture window.
+    Rehearsals, missing timestamps and overlapping/ambiguous slots stay unfiled.
+    """
+    started = _instant((artifact or {}).get('createdDateTime'))
+    finished = _instant((artifact or {}).get('endDateTime'))
+    if not started or not finished or finished <= started:
+        return None
+    candidates = []
+    for occurrence in occurrences:
+        if str(occurrence.get('status') or '').strip().lower() in ('cancelled', 'canceled', 'deleted', 'superseded', 'failed'):
+            continue
+        start = _instant(occurrence.get('scheduled_start'))
+        end = _instant(occurrence.get('scheduled_end'))
+        if (start and end and start < end and started < end and finished > start
+                and recording_matches_occurrence(artifact, occurrence)):
+            candidates.append(occurrence)
+    return candidates[0] if len(candidates) == 1 else None

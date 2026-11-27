@@ -70,7 +70,7 @@ class MediaPolicyTests(unittest.TestCase):
         cursor = Mock(); cursor.__enter__ = Mock(return_value=cursor); cursor.__exit__ = Mock(return_value=False)
         timeline = {'version': 1, 'cues': [{'start': 1, 'end': 2, 'text': 'Saved'}]}
         bunny = {'state': 'ready', 'libraryId': '798153', 'videoId': 'synthetic'}
-        cursor.fetchone.return_value = ({'lmsHiddenFromLearners': True, 'lmsTranscriptTimeline': timeline, 'lmsBunnyRecording': bunny},)
+        cursor.fetchone.return_value = ({'lmsHiddenFromLearners': True, 'lmsTranscriptTimeline': timeline, 'lmsBunnyRecording': bunny}, 'ART-ORIGINAL')
         ns = {'hashlib': hashlib, 'clean_str': lambda value: str(value or ''), 'parse_graph_datetime': instant,
               'json_db_value': lambda value: value, 'parse_json_value': lambda value, default: value or default,
               'LIVE_SESSION_ARTIFACTS_TABLE': 'live_session_artifacts', 'authoring_table_name': lambda name: name,
@@ -81,6 +81,7 @@ class MediaPolicyTests(unittest.TestCase):
             'lmsHiddenFromLearners': False, 'lmsBunnyRecording': {'state': 'failed'}}))
         self.assertIn('FOR UPDATE', cursor.execute.call_args.args[0])
         saved = ns['authoring_upsert'].call_args.args[2]
+        self.assertEqual(saved['id'], 'ART-ORIGINAL')
         self.assertTrue(saved['metadata']['lmsHiddenFromLearners'])
         self.assertEqual(saved['metadata']['lmsTranscriptTimeline'], timeline)
         self.assertEqual(saved['metadata']['lmsBunnyRecording'], bunny)
