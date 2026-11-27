@@ -335,6 +335,34 @@ describe('Teams Meetings page', () => {
     window.localStorage.removeItem('curriculumTeamsAutoSync');
   });
 
+  it('shows retained holiday guidance in the shared calendar dialog without changing a meeting', async () => {
+    fetchCurriculumTeamsMeetingSummaries.mockImplementationOnce(async () => summaries.map((summary, index) => index ? summary : ({
+      ...summary, holidayInvitationNotice: { code: 'existing_holiday_invitations' as const, timeZone: 'Europe/London', invitationCount: 1,
+        invitations: [{ occurrenceId: 'OCC-HOLIDAY', scheduledStart: '2026-09-02T08:30:00Z', localDate: '2026-09-02',
+          weekStart: '2026-08-31', weekEnd: '2026-09-06', holidayLabels: ['Synthetic closure'] }] },
+    })));
+    await renderPage();
+    await screen.findByText('Data Foundations');
+    await userEvent.click(within(rowFor('Data Foundations')).getByRole('button', { name: 'Detail' }));
+    const dialog = within(await screen.findByRole('dialog'));
+    expect(await dialog.findByText('Existing holiday invitations retained')).toBeVisible();
+    const saveButton = dialog.getByRole('button', { name: 'Save without notifying' }) as HTMLButtonElement;
+    const wasDisabled = saveButton.disabled;
+    await userEvent.click(dialog.getByText('View affected invitations (1)'));
+    expect(dialog.getByText(/An invitation does not confirm/)).toBeVisible();
+    expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
+    expect(createTeamsMeeting).not.toHaveBeenCalled();
+    expect(calendarAction).not.toHaveBeenCalled();
+    expect(saveButton.disabled).toBe(wasDisabled);
+  });
+
+  it('does not show retained holiday guidance for an unaffected module', async () => {
+    await renderPage();
+    await screen.findByText('Data Foundations');
+    await userEvent.click(within(rowFor('Data Foundations')).getByRole('button', { name: 'Detail' }));
+    expect(within(await screen.findByRole('dialog')).queryByText('Existing holiday invitations retained')).not.toBeInTheDocument();
+  });
+
   it('reports a calendar that matches the module session plan as in sync', async () => {
     await renderPage();
     expect(await screen.findByText('Data Foundations')).toBeInTheDocument();

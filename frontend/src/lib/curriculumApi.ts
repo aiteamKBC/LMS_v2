@@ -1634,7 +1634,24 @@ export interface CurriculumSession {
  * keyed by module. Listing pages read this instead of pulling every module's
  * full week structure just to inspect a live-session component's settings.
  */
+export interface CurriculumHolidayInvitationNotice {
+  code: 'existing_holiday_invitations';
+  timeZone: string;
+  invitationCount: number;
+  invitations: Array<{
+    occurrenceId: string;
+    scheduledStart: string;
+    localDate: string;
+    weekStart: string;
+    weekEnd: string;
+    holidayLabels: string[];
+  }>;
+}
+
 export interface CurriculumTeamsMeetingSummary {
+  /** Staff-only guidance for saved invitations in the cohort's holiday weeks. */
+  holidayInvitationNotice?: CurriculumHolidayInvitationNotice;
+  holidayInvitationNoticeUnavailable?: boolean;
   meetingType?: string;
   calendarManagement?: 'external' | 'lms';
   timeZone?: string;
@@ -3924,8 +3941,15 @@ export function fetchCurriculumTeamsMeetingSummaries(
   // against the module's stored session plan, and they are the bulk of the payload.
   if (options.occurrenceDates) query.set('occurrence_dates', '1');
   const suffix = query.toString() ? `?${query.toString()}` : '';
+  const path = `/curriculum/teams-meetings/summary/${suffix}`;
+  if (options.occurrenceDates) {
+    // This response contains role-specific staff guidance. Do not retain it
+    // or share an in-flight response across an account change on this device.
+    return fetchJsonUncached<CurriculumCollection<CurriculumTeamsMeetingSummary>>(path,
+      { signal, skipCache: true }).then(payload => payload.results);
+  }
   return fetchCollection<CurriculumTeamsMeetingSummary>(
-    `/curriculum/teams-meetings/summary/${suffix}`,
+    path,
     { signal, skipCache: options.skipCache, revalidate: options.revalidate },
   );
 }

@@ -47,6 +47,7 @@ import { TeamsPermissionCheckPanel } from './TeamsPermissionCheckPanel';
 import { MicrosoftUpdateStatus } from './MicrosoftUpdateStatus';
 import { readMicrosoftUpdate } from './microsoftUpdateState';
 import { CalendarHealthPanel } from './CalendarHealthPanel';
+import { HolidayInvitationsNotice } from './HolidayInvitationsNotice';
 import { STATE_LABELS, STATE_TONES, meetingRunState, type MeetingSettingsForm, type TeamsMeetingsWorkspace } from './useTeamsMeetingsWorkspace';
 
 
@@ -710,6 +711,9 @@ export function TeamsMeetingDialogs({ workspace, secondTab, moduleSaveAction }: 
               </div>
             )}
 
+            <HolidayInvitationsNotice notice={selected.summary?.holidayInvitationNotice}
+              unavailable={selected.summary?.holidayInvitationNoticeUnavailable} />
+
             <MeetingScopePanel
               rows={selectedScopeRows}
               busy={busy}
@@ -829,6 +833,7 @@ export function TeamsMeetingDialogs({ workspace, secondTab, moduleSaveAction }: 
                   row={selectedForDisplay || selected}
                   title="Module dates sent to Teams"
                   preserveExistingDates={Boolean(externalCalendar?.originalSeriesId)}
+                  holidayInvitationsRetained={Boolean(selected.summary?.holidayInvitationNotice)}
                   holidayLabelFor={holidayLabelFor}
                   renderActions={(index, durationMinutes, teamsUtc) => {
                     const plannedUtc = (selectedForDisplay || selected).plannedStarts[index] || '';

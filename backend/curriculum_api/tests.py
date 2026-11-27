@@ -2220,6 +2220,55 @@ class TeamsCalendarSyncVerdictTests(CurriculumTeamsRequestTestCase):
         nothing_tracked = views.teams_calendar_sync_verdict(module, [])
         self.assertEqual(nothing_tracked['syncState'], 'unverified')
 
+    def test_holiday_notice_is_scoped_and_never_changes_the_sync_verdict(self):
+        from .holiday_invitation_notice import holiday_invitation_notice
+        self._module('MOD-HOLD-1', weeks_number=2)
+        self._module('MOD-HOLD-2', weeks_number=2)
+        rows = {
+            'MOD-HOLD-1': [{'id': 'OCC-HOLD-1', 'scheduled_start': '2026-09-07T08:00:00Z', 'status': 'scheduled'}],
+            'MOD-HOLD-2': [{'id': 'OCC-HOLD-2', 'scheduled_start': '2026-09-21T08:00:00Z', 'status': 'scheduled'}],
+        }
+        with patch('curriculum_api.views.cohort_selected_holidays_by_cohort', return_value={}):
+            before = views.teams_calendar_sync_verdicts(rows.keys(), rows)
+            retained_rows = {**rows, 'MOD-HOLD-1': [*rows['MOD-HOLD-1'], {
+                'id': 'OCC-HOLD-REMOVED', 'scheduled_start': '2026-09-08T08:00:00Z', 'status': 'superseded'}]}
+            plan = {'closedWeeks': [{'startDate': '2026-09-07', 'endDate': '2026-09-13',
+                                    'holidays': [{'label': 'Synthetic closure'}]}]}
+            with patch('curriculum_api.holiday_invitation_notice.module_holiday_invitation_notice',
+                    side_effect=lambda module, group, holidays, items, zone: holiday_invitation_notice(items, plan, zone)):
+                result = views.teams_calendar_sync_verdicts(rows.keys(), rows,
+                    notice_timezones={key: 'Europe/London' for key in rows}, notice_occurrences_by_module=retained_rows)
+        notice = result['MOD-HOLD-1'].pop('holidayInvitationNotice')
+        self.assertEqual(notice['invitations'][0]['occurrenceId'], 'OCC-HOLD-1')
+        self.assertEqual(notice['invitationCount'], 2)
+        self.assertNotIn('holidayInvitationNotice', result['MOD-HOLD-2'])
+        self.assertEqual(result, before)
+
+    def test_holiday_notice_audience_uses_the_authenticated_platform_role(self):
+        from types import SimpleNamespace
+        from .holiday_invitation_notice import staff_notice_allowed
+        request = RequestFactory().get('/curriculum_api/curriculum/teams-meetings/summary/', {'role': 'staff'})
+        for role in ('admin', 'staff', 'learner', 'employer', None):
+            with self.subTest(role=role), patch('login.sessions.authenticate_request',
+                    return_value=SimpleNamespace(role=role) if role else None):
+                self.assertEqual(staff_notice_allowed(request), role in ('admin', 'staff'))
+        for learner_type in ('commercial', 'apprenticeship'):
+            with self.subTest(learner_type=learner_type), patch('login.sessions.authenticate_request',
+                    return_value=SimpleNamespace(role='learner', learner_type=learner_type)):
+                self.assertFalse(staff_notice_allowed(request))
+
+    def test_unavailable_holiday_guidance_is_visible_without_changing_the_verdict(self):
+        self._module('MOD-HOLD-ERROR', weeks_number=2)
+        rows = {'MOD-HOLD-ERROR': [{'id': 'OCC-HOLD-ERROR', 'scheduled_start': '2026-09-07T08:00:00Z', 'status': 'scheduled'}]}
+        with patch('curriculum_api.views.cohort_selected_holidays_by_cohort', return_value={}):
+            before = views.teams_calendar_sync_verdicts(rows.keys(), rows)
+            with patch('curriculum_api.holiday_invitation_notice.module_holiday_invitation_notice',
+                    side_effect=RuntimeError('Synthetic planner failure')):
+                result = views.teams_calendar_sync_verdicts(rows.keys(), rows,
+                    notice_timezones={'MOD-HOLD-ERROR': 'Europe/London'})
+        self.assertTrue(result['MOD-HOLD-ERROR'].pop('holidayInvitationNoticeUnavailable'))
+        self.assertEqual(result, before)
+
     @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
     def test_summary_endpoint_reports_a_correctly_synced_module_as_in_sync(self, _holidays):
         module = self._module('MOD-SYNC-10', sessions_number=2)
@@ -2251,6 +2300,31 @@ class TeamsCalendarSyncVerdictTests(CurriculumTeamsRequestTestCase):
         row = next(item for item in response if item['moduleCatalogueId'] == 'MOD-SYNC-10')
         self.assertEqual(row['syncState'], 'in-sync')
         self.assertEqual(row['differingOccurrenceCount'], 0)
+        self.assertNotIn('holidayInvitationNotice', row)
+        notice = {'code': 'existing_holiday_invitations', 'timeZone': 'Europe/London',
+                  'invitationCount': 1, 'invitations': [{'occurrenceId': 'OCC-SYNC-10-1'}]}
+        with patch('curriculum_api.holiday_invitation_notice.holiday_invitation_notice', return_value=notice):
+            protected = self.client.get('/curriculum_api/curriculum/teams-meetings/summary/',
+                {'module_catalogue_ids': 'MOD-SYNC-10', 'occurrence_dates': '1'})
+            self.assertEqual(protected['Cache-Control'], 'private, no-store')
+            self.assertIn('Cookie', protected['Vary'])
+            shown = protected.json()['results'][0]
+            self.assertEqual(shown.pop('holidayInvitationNotice'), notice)
+            self.assertEqual(shown, row)
+            cached = {'MOD-SYNC-10': {'syncState': row['syncState'], 'syncReasons': row['syncReasons'],
+                'expectedOccurrenceCount': row['expectedOccurrenceCount'], 'differingOccurrences': row['differingOccurrenceCount'],
+                'missingFromTeams': row['missingFromTeams'], 'extraInTeams': row['extraInTeams'],
+                'holidayInvitationNotice': notice, 'holidayInvitationNoticeUnavailable': True}}
+            with patch('curriculum_api.holiday_invitation_notice.staff_notice_allowed', return_value=False), \
+                    patch('curriculum_api.views.teams_calendar_sync_verdicts', return_value=cached):
+                learner = self.client.get('/curriculum_api/curriculum/teams-meetings/summary/',
+                    {'module_catalogue_ids': 'MOD-SYNC-10', 'occurrence_dates': '1'}).json()['results'][0]
+                self.assertEqual(learner, row)
+                self.assertNotIn('holidayInvitationNotice', learner)
+                self.assertNotIn('holidayInvitationNoticeUnavailable', learner)
+            light = self.client.get('/curriculum_api/curriculum/teams-meetings/summary/',
+                {'module_catalogue_ids': 'MOD-SYNC-10'}).json()['results'][0]
+            self.assertNotIn('holidayInvitationNotice', light)
 
 
 def staff_user_row(name, email='', access='tutor', row_id=1, status='FullUser'):

@@ -244,6 +244,7 @@ export function CompactSchedulePreview({
   formatLabel = (plannedUtc, date) => formatDateLabel(plannedUtc || date),
   showDuration = true,
   showSessionNumbers = true,
+  holidayInvitationsRetained = false,
 }: {
   occurrences: Array<{
     session?: HolidayShiftSessionLike;
@@ -272,6 +273,8 @@ export function CompactSchedulePreview({
   showDuration?: boolean;
   /** Keep the number as a fallback when a caller supplies no session title. */
   showSessionNumbers?: boolean;
+  /** Staff review of saved invitations; the timetable governs teaching exceptions. */
+  holidayInvitationsRetained?: boolean;
 }) {
   // One kind of row. The parked clash rule used to emit two more -- a red
   // `blocked` card on the closed date and a green `replacement` card on the day
@@ -385,7 +388,9 @@ export function CompactSchedulePreview({
                     {entry.holidayNote && (
                       <div className="flex items-start gap-2 border-t border-background-200 bg-background-100 px-3 py-2 text-[13px] leading-6 text-foreground-700">
                         <AppIcon className="ri-calendar-event-line mt-1 shrink-0 text-base text-primary-600"></AppIcon>
-                        <span>Heads up: this session falls on a holiday ({entry.holidayNote}). It runs as planned.</span>
+                        <span>{holidayInvitationsRetained
+                          ? <>Existing invitation on a holiday ({entry.holidayNote}). Follow the published holiday arrangements and any approved teaching exception.</>
+                          : <>Heads up: this session falls on a holiday ({entry.holidayNote}). It runs as planned.</>}</span>
                       </div>
                     )}
                     {entry.extra && (
