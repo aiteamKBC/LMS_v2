@@ -9,7 +9,8 @@ from learner_api.progress_rules import progress_counts_as_achieved
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 from learner_api.weekly_display import display_policies, display_weeks, default_week
 from .weekly_live_attendance import (read_weekly_live_evidence, credit_in_week,
-                                     week_live_session, add_live_activity_hours)
+                                     week_live_session, add_live_activity_hours,
+                                     attribute_live_activity_records)
 
 BUSINESS_ZONE = ZoneInfo('Europe/London')
 VISIBLE_WEEK = visible_week_sql('weeks')
@@ -443,11 +444,11 @@ def read_weekly_learning(context, selection=None, *, module_id=None, include_wee
     codes = {code for item in activities for code in item['ksbCodes']}
     achieved = {code for item in activities if item['status'] == 'completed' for code in item['ksbCodes']}
     planned = sum(item['expectedHours'] or 0 for item in activities)
-    records = canonical_learning.weekly_hour_records(owner)
+    week_credits = [credit for credit in live_credits if credit_in_week(credit, selected)
+                    and credit['componentId'] in selected_by_id]
+    records = attribute_live_activity_records(canonical_learning.weekly_hour_records(owner), week_credits)
     activity_hours = module_activity_hours(records, modules)
-    activity_hours = add_live_activity_hours(activity_hours, records,
-        [credit for credit in live_credits if credit_in_week(credit, selected)
-         and credit['componentId'] in selected_by_id])
+    activity_hours = add_live_activity_hours(activity_hours, records, week_credits)
     module_hours = activity_hours[str(selected['moduleId'])]
     module_components = [component for component in components if component['module_catalogue_id'] == selected['moduleId']]
     # Keep the established total summation/rounding order exactly. The index

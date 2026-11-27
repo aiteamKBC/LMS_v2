@@ -54,6 +54,34 @@ def synthetic_size_report():
 
 
 class WeeklyLearningTests(SimpleTestCase):
+    def test_attendance_allocation_reaches_its_live_activity_without_adding_hours(self):
+        from copy import deepcopy
+        from learner_api.attendance_learning import learning_state
+        credit = {'componentId': 'C1', 'moduleId': 'M1', 'occurrenceId': 'O1',
+                  'sessionDate': '2026-10-05', 'hours': 2.5, 'verifiedSeconds': 6960,
+                  'submittedAt': '2026-10-05T10:00:00Z'}
+        credit['liveSessionLearning'] = learning_state(credit, {})
+        for component_ref in (None, 'retired-live-card', 'recording-card', 'C1'):
+            for kind in ('commercial', 'apprenticeship'):
+                for actions in (False, True):
+                    with self.subTest(component=component_ref, kind=kind, actions=actions):
+                        records = [{'id': 1, 'module_ref': 'M1', 'component_ref': component_ref,
+                                    'actual_seconds': 9000, 'accepted': True,
+                                    'actual_basis': 'live_attendance_credit',
+                                    'attendance_occurrence_id': 'O1', 'reporting_month': '2026-10'}]
+                        before = deepcopy(records)
+                        response, _, _ = self.projection(kind=kind, records=records,
+                            reader_options={'include_actions': actions},
+                            live_evidence=([], [credit, credit]))
+                        selected = response['selectedWeek']
+                        self.assertEqual(selected['activities'][0]['actualHours'], 2.5)
+                        self.assertEqual(selected['summary']['otjhHours'], 2.5)
+                        self.assertEqual(selected['activities'][0]['liveSessionLearning']['attendedSeconds'], 6960)
+                        other, _, _ = self.projection('M1:2', kind=kind, records=records,
+                            reader_options={'include_actions': actions}, live_evidence=([], [credit]))
+                        self.assertEqual(other['selectedWeek']['summary']['otjhHours'], 0)
+                        self.assertEqual(records, before)
+
     def test_attendance_requirements_reach_both_weekly_views_without_losing_hours(self):
         from learner_api.attendance_learning import learning_state
         credit = {'componentId': 'C1', 'moduleId': 'M1', 'sessionDate': '2026-10-05',
