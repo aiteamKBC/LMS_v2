@@ -2985,7 +2985,7 @@ def apply_teams_occurrence_shifts(
 
 def verify_teams_calendar_with_standalones(
     request, owner_key, event_id, targets, expected_join_url='', recurring=True,
-    occurrence_details=None, expected_attendees=None,
+    occurrence_details=None, expected_attendees=None, *, privacy_headers=None,
 ):
     """Verify the master series and any deleted occurrences restored separately.
 
@@ -3009,6 +3009,7 @@ def verify_teams_calendar_with_standalones(
         raise CalendarMismatch('The recurring Teams calendar has no verified series occurrences.')
     event = verify_calendar(
         request, owner_key, event_id, master_targets, expected_join_url, recurring,
+        privacy_headers=privacy_headers,
     )
     for target in targets:
         detail = details_by_number.get(int(target['session_number']))
@@ -3021,6 +3022,7 @@ def verify_teams_calendar_with_standalones(
             [target],
             clean_str(detail.get('join_url')),
             False,
+            privacy_headers=privacy_headers,
         )
         if expected_attendees is None:
             continue
@@ -4472,6 +4474,7 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
             current = verify_teams_calendar_with_standalones(
                 microsoft_graph_request, owner_key, event_id, without_missing(targets, known_missing), current_join,
                 repeat != 'none', current_occurrences,
+                privacy_headers=GRAPH_SILENT_INVITE_HEADERS if people_only else None,
             )
             dates_already_verified = True
         except CalendarMismatch as mismatch:
@@ -4486,11 +4489,11 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
                     )
                 # Except on a people-only save, which must never touch a date.
                 # Repairing the drift here would move, or re-create, sessions
-                # as a side effect of saving who is invited. Nothing has been
-                # written yet; the author updates the schedule on its own.
+                # as a side effect of saving who is invited. Invitations and
+                # dates are untouched; the author updates the schedule on its own.
                 return json_error(
                     'The Teams calendar dates no longer match the dates saved here, so the invitations were not '
-                    'saved. Nothing was changed in Teams. Update the Teams calendar dates first, then save the '
+                    'saved. Invitations and session dates were not changed in Teams. Update the Teams calendar dates first, then save the '
                     'invitations again.',
                     status=409, code='teams_schedule_drift', detail=str(mismatch), liveSessionId=live_session_id,
                 )
