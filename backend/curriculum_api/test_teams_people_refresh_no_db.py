@@ -109,6 +109,80 @@ class PeopleRefreshTests(SimpleTestCase):
         self.assertEqual(refresh._failure_details(failure.exception), ('saved_state_changed', 'verify_saved_state'))
         update.assert_not_called()
 
+    def test_additional_meeting_updates_its_own_editor_without_changing_the_main_booking(self):
+        series = {**self.series, 'status': 'week-meeting', 'meeting_type': 'week-additional'}
+        settings = {'extraTeamsLiveSessionId': 'LIVE', 'extraTeamsEventId': 'EVENT', 'extraTeamsMeetingUrl': JOIN,
+                    'extraTeamsStartDateTimeUtc': '2026-12-16T12:00:00Z', 'extraTeamsDurationMinutes': 120,
+                    'extraTeamsPresenters': [], 'extraTeamsCoOrganizers': [], 'extraTeamsAttendees': [],
+                    'teamsOccurrenceId': 'MAIN-OCC-KEEP', 'teamsMeetingUrl': 'https://example.invalid/main-keep',
+                    'sessionDate': '2026-12-16', 'customValue': {'keep': True}}
+        cursor = Mock()
+        cursor.__enter__ = Mock(return_value=cursor)
+        cursor.__exit__ = Mock(return_value=False)
+        cursor.fetchall.return_value = [('COMP-ONE', json.dumps(settings))]
+        with patch.object(refresh, 'load_calendar_state', return_value=(series, [], {})), \
+                patch.object(refresh, 'calendar_reader', return_value=nullcontext(self.reader)), \
+                patch.object(refresh.transaction, 'atomic', return_value=nullcontext()), \
+                patch.object(refresh, 'connection', SimpleNamespace(cursor=lambda: cursor)), \
+                patch('curriculum_api.views.update_authoring_rows') as update, \
+                patch('curriculum_api.views.invalidate_curriculum_cache'):
+            self.assertTrue(refresh.refresh_people('LIVE')['changed'])
+        component_write = next(call for call in update.call_args_list if call.args[0] == 'components')
+        self.assertEqual(component_write.args[1:3], ('id = %s', ['COMP-ONE']))
+        actual = component_write.args[3]['settings_json']
+        actual = json.loads(actual) if isinstance(actual, str) else actual
+        self.assertEqual(actual, {**settings, 'extraTeamsPresenters': ['tutor@example.invalid'],
+                                 'extraTeamsCoOrganizers': ['tutor@example.invalid'],
+                                 'extraTeamsAttendees': ['learner@example.invalid']})
+        self.assertEqual(cursor.execute.call_args.args[1], ['MODULE', 'LIVE'])
+        self.assertTrue(all(call.args[0] in {'components', 'live_sessions'} for call in update.call_args_list))
+        self.assertEqual(self.reader.call_count, 2)
+
+    def test_additional_editor_is_repaired_even_when_the_series_roster_already_matches(self):
+        series = {**self.series, 'status': 'week-meeting', 'meeting_type': 'week-additional',
+                  'co_organizers': ['tutor@example.invalid'],
+                  'attendees': ['learner@example.invalid', 'tutor@example.invalid']}
+        settings = {'extraTeamsLiveSessionId': 'LIVE', 'extraTeamsEventId': 'EVENT', 'extraTeamsMeetingUrl': JOIN}
+        cursor = Mock()
+        cursor.__enter__ = Mock(return_value=cursor)
+        cursor.__exit__ = Mock(return_value=False)
+        cursor.fetchall.return_value = [('COMP-ONE', settings)]
+        with patch.object(refresh, 'load_calendar_state', return_value=(series, [], {})), \
+                patch.object(refresh, 'calendar_reader', return_value=nullcontext(self.reader)), \
+                patch.object(refresh.transaction, 'atomic', return_value=nullcontext()), \
+                patch.object(refresh, 'connection', SimpleNamespace(cursor=lambda: cursor)), \
+                patch('curriculum_api.views.update_authoring_rows') as update, \
+                patch('curriculum_api.views.invalidate_curriculum_cache') as invalidate:
+            self.assertTrue(refresh.refresh_people('LIVE')['changed'])
+        update.assert_called_once()
+        self.assertEqual(update.call_args.args[0], 'components')
+        invalidate.assert_called_once()
+
+    def test_ambiguous_or_foreign_additional_binding_preserves_both_saved_rosters(self):
+        series = {**self.series, 'status': 'week-meeting', 'meeting_type': 'week-additional'}
+        for rows in ([], [('ONE', {}), ('TWO', {})], [('ONE', {'extraTeamsMeetingUrl': 'foreign'})]):
+            with self.subTest(rows=rows):
+                cursor = Mock()
+                cursor.__enter__ = Mock(return_value=cursor)
+                cursor.__exit__ = Mock(return_value=False)
+                cursor.fetchall.return_value = rows
+                with patch.object(refresh, 'load_calendar_state', return_value=(series, [], {})), \
+                        patch.object(refresh, 'calendar_reader', return_value=nullcontext(self.reader)), \
+                        patch.object(refresh.transaction, 'atomic', return_value=nullcontext()), \
+                        patch.object(refresh, 'connection', SimpleNamespace(cursor=lambda: cursor)), \
+                        patch('curriculum_api.views.update_authoring_rows') as update:
+                    with self.assertRaises(refresh.CalendarStateError) as failure:
+                        refresh.refresh_people('LIVE')
+                self.assertEqual(refresh._failure_details(failure.exception), ('additional_binding_unverified', 'save_people'))
+                update.assert_not_called()
+
+    def test_unrecognized_week_meeting_status_does_not_enable_another_meeting_type(self):
+        with patch.object(refresh, 'load_calendar_state', return_value=({**self.series, 'status': 'week-meeting'}, [], {})), \
+                patch.object(refresh, 'calendar_reader') as reader:
+            with self.assertRaises(refresh.CalendarStateError):
+                refresh.refresh_people('LIVE')
+        reader.assert_not_called()
+
     def test_inactive_meetings_do_not_use_application_transport(self):
         for changes in ({'status': 'cancelled'}, {'status': 'deleted'}):
             with self.subTest(changes=changes), patch.object(refresh, 'load_calendar_state', return_value=({**self.series, **changes}, [], {})), \

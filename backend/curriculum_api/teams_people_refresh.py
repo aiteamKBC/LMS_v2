@@ -39,6 +39,7 @@ REASONS = {
     'weekday_roster_mismatch': 'read_roster',
     'inactive_series': 'load_state',
     'saved_state_changed': 'verify_saved_state',
+    'additional_binding_unverified': 'save_people',
 }
 BLOCKED_REASONS = {'invitation_list_unavailable', 'invitation_list_incomplete', 'meeting_identity_mismatch'}
 PHASES = {'lock', 'cache_read', 'cache_write', 'load_state', 'read_roster',
@@ -153,12 +154,48 @@ def read_people(series, read):
     return result
 
 
+def refresh_additional_component_people(v, series, values):
+    """Keep the additional-meeting editor's snapshot on its own component.
+
+    Its form reads extraTeams* settings, whereas the main calendar reads the
+    live-session row. Lock and merge the exact additional binding only; never
+    reattach its meeting to the module calendar or change an authored clock.
+    """
+    if series.get('meeting_type') != 'week-additional':
+        return False
+    with connection.cursor() as cursor:
+        cursor.execute(f'''SELECT id, settings_json FROM {v.authoring_table_name(v.AUTHORING_COMPONENTS_TABLE)}
+            WHERE module_catalogue_id=%s AND deleted_at IS NULL AND NOT coalesce(is_programme_deleted,false)
+              AND settings_json->>'extraTeamsLiveSessionId'=%s FOR UPDATE''',
+                       [series['module_catalogue_id'], series['id']])
+        rows = cursor.fetchall()
+    if len(rows) != 1:
+        raise _state_error('additional_binding_unverified',
+                           'The additional meeting does not have one verified component. Saved people were preserved.')
+    identity, raw_settings = rows[0]
+    settings = v.as_json_value(raw_settings, {})
+    if (not isinstance(settings, dict)
+            or settings.get('extraTeamsMeetingUrl') != series.get('join_url')
+            or settings.get('extraTeamsEventId') != series.get('graph_event_id')):
+        raise _state_error('additional_binding_unverified',
+                           'The additional meeting component has a different calendar identity. Saved people were preserved.')
+    elevated = set(values['presenters'] + values['coOrganizers'])
+    requested = {'extraTeamsAttendees': [email for email in values['attendees'] if email not in elevated],
+                 'extraTeamsPresenters': values['presenters'], 'extraTeamsCoOrganizers': values['coOrganizers']}
+    if all(sorted(stored_email_list(settings.get(key))) == emails for key, emails in requested.items()):
+        return False
+    v.update_authoring_rows(v.AUTHORING_COMPONENTS_TABLE, 'id = %s', [identity], {
+        'settings_json': v.json_db_value({**settings, **requested}), 'updated_at': datetime.now(timezone.utc)})
+    return True
+
+
 def _refresh_people(live_id):
     from . import views as v
 
     with _diagnostic_phase('load_state'):
         series, rows, _snapshot = load_calendar_state(live_id)
-    if series.get('status') != 'active':
+    additional = series.get('status') == 'week-meeting' and series.get('meeting_type') == 'week-additional'
+    if series.get('status') != 'active' and not additional:
         raise _state_error('inactive_series', 'Only active Teams meetings can be refreshed.')
     before = digest([series, rows])
     with _diagnostic_phase('read_roster'), calendar_reader() as read:
@@ -171,17 +208,19 @@ def _refresh_people(live_id):
         for column, key in (('attendees', 'attendees'), ('presenters', 'presenters'), ('co_organizers', 'coOrganizers')):
             if sorted(v.teams_series_email_list(current.get(column))) != values[key]:
                 updates[column] = v.json_db_value(values[key])
+        with _diagnostic_phase('save_people'):
+            component_changed = refresh_additional_component_people(v, current, values)
         if updates:
             with _diagnostic_phase('save_people'):
                 v.update_authoring_rows(v.LIVE_SESSIONS_TABLE, 'id = %s', [live_id],
                                         {**updates, 'updated_at': datetime.now(timezone.utc)})
-    if updates:
+    if updates or component_changed:
         _after_commit('invalidate_cache',
                       lambda: v.invalidate_curriculum_cache(content_scope=series.get('module_catalogue_id')))
     elevated = set(values['presenters'] + values['coOrganizers'])
     return {'form': {'organizerEmail': series['organizer_email'], **values,
                      'attendees': [email for email in values['attendees'] if email not in elevated]},
-            'changed': bool(updates), 'message': 'People and roles refreshed from Teams. Session dates, settings and join links are unchanged.'}
+            'changed': bool(updates) or component_changed, 'message': 'People and roles refreshed from Teams. Session dates, settings and join links are unchanged.'}
 
 
 def refresh_people(live_id, *, automatic=False):
@@ -225,7 +264,12 @@ def sync_due_people(*, limit=10, series_ids=()):
     with connection.cursor() as cursor:
         cursor.execute('''SELECT s.id FROM curriculum.live_sessions s
             JOIN curriculum.modules m ON m.module_catalogue_id=s.module_catalogue_id
-            WHERE s.status='active' AND m.deleted_at IS NULL AND NOT coalesce(m.is_programme_deleted,false)
+            WHERE (s.status='active' OR (s.status='week-meeting' AND s.meeting_type='week-additional'
+              AND EXISTS (SELECT 1 FROM curriculum.components c
+                WHERE c.module_catalogue_id=s.module_catalogue_id AND c.deleted_at IS NULL
+                  AND NOT coalesce(c.is_programme_deleted,false)
+                  AND c.settings_json->>'extraTeamsLiveSessionId'=s.id)))
+              AND m.deleted_at IS NULL AND NOT coalesce(m.is_programme_deleted,false)
               AND coalesce(s.online_meeting_id,'')<>'' AND coalesce(s.join_url,'')<>''
               AND (%s OR s.id=ANY(%s)) ORDER BY s.id''', [not bool(series_ids), list(series_ids)])
         ids = [row[0] for row in cursor.fetchall()]

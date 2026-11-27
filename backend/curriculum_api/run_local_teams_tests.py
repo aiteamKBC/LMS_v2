@@ -24,6 +24,7 @@ SUITES = (
     'curriculum_api.tests.CurriculumTeamsMeetingTests',
     'curriculum_api.tests.TeamsCalendarSyncVerdictTests',
     'curriculum_api.test_session_artifact_recovery',
+    'curriculum_api.test_teams_additional_people_postgres',
     'coach_api.tests.CoachTimetableWindowTests',
     'coach_api.tests.CoachTimetableBookingConflictTests',
     'coach_api.tests.CoachMeetingArtifactTests',
