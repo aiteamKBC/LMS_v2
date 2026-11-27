@@ -43,6 +43,7 @@ def main():
                 'coach_api.test_recordings_transport', 'coach_api.test_recordings_evidence_api',
                 'coach_api.test_recordings_saved_evidence', 'coach_api.test_recordings_index',
                 'curriculum_api.test_recording_direct_fetch',
+                'curriculum_api.test_recording_channel_source',
             ])
             result = unittest.TextTestRunner(verbosity=1).run(suite)
         finally:

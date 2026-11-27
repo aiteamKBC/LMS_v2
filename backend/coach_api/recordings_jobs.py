@@ -147,7 +147,9 @@ def calendar_snapshots(coaches, start, end, *, refresh=False):
     for kind, context in items:
         job = jobs[job_key(kind, context)]
         pending = job.state in ('queued', 'running') or bool(job.next_run_at and job.next_run_at <= timezone.now())
-        result.append({'events': events[job.key] if job.last_success_at else None,
+        from .recordings_retained import retained_events
+        visible = retained_events(job.owner_email, start, end, events[job.key]) if job.last_success_at else None
+        result.append({'events': visible,
             'pending': pending, 'error': {'code': job.error_code, 'retryable': job.retryable} if job.error_code else None,
             'syncedAt': job.last_success_at.isoformat() if job.last_success_at else None})
     return result

@@ -1,6 +1,7 @@
 """Synthetic video journal and timed transcripts; all provider calls mocked."""
 from unittest.mock import Mock, patch
 import base64
+import os
 
 from django.test import TestCase
 
@@ -162,6 +163,27 @@ class SessionCaptionTests(TestCase):
     def test_existing_manual_english_captions_are_retained(self):
         self.client.video.return_value = {'guid': VIDEO, 'captions': [{'srclang': 'en', 'label': 'Reviewed English'}]}
         self.assertEqual(self.sync()['state'], 'retained')
+        self.client.caption.assert_not_called()
+
+    def test_shared_tutor_projection_does_not_overwrite_the_original_coach_caption_track(self):
+        from . import shared_recordings as shared
+        identity = {'drive': 'drive', 'item': 'item', 'version': 'v1', 'size': 1000000}
+        original = CurriculumVideoImport.objects.create(target_kind='coach_recording', target_id='coach-occurrence',
+            component_id='original', fingerprint='synthetic-caption-owner', title='Synthetic original', status='ready',
+            source_url='https://graph.microsoft.com/synthetic', source_at_start='https://graph.microsoft.com/synthetic',
+            library_id='999001', collection_id='collection', video_id=VIDEO,
+            scope={'owner_email': 'coach@example.invalid', 'event_key': 'coach-occurrence',
+                   'direct_source': identity, 'captions_state': 'ready'})
+        self.asset.library_id = '999002'; self.asset.video_id = ''
+        self.asset.source_url = self.asset.source_at_start = original.source_url
+        self.asset.save()
+        with patch.dict(os.environ, {'BUNNY_LIVE_STREAM_LIBRARY_ID': '999002', 'BUNNY_COACH_STREAM_LIBRARY_ID': '999001'}):
+            shared.claim(self.asset, identity)
+            self.asset.library_id, self.asset.video_id, self.asset.collection_id = original.library_id, VIDEO, 'collection'
+            self.asset.save(update_fields=['library_id', 'video_id', 'collection_id'])
+            receipt = self.sync()
+        self.assertEqual(receipt['state'], 'retained')
+        self.assertEqual(receipt['sourceImportId'], str(original.pk))
         self.client.caption.assert_not_called()
 
     def test_live_lease_prevents_second_claim_and_stale_receipt_cannot_win(self):

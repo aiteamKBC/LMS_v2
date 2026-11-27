@@ -232,6 +232,10 @@ def transfer_recording(asset, *, lease_id=None):
     source = source_identity(row, occurrence, row)
     if source != asset.source_at_start or source != asset.source_url:
         raise VideoImportError('The Microsoft recording identity changed; refresh the session before retrying.')
+    from .shared_recordings import is_reference, use_reference
+    if is_reference(asset):
+        use_reference(asset)
+        return
     client = BunnyStream(asset.library_id)
     from .bunny_stream import live_library_id
     live_video = None
@@ -339,6 +343,8 @@ def publish_outcome(asset):
     Never overwrite an existing Azure reference: old deployed readers can keep
     using it until the reviewed Bunny player is deployed.
     """
+    from .shared_recordings import is_reference, reference_owner
+    reference_owner(asset)
     from .live_recording_migration import checked_previous, replacement_import
     previous = checked_previous(asset)
     if previous is not None and asset.status != 'ready':
@@ -347,7 +353,8 @@ def publish_outcome(asset):
     elif asset.scope.get('live_replacement_import_id'):
         asset = replacement_import(asset, include_pending=False)
     from .bunny_stream import live_library_id
-    if asset.library_id == live_library_id() and asset.library_id != os.environ.get('BUNNY_STREAM_LIBRARY_ID', '798153') and asset.status == 'ready':
+    if asset.status == 'ready' and (is_reference(asset) or (
+            asset.library_id == live_library_id() and asset.library_id != os.environ.get('BUNNY_STREAM_LIBRARY_ID', '798153'))):
         if (asset.scope.get('live_playback_verified_video_id') != asset.video_id or
                 asset.scope.get('live_playback_verified_library_id') != asset.library_id):
             raise VideoImportError('LiveSessions playback must be verified before changing the saved player reference.')
