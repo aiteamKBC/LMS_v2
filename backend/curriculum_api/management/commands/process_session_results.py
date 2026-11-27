@@ -63,6 +63,15 @@ class Command(BaseCommand):
         requested_ids = list(dict.fromkeys(value.strip() for value in options.get('live_session_ids', []) if value.strip()))
         scope_params = [requested_ids] if requested_ids else []
         if options['scheduled']:
+            # An already discovered recording must not depend on another Graph
+            # series pass (or that series' attempt limit) to finish publication.
+            try:
+                from curriculum_api.recording_retry import run_pending as retry_recordings
+                checked = retry_recordings(limit=options['limit'], kinds=('live_session',), series_ids=requested_ids)
+                if checked:
+                    self.stdout.write(f'Checked {checked} saved live recording transfers.')
+            except Exception as recording_failure:
+                logger.warning('Saved live recording transfers need retry (%s).', type(recording_failure).__name__)
             if not requested_ids:
                 try:
                     from coach_api.recordings_bunny import run_pending as run_coaching

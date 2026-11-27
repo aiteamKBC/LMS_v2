@@ -36,11 +36,26 @@ def resolve_source(source, token, artifact):
                 organizer = str(uuid.UUID(identity))
             except ValueError:
                 pass
+    settings = get_graph_settings()
     try:
         matched = matched_recording_download(artifact, organizer, source, token,
-            graph_get=microsoft_graph_request, graph_base=get_graph_settings()['base_url'], include_identity=True)
+            graph_get=microsoft_graph_request, graph_base=settings['base_url'], include_identity=True)
     except Exception:
-        raise VideoImportError('The Microsoft file identity could not be verified. No second copy was requested.') from None
+        matched = False
+    if not matched:
+        try:
+            from coach_api.recordings_cache import recent_read
+            from .recording_channel_source import channel_index, matched_channel_recording
+
+            def channels(owner):
+                return recent_read('recording-channel-index', [settings, owner],
+                    lambda: channel_index(owner, graph_get=microsoft_graph_request, graph_base=settings['base_url']),
+                    timeout=300)
+
+            matched = matched_channel_recording(artifact, organizer, source, token,
+                graph_get=microsoft_graph_request, graph_base=settings['base_url'], cached_index=channels)
+        except Exception:
+            raise VideoImportError('The Microsoft file identity could not be verified. No second copy was requested.') from None
     if not matched:
         raise VideoImportError('A unique Microsoft file is not available for direct transfer yet.')
     return matched
