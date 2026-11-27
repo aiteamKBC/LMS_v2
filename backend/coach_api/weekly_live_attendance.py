@@ -1,4 +1,5 @@
 """Read-only bridge from the learner attendance register to Weekly Learning."""
+from collections import defaultdict
 from datetime import timezone
 from zoneinfo import ZoneInfo
 
@@ -76,4 +77,24 @@ def add_live_activity_hours(activity_hours, records, credits):
         extra = supplement_module_hours({mid: {'hours': {'actual': 0}}}, records, [credit])
         result[mid]['components'][cid] = round(result[mid]['components'].get(cid, 0)
                                                + extra[mid]['hours']['actual'], 4)
+    return result
+
+
+def attribute_live_activity_records(records, credits):
+    """Attribute an existing allocation to its uniquely resolved live activity.
+
+    The ledger may retain an older or recording-card reference for the same
+    occurrence. Reuse its hours without altering saved evidence or dates.
+    """
+    components = defaultdict(set)
+    for credit in credits:
+        if credit.get('occurrenceId') and credit.get('componentId') and credit.get('hours', 0) > 0 and not credit.get('otjhFrozen'):
+            components[(str(credit['moduleId']), str(credit['occurrenceId']))].add(str(credit['componentId']))
+    result = []
+    for record in records:
+        candidates = components.get((str(record.get('module_ref')), str(record.get('attendance_occurrence_id'))), set())
+        if record.get('actual_basis') == 'live_attendance_credit' and record.get('accepted') is True and len(candidates) == 1:
+            result.append({**record, 'component_ref': next(iter(candidates))})
+        else:
+            result.append(record)
     return result

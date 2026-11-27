@@ -6,7 +6,8 @@ from unittest.mock import patch
 from django.test import SimpleTestCase
 
 from .weekly_live_attendance import (add_live_activity_hours, credit_in_week,
-                                     read_weekly_live_evidence, week_live_session)
+                                     read_weekly_live_evidence, week_live_session,
+                                     attribute_live_activity_records)
 
 NOW = datetime(2026, 10, 19, tzinfo=timezone.utc)
 WEEK = {'kind': 'live-session', 'moduleId': 'M1', 'startDate': '2026-10-12', 'endDate': '2026-10-18'}
@@ -19,6 +20,44 @@ def lecture(**over):
             'scheduled_start': start, 'scheduled_end': start+timedelta(hours=2),
             'session_date': start.date(), 'attendance_status': 'present',
             'join_url': 'https://example.test/shared', **over}
+
+
+class WeeklyAttendanceHourAttributionTests(SimpleTestCase):
+    def test_reuses_existing_hours_for_the_same_module_and_occurrence_only(self):
+        from learner_api.weekly_hours import module_activity_hours
+        credit = {'moduleId': 'M1', 'componentId': 'LIVE', 'occurrenceId': 'O1',
+                  'hours': 2.5, 'verifiedSeconds': 6960}
+        primary = {'module_ref': 'M1', 'component_ref': 'RECORDING',
+                   'attendance_occurrence_id': 'O1', 'actual_basis': 'live_attendance_credit',
+                   'actual_seconds': 9000, 'accepted': True,
+                   'reporting_month': '2026-10', 'submitted_at': '2026-10-14T10:00:00Z'}
+        records = [primary,
+                   {**primary, 'module_ref': 'M2'},
+                   {**primary, 'component_ref': 'OTHER', 'attendance_occurrence_id': 'O2'},
+                   {**primary, 'component_ref': 'READING', 'actual_basis': 'staff:module-progress'},
+                   {**primary, 'component_ref': 'PENDING', 'accepted': False}]
+        before = deepcopy(records)
+        projected = attribute_live_activity_records(records, [credit, credit])
+        self.assertEqual(projected[0], {**primary, 'component_ref': 'LIVE'})
+        self.assertEqual(projected[1:], records[1:])
+        self.assertEqual(records, before)
+        self.assertEqual(attribute_live_activity_records(projected, [credit]), projected)
+        hours = module_activity_hours(projected, [{'id': 'M1'}, {'id': 'M2'}])
+        hours = add_live_activity_hours(hours, projected, [credit, credit])
+        self.assertEqual(hours['M1']['components'], {'LIVE': 2.5, 'OTHER': 2.5, 'READING': 2.5})
+        self.assertEqual(hours['M2']['components'], {'RECORDING': 2.5})
+
+    def test_closed_ambiguous_or_unmatched_credits_preserve_saved_attribution(self):
+        record = {'module_ref': 'M1', 'component_ref': 'SAVED',
+                  'attendance_occurrence_id': 'O1', 'actual_basis': 'live_attendance_credit',
+                  'actual_seconds': 9000, 'accepted': True, 'reporting_month': '2026-10'}
+        credit = {'moduleId': 'M1', 'componentId': 'LIVE', 'occurrenceId': 'O1',
+                  'hours': 2.5, 'verifiedSeconds': 6960}
+        for credits in ([], [{**credit, 'otjhFrozen': True}], [{**credit, 'hours': 0}],
+                        [{**credit, 'moduleId': 'M2'}], [{**credit, 'occurrenceId': 'O2'}],
+                        [credit, {**credit, 'componentId': 'ANOTHER'}]):
+            with self.subTest(credits=credits):
+                self.assertEqual(attribute_live_activity_records([record], credits), [record])
 
 
 class WeeklyLiveAttendanceTests(SimpleTestCase):
@@ -35,7 +74,9 @@ class WeeklyLiveAttendanceTests(SimpleTestCase):
         credit = {'moduleId': 'M1', 'componentId': 'C1', 'occurrenceId': '', 'hours': 2.5,
                   'sessionDate': '2026-10-14', 'timeTrackingSource': 'manual_attendance'}
         with patch('learner_api.attendance_lectures.lecture_register', return_value=[]), \
-             patch('learner_api.live_session_progress.read_live_credits', return_value=[credit]) as read:
+             patch('learner_api.live_session_progress.read_live_credits', return_value=[credit]) as read, \
+             patch('learner_api.attendance_learning.with_learning_requirements',
+                   side_effect=lambda source, credits: credits):
             rows, credits = read_weekly_live_evidence(SimpleNamespace(pk=7), {'id': 70}, ['M1'], ['M1'])
         self.assertEqual(rows, [])
         self.assertEqual(credits, [credit])
