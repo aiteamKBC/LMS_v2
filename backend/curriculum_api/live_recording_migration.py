@@ -30,7 +30,9 @@ def checked_previous(asset):
         previous = CurriculumVideoImport.objects.get(pk=previous_id, target_kind='live_session')
     except (CurriculumVideoImport.DoesNotExist, ValueError, ValidationError, TypeError):
         raise VideoImportError('The historical recording reference could not be verified.') from None
-    if (asset.target_kind != 'live_session' or asset.library_id != live_library_id()
+    from .shared_recordings import reference_owner
+    shared = reference_owner(asset)
+    if (asset.target_kind != 'live_session' or (asset.library_id != live_library_id() and shared is None)
             or previous.target_id != asset.target_id or previous.component_id != asset.component_id
             or previous.source_at_start != asset.source_at_start or previous.source_url != asset.source_url
             or any(previous.scope.get(key) != asset.scope.get(key) for key in OWNER_FIELDS)):
@@ -57,6 +59,9 @@ def replacement_import(asset, *, include_pending=True):
 def queue_migration(asset, *, peer_mapping=None):
     """Queue only. The normal AWS worker owns downloads/uploads and playback switch."""
     library = require_live_credentials()
+    from .shared_recordings import reference_owner
+    if reference_owner(asset) is not None:
+        raise VideoImportError('This recording already uses one protected shared original; no duplicate migration is needed.')
     if asset.target_kind != 'live_session' or asset.library_id == library or asset.status != 'ready':
         raise VideoImportError('Only a ready historical live recording can be queued for this migration.')
     if not asset.video_id or not asset.scope.get('graph_artifact_id'):

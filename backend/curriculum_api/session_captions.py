@@ -144,6 +144,14 @@ def sync_series_captions(series_id, artifacts):
             continue
         current, claim = claimed
         try:
+            from .shared_recordings import is_reference, reference_owner
+            if is_reference(current):
+                owner = reference_owner(current)
+                available = (owner.scope.get('captions_state') == 'ready'
+                    or owner.scope.get(JOURNAL, {}).get('state') in ('ready', 'retained'))
+                claim = {**claim, 'sourceImportId': str(owner.pk)}
+                _finish(current.pk, claim, 'retained' if available else 'failed')
+                continue  # One provider track, authored only by its original.
             client = BunnyStream(current.library_id)
             remote = client.video(current.video_id, timeout=(3, 8))
             if remote.get('guid') != current.video_id:

@@ -63,8 +63,24 @@ protected playback and correct Quality/component projection. Then verify a repea
 pass creates no extra provider object. Mocked tests and source byte probes alone
 do not establish a successful deployed transfer.
 
-Before activating channel copies, resolve whether the same lecture appearing in
-several coach calendars should share one video reference. The existing ownership
-boundary prevents retries/aliases within one coach occurrence from duplicating a
-video; it does not deduplicate different coach occurrences or libraries. Do not
-claim global deduplication or activate that new route while this decision is open.
+## Shared originals (owner approved on 2026-11-27)
+
+The same verified Microsoft file now has one durable `recording_media` claim
+across coach occurrences and the protected recording libraries. Its key is the
+DriveItem identity; a changed version is held for review rather than copied again.
+Existing proved originals/in-flight uploads win. A known tutor import is preferred
+before a new upload; otherwise a coach original stays in its coach collection.
+
+Every occurrence keeps its own import, meeting identity, access boundary,
+transcript and Quality/component projection. A reference must match both its
+immutable source receipt and its own saved scope. It reuses the original's actual
+library/GUID after protected-player verification. It never moves the original,
+retags it for another occurrence, uploads another copy, or overwrites its caption
+track. Coach originals retain one resolution up to 720p; an existing shared tutor
+lecture keeps its tutor resolutions. New coach collections are still provisioned
+normally, including coaches whose shared lectures reference another collection.
+
+The claim protects concurrent workers, retries and late discovery in another
+calendar. Existing historical ready originals are not deleted, rewritten or
+merged. This does not claim that historical duplicate provider objects have been
+removed. Legacy Materials/FreeCourse libraries and their security are unchanged.

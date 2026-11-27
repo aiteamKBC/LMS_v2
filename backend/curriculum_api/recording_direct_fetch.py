@@ -97,6 +97,11 @@ def source_owner(asset, identity):
 
 def transfer_direct(asset, client, source, artifact):
     """Return this saved GUID or its alias owner's GUID, without local media."""
+    from . import shared_recordings as shared
+    if shared.is_reference(asset):
+        if source != asset.source_at_start:
+            raise VideoImportError('The shared recording source changed.')
+        return shared.use_reference(asset)
     if str(client.library_id) != asset.library_id or not asset.collection_id:
         raise VideoImportError('The recording destination has not been verified.')
     recovered = client.video(asset.video_id) if asset.video_id else client.find_import(asset.pk)
@@ -108,11 +113,17 @@ def transfer_direct(asset, client, source, artifact):
         raise VideoImportError('The direct transfer awaits confirmation. No second video was created.')
     if asset.scope.get('direct_owner_import_id') and asset.scope['direct_owner_import_id'] != str(asset.pk):
         owner = source_owner(asset, asset.scope.get('direct_source'))
+        owner = shared.claim(asset, asset.scope['direct_source'], preferred=owner)
+        if shared.is_reference(asset):
+            return shared.use_reference(asset)
         asset.status = 'processing'
         return _remember(asset, client, client.video(owner.video_id)) if owner.video_id else None
     from coach_api.views import microsoft_graph_token
     download, identity = resolve_source(source, microsoft_graph_token(), artifact)
     owner = source_owner(asset, identity)
+    owner = shared.claim(asset, identity, preferred=owner)
+    if shared.is_reference(asset):
+        return shared.use_reference(asset)
     if owner.pk != asset.pk:
         if owner.video_id:
             return _remember(asset, client, client.video(owner.video_id))

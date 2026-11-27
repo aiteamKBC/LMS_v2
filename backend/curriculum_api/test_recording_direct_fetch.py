@@ -17,6 +17,7 @@ from curriculum_api.models import CurriculumVideoImport
 from curriculum_api import recording_direct_fetch as direct
 from curriculum_api import live_recording_routing as routing
 from curriculum_api import video_imports
+from curriculum_api import shared_recordings as shared
 from coach_api.models import CoachingRecordingJob
 from coach_api import recordings_bunny as coach
 from coach_api import recordings_jobs as jobs
@@ -88,10 +89,12 @@ class DirectRecordingTests(unittest.TestCase):
         self.addCleanup(CurriculumVideoImport.objects.all().delete)
         self.addCleanup(CoachingRecordingJob.objects.all().delete)
         self.client = Mock(library_id='999001')
+        self.client.verify_embed.return_value = True
         self.client.find_import.return_value = None
         self.client.video.return_value = self.video()
         self.client.move_to_collection.return_value = self.video()
         self.resolve = patch.object(direct, 'resolve_source', return_value=('https://tenant.sharepoint.com/file?temporary-secret', FILE)).start()
+        patch.object(shared, 'BunnyStream', return_value=self.client).start()
         patch('coach_api.views.microsoft_graph_token', return_value='tenant-secret').start()
 
     def video(self, **fields):
@@ -230,6 +233,173 @@ class DirectRecordingTests(unittest.TestCase):
         self.assertEqual(direct.source_owner(other, FILE).pk, other.pk)
         with self.assertRaises(VideoImportError):
             direct.source_owner(first, {'drive': 'drive', 'item': 'item'})
+
+    def test_shared_file_across_coaches_has_one_fetch_and_never_moves_or_retags_the_original(self):
+        first = self.asset()
+        other = self.asset(collection_id='bbbbbbbb-cccc-dddd-eeee-ffffffffffff',
+            scope={'owner_email': 'second@example.invalid', 'event_key': 'other-occurrence'})
+        direct.transfer_direct(first, self.client, SOURCE, {})
+        direct.transfer_direct(other, self.client, SOURCE, {})
+        self.client.request.assert_called_once()
+        self.assertEqual(CurriculumVideoImport.objects.filter(target_kind=shared.KIND).count(), 1)
+        self.client.find_import.return_value = self.video()
+        direct.transfer_direct(first, self.client, SOURCE, {})
+        metadata_calls = self.client.metadata.call_count
+        direct.transfer_direct(other, self.client, SOURCE, {})
+        other.refresh_from_db(); first.refresh_from_db()
+        self.assertEqual(other.video_id, first.video_id)
+        self.assertEqual(other.collection_id, COLLECTION)
+        self.assertEqual(other.scope['owner_email'], 'second@example.invalid')
+        self.assertEqual(other.scope['event_key'], 'other-occurrence')
+        self.assertEqual(self.client.metadata.call_count, metadata_calls)
+        self.client.move_to_collection.assert_not_called()
+        self.client.request.assert_called_once()
+
+    def test_known_tutor_import_owns_shared_lecture_before_any_coach_upload(self):
+        coach_asset = self.asset()
+        tutor = self.asset(target_kind='live_session', target_id='series', library_id='999002',
+            scope={'module_id': 'module', 'series_id': 'series', 'occurrence_id': 'lecture',
+                   'programme_id': 'programme', 'cohort_id': 'cohort', 'group_id': 'group'})
+        live_client = Mock(library_id='999002')
+        live_client.find_import.return_value = None
+        live_client.verify_embed.return_value = True
+        live_client.video.return_value = self.video(availableResolutions='480p,720p,1080p')
+        with patch.dict(os.environ, {'BUNNY_LIVE_STREAM_LIBRARY_ID': '999002',
+                'BUNNY_LIVE_STREAM_TOKEN_KEY': 'synthetic-live-token'}), \
+                patch.object(shared, 'BunnyStream', return_value=live_client), \
+                patch('curriculum_api.live_recording_routing.find_existing_recording', return_value=None):
+            self.assertIsNone(direct.transfer_direct(coach_asset, self.client, SOURCE, {}))
+            self.client.request.assert_not_called()
+            direct.transfer_direct(tutor, live_client, SOURCE, {})
+            live_client.request.assert_called_once()
+            live_client.find_import.return_value = self.video(availableResolutions='480p,720p,1080p')
+            direct.transfer_direct(tutor, live_client, SOURCE, {})
+            metadata_calls = live_client.metadata.call_count
+            direct.transfer_direct(coach_asset, self.client, SOURCE, {})
+            coach_asset.refresh_from_db(); tutor.refresh_from_db()
+            self.assertEqual((coach_asset.library_id, coach_asset.video_id), ('999002', tutor.video_id))
+            self.assertEqual(coach_asset.scope['owner_email'], OWNER)
+            self.assertEqual(live_client.metadata.call_count, metadata_calls)
+            live_client.move_to_collection.assert_not_called()
+            self.client.request.assert_not_called()
+            live_client.request.assert_called_once()
+
+    def test_shared_reference_rejects_changed_access_scope_source_and_file_version(self):
+        first, alias = self.asset(), self.asset(scope={'owner_email': 'second@example.invalid', 'event_key': 'other'})
+        direct.transfer_direct(first, self.client, SOURCE, {})
+        direct.transfer_direct(alias, self.client, SOURCE, {})
+        for field, value in (('owner_email', 'foreign@example.invalid'), ('event_key', 'foreign-occurrence')):
+            with self.subTest(field=field):
+                changed = deepcopy(alias)
+                changed.scope = {**changed.scope, field: value}
+                with self.assertRaises(VideoImportError): shared.reference_owner(changed)
+        changed = deepcopy(alias); changed.source_url = SOURCE + '?foreign=1'
+        with self.assertRaises(VideoImportError): shared.reference_owner(changed)
+        changed = deepcopy(alias); changed.scope = {**changed.scope, 'direct_source': {**FILE, 'version': 'changed'}}
+        with self.assertRaises(VideoImportError): shared.reference_owner(changed)
+        foreign_file = {**FILE, 'item': 'foreign-item'}
+        foreign = self.asset(scope={'owner_email': 'foreign@example.invalid', 'event_key': 'foreign'})
+        shared.claim(foreign, foreign_file)
+        changed = deepcopy(alias)
+        changed.scope = {**changed.scope, 'direct_source': foreign_file,
+                         shared.SOURCE: foreign.scope[shared.SOURCE], shared.OWNER: str(foreign.pk)}
+        with self.assertRaises(VideoImportError): shared.reference_owner(changed)
+        third = self.asset(scope={'owner_email': 'third@example.invalid', 'event_key': 'third'})
+        self.resolve.return_value = ('https://tenant.sharepoint.com/fresh', {**FILE, 'version': 'changed'})
+        with self.assertRaisesRegex(VideoImportError, 'version changed'):
+            direct.transfer_direct(third, self.client, SOURCE, {})
+        self.client.request.assert_called_once()
+
+    def test_forged_shared_owner_without_immutable_source_receipt_is_blocked(self):
+        asset = self.asset(scope={'owner_email': OWNER, 'event_key': 'occurrence',
+            shared.OWNER: str(uuid.uuid4()), shared.SOURCE: str(uuid.uuid4()), 'direct_source': FILE})
+        with self.assertRaises(VideoImportError): shared.use_reference(asset)
+        asset.scope[shared.SOURCE] = 'invalid-uuid'
+        with self.assertRaises(VideoImportError): shared.use_reference(asset)
+        self.client.video.assert_not_called(); self.client.request.assert_not_called()
+
+    def test_ready_original_without_source_receipt_is_visible_review_not_a_new_copy(self):
+        original = self.asset(target_kind='live_session', library_id='999002', status='ready', video_id=VIDEO,
+                              scope={'module_id': 'module', 'series_id': 'series', 'occurrence_id': 'lecture'})
+        alias = self.asset()
+        with patch.dict(os.environ, {'BUNNY_LIVE_STREAM_LIBRARY_ID': '999002'}):
+            self.assertEqual(shared.claim(alias, FILE).pk, original.pk)
+            with self.assertRaisesRegex(VideoImportError, 'immutable source-identity reconciliation'):
+                shared.use_reference(alias)
+        self.client.request.assert_not_called(); self.client.video.assert_not_called()
+
+    def test_shared_caption_reference_keeps_own_text_without_overwriting_provider_track(self):
+        job, alias = self.prepare_transfer()
+        original = self.asset(status='ready', video_id=VIDEO,
+            scope={'owner_email': 'second@example.invalid', 'event_key': 'original', 'direct_source': FILE,
+                   'captions_state': 'ready'})
+        owner = shared.claim(alias, FILE)
+        self.assertEqual(owner.pk, original.pk)
+        shared.use_reference(alias)
+        content = 'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nSynthetic words\n'
+        with patch('coach_api.recordings_transcripts.recording_captions', return_value=content):
+            coach.refresh_captions(alias, job=job, artifact=self.artifact(), client=self.client)
+        alias.refresh_from_db()
+        self.assertEqual(alias.scope['microsoft_captions_vtt'], content)
+        self.assertEqual(alias.scope['captions_state'], 'ready')
+        self.assertEqual(alias.scope['captions_source_import_id'], str(original.pk))
+        self.client.caption.assert_not_called()
+
+    def test_shared_lecture_publishes_in_own_coach_quality_scope_and_repeated_discovery_keeps_one_video(self):
+        job, asset = self.prepare_transfer()
+        original = self.asset(target_kind='live_session', target_id='series', library_id='999002',
+            status='ready', video_id=VIDEO, scope={'module_id': 'module', 'series_id': 'series',
+            'occurrence_id': 'lecture', 'direct_source': FILE, 'lmsEnglishCaptions': {'state': 'ready'}})
+        live_client = Mock(library_id='999002')
+        live_client.video.return_value = self.video(availableResolutions='480p,720p,1080p')
+        live_client.verify_embed.return_value = True
+        with patch.dict(os.environ, {'BUNNY_LIVE_STREAM_LIBRARY_ID': '999002',
+                'BUNNY_LIVE_STREAM_TOKEN_KEY': 'synthetic-live-token'}), \
+                patch.object(shared, 'BunnyStream', return_value=live_client):
+            video_imports.process(asset.pk)
+            asset.refresh_from_db(); job.refresh_from_db()
+            self.assertEqual(asset.status, 'ready')
+            saved = job.result['artifacts'][0]
+            self.assertEqual(saved['lmsBunnyRecording']['importId'], str(asset.pk))
+            self.assertEqual(saved['lmsBunnyRecording']['libraryId'], '999002')
+            self.assertEqual(coach.playback(job, saved)['videoId'], original.video_id)
+            coach.enqueue_evidence(job, [self.artifact()])
+            video_imports.process(asset.pk)
+            self.assertEqual(CurriculumVideoImport.objects.filter(target_kind=coach.KIND).count(), 1)
+            job.context = {**job.context, 'owner': 'foreign@example.invalid'}
+            with self.assertRaises(VideoImportError): coach.playback(job, saved)
+        self.client.request.assert_not_called()
+        live_client.request.assert_not_called(); live_client.metadata.assert_not_called()
+        live_client.move_to_collection.assert_not_called(); live_client.caption.assert_not_called()
+
+    def test_shared_tutor_reference_to_existing_coach_original_keeps_own_occurrence_and_protected_player(self):
+        from types import SimpleNamespace
+        from curriculum_api import session_bunny, live_recording_migration
+        original = self.asset(status='ready', video_id=VIDEO, scope={'owner_email': OWNER,
+            'event_key': 'original', 'direct_source': FILE, 'captions_state': 'ready'})
+        scope = {'module_id': 'module', 'series_id': 'series', 'occurrence_id': 'lecture',
+            'programme_id': 'programme', 'cohort_id': 'cohort', 'group_id': 'group', 'graph_artifact_id': 'file'}
+        alias = self.asset(target_kind='live_session', target_id='series', component_id='artifact', library_id='999002', scope=scope)
+        row = {'id': 'series', 'module_catalogue_id': 'module', 'organizer_email': OWNER,
+               'online_meeting_id': 'meeting', 'graph_artifact_id': 'file'}
+        cursor = Mock(); cursor.__enter__ = Mock(return_value=cursor); cursor.__exit__ = Mock(return_value=False)
+        cursor.fetchall.return_value = [('artifact',)]
+        with patch.dict(os.environ, {'BUNNY_LIVE_STREAM_LIBRARY_ID': '999002'}), \
+                patch('curriculum_api.views.teams_online_meeting_owner_id', return_value='owner'), \
+                patch('curriculum_api.session_results.read', return_value=[row]):
+            shared.claim(alias, FILE)
+            session_bunny.transfer_recording(alias)
+            self.assertEqual((alias.status, alias.library_id, alias.video_id), ('ready', original.library_id, original.video_id))
+            with patch.object(session_bunny, 'connections', {'default': SimpleNamespace(cursor=lambda: cursor)}):
+                session_bunny.publish_outcome(alias)
+            payload = json.loads(cursor.execute.call_args_list[0].args[1][0])
+            self.assertEqual((payload['libraryId'], payload['videoId']), (original.library_id, original.video_id))
+            self.assertEqual(alias.scope['occurrence_id'], 'lecture')
+            self.assertIn('/embed/999001/'+VIDEO, session_bunny.recording_player({'metadata': {'lmsBunnyRecording': payload}}))
+            with patch.object(live_recording_migration, 'require_live_credentials', return_value='999002'):
+                with self.assertRaisesRegex(VideoImportError, 'already uses one protected shared original'):
+                    live_recording_migration.queue_migration(alias)
+        self.client.request.assert_not_called(); self.client.metadata.assert_not_called()
 
     def test_published_player_keeps_other_files_and_requires_matching_authorized_scope(self):
         job = self.job()
