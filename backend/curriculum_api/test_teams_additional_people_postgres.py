@@ -97,6 +97,19 @@ class AdditionalMeetingPeopleTests(CurriculumTeamsRequestTestCase):
         self.assertEqual(before['id'], 'COMP-PEOPLE-OWN')
         self.invalidate.assert_called_once()
 
+    def test_ordinary_appointment_imports_verified_room_roles_without_replacing_its_invitation_list(self):
+        self.event.update(isOnlineMeeting=False, onlineMeeting=None, onlineMeetingUrl=None)
+        views.update_authoring_rows(views.LIVE_SESSIONS_TABLE, 'id=%s', [self.live_id], {
+            'attendees': views.json_db_value(['keep-invited@example.invalid'])})
+        self.assertTrue(refresh.refresh_people(self.live_id)['changed'])
+        saved = views.authoring_fetch_all(views.LIVE_SESSIONS_TABLE, 'id=%s', [self.live_id], ensure_tables=False)[0]
+        self.assertEqual(views.teams_series_email_list(saved['attendees']), ['keep-invited@example.invalid'])
+        self.assertEqual(views.teams_series_email_list(saved['co_organizers']), ['tutor@example.invalid'])
+        settings = views.as_json_value(self.component()['settings_json'], {})
+        self.assertEqual(settings['extraTeamsAttendees'], ['keep-invited@example.invalid'])
+        self.assertEqual(settings['extraTeamsCoOrganizers'], ['tutor@example.invalid'])
+        self.assertEqual(settings['teamsOccurrenceId'], 'MAIN-OCC-KEEP')
+
     def test_newer_committed_lms_edit_is_not_overwritten_by_an_older_graph_read(self):
         peer = connection.copy(alias='additional_people_peer')
         self.addCleanup(peer.close)

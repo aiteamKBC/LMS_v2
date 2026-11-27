@@ -128,10 +128,20 @@ def read_people(series, read):
         if not owner or (not imported and not event_id) or not link or not meeting_id or not join_context_oid(link):
             raise _state_error('saved_identity_incomplete', 'The saved meeting identities are incomplete. No people or roles were imported.')
         event = None if imported else read(f'users/{quote(owner, safe="")}/events/{quote(event_id, safe="")}'
-                     '?$select=id,type,isOrganizer,isCancelled,organizer,onlineMeeting,attendees')
+                     '?$select=id,type,isOrganizer,isCancelled,organizer,onlineMeeting,onlineMeetingUrl,isOnlineMeeting,attendees')
+        # Some historic additional slots are ordinary calendar appointments
+        # alongside an explicitly saved Teams room. The appointment cannot
+        # establish that room's invitation list. Verify its original calendar
+        # identity, then read only explicit roles from the exact saved room,
+        # as for an imported calendar. A different online link is never accepted.
+        roles_only_additional = (
+            series.get('meeting_type') == 'week-additional' and isinstance(event, dict)
+            and event.get('type') == 'singleInstance' and event.get('isOnlineMeeting') is False
+            and not event.get('onlineMeeting') and not event.get('onlineMeetingUrl')
+        )
         if not imported and (not isinstance(event, dict) or event.get('id') != event_id or event.get('isOrganizer') is not True
                 or event.get('type') not in {'seriesMaster', 'singleInstance'} or event.get('isCancelled')
-                or (event.get('onlineMeeting') or {}).get('joinUrl') != link
+                or ((event.get('onlineMeeting') or {}).get('joinUrl') != link and not roles_only_additional)
                 or str(((event.get('organizer') or {}).get('emailAddress') or {}).get('address') or '').casefold() != owner.casefold()):
             raise _state_error('organizer_event_unverified', 'Microsoft did not verify the saved organiser event. No people or roles were imported.')
         meeting = read_online(SimpleNamespace(read=read), {'online_meeting_id': meeting_id, 'join_url': link},
@@ -144,7 +154,7 @@ def read_people(series, read):
             # calendar sign-in. The worker reads explicit online-meeting roles
             # using the existing app policy; it never impersonates that user or
             # infers/replaces their original calendar invitation list.
-            'attendees': sorted(stored_email_list(series.get('attendees'))) if imported else sorted(people(event)),
+            'attendees': sorted(stored_email_list(series.get('attendees'))) if imported or roles_only_additional else sorted(people(event)),
             'presenters': sorted(presenter_labels(roles, series.get('presenters'))),
             'coOrganizers': sorted({item['upn'].strip().lower() for item in roles if item['role'] == 'coorganizer'}),
         }

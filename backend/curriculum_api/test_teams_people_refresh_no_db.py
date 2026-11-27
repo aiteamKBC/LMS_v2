@@ -55,6 +55,36 @@ class PeopleRefreshTests(SimpleTestCase):
         self.assertEqual(self.reader.call_count, 2)
         self.assertEqual(self.reader.call_args.kwargs, {'prefer': 'include-unknown-enum-members'})
 
+    def test_ordinary_additional_calendar_preserves_invites_and_reads_only_the_verified_room_roles(self):
+        series = {**self.series, 'status': 'week-meeting', 'meeting_type': 'week-additional',
+                  'attendees': ['keep-invited@example.invalid']}
+        event = {**self.event, 'type': 'singleInstance', 'isOnlineMeeting': False,
+                 'onlineMeeting': None, 'onlineMeetingUrl': None}
+        read = Mock(side_effect=lambda path, **kwargs: self.meeting if 'onlineMeetings' in path else event)
+        values = refresh.read_people(series, read)
+        self.assertEqual(values, {'attendees': ['keep-invited@example.invalid'],
+                                  'presenters': ['tutor@example.invalid'], 'coOrganizers': ['tutor@example.invalid']})
+        self.assertEqual(read.call_count, 2)
+        self.assertIn('/onlineMeetings/ONLINE', read.call_args.args[0])
+
+    def test_plain_calendar_support_cannot_accept_an_unknown_or_different_online_binding(self):
+        series = {**self.series, 'status': 'week-meeting', 'meeting_type': 'week-additional'}
+        ordinary = {**self.event, 'type': 'singleInstance', 'isOnlineMeeting': False,
+                    'onlineMeeting': None, 'onlineMeetingUrl': None}
+        for changes in ({'isOnlineMeeting': True}, {'isOnlineMeeting': None},
+                        {'onlineMeeting': {'joinUrl': 'https://example.invalid/foreign'}},
+                        {'onlineMeetingUrl': 'https://example.invalid/foreign'},
+                        {'organizer': {}}, {'isCancelled': True}):
+            with self.subTest(changes=changes):
+                read = Mock(return_value={**ordinary, **changes})
+                with self.assertRaises(refresh.CalendarStateError):
+                    refresh.read_people(series, read)
+                self.assertEqual(read.call_count, 1)
+        read = Mock(return_value=ordinary)
+        with self.assertRaises(refresh.CalendarStateError):
+            refresh.read_people(self.series, read)
+        self.assertEqual(read.call_count, 1)
+
     def test_wrong_event_link_owner_or_cancelled_event_is_not_imported(self):
         for changes in ({'id': 'FOREIGN'}, {'onlineMeeting': {'joinUrl': 'https://example.invalid/foreign'}},
                         {'isOrganizer': False}, {'isCancelled': True}, {'organizer': {}}, {'attendees': None}):
