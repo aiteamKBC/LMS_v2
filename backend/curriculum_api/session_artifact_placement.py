@@ -50,7 +50,7 @@ def overlapping_artifact_occurrence(artifact, occurrences):
         return None
     candidates = []
     for occurrence in occurrences:
-        if occurrence.get('status') in ('cancelled', 'deleted', 'superseded'):
+        if str(occurrence.get('status') or '').strip().lower() in ('cancelled', 'canceled', 'deleted', 'superseded', 'failed'):
             continue
         start = _instant(occurrence.get('scheduled_start'))
         end = _instant(occurrence.get('scheduled_end'))

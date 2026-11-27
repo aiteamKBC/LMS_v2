@@ -77,9 +77,26 @@ class ArtifactOccurrenceRecoveryTests(CurriculumTeamsRequestTestCase):
         views.upsert_live_session_artifact(self.future, 'transcript', {**self.window, 'id': 'transcript-recovery'})
         old = views.authoring_fetch_all(views.LIVE_SESSION_ARTIFACTS_TABLE, 'occurrence_id=%s', [self.future['id']])[0]
         with connection.cursor() as cursor:
+            cursor.execute('''INSERT INTO curriculum.session_result_archive
+                (artifact_id,occurrence_id,container,blob_name,status,transcript_text)
+                VALUES (%s,%s,'synthetic-private','original/session-9.vtt','ready','Synthetic saved transcript')''',
+                           [old['id'], self.future['id']])
+            self.addCleanup(self.clear_archive, old['id'])
             cursor.execute('UPDATE curriculum.live_session_artifacts SET occurrence_id=%s WHERE id=%s',
+                           [self.current['id'], old['id']])
+            cursor.execute('UPDATE curriculum.session_result_archive SET occurrence_id=%s WHERE artifact_id=%s',
                            [self.current['id'], old['id']])
         rows = self.discover()
         transcript = next(row for row in rows if row['artifact_type'] == 'transcript')
         self.assertEqual(transcript['id'], old['id'])
         self.assertEqual(transcript['occurrence_id'], self.current['id'])
+        with connection.cursor() as cursor:
+            cursor.execute('''SELECT artifact_id,occurrence_id,container,blob_name,transcript_text
+                FROM curriculum.session_result_archive WHERE artifact_id=%s''', [old['id']])
+            self.assertEqual(cursor.fetchone(), (old['id'], self.current['id'], 'synthetic-private',
+                                                 'original/session-9.vtt', 'Synthetic saved transcript'))
+
+    def clear_archive(self, artifact_id):
+        with connection.cursor() as cursor:
+            cursor.execute('DELETE FROM curriculum.session_result_archive WHERE artifact_id=%s AND container=%s',
+                           [artifact_id, 'synthetic-private'])

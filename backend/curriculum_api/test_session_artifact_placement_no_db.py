@@ -55,7 +55,7 @@ class ArtifactRecoveryTests(unittest.TestCase):
         self.assertIsNone(overlapping_artifact_occurrence(rehearsal, [self.current, self.future]))
 
     def test_cancelled_or_superseded_slots_are_not_recovered(self):
-        for status in ('cancelled', 'deleted', 'superseded'):
+        for status in ('cancelled', 'canceled', 'deleted', 'superseded', 'failed', ' CANCELED ', 'Failed'):
             self.assertIsNone(overlapping_artifact_occurrence(self.artifact, [{**self.current, 'status': status}]))
 
     def test_incomplete_or_reversed_windows_are_not_recovered(self):
