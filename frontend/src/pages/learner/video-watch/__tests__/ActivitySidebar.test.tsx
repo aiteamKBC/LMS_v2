@@ -18,6 +18,85 @@ function Location() { return <output data-testid="location">{useLocation().pathn
 afterEach(() => vi.restoreAllMocks());
 
 describe('module activity sidebar', () => {
+  it.each(['commercial', 'apprenticeship'])('keeps London recordings accessible from a later required activity (%s)', async kind => {
+    vi.spyOn(learningSchedule, 'peek').mockReturnValue(undefined);
+    vi.spyOn(learningSchedule, 'read').mockResolvedValue({ modules: [] } as unknown as TrainingPlanDashboard);
+    const london = { componentId: 'LONDON', title: 'London recording', type: 'video',
+      videoUrl: 'https://example.invalid/london.mp4', expectedOtjh: 0 };
+    const current = { componentId: 'CURRENT', title: 'Current lesson', type: 'reading',
+      contentHtml: '<p>Current lesson</p>', expectedOtjh: 1 };
+    const londonWeek = { key: 'LONDON-WEEK', week: 'London Master Class Event', count: 1, completed: 1,
+      active: false, components: [london] };
+    const routeFor = vi.fn(component => `/learning/${kind}/${component.componentId}`);
+    render(<MemoryRouter><ActivitySidebar kind={kind} id="132" moduleTitle="Marketing" weekTitle="Week 2"
+      weekComponents={[current]} weeks={[londonWeek, { key: 'CURRENT-WEEK', week: 'Week 2',
+        count: 1, completed: 0, active: true, components: [current] }]}
+      currentComponentId="CURRENT" completedIds={new Set(['LONDON'])} routeFor={routeFor} /><Location /></MemoryRouter>);
+
+    const section = await screen.findByRole('region', { name: 'London Master Class' });
+    fireEvent.click(screen.getByRole('button', { name: 'Required only' }));
+    const shortcut = within(section)
+      .getByRole('button', { name: /Open Week 1.*London Master Class Event/ });
+    expect(shortcut).toBeVisible();
+    fireEvent.click(shortcut);
+    expect(routeFor).toHaveBeenCalledWith(london, londonWeek.week);
+    expect(screen.getByTestId('location')).toHaveTextContent(`/learning/${kind}/LONDON`);
+  });
+
+  it('opens the matching London week by activity identity when titles repeat', () => {
+    const first = { componentId: 'FIRST', title: 'First recording', type: 'video', videoUrl: 'https://example.invalid/first.mp4', expectedOtjh: 0 };
+    const second = { componentId: 'SECOND', title: 'Second recording', type: 'video', videoUrl: 'https://example.invalid/second.mp4', expectedOtjh: 0 };
+    const routeFor = vi.fn(component => `/activity/${component.componentId}`);
+    render(<MemoryRouter><ActivitySidebar moduleTitle="MSP" weekTitle="Current lesson" weekComponents={[]}
+      completedIds={new Set()} weeks={[
+        { key: 'W1', week: 'London subject masterclass', count: 1, completed: 0, active: false, components: [first] },
+        { key: 'W2', week: 'London subject masterclass', count: 1, completed: 0, active: false, components: [second] },
+      ]} routeFor={routeFor} /><Location /></MemoryRouter>);
+    fireEvent.click(within(screen.getByRole('region', { name: 'London Master Class' }))
+      .getByRole('button', { name: /Open Week 2.*London subject masterclass/ }));
+    expect(routeFor).toHaveBeenCalledWith(second, 'London subject masterclass');
+    expect(screen.getByTestId('location')).toHaveTextContent('/activity/SECOND');
+  });
+
+  it('preserves access restrictions on the London shortcut', () => {
+    const blocked = vi.fn(), routeFor = vi.fn(() => '/activity/LONDON');
+    render(<MemoryRouter><ActivitySidebar moduleTitle="Marketing" weekTitle="Current lesson" weekComponents={[]}
+      completedIds={new Set()} accessOpen={false} onAccessBlocked={blocked} weeks={[
+        { key: 'W1', week: 'London Master Class', count: 1, completed: 0, active: false,
+          components: [{ componentId: 'LONDON', title: 'Recording', type: 'video', videoUrl: 'https://example.invalid/london.mp4', expectedOtjh: 0 }] },
+      ]} routeFor={routeFor} /><Location /></MemoryRouter>);
+    const shortcut = within(screen.getByRole('region', { name: 'London Master Class' })).getByRole('button');
+    expect(shortcut).toHaveAttribute('aria-disabled', 'true');
+    fireEvent.click(shortcut);
+    expect(blocked).toHaveBeenCalledOnce();
+    expect(routeFor).not.toHaveBeenCalled();
+    expect(screen.getByTestId('location')).toHaveTextContent('/');
+  });
+
+  it('uses the source availability check and opens slides when a recording is unavailable', () => {
+    const unavailable = { componentId: 'VIDEO', title: 'Recording', type: 'video', videoUrl: 'https://example.invalid/london.mp4', expectedOtjh: 0 };
+    const slides = { componentId: 'SLIDES', title: 'Event slides', type: 'powerpoint', resourceUrl: 'https://example.invalid/slides.pptx', expectedOtjh: 0 };
+    const routeFor = vi.fn(component => `/activity/${component.componentId}`);
+    render(<MemoryRouter><ActivitySidebar moduleTitle="Marketing" weekTitle="Current lesson" weekComponents={[]}
+      completedIds={new Set()} canOpen={component => component.componentId === 'SLIDES'} weeks={[
+        { key: 'W1', week: 'London Master Class Event', count: 2, completed: 0, active: false, components: [unavailable, slides] },
+      ]} routeFor={routeFor} /><Location /></MemoryRouter>);
+    fireEvent.click(within(screen.getByRole('region', { name: 'London Master Class' })).getByRole('button'));
+    expect(routeFor).toHaveBeenCalledWith(slides, 'London Master Class Event');
+    expect(screen.getByTestId('location')).toHaveTextContent('/activity/SLIDES');
+  });
+
+  it('does not advertise a London placeholder without content or another masterclass', () => {
+    render(<MemoryRouter><ActivitySidebar moduleTitle="Marketing" weekTitle="Current lesson" weekComponents={[]}
+      completedIds={new Set()} weeks={[
+        { key: 'EMPTY', week: 'London Master Class', count: 1, completed: 0, active: false,
+          components: [{ componentId: 'EMPTY', title: 'Recorded Event', type: 'video', expectedOtjh: 0 }] },
+        { key: 'OTHER', week: 'Other masterclass', count: 1, completed: 0, active: false,
+          components: [{ componentId: 'OTHER', title: 'Other recording', type: 'video', videoUrl: 'https://example.invalid/other.mp4', expectedOtjh: 0 }] },
+      ]} routeFor={component => `/activity/${component.componentId}`} /></MemoryRouter>);
+    expect(screen.queryByRole('region', { name: 'London Master Class' })).not.toBeInTheDocument();
+  });
+
   it('opens a future live session from the sidebar while its time entry is locked', () => {
     render(<MemoryRouter><ActivitySidebar weekTitle="Week 8" moduleTitle="Module" weeks={[]} completedIds={new Set()}
       weekComponents={[{ title: 'Upcoming lecture', componentId: 'LIVE', type: 'live_session', expectedOtjh: 2.5,
