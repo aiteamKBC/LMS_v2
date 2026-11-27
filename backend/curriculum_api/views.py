@@ -20567,7 +20567,8 @@ def teams_calendar_sync_verdict(
     )
 
 
-def teams_calendar_sync_verdicts(module_catalogue_ids, occurrences_by_module, occurrences_readable=True):
+def teams_calendar_sync_verdicts(module_catalogue_ids, occurrences_by_module, occurrences_readable=True,
+                                 *, notice_timezones=None, notice_occurrences_by_module=None):
     """A sync verdict per module, in bulk reads rather than reads per module.
 
     Four reads for the whole page whatever its length: the module rows, their
@@ -20658,6 +20659,23 @@ def teams_calendar_sync_verdicts(module_catalogue_ids, occurrences_by_module, oc
         except Exception:
             logger.exception('Unable to compare the Teams calendar for %s.', module_id)
             verdicts[module_id] = teams_calendar_sync_verdict(None, [], occurrences_readable=False)
+        # Staff guidance only: reuse the authoritative whole-week planner
+        # and the already scoped rows. Never change the sync verdict,
+        # bookings, holiday exceptions, invitation delivery or hours here.
+        if (notice_timezones is not None and module_row and occurrences_readable
+                and (holidays_readable or not cohort_id)):
+            try:
+                from .holiday_invitation_notice import module_holiday_invitation_notice
+                notice = module_holiday_invitation_notice(module_row,
+                    groups_by_id.get(clean_str(module_row.get('group_id'))),
+                    holidays_by_cohort.get(cohort_id) or [],
+                    (notice_occurrences_by_module if notice_occurrences_by_module is not None else occurrences_by_module).get(module_id) or [],
+                    notice_timezones.get(module_id))
+                if notice:
+                    verdicts[module_id]['holidayInvitationNotice'] = notice
+            except Exception as failure:
+                logger.warning('Holiday invitation guidance unavailable (%s).', type(failure).__name__)
+                verdicts[module_id]['holidayInvitationNoticeUnavailable'] = True
     return verdicts
 
 
@@ -20745,6 +20763,7 @@ def curriculum_teams_meeting_summary(request):
     results = []
     seen_modules = set()
     occurrences_by_module = {}
+    notice_occurrences_by_module = {}
     for row in sessions:
         module_id = clean_str(row.get('module_catalogue_id'))
         # Ordered newest-first above, so the first row for a module is the live one.
@@ -20766,6 +20785,9 @@ def curriculum_teams_meeting_summary(request):
             if clean_str(item.get('status')).lower() not in TEAMS_OFF_CALENDAR_OCCURRENCE_STATUSES
         ]
         occurrences_by_module[module_id] = occurrences
+        # Keep saved, non-cancelled invitations that were removed from the
+        # teaching plan available to the notice, without changing the verdict.
+        notice_occurrences_by_module[module_id] = occurrences_by_session.get(session_id, [])
         # Sorted by date in its own right, now that the read above is in
         # session order: the next meeting is the soonest one, not the
         # lowest-numbered one.
@@ -20818,12 +20840,17 @@ def curriculum_teams_meeting_summary(request):
         results.append(entry)
 
     if want_occurrence_dates and results:
+        from .holiday_invitation_notice import staff_notice_allowed
+        show_holiday_notice = staff_notice_allowed(request)
         # One grouped comparison for every module in the page rather than one
         # per row: see `teams_calendar_sync_verdicts` for the reads it groups.
         verdicts = teams_calendar_sync_verdicts(
             (entry['moduleCatalogueId'] for entry in results),
             occurrences_by_module,
             occurrences_readable=occurrences_readable,
+            notice_timezones=({entry['moduleCatalogueId']: entry['timeZone'] for entry in results}
+                              if show_holiday_notice else None),
+            notice_occurrences_by_module=notice_occurrences_by_module if show_holiday_notice else None,
         )
         for entry in results:
             verdict = verdicts.get(entry['moduleCatalogueId']) or teams_calendar_sync_verdict(
@@ -20835,6 +20862,10 @@ def curriculum_teams_meeting_summary(request):
             entry['differingOccurrenceCount'] = verdict['differingOccurrences']
             entry['missingFromTeams'] = verdict['missingFromTeams']
             entry['extraInTeams'] = verdict['extraInTeams']
+            if show_holiday_notice and verdict.get('holidayInvitationNotice'):
+                entry['holidayInvitationNotice'] = verdict['holidayInvitationNotice']
+            if show_holiday_notice and verdict.get('holidayInvitationNoticeUnavailable'):
+                entry['holidayInvitationNoticeUnavailable'] = True
             if any(item.get('verified') is False for item in entry.get('calendarSeries') or []):
                 entry['syncState'] = 'unverified'
                 entry['syncReasons'] = [*entry['syncReasons'], 'weekday_series_unverified']
@@ -20842,7 +20873,13 @@ def curriculum_teams_meeting_summary(request):
                 entry['syncState'] = 'unverified'
                 entry['syncReasons'] = [*entry['syncReasons'], 'calendar_verification_pending']
 
-    return curriculum_results_response(results, request=request)
+    response = curriculum_results_response(results, request=request)
+    # This optional staff guidance varies by the authenticated session. Keep
+    # it out of shared/browser caches when another account uses the device.
+    from django.utils.cache import patch_vary_headers
+    response['Cache-Control'] = 'private, no-store'
+    patch_vary_headers(response, ('Cookie',))
+    return response
 
 
 @require_GET
