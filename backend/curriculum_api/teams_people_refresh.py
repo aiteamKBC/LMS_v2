@@ -176,7 +176,10 @@ def refresh_additional_component_people(v, series, values):
     settings = v.as_json_value(raw_settings, {})
     if (not isinstance(settings, dict)
             or settings.get('extraTeamsMeetingUrl') != series.get('join_url')
-            or settings.get('extraTeamsEventId') != series.get('graph_event_id')):
+            or settings.get('extraTeamsEventId') != series.get('graph_event_id')
+            or settings.get('extraTeamsOnlineMeetingId') != series.get('online_meeting_id')
+            or str(settings.get('extraTeamsOrganizerEmail') or '').strip().casefold()
+            != str(series.get('organizer_email') or '').strip().casefold()):
         raise _state_error('additional_binding_unverified',
                            'The additional meeting component has a different calendar identity. Saved people were preserved.')
     elevated = set(values['presenters'] + values['coOrganizers'])

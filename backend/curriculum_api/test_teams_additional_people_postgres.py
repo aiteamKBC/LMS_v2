@@ -36,6 +36,7 @@ class AdditionalMeetingPeopleTests(CurriculumTeamsRequestTestCase):
                        'co_organizers': views.json_db_value([]), 'attendees': views.json_db_value([])}
         views.authoring_upsert(views.LIVE_SESSIONS_TABLE, ['id'], self.series)
         self.original = {'extraTeamsLiveSessionId': self.live_id, 'extraTeamsEventId': 'EVENT',
+                         'extraTeamsOnlineMeetingId': 'ONLINE', 'extraTeamsOrganizerEmail': 'owner@example.invalid',
                          'extraTeamsMeetingUrl': self.join, 'extraTeamsStartDateTimeUtc': '2026-12-16T12:00:00Z',
                          'extraTeamsDurationMinutes': 120, 'teamsOccurrenceId': 'MAIN-OCC-KEEP',
                          'teamsMeetingUrl': 'https://example.invalid/main-keep', 'custom': {'keep': True}}

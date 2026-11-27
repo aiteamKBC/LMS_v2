@@ -112,6 +112,7 @@ class PeopleRefreshTests(SimpleTestCase):
     def test_additional_meeting_updates_its_own_editor_without_changing_the_main_booking(self):
         series = {**self.series, 'status': 'week-meeting', 'meeting_type': 'week-additional'}
         settings = {'extraTeamsLiveSessionId': 'LIVE', 'extraTeamsEventId': 'EVENT', 'extraTeamsMeetingUrl': JOIN,
+                    'extraTeamsOnlineMeetingId': 'ONLINE', 'extraTeamsOrganizerEmail': 'OWNER@example.invalid',
                     'extraTeamsStartDateTimeUtc': '2026-12-16T12:00:00Z', 'extraTeamsDurationMinutes': 120,
                     'extraTeamsPresenters': [], 'extraTeamsCoOrganizers': [], 'extraTeamsAttendees': [],
                     'teamsOccurrenceId': 'MAIN-OCC-KEEP', 'teamsMeetingUrl': 'https://example.invalid/main-keep',
@@ -142,7 +143,8 @@ class PeopleRefreshTests(SimpleTestCase):
         series = {**self.series, 'status': 'week-meeting', 'meeting_type': 'week-additional',
                   'co_organizers': ['tutor@example.invalid'],
                   'attendees': ['learner@example.invalid', 'tutor@example.invalid']}
-        settings = {'extraTeamsLiveSessionId': 'LIVE', 'extraTeamsEventId': 'EVENT', 'extraTeamsMeetingUrl': JOIN}
+        settings = {'extraTeamsLiveSessionId': 'LIVE', 'extraTeamsEventId': 'EVENT', 'extraTeamsMeetingUrl': JOIN,
+                    'extraTeamsOnlineMeetingId': 'ONLINE', 'extraTeamsOrganizerEmail': 'owner@example.invalid'}
         cursor = Mock()
         cursor.__enter__ = Mock(return_value=cursor)
         cursor.__exit__ = Mock(return_value=False)
@@ -160,7 +162,11 @@ class PeopleRefreshTests(SimpleTestCase):
 
     def test_ambiguous_or_foreign_additional_binding_preserves_both_saved_rosters(self):
         series = {**self.series, 'status': 'week-meeting', 'meeting_type': 'week-additional'}
-        for rows in ([], [('ONE', {}), ('TWO', {})], [('ONE', {'extraTeamsMeetingUrl': 'foreign'})]):
+        identity = {'extraTeamsLiveSessionId': 'LIVE', 'extraTeamsEventId': 'EVENT', 'extraTeamsMeetingUrl': JOIN,
+                    'extraTeamsOnlineMeetingId': 'ONLINE', 'extraTeamsOrganizerEmail': 'owner@example.invalid'}
+        for rows in ([], [('ONE', {}), ('TWO', {})], [('ONE', {'extraTeamsMeetingUrl': 'foreign'})],
+                     [('ONE', {**identity, 'extraTeamsOnlineMeetingId': 'FOREIGN'})],
+                     [('ONE', {**identity, 'extraTeamsOrganizerEmail': 'another@example.invalid'})]):
             with self.subTest(rows=rows):
                 cursor = Mock()
                 cursor.__enter__ = Mock(return_value=cursor)
