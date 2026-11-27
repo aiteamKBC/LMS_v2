@@ -730,9 +730,55 @@ class CalendarChecksTests(unittest.TestCase):
         # Microsoft forwarding is forbidden; optional mail uses the LMS.
         self.assertFalse(self.forwards)
 
+    def test_people_save_confirms_legacy_privacy_before_saving_new_attendees(self):
+        self.assertEqual(self.create().status_code, 201)
+        self.events['event-1']['hideAttendees'] = False
+        self.payload.update(peopleOnly=True, invitationsOnly=True,
+                            attendees=['learner@example.invalid', 'new@example.invalid'])
+        held = copy.deepcopy(self.tracked)
+        identities = {key: event['onlineMeeting']['joinUrl'] for key, event in self.events.items()}
+        self.calls.clear()
+        self.headers.clear()
+        result = self.v.curriculum_teams_meeting_schedule(types.SimpleNamespace(method='PATCH'), 'LIVE-SYNTHETIC')
+        self.assertEqual(result.status_code, 200, result)
+        writes = [call for call in self.calls if call[0] != 'GET']
+        self.assertEqual(writes[0], ('PATCH', 'users/organizer%40example.invalid/events/event-1', {'hideAttendees': True}))
+        self.assertTrue(all(call[0] == 'PATCH' and set(call[2]) <= {'hideAttendees', 'attendees'} for call in writes))
+        self.assertIn('new@example.invalid', checks.attendee_addresses(self.events['event-1']['attendees']))
+        self.assertTrue(self.events['event-1']['hideAttendees'])
+        self.assertEqual(self.tracked, held)
+        self.assertEqual({key: event['onlineMeeting']['joinUrl'] for key, event in self.events.items()}, identities)
+        self.assertFalse(self.forwards)
+        self.assertTrue(all(headers == SILENT_INVITE for method, _path, headers, _body in self.headers if method == 'PATCH'))
+
+    def test_weekday_people_save_confirms_legacy_privacy_without_changing_dates(self):
+        self.prepare_weekday_path()
+        self.assertEqual(self.create().status_code, 201)
+        self.events['event-2']['hideAttendees'] = False
+        self.payload.update(peopleOnly=True, invitationsOnly=True,
+                            attendees=['learner@example.invalid', 'new@example.invalid'])
+        self.v.stored_calendar_series = lambda series: series.get('calendar_series') or []
+        held = copy.deepcopy(self.tracked)
+        self.calls.clear()
+        result = self.v.curriculum_teams_meeting_schedule(types.SimpleNamespace(method='PATCH'), 'LIVE-SYNTHETIC')
+        self.assertEqual(result.status_code, 200, result)
+        writes = [call for call in self.calls if call[0] != 'GET']
+        self.assertEqual(writes[0], ('PATCH', 'users/organizer%40example.invalid/events/event-2', {'hideAttendees': True}))
+        self.assertTrue(all(call[0] == 'PATCH' and set(call[2]) <= {'hideAttendees', 'attendees'} for call in writes))
+        self.assertTrue(all(event['hideAttendees'] for event in self.events.values()))
+        self.assertTrue(all('new@example.invalid' in checks.attendee_addresses(event['attendees']) for event in self.events.values()))
+        self.assertEqual(self.tracked, held)
+        self.assertFalse(self.forwards)
+
     def test_privacy_failure_is_not_reported_as_a_request_to_move_session_dates(self):
         self.assertEqual(self.create().status_code, 201)
         self.events['event-1']['hideAttendees'] = False
+        def unconfirmed_privacy(method, path, payload=None, **kwargs):
+            response = self.graph(method, path, payload, **kwargs)
+            if method == 'PATCH' and payload == {'hideAttendees': True}:
+                self.events['event-1']['hideAttendees'] = False
+            return response
+        sys.modules['coach_api.views'].microsoft_graph_request = unconfirmed_privacy
         self.payload.update(peopleOnly=True, invitationsOnly=True,
                             attendees=['learner@example.invalid', 'new@example.invalid'])
         held = copy.deepcopy(self.tracked)
@@ -742,9 +788,10 @@ class CalendarChecksTests(unittest.TestCase):
         self.assertEqual(result.status_code, 409, result)
         self.assertEqual(result['code'], 'teams_attendee_privacy_unconfirmed')
         self.assertIn('Updating session dates does not resolve', result['error'])
-        self.assertFalse([call for call in self.calls if call[0] != 'GET'])
+        self.assertEqual([call[2] for call in self.calls if call[0] != 'GET'], [{'hideAttendees': True}])
         self.assertFalse(self.forwards)
         self.assertEqual(self.tracked, held)
+        self.assertNotIn('new@example.invalid', checks.attendee_addresses(self.events['event-1']['attendees']))
 
     def test_microsoft_forwarding_is_disabled_even_for_one_person(self):
         sent = Mock(return_value={})
@@ -757,6 +804,12 @@ class CalendarChecksTests(unittest.TestCase):
         self.prepare_weekday_path()
         self.assertEqual(self.create().status_code, 201)
         self.events['event-2']['hideAttendees'] = False
+        def unconfirmed_privacy(method, path, payload=None, **kwargs):
+            response = self.graph(method, path, payload, **kwargs)
+            if method == 'PATCH' and payload == {'hideAttendees': True}:
+                self.events['event-2']['hideAttendees'] = False
+            return response
+        sys.modules['coach_api.views'].microsoft_graph_request = unconfirmed_privacy
         self.payload.update(peopleOnly=True, invitationsOnly=True,
                             attendees=['learner@example.invalid', 'new@example.invalid'])
         self.v.stored_calendar_series = lambda series: series.get('calendar_series') or []
@@ -765,8 +818,59 @@ class CalendarChecksTests(unittest.TestCase):
         result = self.v.curriculum_teams_meeting_schedule(types.SimpleNamespace(method='PATCH'), 'LIVE-SYNTHETIC')
         self.assertEqual(result.status_code, 409, result)
         self.assertEqual(result['code'], 'teams_attendee_privacy_unconfirmed')
-        self.assertFalse([call for call in self.calls if call[0] != 'GET'])
+        self.assertEqual([call[2] for call in self.calls if call[0] != 'GET'], [{'hideAttendees': True}])
         self.assertFalse(self.forwards)
+        self.assertTrue(all('new@example.invalid' not in checks.attendee_addresses(event['attendees']) for event in self.events.values()))
+
+    def test_people_save_repairs_omitted_privacy_and_preserves_added_roles(self):
+        self.assertEqual(self.create().status_code, 201)
+        self.events['event-1'].pop('hideAttendees')
+        self.payload.update(peopleOnly=True, invitationsOnly=True,
+                            presenters=['tutor@example.invalid'], coOrganizers=['co@example.invalid'])
+        result = self.v.curriculum_teams_meeting_schedule(types.SimpleNamespace(method='PATCH'), 'LIVE-SYNTHETIC')
+        self.assertEqual(result.status_code, 200, result)
+        self.assertTrue(self.events['event-1']['hideAttendees'])
+        self.assertEqual(self.series[0]['presenters'], ['tutor@example.invalid'])
+        # Existing policy also promotes the presenter to co-organizer.
+        self.assertEqual(self.series[0]['co_organizers'], ['co@example.invalid', 'tutor@example.invalid'])
+        self.assertTrue({'tutor@example.invalid', 'co@example.invalid'} <= checks.attendee_addresses(self.events['event-1']['attendees']))
+
+    def test_people_save_confirms_privacy_on_an_exposed_occurrence(self):
+        self.assertEqual(self.create().status_code, 201)
+        self.instances[0]['hideAttendees'] = False
+        self.payload.update(peopleOnly=True, invitationsOnly=True,
+                            attendees=['learner@example.invalid', 'new@example.invalid'])
+        self.calls.clear()
+        result = self.v.curriculum_teams_meeting_schedule(types.SimpleNamespace(method='PATCH'), 'LIVE-SYNTHETIC')
+        self.assertEqual(result.status_code, 200, result)
+        self.assertTrue(self.instances[0]['hideAttendees'])
+        writes = [call for call in self.calls if call[0] != 'GET']
+        self.assertEqual(writes[0][1].split('/')[-1], self.instances[0]['id'])
+        self.assertEqual(writes[0][2], {'hideAttendees': True})
+        self.assertTrue(all(call[0] == 'PATCH' and set(call[2]) <= {'hideAttendees', 'attendees'} for call in writes))
+
+    def test_schedule_drift_blocks_privacy_repair_and_people_save_before_any_write(self):
+        self.assertEqual(self.create().status_code, 201)
+        self.events['event-1']['hideAttendees'] = False
+        self.instances[0]['end']['dateTime'] = (checks.event_instant(self.instances[0], 'end') + timedelta(minutes=5)).isoformat()
+        self.payload.update(peopleOnly=True, invitationsOnly=True,
+                            attendees=['learner@example.invalid', 'new@example.invalid'])
+        self.calls.clear()
+        result = self.v.curriculum_teams_meeting_schedule(types.SimpleNamespace(method='PATCH'), 'LIVE-SYNTHETIC')
+        self.assertEqual(result.status_code, 409, result)
+        self.assertEqual(result['code'], 'teams_schedule_drift')
+        self.assertFalse([call for call in self.calls if call[0] != 'GET'])
+
+    def test_attendee_calendar_copy_cannot_be_used_for_privacy_repair(self):
+        self.assertEqual(self.create().status_code, 201)
+        self.events['event-1'].update(hideAttendees=False, isOrganizer=False)
+        self.payload.update(peopleOnly=True, invitationsOnly=True,
+                            attendees=['learner@example.invalid', 'new@example.invalid'])
+        self.calls.clear()
+        result = self.v.curriculum_teams_meeting_schedule(types.SimpleNamespace(method='PATCH'), 'LIVE-SYNTHETIC')
+        self.assertEqual(result.status_code, 409, result)
+        self.assertEqual(result['code'], 'teams_attendee_privacy_unconfirmed')
+        self.assertFalse([call for call in self.calls if call[0] != 'GET'])
 
     def test_save_invitations_sends_nothing_even_to_the_person_it_added(self):
         """"Save invitations" only saves who is invited.
