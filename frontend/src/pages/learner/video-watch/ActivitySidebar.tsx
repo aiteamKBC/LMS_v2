@@ -187,6 +187,12 @@ export function ActivitySidebar({
     : 'Current week';
   const contentAvailableFor = canOpen || hasComponentContent;
   const openableFor = canOpen || ((c: JourneyComponent) => hasComponentContent(c) && isNavigableComponent(c));
+  const londonMasterclasses = weeks.flatMap((week, index) => {
+    if (!/\blondon\b.*\bmaster\s*class\b/i.test(week.week.replace(/\s+/g, ' '))) return [];
+    const available = week.components.filter(openableFor);
+    const recording = available.find(component => component.type === 'video') || available[0];
+    return recording ? [{ week, index, recording }] : [];
+  });
   const hasUnavailableContent = weekComponents.some((c) => !contentAvailableFor(c));
   const deliveryRanges = sidebarWeekRanges(weeks, plannedModule?.curriculumSlots);
   const rangeLabel = (index: number) => {
@@ -224,6 +230,24 @@ export function ActivitySidebar({
   return (
     <aside aria-label="Module activities" tabIndex={scrollWithinViewport ? 0 : undefined}
       className={`min-w-0 space-y-4 lg:sticky lg:top-4 ${scrollWithinViewport ? 'lg:max-h-[calc(100dvh-2rem)] lg:overflow-y-auto lg:pr-1' : ''}`}>
+      {londonMasterclasses.length > 0 && <section aria-label="London Master Class" className="rounded-xl border border-primary-200 bg-primary-50 px-4 py-3 shadow-sm">
+        <h3 className="text-sm font-bold text-primary-900">London Master Class</h3>
+        <p className="mt-1 text-xs text-primary-700">Recordings and slides in this module.</p>
+        <div className="mt-3 space-y-2">
+          {londonMasterclasses.map(({ week, index, recording }) => <button
+            key={week.weekId || week.key || `${index}:${week.week}`}
+            type="button"
+            aria-label={`Open ${displayWeekLabel(index)}`}
+            aria-disabled={!accessOpen || undefined}
+            onClick={() => accessOpen ? navigate(routeFor(recording, week.week)) : onAccessBlocked?.()}
+            className="flex min-h-11 w-full items-center gap-2 rounded-lg border border-primary-200 bg-white px-3 py-2 text-left text-primary-800 transition-colors hover:bg-primary-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+          >
+            <AppIcon className="ri-play-circle-line text-lg" />
+            <span className="min-w-0 flex-1"><span className="block text-xs font-semibold">{week.week}</span><span className="block text-[11px]">Open recordings and slides</span></span>
+            <AppIcon className="ri-arrow-right-line" />
+          </button>)}
+        </div>
+      </section>}
       {webPoints.error && <p role="status" className="text-xs text-amber-800">Point grouping could not load. Activities are shown below. <button type="button" onClick={webPoints.refresh} className="underline">Retry Points</button></p>}
       {legendItems.length > 0 && <section aria-label="Activity type key" className="rounded-xl border border-primary-100 bg-white px-4 py-3 shadow-sm">
         <p className="text-[10px] font-bold uppercase tracking-wider text-primary-900">Activity types</p>
