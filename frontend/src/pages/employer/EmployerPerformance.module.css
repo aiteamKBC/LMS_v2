@@ -23,7 +23,7 @@
 .chartHeader p, .chartNote { margin-top: 4px !important; color: var(--muted); font-size: 11px; line-height: 1.4; }
 .chartHeader label { display: flex; flex-direction: column; gap: 5px; max-width: 300px; min-width: 180px; color: var(--muted); font-size: 12px; }
 .chartHeader select { width: 100%; padding: 9px 12px; border: 1px solid var(--line); border-radius: 10px; color: var(--ink); background: var(--surface); }
-.columnCanvas { --plot-height: 64px; display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 8px; margin-top: 8px; }
+.columnCanvas { --plot-height: 220px; display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 8px; margin-top: 8px; }
 .columnAxis { position: relative; height: var(--plot-height); margin-top: 18px; color: var(--muted); font-size: 10px; }
 .columnAxis span { position: absolute; right: 0; transform: translateY(50%); }
 .columnScroll { min-width: 0; overflow-x: auto; padding-top: 18px; padding-bottom: 4px; overscroll-behavior-x: contain; }
@@ -47,7 +47,10 @@
 .columnWell { position: relative; display: flex; justify-content: center; height: var(--plot-height); }
 .columnBar, .columnZero { position: absolute; bottom: 0; width: 100%; background: var(--bar); border-radius: 3px 3px 0 0; }
 .columnZero { height: 2px; }
-.columnOutsideValue { position: absolute; color: var(--ink); font-size: 10px; font-weight: 650; line-height: 1; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.columnValue { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%) rotate(-90deg); color: var(--employer-on-primary); font-size: 10px; font-weight: 650; line-height: 1; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.columnSeries[data-series='1'] .columnValue { color: var(--employer-on-gold); }
+.columnValue[data-outside] { top: auto; bottom: calc(100% + 4px); transform: translateX(-50%) rotate(180deg); writing-mode: vertical-rl; }
+.columnSeries .columnValue[data-outside] { color: var(--ink); }
 .columnMissing { position: absolute; bottom: 5px; color: var(--muted); font-size: 10px; }
 @container (max-width: 560px) {
   .columnCanvas { grid-template-columns: 24px minmax(0, 1fr); gap: 6px; }

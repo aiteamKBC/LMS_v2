@@ -43,17 +43,29 @@ function curvePath(offset: number, width: number) {
 type LearnerPosition = { pin: JourneyPin; learner: EmployerLearnerCard };
 const sortPins = (a: LearnerPosition, b: LearnerPosition) => (a.pin.percent ?? 0) - (b.pin.percent ?? 0)
   || a.learner.name.localeCompare(b.learner.name) || learnerKey(a.learner).localeCompare(learnerKey(b.learner));
-function pinLanes(pins: LearnerPosition[], width: number, offset: number, ends: number[]) {
-  return pins.map(({ pin }) => {
-    const anchor = progressX(pin.percent ?? 0, width);
-    const center = Math.max(64, Math.min(width - 64, anchor));
-    const left = offset + Math.min(center - 60, anchor - 18);
-    const right = offset + Math.max(center + 60, anchor + 18);
-    const available = ends.findIndex(end => end + 12 <= left);
-    const lane = available < 0 ? ends.length : available;
-    ends[lane] = right;
-    return lane;
-  });
+function pinHeights(segments: { pins: LearnerPosition[]; parallelPins: LearnerPosition[]; width: number; offset: number }[], parallel = false) {
+  const positions = segments.flatMap(segment => (parallel ? segment.parallelPins : segment.pins).map(position => {
+    const anchor = progressX(position.pin.percent ?? 0, segment.width);
+    const center = Math.max(53, Math.min(segment.width - 53, anchor));
+    return { position, left: segment.offset + center - 45, right: segment.offset + center + 45 };
+  })).sort((a, b) => sortPins(a.position, b.position));
+  const heights = new Map<LearnerPosition, number>();
+  const placed: { left: number; right: number; height: number }[] = [];
+  let previousHeight = 24, previousPercent = 0;
+  for (const { position, left, right } of positions) {
+    const value = position.pin.percent ?? 0;
+    // A common vertical scale keeps higher progress above lower progress even
+    // where the road curves downward. Make room for names in crowded groups.
+    let height = previousHeight + (value - previousPercent) * 2;
+    for (const other of placed) {
+      if (left < other.right + 8 && right + 8 > other.left) height = Math.max(height, other.height + 72);
+    }
+    heights.set(position, height);
+    placed.push({ left, right, height });
+    previousHeight = height;
+    previousPercent = value;
+  }
+  return heights;
 }
 
 function LearnerPin({ pin, learner, left, top, fieldWidth }: {
@@ -102,8 +114,6 @@ function LearnerPin({ pin, learner, left, top, fieldWidth }: {
       aria-describedby={position ? id : undefined} onMouseEnter={show} onMouseLeave={hide} onFocus={show} onBlur={hide} onClick={show}>
       <span className={styles.pinName}><span>{learner.name}</span></span>
       <span className={styles.pinHead}><span>{initials(learner.name) || '?'}</span></span>
-      <span className={styles.pinCaption}>{pin.state === 'skipped' && <SkipForward size={10} aria-hidden="true" />}
-        {pin.percent == null ? '?' : percent(pin.percent)}{pin.state === 'next' ? ' · Next' : pin.state === 'parallel' ? ' · Parallel' : ''}</span>
     </button>
     {position && createPortal(<div id={id} role="tooltip" className={styles.tooltip}
       style={{ left: position.left, top: position.top, maxHeight: position.maxHeight, transform: position.above ? 'translateY(-100%)' : undefined }}
@@ -187,8 +197,8 @@ function HolidayMarker({ holidays, year, left, top }: { holidays: JourneyHoliday
   </>;
 }
 
-function JourneyPinField({ title, pins, width, lanes, laneOffset, layoutKey, parallel = false, curved = false, holidays = [], year }: {
-  title: string; pins: LearnerPosition[]; width: number; lanes: number[]; laneOffset: number; layoutKey: string; parallel?: boolean; curved?: boolean;
+function JourneyPinField({ title, pins, width, heights, laneOffset, layoutKey, parallel = false, curved = false, holidays = [], year }: {
+  title: string; pins: LearnerPosition[]; width: number; heights: number[]; laneOffset: number; layoutKey: string; parallel?: boolean; curved?: boolean;
   holidays?: JourneyHoliday[]; year: number;
 }) {
   const field = useRef<HTMLDivElement>(null);
@@ -229,11 +239,11 @@ function JourneyPinField({ title, pins, width, lanes, laneOffset, layoutKey, par
     {pins.map(({ pin, learner }, index) => {
       const value = pin.percent ?? 0;
       const left = xAt(value);
-      const top = (curved ? yAt(value) - 55 : 30 + laneOffset) - lanes[index] * (curved ? 176 : 128);
+      const top = 40 + laneOffset - heights[index];
       const railTop = curved ? yAt(value) : 75 + laneOffset;
       return <Fragment key={learnerKey(learner)}>
-        {lanes[index] > 0 && <span className={styles.pinConnector} aria-hidden="true"
-          style={{ left, top: top + 40, height: railTop - top - 40 }} />}
+        <span className={styles.pinConnector} aria-hidden="true"
+          style={{ left, top: top + 40, height: railTop - top - 40 }} />
         <LearnerPin pin={pin} learner={learner} left={left} top={top} fieldWidth={geometry.width} />
       </Fragment>;
     })}
@@ -275,22 +285,24 @@ export function EmployerJourneyTimeline({ employerId, learners, filtered, record
   const holidays = annualJourneyHolidays(filtered, schedules.records, `${year}-01-01`, `${year}-12-31`);
   const programmes = [...new Set(filtered.map(learner => learner.programme).filter(Boolean))];
   const skipped = model.rows.filter(row => row.pins.some(pin => pin.state === 'skipped' && (!moduleId || pin.id === moduleId))).length;
-  const laneEnds: number[] = [];
-  const parallelLaneEnds: number[] = [];
   let moduleOffset = 0;
-  const segments = modules.map(module => {
+  const positionedSegments = modules.map(module => {
     const pins = model.rows.flatMap(row => row.pins.filter(pin => pin.id === module.id).map(pin => ({ pin, learner: row.learner })))
       .sort(sortPins);
     const parallelPins = model.rows.flatMap(row => row.parallelPins.filter(pin => pin.id === module.id).map(pin => ({ pin, learner: row.learner })))
       .sort(sortPins);
     const width = Math.max(270, Math.max(pins.length, parallelPins.length) * 96 + 48);
-    const lanes = pinLanes(pins, width, moduleOffset, laneEnds);
-    const parallelLanes = pinLanes(parallelPins, width, moduleOffset, parallelLaneEnds);
+    const offset = moduleOffset;
     moduleOffset += width + 4;
-    return { module, pins, parallelPins, width,
-      lanes, parallelLanes };
+    return { module, pins, parallelPins, width, offset };
   });
-  const laneOffset = Math.max(0, ...segments.flatMap(segment => [...segment.lanes, ...segment.parallelLanes])) * (curved ? 176 : 128);
+  const mainHeights = pinHeights(positionedSegments);
+  const parallelHeights = pinHeights(positionedSegments, true);
+  const segments = positionedSegments.map(segment => ({ ...segment,
+    heights: segment.pins.map(position => mainHeights.get(position)!),
+    parallelHeights: segment.parallelPins.map(position => parallelHeights.get(position)!),
+  }));
+  const laneOffset = Math.max(0, ...mainHeights.values(), ...parallelHeights.values());
   const hasParallel = segments.some(segment => segment.parallelPins.length);
   const unplacedLearners = model.rows.filter(row => row.status !== 'ready' || !row.entries.length);
   const [scroll, setScroll] = useState({ previous: false, next: false });
@@ -332,7 +344,7 @@ export function EmployerJourneyTimeline({ employerId, learners, filtered, record
     {loading && <LoadingSkeleton label="Loading learner journey timeline" />}
     {modules.length > 0 ? <div ref={viewport} id={scrollId} className={styles.viewport} onScroll={measure} role="region" aria-label={curved ? 'Curved modules learner journey' : 'All modules learner journey'} tabIndex={0}>
       <div className={styles.canvas} style={{ gridTemplateColumns: segments.map(segment => `minmax(${segment.width}px, 1fr)`).join(' '), minWidth: `${segments.reduce((sum, segment) => sum + segment.width, 0) + Math.max(0, segments.length - 1) * 4 + 40}px` }}>
-          {segments.map(({ module, pins, width, lanes }, index) => {
+          {segments.map(({ module, pins, width, heights }, index) => {
             const known = module.entries.filter(entry => entry.percent != null);
             const average = known.length ? known.reduce((sum, entry) => sum + entry.percent!, 0) / known.length : null;
             const complete = known.length === module.entries.length && known.every(entry => entry.percent === 100);
@@ -344,15 +356,15 @@ export function EmployerJourneyTimeline({ employerId, learners, filtered, record
               <p className={styles.dates}>{dateRange(module.start, module.end)}</p>
               <div className={styles.moduleStats}><span><strong>{percent(average)}</strong> Hours average{known.length !== module.entries.length && ` (${known.length}/${module.entries.length})`}</span><span>{complete || started ? <Check size={14} /> : <Circle size={13} />}{complete ? 'Complete' : started ? 'In progress' : known.length !== module.entries.length ? 'Progress unavailable' : 'Not started'}</span></div>
               </div>
-              <JourneyPinField title={module.title} pins={pins} width={width} lanes={lanes} laneOffset={laneOffset} layoutKey={moduleIds} curved={curved} holidays={holidays} year={year} />
+              <JourneyPinField title={module.title} pins={pins} width={width} heights={heights} laneOffset={laneOffset} layoutKey={moduleIds} curved={curved} holidays={holidays} year={year} />
             </article>;
           })}
           {hasParallel && <>
             <div className={styles.parallelHeading}><GitFork size={18} aria-hidden="true" /><div><h3>Parallel study timeline</h3><p>Overlapping modules in progress · Each module keeps its own progress</p></div></div>
-            {segments.map(({ module, parallelPins, width, parallelLanes }) => <article key={`parallel:${module.id}`} className={styles.moduleSegment}
+            {segments.map(({ module, parallelPins, width, parallelHeights }) => <article key={`parallel:${module.id}`} className={styles.moduleSegment}
               style={{ '--module-hue': module.hue } as CSSProperties} aria-label={`${module.title} parallel journey segment`}>
               <div className={styles.parallelModuleHeader}><h4 title={module.title}>{module.title}</h4><span>{parallelPins.length} learner{parallelPins.length === 1 ? '' : 's'}</span></div>
-              <JourneyPinField title={module.title} pins={parallelPins} width={width} lanes={parallelLanes} laneOffset={laneOffset} layoutKey={moduleIds} parallel curved={curved} year={year} />
+              <JourneyPinField title={module.title} pins={parallelPins} width={width} heights={parallelHeights} laneOffset={laneOffset} layoutKey={moduleIds} parallel curved={curved} year={year} />
             </article>)}
           </>}
       </div>
