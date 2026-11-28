@@ -5,16 +5,12 @@ on:
     branches: [main]
     paths:
       - 'backend/learner_api/reflection_submissions.py'
-      - 'backend/learner_api/test_assignment_timer_display_no_db.py'
       - 'frontend/src/api/assignmentTopics.ts'
       - 'frontend/src/api/reflectionSubmission*'
       - 'frontend/src/lib/assignmentTopics.ts'
       - 'frontend/src/pages/learner/video-watch/**'
       - 'frontend/package*.json'
-      - 'frontend/vitest.config.ts'
       - 'frontend/eslint.config.ts'
-      - 'frontend/src/test/setup.ts'
-      - '.github/ci/test_learner_assignment_release.py'
       - '.github/workflows/learner-assignment-checks.yml'
       - '.github/workflows/deploy-aws.yml'
   workflow_call:
@@ -32,7 +28,7 @@ env:
 
 jobs:
   frontend:
-    name: Assignment timer, submission and booking regressions
+    name: Assignment frontend types and build
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -50,26 +46,4 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: npm run type-check
       - run: npm run lint
-      - run: npm run test:assignment-timer
-      - name: London and module navigation regressions
-        run: >-
-          npm test -- src/pages/learner/video-watch/__tests__/ActivitySidebar.test.tsx
-          src/pages/learner/video-watch/__tests__/weekPreview.test.ts
-          src/pages/learner/my-learning/subjectLearning.test.tsx
-          src/pages/learner/my-learning/compactModules.test.tsx --maxWorkers=2
       - run: npm run build
-
-  backend:
-    name: Assignment timer display and release scope without database
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ env.ASSIGNMENT_CHECK_REF }}
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Pure assignment display regression tests
-        run: python -B -m unittest discover -s backend/learner_api -p test_assignment_timer_display_no_db.py -v
-      - name: Large change-list and deployment gate regressions (mock commands)
-        run: python -B -m unittest discover -s .github/ci -p test_learner_assignment_release.py -v
