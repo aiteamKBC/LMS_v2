@@ -6,10 +6,15 @@ import { MigratedMeetingIntelligence } from './MigratedMeetingIntelligence';
 const api = vi.hoisted(() => ({
   fetch: vi.fn(),
   save: vi.fn(),
+  pdf: vi.fn(),
 }));
 vi.mock('@/api/reviewInstances', () => ({
   fetchMigratedReviewIntelligence: api.fetch,
   saveMigratedMeetingSummary: api.save,
+}));
+vi.mock('@/api/coachReviewTranscriptPdf', () => ({ loadCoachReviewTranscriptPdf: api.pdf }));
+vi.mock('@/pages/learner/monthly-submission/AssignmentPdfPreview', () => ({
+  AssignmentPdfPreview: ({ label }: { label: string }) => <section aria-label={label} />,
 }));
 
 const id = 'imported-review:C5-TEST-MCM-20261002-001';
@@ -22,6 +27,7 @@ const empty = {
 beforeEach(() => {
   api.fetch.mockReset().mockResolvedValue(empty);
   api.save.mockReset();
+  api.pdf.mockReset().mockResolvedValue(new Blob(['%PDF-synthetic'], { type: 'application/pdf' }));
 });
 afterEach(cleanup);
 
@@ -120,10 +126,11 @@ describe('independent imported resources', () => {
     expect(screen.getByText(/Call-end confirmation is still pending/)).toBeVisible();
     expect(screen.queryByRole('button', { name: /Play/ })).not.toBeInTheDocument();
   });
-  it('previews the saved content of an off-window transcript inside Review Details', async () => {
-    const preview = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: true,
-      text: async () => 'WEBVTT\n\n00:00.000 --> 00:02.000\nVerified off-window decisions',
-    } as Response);
+  it('previews the saved off-window transcript as a PDF inside Review Details', async () => {
+    vi.stubGlobal('URL', class extends URL {
+      static createObjectURL = vi.fn(() => 'blob:review-transcript');
+      static revokeObjectURL = vi.fn();
+    });
     try {
       api.fetch.mockResolvedValue({ ...empty,
         event: { scheduledDate: '2026-10-24', scheduledTime: '10:00', status: 'in-progress' },
@@ -132,12 +139,12 @@ describe('independent imported resources', () => {
         intelligence: { ...empty.intelligence, transcriptStatus: 'available' },
       });
       render(<MigratedMeetingIntelligence instanceId={id} family="aptem_mcm" status="in-progress" viewAs={false} />);
-      fireEvent.click(await screen.findByRole('button', { name: 'Preview' }));
-      expect(await screen.findByText('Verified off-window decisions')).toBeVisible();
-      expect(preview).toHaveBeenCalledWith(expect.stringContaining('/artifacts/transcript/combined/content'),
-        expect.objectContaining({ credentials: 'include' }));
+      fireEvent.click(await screen.findByRole('button', { name: 'Preview PDF' }));
+      expect(await screen.findByRole('region', { name: 'Transcript PDF preview' })).toBeVisible();
+      expect(api.pdf).toHaveBeenCalledWith(id, 'combined', expect.any(AbortSignal));
     } finally {
-      preview.mockRestore();
+      cleanup();
+      vi.unstubAllGlobals();
     }
   });
   it('keeps incomplete resource enumeration visible as pending', async () => {

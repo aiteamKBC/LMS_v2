@@ -22,10 +22,8 @@ This seeds, per programme lacking one:
     real Curriculum sections/fields -- so the coach-facing form does not go
     blank the day this ships.
   * a Progress Review template (12 week interval, unlimited occurrences)
-    with no fields yet -- Progress Review's coach-facing "form" today is the
-    slide/PPTX pack plus a single sign-off, not a question set (see
-    progress_reviews_api), so there is nothing existing to port. A
-    Curriculum admin adds fields for it when ready.
+    with the next-meeting booking confirmation. A Curriculum admin can add
+    further fields for it when ready.
 
 Both retain the Coach interval and eligibility defaults. New MCM templates
 require coach and learner signatures so the completed meeting can be exported
@@ -41,6 +39,7 @@ from django.core.management.base import BaseCommand
 from ... import review_types
 from ... import reviews
 from ... import views as curriculum_views
+from ...next_review_booking_question import PR_SECTIONS, QUESTION, SEMANTIC_KEY
 
 
 def _agreement_field(field_id, title):
@@ -182,7 +181,9 @@ MCM_SECTIONS = [
         "title": "Confirm Next Meeting & Close (5 minutes)",
         "estimatedMinutes": 5,
         "fields": [
-            _yes_no_field("Please confirm that the next session has been booked through the coaching booking system."),
+            {**_yes_no_field(QUESTION), "configuration": {
+                "semanticKey": SEMANTIC_KEY, "respondentRoles": ["participant"],
+            }},
             _date_field("The date for the next coaching session is"),
         ],
     },
@@ -200,7 +201,6 @@ MCM_SECTIONS = [
         ],
     },
 ]
-
 
 def _template_payload(name, *, interval, unit, sections, review_type_id):
     return {
@@ -249,7 +249,7 @@ class Command(BaseCommand):
         for programme_id in programme_ids:
             for code, name, interval, unit, sections in (
                 (review_types.REVIEW_TYPE_CODE_MCM, "Monthly Coaching Meeting", 1, "months", MCM_SECTIONS),
-                (review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW, "Progress Review", 12, "weeks", []),
+                (review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW, "Progress Review", 12, "weeks", PR_SECTIONS),
             ):
                 type_id = type_ids.get(code)
                 if not type_id:

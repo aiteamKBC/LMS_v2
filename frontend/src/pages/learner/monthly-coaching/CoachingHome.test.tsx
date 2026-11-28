@@ -157,6 +157,39 @@ describe('coaching learner navigation and actions', () => {
     expect(within(selected.getByText('Booked meeting').parentElement!).getByText('No LMS booking recorded')).toBeInTheDocument();
     expect(within(selected.getByText('Review completed').parentElement!).getByText('Thu, 19 Nov 2026')).toBeInTheDocument();
   });
+  it.each(['aptem', 'curriculum'] as const)('shows the LMS completion date for a completed %s review', reviewSource => {
+    const row = session(`completed-${reviewSource}`, '2026-09-14', {
+      reviewSource, status: 'completed', reviewCompletedAt: '2026-09-14T23:30:00Z',
+      importedReview: reviewSource === 'aptem' ? importedReview('Completed in LMS', '2026-09-14') : undefined,
+    });
+    mount({ sessions: [row], today: '2026-09-16' });
+
+    fireEvent.click(within(screen.getByRole('region', { name: 'Monthly coaching programme timeline' })).getAllByRole('button')[0]);
+    const selected = within(screen.getByRole('article', { name: 'Selected coaching meeting' }));
+    expect(selected.getByText('Completed')).toBeInTheDocument();
+    expect(within(selected.getByText('Review completed').parentElement!).getByText('Tue, 15 Sept 2026')).toBeInTheDocument();
+  });
+  it('uses the completed form date when the calendar completion date has not loaded', () => {
+    const row = session('native-completed', '2026-09-14', { status: 'completed', reviewCompletedAt: null });
+    const definition = signatureDefinition();
+    definition.instance.status = 'completed';
+    definition.instance.completedAt = '2026-09-14T23:30:00Z';
+    definition.signatures.participant.signed = true;
+    mount({ sessions: [row], reviews: { [row.eventKey]: definition }, today: '2026-09-16' });
+
+    fireEvent.click(within(screen.getByRole('region', { name: 'Monthly coaching programme timeline' })).getAllByRole('button')[0]);
+    const selected = within(screen.getByRole('article', { name: 'Selected coaching meeting' }));
+    expect(within(selected.getByText('Review completed').parentElement!).getByText('Tue, 15 Sept 2026')).toBeInTheDocument();
+  });
+  it('does not label a review complete while signatures are still pending', () => {
+    const row = session('awaiting-signature', '2026-09-14', {
+      status: 'awaiting-signature', reviewCompletedAt: '2026-09-14T23:30:00Z',
+    });
+    mount({ sessions: [row], today: '2026-09-16' });
+
+    fireEvent.click(within(screen.getByRole('region', { name: 'Monthly coaching programme timeline' })).getAllByRole('button')[0]);
+    expect(within(screen.getByRole('article', { name: 'Selected coaching meeting' })).queryByText('Review completed')).not.toBeInTheDocument();
+  });
   it('labels a locally saved meeting time without claiming a failed calendar sync was booked', () => {
     mount({ sessions: [session('imported-review:pending', '2026-11-19', {
       reviewSource: 'aptem', targetDate: '2026-04-29', calendarEventKey: 'imported-review:pending',

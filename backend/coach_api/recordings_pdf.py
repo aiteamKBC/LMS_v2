@@ -319,6 +319,22 @@ def lecture_transcript_pdf(lecture, parts):
     return _render(record, {}, None, 'transcript', lecture=lecture, turns=turns)
 
 
+def review_transcript_pdf(record, turns, *, window=None):
+    """Render authorised coach Review turns with the Coaching Session layout."""
+    source = SimpleNamespace(
+        owner_email=record.owner_email,
+        calendar_window=window or session_window(record),
+    )
+    context = {
+        'learnerName': record.learner_name,
+        'session': {
+            'meeting_subject': 'Monthly Coaching Meeting' if record.event_type == 'mcr' else 'Progress Review',
+            'case_owner': record.owner_name or record.owner_email,
+        },
+    }
+    return _render(source, {}, context, 'transcript', turns=turns)
+
+
 def evidence_pdf(record, evidence, *, kind, analysis=None):
     """Call only after current authorization and same-occurrence source selection."""
     if kind == 'transcript' and len(evidence.get('analyses') or []) == 1:

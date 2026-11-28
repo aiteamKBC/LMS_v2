@@ -2,7 +2,7 @@ import { useLearnerReviewInstance, type LearnerReviewInstanceState } from './Lea
 export type { LearnerReviewInstanceState } from './LearnerReviewInstanceForm.helpers';
 import { renderImportedSection } from './imported/renderImportedSection';
 import { ImportedValue } from './imported/ImportedReviewSection';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { ReviewFormRenderer } from '@/components/reviews/ReviewFormRenderer';
 import { computeMissingRequiredFieldsForRole, computeVisibleRequiredFields, computeVisibleWritableFieldIds, computeWritableFieldIds } from "@/components/reviews/ReviewFormRenderer.helpers";
@@ -21,6 +21,8 @@ import { LearnerLogs } from '@/features/monthly-logs/page';
 import monthlyLogDesign from '@/features/old-otjh/design.module.css';
 import monthlyLogJournal from '@/features/old-otjh/journal.module.css';
 import monthlyLogStyles from '@/features/monthly-logs/monthlyLogs.module.css';
+import { isNextMeetingQuestion, reviewBookingFamily } from '@/pages/shared/nextReviewBooking';
+import { NextReviewBookingLink } from '@/pages/shared/NextReviewBookingLink';
 
 function savedLearnerSignatureKey(name: string): string {
   return `learner-review-signature:${name.trim().toLowerCase() || 'learner'}`;
@@ -55,7 +57,7 @@ function seedAnswersFromDefinition(definition: LearnerReviewDefinition): Record<
 
 export function LearnerReviewInstanceForm({
   definition: incomingDefinition, onSign, onDownload, signatoryName = 'Learner',
-  viewerRole = 'participant', onSaveAnswers, mcmMonthlyLog, monthlyLogSync, onRetryMonthlyLogSignature,
+  viewerRole = 'participant', onSaveAnswers, mcmMonthlyLog, monthlyLogSync, onRetryMonthlyLogSignature, canBookNext = false, onBookNext, nextBookingFeedback,
 }: {
   definition: LearnerReviewDefinition;
   onSign?: (signature: string, options?: { applyMonthlyLogSignature?: boolean }) => Promise<void>;
@@ -72,6 +74,9 @@ export function LearnerReviewInstanceForm({
   mcmMonthlyLog?: { id: string; month: string; contractKind: LearnerKind };
   monthlyLogSync?: MonthlyLogSignatureSync;
   onRetryMonthlyLogSignature?: () => Promise<void>;
+  canBookNext?: boolean;
+  onBookNext?: (currentInstanceId: string) => void;
+  nextBookingFeedback?: ReactNode;
 }) {
   const [savedPersonalSupport, setSavedPersonalSupport] = useState<LearnerReviewDefinition | null>(null);
   useEffect(() => setSavedPersonalSupport(null), [incomingDefinition]);
@@ -343,6 +348,13 @@ export function LearnerReviewInstanceForm({
         showSavedAnswerStatus
         openSectionId={openSectionId}
         onOpenSectionChange={setOpenSectionId}
+        renderFieldFooter={(field) => {
+          const code = definition.template.reviewTypeCode;
+          const family = reviewBookingFamily(code);
+          if (!family || !canBookNext || !onBookNext || viewerRole !== 'participant' || !isNextMeetingQuestion(field, code)
+              || String(answers[field.id] || '').toLowerCase() !== 'no') return null;
+          return <NextReviewBookingLink family={family} onBook={() => onBookNext(definition.instance.id)} feedback={nextBookingFeedback} />;
+        }}
       />
 
       <div ref={signatureSection} tabIndex={-1} aria-label={signatureFreePersonalSupport ? 'Review documents' : 'Signature step'} className="scroll-mt-6 space-y-3 rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500">

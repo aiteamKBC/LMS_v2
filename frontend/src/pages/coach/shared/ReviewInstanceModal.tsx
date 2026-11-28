@@ -39,14 +39,21 @@ import {
   type ReviewReopenReasonCode,
 } from '@/api/reviewInstances';
 import { ModalHeader, ModalShell } from './ModalHeader';
-import { formatDateLabel } from './calendarEvents';
+import { fetchCoachCalendarEvents, formatDateLabel, type CoachCalendarEvent } from './calendarEvents';
+import ImportedReviewBookingDialog from './ImportedReviewBookingDialog';
+import { CoachNextReviewBookingDialog } from './CoachNextReviewBookingDialog';
+import { normalizeResolvedReviews } from './resolvedReviewRows';
 import { SignaturePad } from '@/pages/users/wizard/steps/SignaturePad';
 import { useAuth } from "@/hooks/useAuth";
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { useImportedMeetingJoin } from './useImportedMeetingJoin';
 import { MigratedMeetingIntelligence } from './MigratedMeetingIntelligence';
 import { CoachMeetingArtifactsPanel } from './CoachMeetingArtifactsPanel';
+import { EvidencePdfActions } from '@/pages/coaching-recordings/SavedEvidencePdf';
+import { loadPreviousReviewTranscriptPdf } from '@/api/coachReviewTranscriptPdf';
 import { MigratedSummaryActions } from './MigratedSummaryActions';
+import { isNextMeetingQuestion, nextReviewBooking, reviewBookingFamily } from '@/pages/shared/nextReviewBooking';
+import { NextReviewBookingLink } from '@/pages/shared/NextReviewBookingLink';
 import type { CoachMeetingArtifactsResponse } from './calendarEvents';
 import { adoptExistingMigratedMeeting, canInitializeMigratedReview } from './importedReviewBooking';
 
@@ -219,9 +226,8 @@ function reviewTypeLabel(definition: ReviewInstanceFormDefinition) {
  * per-Review-type hard-coded form. The header always shows the Review's
  * live Curriculum name (`definition.template.name`), never a fixed string.
  *
- * Deliberately does not touch scheduling/Teams/calendar state -- this modal
- * only reads/writes the Review's own answers via the review instance API;
- * the calendar event it was opened from is untouched here.
+ * Reads and writes the Review's answers through the review instance API.
+ * The next-meeting action opens the booking dialog for the next calendar event.
  */
 export function ReviewInstanceModal(props: Omit<Parameters<typeof ReviewInstanceContent>[0], 'coachIdentity'>) {
   const coachIdentity = useCoachIdentity();
@@ -260,6 +266,29 @@ function ReviewInstanceContent({
   const { auth } = useAuth();
   const isViewingAsCoach = coachIdentity.isViewingAsCoach;
   const [definition, setDefinition] = useState<ReviewInstanceFormDefinition | null>(null);
+  const [nextBookingEvent, setNextBookingEvent] = useState<CoachCalendarEvent | null>(null);
+  const [nextBookingNotice, setNextBookingNotice] = useState('');
+  const [findingNextBooking, setFindingNextBooking] = useState(false);
+  const findingNextBookingRef = useRef(false);
+  const bookNextMeeting = async (currentInstanceId: string) => {
+    if (isViewingAsCoach || findingNextBookingRef.current) return;
+    findingNextBookingRef.current = true;
+    setFindingNextBooking(true);
+    setNextBookingNotice('');
+    try {
+      const calendar = await fetchCoachCalendarEvents(undefined, {
+        includeLiveSessions: false, includeSchedulerQueues: false,
+      });
+      const result = nextReviewBooking(normalizeResolvedReviews(calendar.events || []), currentInstanceId);
+      if (result.kind === 'book') setNextBookingEvent(result.event);
+      else setNextBookingNotice(result.kind === 'booked' ? 'The next review is already booked.' : result.reason);
+    } catch (reason) {
+      setNextBookingNotice(reason instanceof Error ? reason.message : 'Unable to load the next review booking.');
+    } finally {
+      findingNextBookingRef.current = false;
+      setFindingNextBooking(false);
+    }
+  };
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
   const answersRef = useRef<Record<string, unknown>>({});
   const savedAnswersRef = useRef<Record<string, unknown>>({});
@@ -389,6 +418,7 @@ function ReviewInstanceContent({
   const [previousSession, setPreviousSession] = useState<PreviousReviewSession | null>(null);
   const [previousSessionLoading, setPreviousSessionLoading] = useState(false);
   const [previousSessionOpen, setPreviousSessionOpen] = useState(false);
+  const [previousSessionRevision, setPreviousSessionRevision] = useState(0);
   const [previousSessionError, setPreviousSessionError] = useState<string | null>(null);
   const previousSessionRequestRef = useRef<AbortController | null>(null);
   const expandSummaryButtonRef = useRef<HTMLButtonElement>(null);
@@ -891,6 +921,7 @@ function ReviewInstanceContent({
       const previous = await fetchPreviousReviewSession(definition.instance.id, controller.signal);
       if (controller.signal.aborted || previousSessionRequestRef.current !== controller) return;
       setPreviousSession(previous);
+      setPreviousSessionRevision(value => value + 1);
       setPreviousSessionOpen(previous.available);
     } catch (err) {
       if (controller.signal.aborted || previousSessionRequestRef.current !== controller || isAbortError(err)) return;
@@ -1329,13 +1360,17 @@ function ReviewInstanceContent({
                     )}
 
                     {previousSession.transcriptAvailable ? (
-                      <details open className="rounded-xl border border-background-200 bg-background-50 p-3">
-                        <summary className="cursor-pointer text-[12px] font-bold text-foreground-800">Session transcript</summary>
-                        <pre aria-label="Previous session transcript" className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-background-200 bg-white p-3 text-[12px] leading-5 text-foreground-700">{previousSession.transcriptText}</pre>
-                        {previousSession.transcriptTruncated ? (
-                          <p className="mt-2 text-[11px] leading-5 text-amber-700">This transcript is truncated to keep the review responsive.</p>
-                        ) : null}
-                      </details>
+                      <div className="rounded-xl border border-background-200 bg-background-50 p-3">
+                        <p className="mb-3 text-[12px] font-bold text-foreground-800">Session transcript</p>
+                        <EvidencePdfActions
+                          key={`${definition.instance.id}:${previousSessionRevision}`}
+                          kind="transcript"
+                          filename="previous-review-transcript.pdf"
+                          previewFilename="Previous session - full transcript.pdf"
+                          autoPreview
+                          loadPdf={signal => loadPreviousReviewTranscriptPdf(definition.instance.id, signal)}
+                        />
+                      </div>
                     ) : (
                       <p className="rounded-xl border border-background-200 bg-background-50 px-3 py-2 text-[12px] text-foreground-600">
                         No stored transcript is available for this session.
@@ -1400,6 +1435,14 @@ function ReviewInstanceContent({
                 )) : undefined}
               openSectionId={openSectionId}
               onOpenSectionChange={setOpenSectionId}
+              renderFieldFooter={(field) => {
+                const code = definition.template.reviewTypeCode;
+                const family = reviewBookingFamily(code);
+                if (!family || !isNextMeetingQuestion(field, code) || String(answers[field.id] || '').toLowerCase() !== 'no'
+                    || isViewingAsCoach || definition.previewOnly) return null;
+                return <NextReviewBookingLink family={family} busy={findingNextBooking} feedback={nextBookingNotice && <p role="status" className="mt-2 font-semibold">{nextBookingNotice}</p>}
+                  onBook={() => { void bookNextMeeting(definition.instance.id); }} />;
+              }}
               renderFieldAddon={(field) => field.configuration?.semanticKey === 'meeting_summary' ? (
                 definition.migratedForm || isMigratedTemplatePreview ? (migratedSummaryBinding?.fieldKey === field.id ? <MigratedSummaryActions
                   instanceId={definition.instance.id} binding={migratedSummaryBinding}
@@ -1624,9 +1667,26 @@ function ReviewInstanceContent({
     </>
   );
 
+  const nextBookingDialog = nextBookingEvent && (
+    nextBookingEvent.reviewSource === 'aptem' || nextBookingEvent.aptemReviewId
+      ? <ImportedReviewBookingDialog key={nextBookingEvent.eventKey || nextBookingEvent.id}
+          event={nextBookingEvent} viewingAsCoach={isViewingAsCoach}
+          onClose={() => setNextBookingEvent(null)}
+          onSaved={(_updated, notice, options) => {
+            setNextBookingNotice(notice);
+            if (!options?.keepOpen) setNextBookingEvent(null);
+          }} />
+      : <CoachNextReviewBookingDialog key={nextBookingEvent.eventKey || nextBookingEvent.id}
+          event={nextBookingEvent} onClose={() => setNextBookingEvent(null)}
+          onBooked={(_updated, warning) => {
+            setNextBookingNotice(warning || 'The next review has been booked.');
+            setNextBookingEvent(null);
+          }} />
+  );
+
   if (pageMode) {
-    return <div className="mx-auto w-full max-w-[1500px] overflow-hidden rounded-3xl border border-background-200 bg-white shadow-[0_18px_50px_rgba(44,24,78,0.08)]">{content}</div>;
+    return <><div className="mx-auto w-full max-w-[1500px] overflow-hidden rounded-3xl border border-background-200 bg-white shadow-[0_18px_50px_rgba(44,24,78,0.08)]">{content}</div>{nextBookingDialog}</>;
   }
 
-  return <ModalShell busy={busy} onClose={onClose}>{content}</ModalShell>;
+  return <><ModalShell busy={busy} onClose={onClose}>{content}</ModalShell>{nextBookingDialog}</>;
 }

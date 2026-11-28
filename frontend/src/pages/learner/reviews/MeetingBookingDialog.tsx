@@ -11,11 +11,13 @@ import {
 } from '@/api/learnerCalendar';
 import { bookingDateRestrictionMessage, bookingInstant, bookingToday, firstAvailableBookingDate, parseBookingDay } from './bookingDates';
 import { aptemBookingSnapshot, editableBookingNotes, isAptemReview, occupiesBookingSlot } from './meetingBooking';
+import ProgrammeReviewTimeline, { type TimelineReview } from './ProgrammeReviewTimeline';
 import styles from './meetingBooking.module.css';
 
 /** A list card supplies identity and optional initial values. The dialog
  * resolves the full authorized calendar event before allowing a booking. */
 export type MeetingBookingSession = Pick<LearnerCalendarEvent, 'id' | 'eventKey' | 'source'> & Partial<LearnerCalendarEvent>;
+export type MeetingBookingJourney = { currentId: string; items: TimelineReview[]; sessions: LearnerCalendarEvent[] };
 
 type Props = {
   session: MeetingBookingSession;
@@ -23,6 +25,8 @@ type Props = {
   learner: { kind: LearnerKind; id: string };
   rules: BookingCalendarRules | null;
   attendance?: MeetingAttendance;
+  journey?: MeetingBookingJourney;
+  onSwitchJourneySession?: (id: string) => void;
   onClose: () => void;
   onBooked: (response: BookSessionResponse) => void;
 };
@@ -89,7 +93,7 @@ export default function MeetingBookingDialog(props: Props) {
   return <BookingFormBoundary onClose={props.onClose}><MeetingBookingForm {...props} /></BookingFormBoundary>;
 }
 
-function MeetingBookingForm({ session, title, learner, rules, attendance, onClose, onBooked }: Props) {
+function MeetingBookingForm({ session, title, learner, rules, attendance, journey, onSwitchJourneySession, onClose, onBooked }: Props) {
   const dialog = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   const descriptionId = useId();
@@ -114,6 +118,7 @@ function MeetingBookingForm({ session, title, learner, rules, attendance, onClos
   const [coachAvailabilityError, setCoachAvailabilityError] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [pendingSwitchId, setPendingSwitchId] = useState<string | null>(null);
   const submitting = useRef(false);
   const edited = useRef({ date: false, time: false, duration: false, notes: false });
   const mounted = useRef(false);
@@ -320,24 +325,53 @@ function MeetingBookingForm({ session, title, learner, rules, attendance, onClos
   }
 
   const plannedDate = session.targetDate || session.date;
-  const sessionLabel = `${monthly ? 'Monthly Coaching Meeting' : curriculumReview ? (session.reviewTypeName || session.title || 'Review') : 'Progress Review'}${plannedDate ? ` · ${new Date(`${plannedDate}T12:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}` : ''}`;
+  const journeyCurrentIndex = journey?.items.findIndex(item => item.id === journey.currentId) ?? -1;
+  const journeyTargetIndex = journey?.items.findIndex(item => item.id === session.id) ?? -1;
+  const bookingJourney = monthly && journey && journeyCurrentIndex >= 0 && journeyTargetIndex >= 0 ? journey : null;
+  const currentNumber = bookingJourney?.items[journeyCurrentIndex]?.sequence ?? journeyCurrentIndex + 1;
+  const targetNumber = bookingJourney?.items[journeyTargetIndex]?.sequence ?? journeyTargetIndex + 1;
+  const switchJourneySession = (id: string) => {
+    if (id === session.id) { setPendingSwitchId(null); return; }
+    if (!onSwitchJourneySession || saving) return;
+    if (Object.values(edited.current).some(Boolean)) setPendingSwitchId(id);
+    else onSwitchJourneySession(id);
+  };
+  const sessionLabel = `${monthly ? `Monthly Coaching Meeting${bookingJourney ? ` (MCM ${targetNumber})` : ''}` : curriculumReview ? (session.reviewTypeName || session.title || 'Review') : 'Progress Review'}${plannedDate ? ` · ${new Date(`${plannedDate}T12:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}` : ''}`;
   const calendarHref = `/learner/calendar?kind=${encodeURIComponent(learner.kind)}&learner=${encodeURIComponent(learner.id)}&connect=calendar`;
   const canSubmit = !loading && !saving && !availabilityLoading && !coachAvailabilityLoading && !loadError
     && (!reviewBooking || (!coachAvailabilityError && reviewAvailabilityTimes.includes(time)
       && !(connections.length > 0 && availabilityError)))
     && !dateRestriction && !bookingConflict && Boolean(target && date && time);
-  return createPortal(<dialog ref={dialog} aria-labelledby={titleId} aria-describedby={descriptionId} className={styles.dialog}
+  return createPortal(<dialog ref={dialog} aria-labelledby={titleId} aria-describedby={descriptionId} className={`${styles.dialog}${bookingJourney ? ` ${styles.dialogWithJourney}` : ''}`}
     onCancel={event => { event.preventDefault(); close(); }} onClick={event => { if (event.target === event.currentTarget) close(); }}>
     <form onSubmit={submit} aria-busy={loading || saving}>
       <header className={styles.header}>
         <div><p className={styles.eyebrow}>{monthly ? 'Monthly coaching booking' : curriculumReview ? 'Curriculum review booking' : 'Progress review booking'}</p>
-          <h2 id={titleId}>{isExisting ? 'Reschedule' : 'Book'} {meetingType}</h2>
-          <p id={descriptionId} className={styles.description}>Choose the day and time for {title}.</p></div>
+          <h2 id={titleId}>{bookingJourney ? `${isExisting ? 'Reschedule' : 'Book'} MCM ${targetNumber}` : `${isExisting ? 'Reschedule' : 'Book'} ${meetingType}`}</h2>
+          <p id={descriptionId} className={styles.description}>{bookingJourney ? 'Choose a date and time for your next coaching meeting.' : `Choose the day and time for ${title}.`}</p></div>
         <button type="button" aria-label="Close booking dialog" className={styles.close} onClick={close} disabled={saving}><AppIcon className="ri-close-line" /></button>
       </header>
-      <label className={styles.session}>Session<select aria-label="Session" value={session.id} onChange={() => undefined} disabled={saving}>
+      <div className={bookingJourney ? styles.bookingLayout : undefined}>
+        {bookingJourney && <aside className={styles.journey} aria-label="Monthly coaching journey">
+          <div className={styles.journeySummary}>
+            <span><small>Current review</small><strong>MCM {currentNumber}</strong></span>
+            <span className={styles.journeyArrow} aria-hidden="true">→</span>
+            <span><small>Selected meeting</small><strong>MCM {targetNumber}</strong></span>
+          </div>
+          {pendingSwitchId && <div className={styles.switchPrompt} role="alert">
+            <p>Changing meetings will clear the date, time, duration and notes entered here.</p>
+            <div><button type="button" onClick={() => setPendingSwitchId(null)}>Keep editing</button>
+              <button type="button" onClick={() => onSwitchJourneySession?.(pendingSwitchId)}>Switch meeting</button></div>
+          </div>}
+          <ProgrammeReviewTimeline label="Monthly coaching" items={bookingJourney.items} activeId={bookingJourney.currentId} targetId={session.id} targetLabel="Selected" onSelect={onSwitchJourneySession ? switchJourneySession : undefined} showStatus scrollToActive compact />
+        </aside>}
+        <div className={bookingJourney ? styles.bookingDetails : undefined}>
+      {bookingJourney ? <div className={styles.sessionSummary} role="group" aria-label="Selected meeting">
+        <span>{isExisting ? 'Meeting to reschedule' : 'Session to book'}</span><strong>Monthly Coaching Meeting · MCM {targetNumber}</strong>
+        {plannedDate && <small>Planned for {new Date(`${plannedDate}T12:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</small>}
+      </div> : <label className={styles.session}>Session<select aria-label="Session" value={session.id} onChange={() => undefined} disabled={saving}>
         <option value={session.id}>{sessionLabel}</option>
-      </select></label>
+      </select></label>}
       {rescheduling && target && <p role="note" className={styles.description}>Current booking: {target.scheduledDate} at {target.scheduledTime} UK time · {target.durationMinutes || 60} minutes. Select an available replacement below.</p>}
       <div className={styles.fields}>
         <label>Date<input aria-label="Day" type="date" required min={bookingToday()} value={date} disabled={saving || Boolean(loadError)} onChange={event => { edited.current.date = true; setDate(event.target.value); setTime(''); setError(''); }} /></label>
@@ -384,6 +418,8 @@ function MeetingBookingForm({ session, title, learner, rules, attendance, onClos
         <button type="button" onClick={close} disabled={saving}>Cancel</button>
         <button type="submit" aria-label={saving ? 'Saving' : isExisting ? 'Save new time' : 'Book session'} className={styles.primary} disabled={!canSubmit}>{saving ? 'Saving…' : isExisting ? 'Save new time' : 'Send request'}</button>
       </footer>
+        </div>
+      </div>
     </form>
   </dialog>, document.body);
 }

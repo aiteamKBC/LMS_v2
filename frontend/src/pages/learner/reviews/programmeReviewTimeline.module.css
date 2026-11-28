@@ -26,10 +26,13 @@
 .step:first-child::before { left: 50%; }
 .step:last-child::before { right: 50%; }
 .stepLink { position: relative; display: flex; width: 100%; min-height: 82px; flex-direction: column; align-items: center; padding: 0 5px; border: 0; border-radius: var(--lms-radius, 16px); background: transparent; color: inherit; font: inherit; cursor: pointer; }
-.stepLink:hover .marker { transform: translateY(-3px); box-shadow: 0 0 0 2px var(--tone-ring), 0 6px 15px #19314e2b; }
+.step:not([data-readonly="true"]) .stepLink:hover .marker { transform: translateY(-3px); box-shadow: 0 0 0 2px var(--tone-ring), 0 6px 15px #19314e2b; }
+.step[data-readonly="true"] .stepLink { cursor: default; }
 .step[data-active="true"]:not([data-selection="marker"]) .stepLink { background: #f8f3ff; box-shadow: 0 0 0 2px #a77bd9, 0 7px 20px #6e42a333; }
 .step[data-active="true"]:not([data-selection="marker"]) .date { box-shadow: 0 2px 9px #6e42a326; }
 .step[data-active="true"]:not([data-selection="marker"]) .marker { transform: translateY(-2px) scale(1.1); box-shadow: 0 0 0 3px var(--tone-ring), 0 0 0 7px #aa83dd35, 0 5px 14px #6e42a344; }
+.step[data-target="true"] .stepLink { background: #eef5ff; box-shadow: 0 0 0 2px #6b9bda; }
+.targetBadge { margin-top: 3px; color: #245a9b; font-size: 9px; font-weight: 800; line-height: 1.15; }
 .date { display: block; width: 100%; min-height: 22px; padding: 2px 3px; border-radius: var(--lms-radius, 16px); background: var(--tone); color: var(--tone-ink); font-size: 10px; font-weight: 700; line-height: 18px; white-space: nowrap; }
 .marker { display: grid; place-items: center; width: 30px; height: 30px; flex-shrink: 0; margin-top: 6px; border: 3px solid #fff; border-radius: 50%; background: var(--tone); box-shadow: 0 0 0 2px var(--tone-ring), 0 2px 5px #19314e24; color: var(--tone-ink); transition: transform 150ms, box-shadow 150ms; }
 .title { display: block; max-width: 100%; margin-top: 6px; color: #243b57; font-size: 10px; font-weight: 700; line-height: 1.2; }
@@ -49,5 +52,28 @@
 :global(:is(.dark, [data-theme="dark"])) .step::before { background: #506078; }
 :global(:is(.dark, [data-theme="dark"])) .marker { border-color: #192a40; }
 :global(:is(.dark, [data-theme="dark"])) .step[data-active="true"]:not([data-selection="marker"]) .stepLink { background: #302849; }
+:global(:is(.dark, [data-theme="dark"])) .step[data-target="true"] .stepLink { background: #213b58; }
+:global(:is(.dark, [data-theme="dark"])) .targetBadge { color: #b3d2ff; }
 :global(:is(.dark, [data-theme="dark"])) .scrollControls button { border-color: #35465f; background: #213049; color: #c4a5fa; }
+.compact { display: flex; min-height: 0; flex: 1; flex-direction: column; margin: 0; padding: 0; border: 0; background: transparent; }
+.compact .heading { align-items: center; padding-bottom: 10px; }
+.compact .heading h2 { font-size: 14px; }
+.compact .scroll { min-height: 0; flex: 1; margin: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior-y: contain; padding: 4px 5px; scrollbar-color: #b9c5d5 transparent; scrollbar-width: thin; }
+.compact .scroll::-webkit-scrollbar { width: 7px; }
+.compact .scroll::-webkit-scrollbar-thumb { border-radius: 999px; background: #b9c5d5; }
+.compact .steps { position: relative; width: 100%; min-width: 0; flex-direction: column; gap: 8px; padding: 3px 4px 6px; }
+.compact .steps::before { position: absolute; top: 28px; bottom: 31px; left: 23px; width: 2px; background: #dce3ec; content: ''; }
+.compact .step { width: 100%; flex: none; text-align: left; }
+.compact .step::before { display: none; }
+.compact .stepLink { display: grid; min-height: 50px; grid-template-columns: 25px minmax(0, 1fr) auto; grid-template-areas: "marker title date" "marker status date" "marker badge date"; align-items: center; column-gap: 8px; padding: 5px 7px; }
+.compact .step:not([data-readonly="true"]) .stepLink:hover { box-shadow: inset 0 0 0 1px #8159b3; }
+.compact .marker { grid-area: marker; box-sizing: border-box; width: 24px; height: 24px; margin: 0; border-width: 2px; }
+.compact .marker svg { width: 12px; height: 12px; }
+.compact .date { grid-area: date; width: auto; min-height: 0; padding: 2px 5px; font-size: 9px; line-height: 16px; }
+.compact .title { grid-area: title; margin: 0; font-size: 12px; }
+.compact .status { grid-area: status; margin: 0; font-size: 10px; }
+.compact .targetBadge { grid-area: badge; margin: 0; }
+.compact .legend { display: none; }
+:global(:is(.dark, [data-theme="dark"])) .compact { background: transparent; }
+:global(:is(.dark, [data-theme="dark"])) .compact .steps::before { background: #506078; }
 @media (max-width: 600px) { .timeline { padding: 10px 12px 8px; } .heading { flex-wrap: wrap; } .scroll { margin-top: 10px; } }

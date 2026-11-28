@@ -11,13 +11,25 @@ import { LearnerReviewInstanceForm } from '@/pages/learner/reviews/LearnerReview
 import { adoptMigratedReviewBooking, calculateMigratedReviewProgress, fetchCoachReviewSlots, rescheduleMigratedReview } from '@/api/reviewInstances';
 import { reopenMigratedReview, downloadMigratedReviewRevision } from '@/api/reviewInstances';
 import { bookMigratedReview, calculateReviewInstanceProgress, completeMigratedReview, completeReviewInstance, downloadReviewInstancePdf, fetchPreviousReviewSession, fetchReviewInstanceForm, generateMigratedReviewPdf, generateReviewMeetingSummary, initializeMigratedReview, reopenReviewInstance, saveReviewInstanceAnswers, signMigratedReviewAsCoach, signReviewInstance, startMigratedReview, submitMigratedReview, type ReviewInstanceFormDefinition, type ReviewProgressSnapshot } from '@/api/reviewInstances';
+import { loadPreviousReviewTranscriptPdf } from '@/api/coachReviewTranscriptPdf';
+import { NEXT_MEETING_QUESTION } from '@/pages/shared/nextReviewBooking';
 
 const account = vi.hoisted(() => ({ name: 'Sam Coach' }));
 const coachMode = vi.hoisted(() => ({ email: 'coach@example.invalid', isInitialized: true, isViewingAsCoach: false }));
 const nativeArtifacts = vi.hoisted(() => vi.fn());
+const nextCalendar = vi.hoisted(() => vi.fn());
 vi.mock('./calendarEvents', async importOriginal => ({
   ...await importOriginal<typeof import('./calendarEvents')>(),
   fetchCoachMeetingArtifacts: nativeArtifacts,
+  fetchCoachCalendarEvents: nextCalendar,
+}));
+vi.mock('./CoachNextReviewBookingDialog', () => ({
+  CoachNextReviewBookingDialog: ({ event }: { event: { eventKey?: string } }) =>
+    <div role="dialog" aria-label="Next coach booking">{event.eventKey}</div>,
+}));
+vi.mock('./ImportedReviewBookingDialog', () => ({
+  default: ({ event }: { event: { eventKey?: string } }) =>
+    <div role="dialog" aria-label="Next imported booking">{event.eventKey}</div>,
 }));
 vi.mock('@/features/monthly-logs/page', () => ({ LearnerLogs: () => null }));
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ auth: { user: { fullName: account.name } } }) }));
@@ -32,6 +44,7 @@ vi.mock('@/api/reviewInstances', async (importOriginal) => ({
   reopenMigratedReview: vi.fn(), downloadMigratedReviewRevision: vi.fn(),
   submitMigratedReview: vi.fn(), signMigratedReviewAsCoach: vi.fn(), completeMigratedReview: vi.fn(), generateMigratedReviewPdf: vi.fn(),
 }));
+vi.mock('@/api/coachReviewTranscriptPdf', () => ({ loadPreviousReviewTranscriptPdf: vi.fn() }));
 vi.mock('@/pages/users/wizard/steps/SignaturePad', () => ({
   SignaturePad: ({ signatoryName, onCommit }: { signatoryName: string; onCommit: (signature: string) => void }) => <div>
     <p>Signing as {signatoryName}</p><button type="button" onClick={() => onCommit('data:image/png;base64,c2ln')}>Confirm coach signature</button>
@@ -111,6 +124,8 @@ function mount(instanceId = 'instance-1') {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  nextCalendar.mockResolvedValue({ events: [] });
+  vi.mocked(loadPreviousReviewTranscriptPdf).mockImplementation(() => new Promise(() => {}));
   nativeArtifacts.mockResolvedValue({ artifacts: [], attendance: null, meetingSummary: null });
   vi.mocked(fetchCoachReviewSlots).mockResolvedValue(['09:00', '10:00', '10:30', '11:00', '12:00', '14:30', '15:00']);
   account.name = 'Sam Coach';
@@ -134,6 +149,51 @@ beforeEach(() => {
 });
 
 describe('Native Review Teams resources', () => {
+  it.each([
+    ['mcm', 'mcr'],
+    ['progress_review', 'progress-review'],
+  ] as const)('opens the next %s booking inside the review after answering No', async (family, source) => {
+    const data = definition('scheduled');
+    data.template.reviewTypeCode = family;
+    data.sections = [{ id: 'confirm-next', title: 'Confirm Next Meeting & Close (5 minutes)',
+      estimatedMinutes: 5, displayOrder: 0, enabled: true,
+      fields: [{ id: 'next-booked', title: NEXT_MEETING_QUESTION,
+        fieldType: family === 'mcm' ? 'boolean_case_block' : 'boolean',
+        required: true, displayOrder: 0, configuration: {}, answer: null }] }];
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(data);
+    nextCalendar.mockResolvedValue({ events: [
+      { id: 'current-1', eventKey: 'current-1', reviewInstanceId: 'instance-1', source,
+        learnerId: 12, reviewTemplateId: 'template-1', occurrenceNumber: 1, targetDate: '2026-09-14', status: 'scheduled' },
+      { id: 'next-2', eventKey: 'next-2', source, learnerId: 12, reviewTemplateId: 'template-1',
+        occurrenceNumber: 2, targetDate: '2026-10-14', status: 'not-scheduled' },
+    ] });
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: 'no' }));
+    fireEvent.click(screen.getByRole('button', { name: /Book next/ }));
+    expect(await screen.findByRole('dialog', { name: 'Next coach booking' })).toHaveTextContent('next-2');
+    expect(screen.getByRole('button', { name: 'no' })).toBeInTheDocument();
+  });
+
+  it('opens the existing Aptem booking dialog for the next imported MCM', async () => {
+    const data = migratedDefinition('scheduled');
+    data.template.reviewTypeCode = 'aptem_mcm';
+    data.sections = [{ id: 'confirm-next', title: 'Confirm Next Meeting & Close (5 minutes)',
+      estimatedMinutes: 5, displayOrder: 0, enabled: true,
+      fields: [{ id: 'next-booked', title: NEXT_MEETING_QUESTION, fieldType: 'boolean_case_block',
+        required: true, displayOrder: 0, configuration: { migrated: true }, answer: null }] }];
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(data);
+    nextCalendar.mockResolvedValue({ events: [
+      { id: data.instance.id, eventKey: data.instance.id, source: 'mcr', reviewSource: 'aptem',
+        importedReviewType: 'Monthly Coaching Meeting', learnerId: 12, status: 'scheduled', targetDate: '2026-09-14' },
+      { id: 'imported-review:next', eventKey: 'imported-review:next', source: 'mcr', reviewSource: 'aptem',
+        importedReviewType: 'Monthly Coaching Meeting', learnerId: 12, status: 'not-scheduled', targetDate: '2026-10-14' },
+    ] });
+    mount(data.instance.id);
+    fireEvent.click(await screen.findByRole('button', { name: 'no' }));
+    fireEvent.click(screen.getByRole('button', { name: /Book next/ }));
+    expect(await screen.findByRole('dialog', { name: 'Next imported booking' })).toHaveTextContent('imported-review:next');
+  });
+
   it.each(['mcr', 'progress-review', 'review'])('checks the linked %s meeting without losing unsaved answers', async source => {
     const data = definition('scheduled');
     data.calendarMeeting = { eventKey: 'native:exact-meeting', source, status: 'scheduled',
@@ -1318,7 +1378,13 @@ describe('coach review page presentation', () => {
 
     await waitFor(() => expect(fetchPreviousReviewSession).toHaveBeenCalledWith('instance-1', expect.any(AbortSignal)));
     expect(await screen.findByText('Prior coaching summary.')).toBeVisible();
-    expect(screen.getByLabelText('Previous session transcript')).toHaveTextContent('Coach: Let us review the agreed action.');
+    expect(screen.queryByText(/Coach: Let us review the agreed action/)).not.toBeInTheDocument();
+    await waitFor(() => expect(loadPreviousReviewTranscriptPdf).toHaveBeenCalledWith('instance-1', expect.any(AbortSignal)));
+    expect(screen.getByRole('dialog', { name: 'Transcript PDF' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Close PDF preview' }));
+    const transcript = screen.getByLabelText('Transcript PDF');
+    expect(within(transcript).getByRole('button', { name: 'Preview PDF' })).toBeVisible();
+    expect(within(transcript).getByRole('button', { name: 'Download PDF' })).toBeVisible();
   });
 
   it.each(['MCM', 'PR', 'PR_SKILLS_RADAR'] as const)('loads Aptem %s context without occurrence numbers or changing draft answers', async (family) => {

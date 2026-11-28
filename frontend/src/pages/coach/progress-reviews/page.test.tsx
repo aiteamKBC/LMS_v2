@@ -136,6 +136,17 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 describe('progress review list navigation and filters', () => {
+  it('opens booking for the next Progress Review from a review confirmation link', async () => {
+    fetchEvents.mockResolvedValue({ events: [
+      review(41, { learnerId: '41', reviewInstanceId: 'REVI-41', occurrenceNumber: 1,
+        status: 'completed', targetDate: '2026-09-01' }),
+      review(42, { learnerId: '41', occurrenceNumber: 2, targetDate: '2026-12-01' }),
+    ] });
+    mount('/coach/progress-reviews?bookNextAfter=REVI-41');
+    const dialog = await screen.findByRole('dialog', { name: 'Schedule progress review' });
+    expect(within(dialog).getByText('Learner 42')).toBeVisible();
+  });
+
   it.each(['Progress Review', 'Progress Review (+ Skills Radar)', 'Personal Support Plan'])('starts %s from its row Join action', async type => {
     fetchEvents.mockResolvedValue({ events: [review(31, { eventKey: 'imported-review:31', reviewSource: 'aptem',
       importedReviewType: type, reviewTemplateId: null, status: 'scheduled', scheduledDate: '2026-09-14',

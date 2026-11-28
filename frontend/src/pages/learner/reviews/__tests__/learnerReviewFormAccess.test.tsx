@@ -13,8 +13,8 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import MonthlyCoachingPage from '../../monthly-coaching/page';
-import ProgressReviewsPage from '../../progress-reviews/page';
+import MonthlyCoachingPage, { MonthlyCoachingListPage } from '../../monthly-coaching/page';
+import ProgressReviewsPage, { ProgressReviewsListPage } from '../../progress-reviews/page';
 import { CurriculumReviewPage } from '../curriculumReviews';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { ToastProvider } from '@/hooks/useToast';
@@ -23,6 +23,7 @@ import type { LearnerCalendarEvent, LearnerReviewDefinition } from '@/api/learne
 import { LearnerReviewInstanceForm } from '../LearnerReviewInstanceForm';
 import { useLearnerReviewInstance } from "../LearnerReviewInstanceForm.helpers";
 import type { ReviewInstanceFormDefinition } from '@/api/reviewInstances';
+import { NEXT_MEETING_QUESTION } from '@/pages/shared/nextReviewBooking';
 
 const access = vi.hoisted(() => ({ canProgress: true }));
 const viewer = vi.hoisted(() => ({ role: 'learner', subjectId: 12 }));
@@ -43,6 +44,12 @@ vi.mock('@/hooks/useMyLearner', () => ({
 }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({
   WorkspaceShell: ({ children }: { children: React.ReactNode }) => <main>{children}</main>,
+}));
+vi.mock('../MeetingBookingDialog', () => ({
+  default: ({ session, journey }: { session: { id: string }; journey?: { currentId: string; items: { id: string; sequence?: number | null }[] } }) => <div role="dialog" aria-label="Book meeting">
+    <output data-testid="booking-session">{session.id}</output>
+    {journey && <output data-testid="booking-journey">{journey.currentId} to {session.id}: {journey.items.map(item => `MCM ${item.sequence}`).join(', ')}</output>}
+  </div>,
 }));
 
 const SCHEDULED_MCM = 'mcr:12:1:2026-09-03';
@@ -243,6 +250,60 @@ const mountProgressReview = (id: string) => render(
 );
 
 describe('Learner Review View opens the generic Curriculum form', () => {
+  it('opens the next MCM booking dialog for the learner from the confirmation link', async () => {
+    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })}>
+      <MemoryRouter initialEntries={['/learner/monthly-coaching?bookNextAfter=REVI-1']}>
+        <Routes><Route path="/learner/monthly-coaching" element={<MonthlyCoachingListPage />} /></Routes>
+      </MemoryRouter>
+    </QueryClientProvider>);
+    const dialog = await screen.findByRole('dialog', { name: 'Book meeting' });
+    expect(within(dialog).getByTestId('booking-session')).toHaveTextContent(UNSCHEDULED_MCM);
+  });
+
+  it('opens the next Progress Review booking dialog for the learner from the confirmation link', async () => {
+    const nextId = 'progress-review:12:2:2026-12-10';
+    events.push(event({ id: nextId, source: 'progress-review', type: 'review',
+      reviewTemplateId: 'REV-2', reviewTypeCode: 'progress_review', reviewTypeName: 'Progress Review',
+      sequence: 2, occurrenceNumber: 2, status: 'not-scheduled',
+      date: '2026-12-10', targetDate: '2026-12-10', scheduledDate: null, scheduledTime: null }));
+    render(<ToastProvider><MemoryRouter initialEntries={['/learner/progress-reviews?bookNextAfter=REVI-2']}>
+      <Routes><Route path="/learner/progress-reviews" element={<ProgressReviewsListPage />} /></Routes>
+    </MemoryRouter></ToastProvider>);
+    const dialog = await screen.findByRole('dialog', { name: 'Book meeting' });
+    expect(within(dialog).getByTestId('booking-session')).toHaveTextContent(nextId);
+  });
+
+  it.each([
+    ['mcm', SCHEDULED_MCM, mountMcm, UNSCHEDULED_MCM],
+    ['progress_review', SCHEDULED_PR, mountProgressReview, 'progress-review:12:2:2026-12-10'],
+  ] as const)('opens the next %s booking inside the review after a No answer', async (family, eventId, mount, nextId) => {
+    if (family === 'progress_review') events.push(event({ id: nextId, source: 'progress-review', type: 'review',
+      reviewTemplateId: 'REV-2', reviewTypeCode: 'progress_review', reviewTypeName: 'Progress Review',
+      sequence: 2, occurrenceNumber: 2, status: 'not-scheduled',
+      date: '2026-12-10', targetDate: '2026-12-10', scheduledDate: null, scheduledTime: null }));
+    reviewDefinition = {
+      ...reviewDefinition,
+      instance: { ...reviewDefinition.instance!, id: family === 'mcm' ? 'REVI-1' : 'REVI-2' },
+      template: { ...reviewDefinition.template, reviewTypeCode: family },
+      sections: [{ id: 'confirm-next', title: 'Confirm Next Meeting & Close (5 minutes)',
+        estimatedMinutes: 5, displayOrder: 0, enabled: true,
+        fields: [{ id: 'next-booked', title: NEXT_MEETING_QUESTION,
+          fieldType: family === 'mcm' ? 'boolean_case_block' : 'boolean',
+          required: true, displayOrder: 0, configuration: {}, answer: 'no' }] }],
+    };
+    mount(eventId);
+    await screen.findByTestId('learner-review-instance-form');
+    const sectionButton = screen.getByRole('button', { name: /Confirm Next Meeting & Close/ });
+    if (sectionButton.getAttribute('aria-expanded') === 'false') fireEvent.click(sectionButton);
+    fireEvent.click(screen.getByRole('button', { name: /Book next/ }));
+    const dialog = await screen.findByRole('dialog', { name: 'Book meeting' });
+    expect(within(dialog).getByTestId('booking-session')).toHaveTextContent(nextId);
+    if (family === 'mcm') expect(within(dialog).getByTestId('booking-journey')).toHaveTextContent(`${eventId} to ${nextId}: MCM 1, MCM 2`);
+    else expect(within(dialog).queryByTestId('booking-journey')).not.toBeInTheDocument();
+    expect(screen.getByTestId('learner-review-instance-form')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'no' })).toBeInTheDocument();
+  });
+
   it('prepares a planned Aptem MCM for the owning learner', async () => {
     const key = 'imported-review:synthetic-mcm';
     events = [event({ id: key, eventKey: key, source: 'mcr', reviewSource: 'aptem',
@@ -841,6 +902,24 @@ describe('Learner Review View opens the generic Curriculum form', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save my answers' }));
 
     expect(onSaveAnswers).toHaveBeenCalledWith({ 'FLD-LEARNER': 'My updated reflection.' });
+  });
+
+  it.each(['mcm', 'progress_review'] as const)('lets the learner answer No and start %s booking', family => {
+    reviewDefinition = definition({ sections: [{ id: 'confirm-next', title: 'Confirm Next Meeting & Close (5 minutes)',
+      estimatedMinutes: 5, displayOrder: 1, enabled: true,
+      fields: [{ id: 'next-booked', title: NEXT_MEETING_QUESTION,
+        fieldType: family === 'mcm' ? 'boolean_case_block' : 'boolean',
+        required: true, displayOrder: 1, configuration: { respondentRoles: ['participant'] }, answer: 'yes' }] }] });
+    reviewDefinition.template.reviewTypeCode = family;
+    const onSaveAnswers = vi.fn().mockResolvedValue(reviewDefinition);
+    const onBookNext = vi.fn();
+    render(<LearnerReviewInstanceForm definition={reviewDefinition} canBookNext onBookNext={onBookNext} onSaveAnswers={onSaveAnswers} />);
+    expect(screen.queryByRole('button', { name: /Book next/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'no' }));
+    fireEvent.click(screen.getByRole('button', { name: /Book next/ }));
+    expect(onBookNext).toHaveBeenCalledWith(reviewDefinition.instance!.id);
+    fireEvent.click(screen.getByRole('button', { name: 'Save my answers' }));
+    expect(onSaveAnswers).toHaveBeenCalledWith({ 'next-booked': 'no' });
   });
 
   it('clearly marks the current respondent questions and required progress', () => {

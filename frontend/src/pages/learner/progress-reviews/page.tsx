@@ -1,6 +1,6 @@
 import { LoadingSkeleton } from '@/components/feature/LoadingSkeleton';
 import { ImportedReviewSection, ImportedValue } from '../reviews/imported/ImportedReviewSection';
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
@@ -10,6 +10,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { needsLearnerMigratedForm } from '@/api/learnerMigratedReview';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
 import { responsesForSection, type ProgressReviewResponses } from '@/pages/shared/progressReviewForm';
+import { nextReviewBooking } from '@/pages/shared/nextReviewBooking';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { isMigratedContinuationEvent, useReviewSessions } from '@/pages/learner/reviews/useReviewSessions';
 import { isoDate } from '@/pages/learner/reviews/bookingDates';
@@ -266,6 +267,10 @@ export function ProgressReviewsListPage() {
 }
 
 function ProgressReviewsList() {
+  const [bookingParams, setBookingParams] = useSearchParams();
+  const bookingAfter = bookingParams.get('bookNextAfter');
+  const handledBookingAfter = useRef('');
+  const [nextBookingMessage, setNextBookingMessage] = useState('');
   const { myLearner, learner, sessions: reviews, setEvents, bookingCalendar, loading, error, refresh } = useReviewSessions('progress-review', true);
   const attendance = useMeetingAttendance(myLearner);
   const [absence, setAbsence] = useState<MeetingAttendance | null>(null);
@@ -277,6 +282,18 @@ function ProgressReviewsList() {
     titleOf: progressReviewTitle, setEvents, refresh: () => { refresh(); attendance.refresh(); },
   });
 
+  useEffect(() => {
+    if (!bookingAfter || loading || handledBookingAfter.current === bookingAfter) return;
+    handledBookingAfter.current = bookingAfter;
+    const result = nextReviewBooking(reviews, bookingAfter);
+    if (!attendance.canAct) setNextBookingMessage('Booking is unavailable in this view.');
+    else if (result.kind === 'book') booking.openBooking(result.event);
+    else setNextBookingMessage(result.kind === 'booked' ? 'The next Progress Review is already booked.' : result.reason);
+    const updated = new URLSearchParams(bookingParams);
+    updated.delete('bookNextAfter');
+    setBookingParams(updated, { replace: true });
+  }, [bookingAfter, bookingParams, setBookingParams, loading, reviews, attendance.canAct, booking]);
+
   return (
     <WorkspaceShell role="learner" roleLabel={learnerNav.label} navItems={learnerNav.items}
       workspaceLabel={learnerNav.workspaceLabel} pageTitle="Progress Reviews"
@@ -285,6 +302,7 @@ function ProgressReviewsList() {
       <main className="page-container min-w-0 w-full space-y-4 p-3 md:p-6">
         {error && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-base text-red-700">{error}<button type="button" onClick={refresh} className="ml-3 min-h-12 font-bold underline">Try again</button></div>}
         {booking.notice}
+        {nextBookingMessage && <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-base text-amber-900">{nextBookingMessage}</p>}
         {attendance.error && <p role="alert" className="rounded-xl bg-red-50 p-4 text-base text-red-700">{attendance.error}<button type="button" onClick={attendance.refresh} className="ml-2 min-h-12 underline">Retry attendance</button></p>}
         {attendance.notice && <p role="status" className="rounded-xl bg-emerald-50 p-4 text-base text-emerald-700">{attendance.notice}</p>}
         {signatures.error && <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-base text-amber-900">Some signature details could not be loaded. Open a review to check its signatures.<button type="button" onClick={signatures.refresh} className="ml-2 min-h-12 underline">Retry signature details</button></p>}
@@ -350,6 +368,13 @@ export default function ProgressReviewsPage() {
   const previousReview = selectedIndex > 0 ? reviews[selectedIndex - 1] : null;
   const booking = useMeetingBooking({ learner: myLearner, rules: bookingCalendar, attendance: attendance.data?.sessions || [],
     titleOf: progressReviewTitle, setEvents, refresh: () => { refresh(); attendance.refresh(); } });
+  const [nextBookingMessage, setNextBookingMessage] = useState('');
+  const bookNextReview = (currentId: string) => {
+    setNextBookingMessage('');
+    const result = nextReviewBooking(reviews, currentId);
+    if (result.kind === 'book') booking.openBooking(result.event);
+    else setNextBookingMessage(result.kind === 'booked' ? 'The next Progress Review is already booked.' : result.reason);
+  };
   const selectedPresentation = selected ? reviewOverview([selected], attendance.data?.sessions || [],
     attendance.data?.today || bookingCalendar?.today || isoDate(new Date()), { [selected.id]: reviewInstance.definition }).all[0] : null;
   const canBook = selectedPresentation?.action === 'schedule';
@@ -414,7 +439,6 @@ export default function ProgressReviewsPage() {
     >
       <div className={`page-container ${styles.page} min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6`}>
         {error && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><AppIcon className="ri-error-warning-line mr-2" />{error}<button type="button" onClick={refresh} className="ml-3 font-bold underline">Try again</button></div>}
-        {booking.notice}
         {booking.dialog}
         {attendance.error && <p role="alert" className="rounded-xl bg-red-50 p-4 text-base text-red-700">{attendance.error}<button type="button" onClick={attendance.refresh} className="ml-2 min-h-12 underline">Retry attendance</button></p>}
 
@@ -516,7 +540,7 @@ export default function ProgressReviewsPage() {
                 </div>
               </section>
 
-              {reviewInstance.loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : reviewInstance.error ? <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{reviewInstance.error}<button type="button" onClick={reviewInstance.refresh} className="ml-2 underline">Retry review</button></p> : reviewInstance.definition ? <LearnerReviewInstanceForm definition={reviewInstance.definition} onDownload={previewImported ? undefined : migratedEvent ? () => downloadMigratedReviewForParty(selected.formEventKey || selected.eventKey || selected.id) : undefined} onSign={canProgress && !previewImported ? saveSignature : undefined} signatoryName={learner?.name || 'Learner'} onSaveAnswers={migratedEvent ? (canProgress && !previewImported ? (answers, version) => saveMigratedReviewPartyAnswers(selected.formEventKey || selected.eventKey || selected.id, answers, version) : undefined) : answers => saveLearnerEventReviewAnswers(myLearner.kind, myLearner.id, selected.eventKey || selected.id, answers)} /> : instanceBacked ? <p className="p-4 text-sm text-foreground-500">This review form is not available.</p> : <>
+              {reviewInstance.loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : reviewInstance.error ? <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{reviewInstance.error}<button type="button" onClick={reviewInstance.refresh} className="ml-2 underline">Retry review</button></p> : reviewInstance.definition ? <LearnerReviewInstanceForm definition={reviewInstance.definition} canBookNext={canProgress && !previewImported} onBookNext={bookNextReview} nextBookingFeedback={booking.notice || nextBookingMessage} onDownload={previewImported ? undefined : migratedEvent ? () => downloadMigratedReviewForParty(selected.formEventKey || selected.eventKey || selected.id) : undefined} onSign={canProgress && !previewImported ? saveSignature : undefined} signatoryName={learner?.name || 'Learner'} onSaveAnswers={migratedEvent ? (canProgress && !previewImported ? (answers, version) => saveMigratedReviewPartyAnswers(selected.formEventKey || selected.eventKey || selected.id, answers, version) : undefined) : answers => saveLearnerEventReviewAnswers(myLearner.kind, myLearner.id, selected.eventKey || selected.id, answers)} /> : instanceBacked ? <p className="p-4 text-sm text-foreground-500">This review form is not available.</p> : <>
               {selected.importedReview ? <div className="space-y-3">
                 {selected.importedReview.sections.map((section, index) => <Accordion key={section.id} id={`imported-section:${section.id}`} title={section.name.replace(/\s+(completed|incomplete)$/i, '').trim()} icon="ri-file-list-3-line" open={openSections.includes(`imported-section:${section.id}`) || (!openSections.some((id) => id.startsWith('imported-section:')) && index === 0)} onToggle={toggleSection}>
                   <ImportedReviewSections review={{ ...selected.importedReview, sections: [section] }} />

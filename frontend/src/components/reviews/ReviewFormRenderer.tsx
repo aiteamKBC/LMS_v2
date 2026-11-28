@@ -43,6 +43,7 @@ interface ReviewFormRendererProps {
   openSectionId: string;
   onOpenSectionChange: (sectionId: string) => void;
   renderFieldAddon?: (field: ReviewFieldDefinition) => ReactNode;
+  renderFieldFooter?: (field: ReviewFieldDefinition) => ReactNode;
   renderFieldInput?: (
     field: ReviewFieldDefinition,
     context: {
@@ -121,6 +122,7 @@ export function ReviewFormRenderer({
   openSectionId,
   onOpenSectionChange,
   renderFieldAddon,
+  renderFieldFooter,
   renderFieldInput,
   renderSectionContent,
   variant = 'accordion',
@@ -136,7 +138,7 @@ export function ReviewFormRenderer({
     .map((field, index) => <ReviewFieldControl key={field.id} field={field} index={index}
       answers={answers} onAnswerChange={onAnswerChange} errors={errors} readOnly={readOnly}
       fieldReadOnly={fieldReadOnly} respondentRole={respondentRole}
-      renderFieldAddon={renderFieldAddon} renderFieldInput={renderFieldInput} />);
+      renderFieldAddon={renderFieldAddon} renderFieldFooter={renderFieldFooter} renderFieldInput={renderFieldInput} />);
   const renderContent = (section: ReviewSectionDefinition) => hasSkillsRadar(section)
     ? <SkillsRadarSection section={section} answers={answers} onAnswerChange={onAnswerChange}
       readOnly={readOnly} fieldReadOnly={fieldReadOnly} respondentRole={respondentRole} />
@@ -326,7 +328,7 @@ export function ReviewFormRenderer({
 }
 
 function ReviewFieldControl({
-  field, index, answers, onAnswerChange, errors, readOnly, fieldReadOnly, respondentRole, renderFieldAddon, renderFieldInput,
+  field, index, answers, onAnswerChange, errors, readOnly, fieldReadOnly, respondentRole, renderFieldAddon, renderFieldFooter, renderFieldInput,
 }: {
   field: ReviewFieldDefinition;
   index: number;
@@ -337,6 +339,7 @@ function ReviewFieldControl({
   fieldReadOnly?: (field: ReviewFieldDefinition) => boolean;
   respondentRole?: 'participant' | 'employer';
   renderFieldAddon?: (field: ReviewFieldDefinition) => ReactNode;
+  renderFieldFooter?: (field: ReviewFieldDefinition) => ReactNode;
   renderFieldInput?: ReviewFormRendererProps['renderFieldInput'];
 }) {
   const value = answers[field.id];
@@ -417,14 +420,15 @@ function ReviewFieldControl({
       }) ?? (
         <ReviewFieldInput field={field} value={value} onChange={(next) => onAnswerChange(field.id, next)} readOnly={effectiveReadOnly} />
       )}
+      {renderFieldFooter?.(field)}
 
       {field.fieldType === 'boolean_case_block' ? (
         <div className="mt-3 space-y-3 border-l-2 border-primary-100 pl-4">
           {value === 'yes' ? (field.yesFields || []).map((child, childIndex) => (
-            <ReviewFieldControl key={child.id} field={child} index={childIndex} answers={answers} onAnswerChange={onAnswerChange} errors={errors} readOnly={readOnly} fieldReadOnly={fieldReadOnly} respondentRole={respondentRole} renderFieldAddon={renderFieldAddon} renderFieldInput={renderFieldInput} />
+            <ReviewFieldControl key={child.id} field={child} index={childIndex} answers={answers} onAnswerChange={onAnswerChange} errors={errors} readOnly={readOnly} fieldReadOnly={fieldReadOnly} respondentRole={respondentRole} renderFieldAddon={renderFieldAddon} renderFieldFooter={renderFieldFooter} renderFieldInput={renderFieldInput} />
           )) : null}
           {value === 'no' ? (field.noFields || []).map((child, childIndex) => (
-            <ReviewFieldControl key={child.id} field={child} index={childIndex} answers={answers} onAnswerChange={onAnswerChange} errors={errors} readOnly={readOnly} fieldReadOnly={fieldReadOnly} respondentRole={respondentRole} renderFieldAddon={renderFieldAddon} renderFieldInput={renderFieldInput} />
+            <ReviewFieldControl key={child.id} field={child} index={childIndex} answers={answers} onAnswerChange={onAnswerChange} errors={errors} readOnly={readOnly} fieldReadOnly={fieldReadOnly} respondentRole={respondentRole} renderFieldAddon={renderFieldAddon} renderFieldFooter={renderFieldFooter} renderFieldInput={renderFieldInput} />
           )) : null}
         </div>
       ) : null}

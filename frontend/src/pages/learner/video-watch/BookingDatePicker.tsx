@@ -1,18 +1,45 @@
-import { useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { CalendarDays, ChevronLeft, ChevronRight } from 'lucide-react';
 
 export function BookingDatePicker({ value, onChange, dates }: { value: string; onChange: (value: string) => void; dates: string[] }) {
   const [open, setOpen] = useState(false);
   const [month, setMonth] = useState('');
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const calendarRef = useRef<HTMLDivElement>(null);
+  const [position, setPosition] = useState({ top: 8, left: 8, width: 320 });
   const shown = month || value.slice(0, 7) || dates[0]?.slice(0, 7) || new Date().toISOString().slice(0, 7);
   const [year, number] = shown.split('-').map(Number);
   const first = new Date(Date.UTC(year, number - 1, 1));
   const count = new Date(Date.UTC(year, number, 0)).getUTCDate();
   const shift = (offset: number) => setMonth(new Date(Date.UTC(year, number - 1 + offset, 1)).toISOString().slice(0, 7));
+  useLayoutEffect(() => {
+    if (!open) return;
+    const updatePosition = () => {
+      const trigger = triggerRef.current?.getBoundingClientRect();
+      const calendar = calendarRef.current?.getBoundingClientRect();
+      if (!trigger || !calendar) return;
+      const edge = 8;
+      const width = Math.min(320, window.innerWidth - edge * 2);
+      const height = calendar.height;
+      const below = window.innerHeight - trigger.bottom - edge;
+      const above = trigger.top - edge;
+      const preferredTop = below < height && above > below ? trigger.top - height - edge : trigger.bottom + edge;
+      const top = Math.max(edge, Math.min(preferredTop, window.innerHeight - height - edge));
+      const left = Math.max(edge, Math.min(trigger.left, window.innerWidth - width - edge));
+      setPosition(current => current.top === top && current.left === left && current.width === width ? current : { top, left, width });
+    };
+    updatePosition();
+    window.addEventListener('resize', updatePosition);
+    window.addEventListener('scroll', updatePosition, true);
+    return () => {
+      window.removeEventListener('resize', updatePosition);
+      window.removeEventListener('scroll', updatePosition, true);
+    };
+  }, [open, shown]);
   return <div className="relative">
     <span className="block">Date</span>
-    <button type="button" aria-label="Date" aria-expanded={open} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-left text-sm" onClick={() => { setMonth(value.slice(0, 7) || dates[0]?.slice(0, 7) || ''); setOpen(!open); }}>{value || 'Select a date'} <CalendarDays aria-hidden="true" className="float-right h-4 w-4 text-slate-500" /></button>
-    {open && <div role="group" aria-label="Booking calendar" data-month={shown} onKeyDown={event => { if (event.key === 'Escape') setOpen(false); }} className="absolute left-0 top-full z-20 mt-2 w-80 max-w-full rounded-xl border border-slate-200 bg-white p-3 shadow-lg">
+    <button ref={triggerRef} type="button" aria-label="Date" aria-expanded={open} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-left text-sm" onClick={() => { setMonth(value.slice(0, 7) || dates[0]?.slice(0, 7) || ''); setOpen(!open); }}>{value || 'Select a date'} <CalendarDays aria-hidden="true" className="float-right h-4 w-4 text-slate-500" /></button>
+    {open && <div ref={calendarRef} role="group" aria-label="Booking calendar" data-month={shown} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setOpen(false); triggerRef.current?.focus(); } }} style={position} className="fixed z-50 max-h-[calc(100dvh-16px)] overflow-y-auto rounded-xl border border-slate-200 bg-white p-3 shadow-lg">
       <div className="mb-3 flex items-center justify-between">
         <button type="button" aria-label="Previous month" disabled={shown <= (dates[0]?.slice(0, 7) || shown)} onClick={() => shift(-1)} className="p-2 disabled:opacity-30"><ChevronLeft aria-hidden="true" className="h-4 w-4" /></button>
         <strong aria-live="polite">{first.toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' })}</strong>

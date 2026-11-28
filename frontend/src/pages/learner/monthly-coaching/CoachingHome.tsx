@@ -60,6 +60,13 @@ const STATUS_LABEL_TONE: Record<string, StatusTone> = {
 const dateLabel = (date: string | null, short = false) => date
   ? new Intl.DateTimeFormat('en-GB', { ...(short ? {} : { weekday: 'short' as const }), day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${date}T12:00:00Z`))
   : 'Date to be confirmed';
+const completedInstantLabel = (value: string | null | undefined) => {
+  if (!value) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return dateLabel(value);
+  const instant = new Date(/(?:Z|[+-]\d{2}:\d{2})$/i.test(value) ? value : `${value}Z`);
+  return Number.isNaN(instant.getTime()) ? null
+    : new Intl.DateTimeFormat('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Europe/London' }).format(instant);
+};
 const monthLabel = (date: string | null) => date ? new Intl.DateTimeFormat('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${date}T12:00:00Z`)) : 'Monthly coaching';
 const titleOf = (state: CoachingSessionState) => state.session.importedReview?.name
   || (state.session.reviewSource === 'aptem' ? state.session.title : '')
@@ -147,7 +154,12 @@ export default function CoachingHome(props: CoachingHomeProps) {
   const meetingTime = meetingDate ? current?.session.scheduledTime || current?.attendance?.startTime : null;
   const meetingDateLabel = meetingDate && current?.session.syncState && current.session.syncState !== 'synced'
     ? 'Saved meeting time' : 'Booked meeting';
-  const completedDate = imported ? current?.session.importedReview?.completedDate : null;
+  const currentReview = current && (reviews?.[current.session.eventKey] || reviews?.[current.session.id]);
+  const importedCompletedDate = imported ? current?.session.importedReview?.completedDate : null;
+  const lmsCompletedAt = current?.statusLabel === 'Completed'
+    ? current.session.reviewCompletedAt || (currentReview?.instance?.status === 'completed' ? currentReview.instance.completedAt : null)
+    : null;
+  const completedDate = importedCompletedDate ? dateLabel(importedCompletedDate) : completedInstantLabel(lmsCompletedAt);
 
   function renderAction(state: CoachingSessionState, secondary = false) {
     const className = secondary ? styles.secondaryButton : styles.primaryButton;
@@ -231,7 +243,7 @@ export default function CoachingHome(props: CoachingHomeProps) {
                 {imported && current.session.importedReview?.plannedTime && <span className={styles.dateDetailMeta}>{current.session.importedReview.plannedTime}</span>}</div></div>
               <div className={styles.dateDetail}><span className={styles.dateIcon}><Clock3 size={23}/></span><div><span className={styles.dateDetailLabel}>{meetingDateLabel}</span><p>{meetingDate ? dateLabel(meetingDate) : imported ? 'No LMS booking recorded' : 'Not booked yet'}</p>
                 {meetingDate && <span className={styles.dateDetailMeta}>{meetingTime ? `${meetingTime.slice(0, 5)} · ` : ''}{props.timeZone || 'Europe/London'}{duration != null && duration > 0 && <> · {duration} minutes</>}</span>}</div></div>
-              {completedDate && <div className={styles.dateDetail}><span className={styles.dateIcon}><Check size={23}/></span><div><span className={styles.dateDetailLabel}>Review completed</span><p>{dateLabel(completedDate)}</p></div></div>}
+              {completedDate && <div className={styles.dateDetail}><span className={styles.dateIcon}><Check size={23}/></span><div><span className={styles.dateDetailLabel}>Review completed</span><p>{completedDate}</p></div></div>}
             </div>
             <div className={styles.coach}><span><UserRound size={20}/></span><div><small>{isSelected ? 'Meeting coach' : 'Your current coach'}</small><strong>{currentCoachName}</strong>
               {hostDiffers && <p className={styles.bookedHost}>This meeting is booked with {bookedHost}.</p>}</div>

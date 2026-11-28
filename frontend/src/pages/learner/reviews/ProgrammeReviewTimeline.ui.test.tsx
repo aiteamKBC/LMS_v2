@@ -44,4 +44,25 @@ describe('programme review timeline scrolling', () => {
     expect(within(timeline).getAllByText('In Progress')).toHaveLength(2);
     expect(within(timeline).getByRole('button', { name: 'MCM 1, 1 Oct 2026, In Progress' })).toBeInTheDocument();
   });
+
+  it('scrolls the compact booking timeline vertically when more MCMs are available', () => {
+    const items: TimelineReview[] = Array.from({ length: 9 }, (_, index) => ({
+      id: `mcm-${index + 1}`, title: `MCM ${index + 1}`, date: null, status: 'planned',
+    }));
+    render(<ProgrammeReviewTimeline label="Monthly coaching" items={items} activeId="mcm-1" targetId="mcm-2" compact showStatus />);
+    const viewport = screen.getByRole('region', { name: 'Scroll through monthly coaching meetings' });
+    Object.defineProperty(viewport, 'clientHeight', { configurable: true, value: 150 });
+    Object.defineProperty(viewport, 'scrollHeight', { configurable: true, value: 600 });
+    fireEvent.resize(window);
+
+    const previous = screen.getByRole('button', { name: 'Scroll to previous monthly coaching meetings' });
+    const next = screen.getByRole('button', { name: 'Scroll to next monthly coaching meetings' });
+    expect(previous).toBeDisabled();
+    fireEvent.click(next);
+    expect(viewport.scrollTop).toBe(120);
+    expect(previous).toBeEnabled();
+    for (let index = 0; index < 3; index += 1) fireEvent.click(next);
+    expect(viewport.scrollTop).toBe(450);
+    expect(next).toBeDisabled();
+  });
 });

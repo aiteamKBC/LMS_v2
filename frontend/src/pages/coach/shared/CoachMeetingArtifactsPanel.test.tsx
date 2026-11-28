@@ -248,11 +248,10 @@ describe('Meeting artifact display', () => {
     ]);
     expect(await screen.findAllByText('Transcript')).toHaveLength(2);
     expect(screen.getByText(/Previous meeting/)).toBeInTheDocument();
-    const links = screen.getAllByRole('link', { name: 'Download' });
-    expect(links[0]).toHaveAttribute('href', expect.stringContaining('/transcript/old/content'));
-    expect(links[1]).toHaveAttribute('href', expect.stringContaining('/transcript/new/content'));
+    expect(screen.getAllByRole('button', { name: 'Preview PDF' })).toHaveLength(2);
+    expect(screen.getAllByRole('button', { name: 'Download PDF' })).toHaveLength(2);
   });
-  it('combines transcript segments into one downloadable card while keeping recordings separate', async () => {
+  it('combines transcript segments into one PDF card while keeping recordings separate', async () => {
     renderArtifacts([
       {
         id: 'transcript-1',
@@ -280,11 +279,8 @@ describe('Meeting artifact display', () => {
 
     expect((await screen.findAllByText('Transcript'))).toHaveLength(1);
     expect(screen.getAllByText('Recording')).toHaveLength(2);
-    const downloadLinks = screen.getAllByRole('link', { name: 'Download' });
-    expect(downloadLinks).toHaveLength(3);
-    expect(downloadLinks[0]).toHaveAttribute(
-      'href',
-      expect.stringContaining('/artifacts/transcript/combined/content'),
-    );
+    expect(screen.getAllByRole('button', { name: 'Preview PDF' })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: 'Download PDF' })).toHaveLength(1);
+    expect(screen.getAllByRole('link', { name: 'Download' })).toHaveLength(2);
   });
 });

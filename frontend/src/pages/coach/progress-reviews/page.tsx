@@ -1,5 +1,5 @@
 import { TWELVE_WEEK_WINDOW_DAYS, displayValue, titleCaseLabel, toIsoDate, addDays, currentTimestampLabel, toneForStatus, parseTrackedMinutes, formatTrackedTime, isWithinWindow, buildTwelveWeekWindow, trainingPlanContextLabel, buildReviewActivities, buildProgressReviewSlidesDeck, type ProgressReviewActivity } from './page.helpers';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { reviewCategory } from '@/lib/reviewCategory';
 import Swal from 'sweetalert2';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -23,6 +23,7 @@ import { statusTone } from '@/lib/statusTone';
 import { roleNavMap } from '@/mocks/navigation';
 import { coachSessionKey, readCoachSessionCache, writeCoachSessionCache } from '@/features/coach/shared/coachSessionCache';
 import type { ProgressReviewResponses } from '@/pages/shared/progressReviewForm';
+import { nextReviewBooking } from '@/pages/shared/nextReviewBooking';
 import { LearnerAvatar } from '../shared/LearnerIdentity';
 import { ModernDatePicker, ModernDurationPicker, ScheduleFieldLabel, ScheduleTimeInput } from '../shared/ScheduleControls';
 import ProgressReviewCompletionModal from '../shared/ProgressReviewCompletionModal';
@@ -200,6 +201,8 @@ export default function CoachProgressReviews({ category = 'progress-review' }: {
   const coach = useCoachIdentity();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const bookingAfter = useRef(searchParams.get('bookNextAfter'));
+  const handledBookingAfter = useRef(false);
   const [tab, setTab] = useState<ReviewTab>(() => reviewTabFromQuery(searchParams.get('filter')));
   const [currentPage, setCurrentPage] = useState(() => pageFromQuery(searchParams.get('page')));
   const [searchTerm, setSearchTerm] = useState(() => searchParams.get('q') || '');
@@ -402,7 +405,7 @@ export default function CoachProgressReviews({ category = 'progress-review' }: {
     setScheduleForm(scheduleDefaults(updatedEvent));
   };
 
-  const openScheduleModal = (event: CoachCalendarEvent) => {
+  const openScheduleModal = useCallback((event: CoachCalendarEvent) => {
     if (event.reviewSource === 'aptem' || event.aptemReviewId) {
       setActionNotice(null);
       setImportedBookingEvent(event);
@@ -413,7 +416,20 @@ export default function CoachProgressReviews({ category = 'progress-review' }: {
     setActionNotice(event.syncWarning || null);
     setSchedulePickerOpen(false);
     setScheduleModalEvent(event);
-  };
+  }, []);
+
+  useEffect(() => {
+    if (!bookingAfter.current || loading || handledBookingAfter.current) return;
+    handledBookingAfter.current = true;
+    if (coach.isViewingAsCoach) {
+      setActionNotice('Booking is unavailable in admin view-as mode.');
+      return;
+    }
+    const result = nextReviewBooking(events, bookingAfter.current);
+    if (result.kind === 'book') openScheduleModal(result.event);
+    else setActionNotice(result.kind === 'booked'
+      ? 'The next Progress Review is already booked.' : result.reason);
+  }, [loading, events, coach.isViewingAsCoach, openScheduleModal]);
 
   const schedulableReviews = selectedMonthEvents.filter(event => event.status !== 'in-progress' && (isImportedPersonalSupportPlan(event)
     ? Boolean(reviewActionMatrix(event).schedule)

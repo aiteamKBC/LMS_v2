@@ -30,6 +30,8 @@ from .enrolment_documents import (
     coach_enrolment_documents,
 )
 from .review_pdf import coach_mcm_pdf
+from .review_transcript_pdf import coach_review_transcript_pdf
+from .previous_review_transcript_pdf import previous_review_transcript_pdf
 from .migrated_completion_views import (
     migrated_review_submit, migrated_review_coach_sign,
     migrated_review_complete, migrated_review_generate_pdf,
@@ -118,6 +120,7 @@ urlpatterns = [
     path('coach/case-file/<int:learner_id>/ksbs/<str:code>', case_file_ksb_detail, name='case-file-ksb-detail'),
     path('coach/case-file/<int:learner_id>/<str:section>', case_file_section, name='case-file-section'),
     path('migrated-reviews/<str:review_id>/progress', migrated_review_progress, name='migrated-review-progress'),
+    path('coach/timetable/events/<str:event_key>/transcript-pdf/<str:artifact_id>', coach_review_transcript_pdf, name='coach-review-transcript-pdf'),
     path('migrated-reviews/<str:review_id>/intelligence', migrated_review_intelligence, name='migrated-review-intelligence'),
     path('migrated-reviews/<str:review_id>/check-session', migrated_review_check_session, name='migrated-review-check-session'),
     path('migrated-reviews/<str:review_id>/summary', migrated_review_summary, name='migrated-review-summary'),
@@ -217,6 +220,8 @@ urlpatterns = [
     path('coach/reviews/<str:instance_id>/book', coach_review_instance_book, name='coach-review-instance-book'),
     path('coach/reviews/<str:instance_id>/local-status', coach_review_instance_local_status, name='coach-review-instance-local-status'),
     path('coach/reviews/<str:instance_id>/previous', coach_review_instance_previous, name='coach-review-instance-previous'),
+    path('coach/reviews/<str:instance_id>/previous/transcript-pdf', previous_review_transcript_pdf,
+         name='coach-previous-review-transcript-pdf'),
     path('coach/reviews/<str:instance_id>/answers', coach_review_instance_answers, name='coach-review-instance-answers'),
     path('coach/reviews/<str:instance_id>/meeting-summary', coach_review_instance_meeting_summary, name='coach-review-instance-meeting-summary'),
     path('coach/reviews/<str:instance_id>/complete', coach_review_instance_complete, name='coach-review-instance-complete'),

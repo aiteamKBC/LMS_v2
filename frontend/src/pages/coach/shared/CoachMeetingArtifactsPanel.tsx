@@ -3,6 +3,8 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import { ReviewAttendanceEditor } from './ReviewAttendanceEditor';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { cn } from '@/lib/cn';
+import { loadCoachReviewTranscriptPdf } from '@/api/coachReviewTranscriptPdf';
+import { EvidencePdfActions } from '@/pages/coaching-recordings/SavedEvidencePdf';
 import {
   coachMeetingArtifactContentUrl,
   fetchCoachMeetingArtifacts,
@@ -37,12 +39,6 @@ type PreviewSelection = {
   type: string;
   url: string;
 };
-
-type TranscriptPreviewState =
-  | { status: 'idle' }
-  | { status: 'loading' }
-  | { status: 'ready'; text: string }
-  | { status: 'error'; message: string };
 
 function artifactLabel(type: string) {
   if (type === 'transcript') return 'Transcript';
@@ -480,34 +476,6 @@ function MeetingSummaryCard({
   );
 }
 
-function transcriptPreviewText(raw: string) {
-  const lines = raw.replace(/\r/g, '').split('\n');
-  const visible: string[] = [];
-  let skippingNote = false;
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) {
-      skippingNote = false;
-      if (visible.length && visible[visible.length - 1] !== '') visible.push('');
-      continue;
-    }
-    if (skippingNote) continue;
-    if (/^WEBVTT/i.test(trimmed)) continue;
-    if (/^(Kind|Language):/i.test(trimmed)) continue;
-    if (/^\d+$/.test(trimmed)) continue;
-    if (trimmed.includes('-->')) continue;
-    if (/^NOTE\b/i.test(trimmed)) {
-      skippingNote = true;
-      continue;
-    }
-
-    visible.push(trimmed.replace(/<[^>]+>/g, ''));
-  }
-
-  return visible.join('\n').replace(/\n{3,}/g, '\n\n').trim() || raw.trim() || 'Transcript content is empty.';
-}
-
 function AttendanceTracker({ attendance, controls }: { attendance: CoachMeetingAttendanceSummary | null; controls?: (row: CoachMeetingAttendanceTrackerRow) => ReactNode }) {
   const records = attendance?.records || [];
   const hasReport = Boolean(attendance?.reportCount);
@@ -608,29 +576,6 @@ function AttendanceTracker({ attendance, controls }: { attendance: CoachMeetingA
   );
 }
 
-function TranscriptPreview({ preview }: { preview: TranscriptPreviewState }) {
-  if (preview.status === 'loading') {
-    return (
-      <div className="flex min-h-32 items-center justify-center gap-2 rounded-lg bg-white text-[12px] font-semibold text-primary-700"><LoadingSkeleton label="Loading transcript preview" variant="rows" /></div>
-    );
-  }
-  if (preview.status === 'error') {
-    return (
-      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] leading-5 text-amber-800">
-        {preview.message}
-      </div>
-    );
-  }
-  if (preview.status === 'ready') {
-    return (
-      <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-lg bg-white p-3 text-[12px] leading-5 text-foreground-700">
-        {preview.text}
-      </pre>
-    );
-  }
-  return null;
-}
-
 export function CoachMeetingArtifactsPanel({
   event,
   className,
@@ -684,7 +629,6 @@ export function CoachMeetingArtifactsPanel({
   const [state, setState] = useState<ArtifactState>({ status: 'idle' });
   const [preview, setPreview] = useState<PreviewSelection | null>(null);
   const [playbackError, setPlaybackError] = useState(false);
-  const [transcriptPreview, setTranscriptPreview] = useState<TranscriptPreviewState>({ status: 'idle' });
 
   const loadArtifacts = useCallback((signal?: AbortSignal, refresh = false) => {
     setState(current => preserveResourcesOnRefreshError && refresh && current.status === 'ready'
@@ -731,33 +675,6 @@ export function CoachMeetingArtifactsPanel({
   useEffect(() => {
     if (!allowContentAccess) setPreview(null);
   }, [allowContentAccess]);
-
-  useEffect(() => {
-    if (!preview || preview.type !== 'transcript') {
-      setTranscriptPreview({ status: 'idle' });
-      return;
-    }
-
-    const controller = new AbortController();
-    setTranscriptPreview({ status: 'loading' });
-    fetch(preview.url, { credentials: 'include', signal: controller.signal })
-      .then(async response => {
-        const text = await response.text();
-        if (!response.ok) {
-          throw new Error(text || `Transcript preview failed with ${response.status}`);
-        }
-        setTranscriptPreview({ status: 'ready', text: transcriptPreviewText(text) });
-      })
-      .catch(error => {
-        if (error instanceof DOMException && error.name === 'AbortError') return;
-        setTranscriptPreview({
-          status: 'error',
-          message: error instanceof Error ? error.message : 'Unable to preview transcript.',
-        });
-      });
-
-    return () => controller.abort();
-  }, [preview]);
 
   const grouped = useMemo(() => {
     if (state.status !== 'ready') return { transcripts: [], recordings: [] };
@@ -874,7 +791,14 @@ export function CoachMeetingArtifactsPanel({
                       {artifact.previous_session ? 'Previous meeting · ' : ''}{artifactDate(artifact.end_datetime || artifact.created_datetime)}
                     </p>
                     <div className="mt-2 flex flex-wrap gap-2">
-                      {contentAvailable ? <button
+                      {type === 'transcript' && contentAvailable ? <EvidencePdfActions
+                        key={`${eventKey}:${artifactId}:${state.status === 'ready' ? state.syncedAt || '' : ''}`}
+                        kind="transcript"
+                        filename="coach-review-transcript.pdf"
+                        previewFilename="Coach review - full transcript.pdf"
+                        loadPdf={signal => loadCoachReviewTranscriptPdf(eventKey, artifactId, signal)}
+                      /> : null}
+                      {type !== 'transcript' && contentAvailable ? <button
                         type="button"
                         onClick={() => { setPlaybackError(false); setPreview({ artifact, artifactId, type, url: previewUrl }); }}
                         className={cn(
@@ -887,7 +811,7 @@ export function CoachMeetingArtifactsPanel({
                         <AppIcon className={type === 'recording' ? 'ri-play-circle-line' : 'ri-eye-line'}></AppIcon>
                         {type === 'recording' ? 'Play' : 'Preview'}
                       </button> : null}
-                      {downloadAvailable ? <a
+                      {type !== 'transcript' && downloadAvailable ? <a
                         href={downloadUrl}
                         className="inline-flex items-center gap-1 rounded-md border border-background-300 bg-white px-2 py-1 text-[12px] font-semibold text-foreground-700 transition hover:border-background-400 hover:bg-background-100"
                       >
@@ -898,7 +822,9 @@ export function CoachMeetingArtifactsPanel({
                     {artifact.graph_playback_candidate && !artifact.content_available ? (
                       <p className="mt-2 text-[12px] text-foreground-500">Play from Teams. Video availability is confirmed when playback starts.</p>
                     ) : artifact.content_available === false ? (
-                      <p className="mt-2 text-[12px] text-foreground-500">A saved copy of this recording is not available yet.</p>
+                      <p className="mt-2 text-[12px] text-foreground-500">{type === 'transcript'
+                        ? 'The saved transcript is not available yet.'
+                        : 'A saved copy of this recording is not available yet.'}</p>
                     ) : null}
                   </div>
                 </div>
@@ -939,8 +865,6 @@ export function CoachMeetingArtifactsPanel({
             >
               <track kind="captions" />
             </video>
-          ) : preview.type === 'transcript' ? (
-            <TranscriptPreview preview={transcriptPreview} />
           ) : (
             <div className="rounded-lg border border-background-200 bg-white px-3 py-2 text-[12px] text-foreground-500">
               Inline preview is not available for this artifact type.

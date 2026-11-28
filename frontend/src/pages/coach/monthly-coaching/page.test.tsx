@@ -129,6 +129,18 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 describe('restored monthly coaching list', () => {
+  it('opens booking for the next MCM from a review confirmation link', async () => {
+    fetchEvents.mockResolvedValue({ events: [
+      meeting(41, { learnerId: '41', reviewInstanceId: 'REVI-41', occurrenceNumber: 1,
+        status: 'completed', targetDate: '2026-09-01' }),
+      meeting(42, { learnerId: '41', occurrenceNumber: 2, targetDate: '2026-10-01' }),
+    ] });
+    mount('/coach/monthly-coaching?bookNextAfter=REVI-41');
+    const dialog = await screen.findByRole('dialog', { name: 'Schedule meeting' });
+    expect(within(dialog).getByRole('combobox', { name: 'Search learner to schedule' })).toHaveValue('Learner 42');
+    expect(within(dialog).getByRole('combobox', { name: 'MCM meeting' })).toHaveValue('mcr:42');
+  });
+
   it('starts an imported MCM from the row Join action', async () => {
     fetchEvents.mockResolvedValue({ events: [meeting(31, { eventKey: 'imported-review:31', reviewSource: 'aptem',
       reviewTemplateId: null, status: 'scheduled', scheduledDate: '2026-09-14', scheduledTime: '10:00',

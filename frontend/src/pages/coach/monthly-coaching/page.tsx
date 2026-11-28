@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
@@ -21,6 +21,7 @@ import { LearnerAvatar } from '../shared/LearnerIdentity';
 import ProgressReviewPptxModal from '../progress-reviews/components/ProgressReviewPptxModal';
 import { slidesTargetFromEvent } from '../progress-reviews/components/slidesTarget';
 import { reviewInstancePath, reviewInstanceRouteState } from '../shared/reviewInstanceNavigation';
+import { nextReviewBooking } from '@/pages/shared/nextReviewBooking';
 import { ReviewAge } from '../shared/ReviewAge';
 import { ReviewCompletedDate, ReviewScheduledDate } from '../shared/ReviewDates';
 import {
@@ -208,6 +209,8 @@ export default function CoachMonthlyCoaching() {
   const coach = useCoachIdentity();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const bookingAfter = useRef(searchParams.get('bookNextAfter'));
+  const handledBookingAfter = useRef(false);
   const [filter, setFilter] = useState<MeetingFilter>(() => filterFromQuery(searchParams.get('filter')));
   const [groupFilter, setGroupFilter] = useState(() => searchParams.get('group') || ALL_GROUPS_FILTER);
   const [searchTerm, setSearchTerm] = useState(() => searchParams.get('q') || '');
@@ -489,12 +492,12 @@ export default function CoachMonthlyCoaching() {
     setSlidesEvent(event);
   };
 
-  const applyScheduleEvent = (event: CoachCalendarEvent | null) => {
+  const applyScheduleEvent = useCallback((event: CoachCalendarEvent | null) => {
     setScheduleEventKey(event ? eventIdentity(event) : '');
     setScheduleDate(event?.scheduledDate || event?.targetDate || isoDate(new Date()));
     setScheduleTime(event?.scheduledTime?.slice(0, 5) || '09:00');
     setScheduleDuration(event?.durationMinutes || 60);
-  };
+  }, []);
 
   const searchScheduleLearner = (value: string) => {
     setScheduleLearnerSearch(value);
@@ -512,7 +515,7 @@ export default function CoachMonthlyCoaching() {
     applyScheduleEvent(learnerEvents.find(needsScheduling) || learnerEvents[0] || null);
   };
 
-  const scheduleMeeting = (selectedEvent?: CoachCalendarEvent) => {
+  const scheduleMeeting = useCallback((selectedEvent?: CoachCalendarEvent) => {
     if (selectedEvent?.reviewSource === 'aptem' || selectedEvent?.aptemReviewId) {
       setBookingNotice(null);
       setImportedBookingEvent(selectedEvent);
@@ -526,7 +529,20 @@ export default function CoachMonthlyCoaching() {
     applyScheduleEvent(preferred || null);
     setScheduleError(null);
     setScheduleModalOpen(true);
-  };
+  }, [schedulableEvents, scheduleLearnerOptions, applyScheduleEvent]);
+
+  useEffect(() => {
+    if (!bookingAfter.current || loading || handledBookingAfter.current) return;
+    handledBookingAfter.current = true;
+    if (coach.isViewingAsCoach) {
+      setBookingNotice('Booking is unavailable in admin view-as mode.');
+      return;
+    }
+    const result = nextReviewBooking(events, bookingAfter.current);
+    if (result.kind === 'book') scheduleMeeting(result.event);
+    else setBookingNotice(result.kind === 'booked'
+      ? 'The next Monthly Coaching Meeting is already booked.' : result.reason);
+  }, [loading, events, coach.isViewingAsCoach, scheduleMeeting]);
 
   const submitSchedule = async () => {
     if (!selectedScheduleEvent || !scheduleDate || !scheduleTime) return;

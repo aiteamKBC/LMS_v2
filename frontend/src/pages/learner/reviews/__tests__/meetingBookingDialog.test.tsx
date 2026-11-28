@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -6,7 +7,7 @@ import type { MeetingAttendance } from '@/api/meetingAttendance';
 import {
   bookLearnerCalendarSession, fetchCalendarConnections, fetchLearnerCalendarEvents, fetchPersonalCalendarAvailability, fetchReviewSlots, rescheduleLearnerCalendarSession,
 } from '@/api/learnerCalendar';
-import MeetingBookingDialog, { type MeetingBookingSession } from '../MeetingBookingDialog';
+import MeetingBookingDialog, { type MeetingBookingJourney, type MeetingBookingSession } from '../MeetingBookingDialog';
 
 vi.mock('@/api/learnerCalendar', async importOriginal => ({
   ...await importOriginal<typeof import('@/api/learnerCalendar')>(),
@@ -31,10 +32,11 @@ function meeting(overrides: Partial<LearnerCalendarEvent> = {}): LearnerCalendar
   } as LearnerCalendarEvent;
 }
 
-function mount(session: MeetingBookingSession, onClose = vi.fn(), attendance?: MeetingAttendance) {
+function mount(session: MeetingBookingSession, onClose = vi.fn(), attendance?: MeetingAttendance,
+    journey?: MeetingBookingJourney, onSwitchJourneySession?: (id: string) => void) {
   render(<MemoryRouter><main aria-label="Coaching page">Coaching page</main>
     <MeetingBookingDialog session={session} title="your coaching meeting" learner={{ kind: 'apprenticeship', id: '125' }}
-      rules={rules} attendance={attendance} onClose={onClose} onBooked={vi.fn()} /></MemoryRouter>);
+      rules={rules} attendance={attendance} journey={journey} onSwitchJourneySession={onSwitchJourneySession} onClose={onClose} onBooked={vi.fn()} /></MemoryRouter>);
   return onClose;
 }
 
@@ -69,6 +71,101 @@ afterEach(() => {
 });
 
 describe('MeetingBookingDialog', () => {
+  it('shows the MCM journey and exact next occurrence when opened from a review', async () => {
+    const current = meeting({ status: 'completed', occurrenceNumber: 1 });
+    const next = meeting({ id: 'mcr:211:2:2026-11-15', eventKey: 'mcr:211:2:2026-11-15',
+      sequence: 2, occurrenceNumber: 2, targetDate: '2026-11-15', date: '2026-11-15' });
+    const later = meeting({ id: 'mcr:211:3:2026-12-15', eventKey: 'mcr:211:3:2026-12-15',
+      sequence: 3, occurrenceNumber: 3, targetDate: '2026-12-15', date: '2026-12-15' });
+    vi.mocked(fetchLearnerCalendarEvents).mockResolvedValue({ events: [current, next, later], bookingCalendar: rules } as never);
+    mount(next, vi.fn(), undefined, { currentId: current.id, sessions: [current, next, later], items: [
+      { id: current.id, title: 'Monthly Coaching Meeting 1', date: current.targetDate, status: 'attended', sequence: 1 },
+      { id: next.id, title: 'Monthly Coaching Meeting 2', date: next.targetDate, status: 'planned', sequence: 2 },
+      { id: later.id, title: 'Monthly Coaching Meeting 3', date: later.targetDate, status: 'planned', sequence: 3 },
+    ] });
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByRole('heading', { name: 'Book MCM 2' })).toBeVisible();
+    const journey = within(dialog).getByRole('complementary', { name: 'Monthly coaching journey' });
+    expect(within(journey).getByText('Current review')).toBeVisible();
+    expect(within(journey).getByText('Selected meeting')).toBeVisible();
+    const timeline = within(dialog).getByRole('region', { name: 'Scroll through monthly coaching meetings' });
+    expect(within(timeline).getByText('MCM 3')).toBeVisible();
+    expect(within(timeline).getByText('MCM 1').closest('li')).toHaveAttribute('data-active', 'true');
+    expect(within(timeline).getByText('MCM 2').closest('li')).toHaveAttribute('data-target', 'true');
+    expect(within(timeline).getByText('Selected')).toBeVisible();
+    expect(within(timeline).queryByRole('button', { name: /Monthly Coaching Meeting/ })).not.toBeInTheDocument();
+    const sessionSummary = within(dialog).getByRole('group', { name: 'Selected meeting' });
+    expect(sessionSummary).toHaveTextContent('Monthly Coaching Meeting · MCM 2');
+    expect(within(dialog).queryByRole('combobox', { name: 'Session' })).not.toBeInTheDocument();
+    await waitFor(() => expect(fetchLearnerCalendarEvents).toHaveBeenCalled());
+  });
+
+  it('lets the learner switch to another actionable MCM and protects edited booking details', async () => {
+    const current = meeting({ status: 'completed', occurrenceNumber: 1 });
+    const next = meeting({ id: 'mcr:211:2:2026-11-15', eventKey: 'mcr:211:2:2026-11-15',
+      sequence: 2, occurrenceNumber: 2, targetDate: '2026-11-15', date: '2026-11-15' });
+    const later = meeting({ id: 'mcr:211:3:2026-12-15', eventKey: 'mcr:211:3:2026-12-15',
+      sequence: 3, occurrenceNumber: 3, targetDate: '2026-12-15', date: '2026-12-15' });
+    vi.mocked(fetchLearnerCalendarEvents).mockResolvedValue({ events: [current, next, later], bookingCalendar: rules } as never);
+    const onSwitch = vi.fn();
+    mount(next, vi.fn(), undefined, { currentId: current.id, sessions: [current, next, later], items: [
+      { id: current.id, title: 'Monthly Coaching Meeting 1', date: current.targetDate, status: 'attended', sequence: 1, selectable: false },
+      { id: next.id, title: 'Monthly Coaching Meeting 2', date: next.targetDate, status: 'planned', sequence: 2, selectable: true },
+      { id: later.id, title: 'Monthly Coaching Meeting 3', date: later.targetDate, status: 'planned', sequence: 3, selectable: true },
+    ] }, onSwitch);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Book session' })).toBeEnabled());
+    const journey = screen.getByRole('complementary', { name: 'Monthly coaching journey' });
+    expect(within(journey).queryByRole('button', { name: /Monthly Coaching Meeting 1/ })).not.toBeInTheDocument();
+    fireEvent.click(within(journey).getByRole('button', { name: /Monthly Coaching Meeting 3/ }));
+    expect(onSwitch).toHaveBeenCalledExactlyOnceWith(later.id);
+    fireEvent.change(screen.getByLabelText('Day'), { target: { value: '2026-11-20' } });
+    fireEvent.click(within(journey).getByRole('button', { name: /Monthly Coaching Meeting 3/ }));
+    expect(onSwitch).toHaveBeenCalledTimes(1);
+    expect(within(journey).getByText(/Changing meetings will clear/)).toBeVisible();
+    fireEvent.click(within(journey).getByRole('button', { name: 'Keep editing' }));
+    expect(within(journey).queryByText(/Changing meetings will clear/)).not.toBeInTheDocument();
+    fireEvent.click(within(journey).getByRole('button', { name: /Monthly Coaching Meeting 3/ }));
+    fireEvent.click(within(journey).getByRole('button', { name: 'Switch meeting' }));
+    expect(onSwitch).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps MCM selection responsive while each booking is loading', async () => {
+    const current = meeting({ status: 'completed', occurrenceNumber: 1 });
+    const sessions = [2, 3, 4].map(number => meeting({
+      id: `mcr:211:${number}:2026-11-15`, eventKey: `mcr:211:${number}:2026-11-15`,
+      sequence: number, occurrenceNumber: number, targetDate: '2026-11-15', date: '2026-11-15',
+    }));
+    const journey: MeetingBookingJourney = { currentId: current.id, sessions: [current, ...sessions],
+      items: [current, ...sessions].map((item, index) => ({
+        id: item.id, title: `Monthly Coaching Meeting ${index + 1}`, date: item.targetDate,
+        status: index === 0 ? 'attended' : 'planned', sequence: index + 1, selectable: index > 0,
+      })) };
+    let resolveCalendar!: (value: Awaited<ReturnType<typeof fetchLearnerCalendarEvents>>) => void;
+    vi.mocked(fetchLearnerCalendarEvents).mockImplementation(() => new Promise(resolve => { resolveCalendar = resolve; }));
+
+    function Harness() {
+      const [selected, setSelected] = useState(sessions[0]);
+      return <MemoryRouter><MeetingBookingDialog key={selected.id} session={selected} title="your coaching meeting"
+        learner={{ kind: 'apprenticeship', id: '125' }} rules={rules} journey={journey}
+        onSwitchJourneySession={id => setSelected(sessions.find(item => item.id === id) || selected)}
+        onClose={vi.fn()} onBooked={vi.fn()} /></MemoryRouter>;
+    }
+    render(<Harness />);
+    const choose = (number: number) => fireEvent.click(within(screen.getByRole('complementary', { name: 'Monthly coaching journey' }))
+      .getByRole('button', { name: new RegExp(`Monthly Coaching Meeting ${number},`) }));
+
+    choose(3);
+    expect(screen.getByRole('heading', { name: 'Book MCM 3' })).toBeVisible();
+    choose(4);
+    expect(screen.getByRole('heading', { name: 'Book MCM 4' })).toBeVisible();
+    choose(2);
+    expect(screen.getByRole('heading', { name: 'Book MCM 2' })).toBeVisible();
+    resolveCalendar({ events: [current, ...sessions], bookingCalendar: rules } as never);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Book session' })).toBeEnabled());
+    choose(3);
+    expect(screen.getByRole('heading', { name: 'Book MCM 3' })).toBeVisible();
+  });
+
   const aptem = (source = 'progress-review', overrides: Partial<LearnerCalendarEvent> = {}) => meeting({
     id: 'imported-review:11', eventKey: 'imported-review:11', calendarEventKey: 'booking:11', reviewId: '11', reviewSource: 'aptem',
     source, type: source === 'mcr' ? 'coaching' : 'review', status: 'scheduled',

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Download, Eye } from 'lucide-react';
 import { loadCoachingPdf } from '@/api/coachingRecordings';
 import EvidencePdfDialog from './EvidencePdfDialog';
@@ -12,10 +12,11 @@ export default function SavedEvidencePdf({ eventKey, reference, kind, analysisId
     loadPdf={signal => loadCoachingPdf(eventKey, kind, reference, analysisId, signal)} />;
 }
 
-export function EvidencePdfActions({ kind, filename, previewFilename, loadPdf, onPreviewChange }: {
+export function EvidencePdfActions({ kind, filename, previewFilename, loadPdf, onPreviewChange, autoPreview = false }: {
   kind: 'transcript' | 'analysis'; filename: string; loadPdf: (signal: AbortSignal) => Promise<Blob>;
   previewFilename?: string;
   onPreviewChange?: (open: boolean) => void;
+  autoPreview?: boolean;
 }) {
   const [url, setUrl] = useState('');
   const [open, setOpen] = useState(false);
@@ -24,19 +25,25 @@ export function EvidencePdfActions({ kind, filename, previewFilename, loadPdf, o
   const request = useRef<AbortController | null>(null);
   const objectUrl = useRef('');
   const callback = useRef(onPreviewChange);
+  const loader = useRef(loadPdf);
+  const autoStarted = useRef(false);
   callback.current = onPreviewChange;
+  loader.current = loadPdf;
   useEffect(() => () => {
     request.current?.abort();
+    request.current = null;
     if (objectUrl.current) URL.revokeObjectURL(objectUrl.current);
+    objectUrl.current = '';
+    autoStarted.current = false;
     callback.current?.(false);
   }, []);
-  const prepare = async () => {
+  const prepare = useCallback(async () => {
     if (objectUrl.current) return objectUrl.current;
     if (request.current) return '';
     const controller = new AbortController(); request.current = controller;
     setBusy(true); setError('');
     try {
-      const blob = await loadPdf(controller.signal);
+      const blob = await loader.current(controller.signal);
       if (controller.signal.aborted) return '';
       const value = URL.createObjectURL(blob);
       objectUrl.current = value; setUrl(value);
@@ -47,7 +54,13 @@ export function EvidencePdfActions({ kind, filename, previewFilename, loadPdf, o
     } finally {
       if (!controller.signal.aborted) { setBusy(false); request.current = null; }
     }
-  };
+  }, []);
+  useEffect(() => {
+    if (!autoPreview || autoStarted.current) return;
+    autoStarted.current = true;
+    setOpen(true); callback.current?.(true);
+    void prepare();
+  }, [autoPreview, prepare]);
   const preview = async () => {
     if (open) { setOpen(false); callback.current?.(false); return; }
     setOpen(true); callback.current?.(true);
