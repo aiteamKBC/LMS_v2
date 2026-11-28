@@ -373,7 +373,7 @@ def projection_scope():
     # Existing pure adapter compiles the production reader without Django
     # startup, schema helpers, database fixtures or external services.
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from learner_api.test_canonical_learning_no_db import adapter
+    from canonical_learning_projection import adapter
     return adapter(None)
 
 
