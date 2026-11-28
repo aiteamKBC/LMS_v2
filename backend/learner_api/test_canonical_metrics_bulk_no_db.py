@@ -28,16 +28,19 @@ class CanonicalMetricsBulkTests(TestCase):
             {"learner_id": owner["id"], "report_month": "2026-09", "target_hours": 10}
             for owner in owners
         ]
+        self.executed_queries = []
         def load(sql, params):
-            if any(name in sql for name in ('learner_monthly_signatures', 'learner_monthly_locks', 'live_session_learner_attendance')):
+            self.executed_queries.append((sql, params))
+            if ('learner_monthly_signatures' in sql or 'live_session_learner_attendance' in sql
+                    or ('learner_monthly_targets' in sql and 'month_status' in sql)):
                 return []
             if 'FROM "Learner".learners l' in sql:
                 return owners
+            if 'ksb_learner_progress' in sql:
+                return [{"progress_id": item["id"], "ksb_code": "K1"} for item in base]
             if 'FROM "Learner".learner_progress_entries p' in sql:
                 learner_ids = set(params[0])
                 return [item for item in base if item['owner_id'] in learner_ids]
-            if 'learner_progress_ksbs' in sql:
-                return [{"progress_id": item["id"], "ksb_code": "K1"} for item in base]
             if 'learner_activity_sources s' in sql:
                 return [{"progress_id": item["id"], "source_id": item["id"],
                          "source_system": "old_lms", "completed": True} for item in base] if source_completed else []
@@ -78,6 +81,17 @@ class CanonicalMetricsBulkTests(TestCase):
         self.assertEqual(many_count, 12)
         self.assertEqual(len(one), 1)
         self.assertEqual(len(many), 25)
+
+    def test_bulk_ksbs_scope_owned_progress_before_the_official_relation(self):
+        self.run_bulk([10, 11])
+        sql, params = next(
+            (sql, params) for sql, params in self.executed_queries
+            if 'ksb_learner_progress' in sql
+        )
+        self.assertIn('WITH canonical AS MATERIALIZED', sql)
+        self.assertIn('FROM canonical entry', sql)
+        self.assertNotIn('FROM "Learner".learner_progress_entries entry', sql)
+        self.assertEqual(params, [[700, 701], [1, 2]])
 
     def test_workspace_bulk_uses_programme_plan_instead_of_monthly_targets(self):
         result, count = self.run_bulk([10, 11], learner_workspace=True)

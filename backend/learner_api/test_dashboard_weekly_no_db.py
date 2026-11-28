@@ -33,13 +33,24 @@ class RecordedKsbMappingTests(SimpleTestCase):
 
     def query(self, sql, params):
         # Execute the production filters/joins against isolated synthetic data.
+        self.last_sql = sql
         sql = sql.replace('=ANY(%s)', ' IN (' + ','.join('?' for _ in params[1]) + ')').replace('%s', '?')
         return [dict(row) for row in self.db.execute(sql, [params[0], *params[1]])]
 
     def read(self, owner, components):
+        relation = '''(SELECT k.progress_id,k.position,upper(btrim(k.ksb_code)) AS ksb_code
+            FROM canonical entry
+            JOIN Learner.learner_progress_ksbs k ON k.progress_id=entry.id
+            WHERE NOT EXISTS (SELECT 1 FROM Learner.learner_progress_ksb_exclusions x
+                WHERE x.progress_id=k.progress_id AND x.position=k.position
+                  AND x.ksb_code=upper(btrim(k.ksb_code)) AND x.status<>'released'))'''
         with patch.object(weekly.canonical_learning, 'query', side_effect=self.query), \
-             patch('learner_api.ksb_exclusions.exclusions_table_exists', return_value=True):
-            return weekly.recorded_ksbs({'id': owner}, components)
+             patch.object(weekly, 'official_progress_relation', return_value=relation) as official:
+            result = weekly.recorded_ksbs({'id': owner}, components)
+        official.assert_called_once_with(progress_relation='canonical')
+        self.assertIn('WITH canonical AS MATERIALIZED', self.last_sql)
+        self.assertNotIn('learner_progress_entries entry', self.last_sql)
+        return result
 
     def test_only_owned_visible_links_appear_without_duplicates_or_excluded_codes(self):
         self.assertEqual(self.read(17, ['C1', 'C2', 'EMPTY']), {'C1': ['K1', 'K7', 'S2'], 'C2': ['S3']})
@@ -56,13 +67,26 @@ class RecordedKsbMappingTests(SimpleTestCase):
             query.assert_not_called()
 
     def test_read_failure_is_not_reported_as_no_mapping(self):
-        with patch.object(weekly.canonical_learning, 'query', side_effect=DatabaseError('offline')), \
-             patch.object(weekly.canonical_learning, '_ksb_not_excluded', return_value='1=1'):
+        with patch.object(weekly.canonical_learning, 'query', side_effect=DatabaseError('offline')):
             with self.assertRaises(DatabaseError):
                 weekly.recorded_ksbs({'id': 17}, ['C1'])
 
 
 class DashboardWeeklyTests(SimpleTestCase):
+    def test_weekly_installs_compact_owned_plan_instead_of_full_orm_tree(self):
+        source = SimpleNamespace(pk=285)
+        profile = SimpleNamespace(pk=407, enrolment_id=285)
+        payload = {'modules': [], 'weeks': [], 'selectedWeek': None}
+        with patch.object(weekly.canonical_learning, 'require_profile', return_value={'id': 407}), \
+             patch.object(weekly, 'learner_profile_for_source', return_value=profile), \
+             patch.object(weekly, 'install_canonical_training_plan_modules',
+                          side_effect=lambda selected, _profile: setattr(
+                              selected, '_canonical_training_plan', [],
+                          )) as compact, \
+             patch.object(weekly, 'read_weekly_learning', return_value=payload):
+            self.assertIs(weekly.read_dashboard_weekly(source, 285), payload)
+        compact.assert_called_once_with(source, profile)
+
     def test_module_navigation_is_opt_in_and_preserves_manual_selection(self):
         source = SimpleNamespace(pk=265, _canonical_training_plan=[])
         with patch.object(weekly.canonical_learning, 'require_profile', return_value={'id': 17}), \

@@ -25,7 +25,10 @@ from django.http import HttpRequest, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
 
-from learner_api import evidence_storage
+from learner_api import evidence_storage, journal_documents
+from learner_api.canonical_learning import profile_by_aptem
+from old_otjh.service import ServiceError
+from login.permissions import staff_only
 from learner_api.aptem_identity import APTEM_IDENTITY_CTES
 
 from .db_source import resolve
@@ -355,18 +358,8 @@ def _paired_docs(docs):
 def _documents_by_row(cursor, row_ids):
     if not row_ids:
         return {}
-    cursor.execute(
-        f"""
-        SELECT id, manual_activity_id, aptem_id, month, container, blob_name,
-               display_name, content_type, size_bytes, uploaded_by, uploaded_at
-        FROM {MANUAL_DOCS}
-        WHERE manual_activity_id = ANY(%s) AND deleted_at IS NULL
-        ORDER BY uploaded_at, id
-        """,
-        [list(row_ids)],
-    )
     grouped = {}
-    for row in _dict_rows(cursor):
+    for row in journal_documents.read(cursor, row_ids=list(row_ids)):
         grouped.setdefault(int(row["manual_activity_id"]), []).append(_doc_payload(row))
     return {row_id: _paired_docs(docs) for row_id, docs in grouped.items()}
 
@@ -1305,133 +1298,64 @@ def _ensure_assignment_container():
 
 
 @csrf_exempt
+@staff_only()
 def documents(request: HttpRequest) -> JsonResponse:
-    """Uploaded evidence files for manual assignment rows.
-
-    Blobs live in the ``learner-assignments`` container, foldered per learner,
-    month and row: ``{aptem_id}/{YYYY-MM}/{row_id}/{filename}``.
-    """
-    if request.method == "GET":
-        try:
+    """Staff journal uploads; learner/coach libraries use their owned readers."""
+    try:
+        connection = _connection()
+        if request.method == "GET":
             row_id = _as_int(request.GET.get("manual_activity_id"), minimum=1)
-        except (TypeError, ValueError):
-            return JsonResponse({"error": "manual_activity_id (int) is required"}, status=400)
-        if row_id is None:
-            return JsonResponse({"error": "manual_activity_id (int) is required"}, status=400)
-        try:
-            with _connection().cursor() as cursor:
-                _ensure_manual_tables(cursor)
+            if row_id is None:
+                raise ValueError("manual_activity_id (int) is required")
+            with connection.cursor() as cursor:
                 grouped = _documents_by_row(cursor, [row_id])
-        except DatabaseError as error:
-            return JsonResponse(
-                {"error": "Could not read assignment documents.", "details": str(error)},
-                status=503,
-            )
-        return JsonResponse({"manual_activity_id": row_id, "documents": grouped.get(row_id, [])})
-
-    if request.method == "DELETE":
-        try:
+            return JsonResponse({"manual_activity_id": row_id, "documents": grouped.get(row_id, [])})
+        if request.method == "DELETE":
             body = json.loads(request.body or b"{}")
+            if not isinstance(body, dict) or set(body) - {"id"}:
+                raise ValueError("Only id is accepted; document reassignment and restoration are not supported.")
             doc_id = int(body.get("id"))
-        except (TypeError, ValueError):
-            return JsonResponse({"error": "id (int) is required"}, status=400)
-        try:
-            with _connection().cursor() as cursor:
-                _ensure_manual_tables(cursor)
-                cursor.execute(
-                    f"UPDATE {MANUAL_DOCS} SET deleted_at = now() "
-                    f"WHERE id = %s AND deleted_at IS NULL",
-                    [doc_id],
-                )
-                if cursor.rowcount == 0:
-                    return JsonResponse({"error": "Document was not found."}, status=404)
-        except DatabaseError as error:
-            return JsonResponse(
-                {"error": "Could not delete the document.", "details": str(error)},
-                status=503,
-            )
-        return JsonResponse({"ok": True, "id": doc_id})
-
-    if request.method != "POST":
-        return JsonResponse({"error": "Method not allowed."}, status=405)
-
-    if not evidence_storage.azure_configured():
-        return JsonResponse({"error": "Azure storage is not configured."}, status=503)
-    try:
+            with transaction.atomic(using=connection.alias), connection.cursor() as cursor:
+                journal_documents.soft_delete(cursor, doc_id)
+            return JsonResponse({"ok": True, "id": doc_id})
+        if request.method != "POST":
+            return JsonResponse({"error": "Method not allowed."}, status=405)
+        if set(request.POST) - {"manual_activity_id", "uploaded_by"}:
+            raise ValueError("Document ownership, restoration and source identities cannot be supplied.")
         row_id = int(request.POST.get("manual_activity_id"))
+        upload = request.FILES.get("file")
+        if upload is None or upload.size > MAX_UPLOAD_BYTES:
+            raise ValueError("file is required and must be no larger than 50 MB.")
+        if not evidence_storage.azure_configured():
+            return JsonResponse({"error": "Azure storage is not configured."}, status=503)
+        with transaction.atomic(using=connection.alias), connection.cursor() as cursor:
+            row = journal_documents.writable_row(cursor, row_id)
+            if row["category"] != "assignment":
+                raise ValueError("Only assignment rows take uploads.")
+            from uuid import uuid4
+            display_name = _safe_filename(upload.name)
+            # New uploads must never overwrite an existing blob with the same
+            # display name. Existing paths remain untouched.
+            blob_name = f"{row['aptem_id']}/{row['month']}/{row_id}/{uuid4().hex}/{display_name}"
+            created = journal_documents.create(cursor, row_id, learner_id=row["learner_id"],
+                container=ASSIGNMENT_CONTAINER, blob_name=blob_name, display_name=display_name,
+                content_type=upload.content_type or "application/octet-stream", size_bytes=upload.size,
+                uploaded_by=_actor(request.POST.get("uploaded_by")))
+            try:
+                _ensure_assignment_container()
+                evidence_storage.upload_blob(upload, ASSIGNMENT_CONTAINER, blob_name,
+                    upload.content_type or "application/octet-stream", overwrite=False)
+            except Exception as error:
+                raise ServiceError("Azure upload failed; no document was recorded.", "storage_unavailable", 502) from error
+        return JsonResponse(_doc_payload(created), status=201)
     except (TypeError, ValueError):
-        return JsonResponse({"error": "manual_activity_id (int) is required"}, status=400)
-    upload = request.FILES.get("file")
-    if upload is None:
-        return JsonResponse({"error": "file is required"}, status=400)
-    if upload.size > MAX_UPLOAD_BYTES:
-        return JsonResponse({"error": "File is larger than 50 MB."}, status=400)
-
-    try:
-        with _connection().cursor() as cursor:
-            _ensure_manual_tables(cursor)
-            cursor.execute(
-                f"""
-                SELECT id, aptem_id, month, category FROM {MANUAL_ROWS}
-                WHERE id = %s AND deleted_at IS NULL
-                """,
-                [row_id],
-            )
-            row = _dict_rows(cursor)
-    except DatabaseError as error:
-        return JsonResponse(
-            {"error": "Could not read the manual row.", "details": str(error)},
-            status=503,
-        )
-    if not row:
-        return JsonResponse({"error": "Manual row was not found."}, status=404)
-    row = row[0]
-    if row["category"] != "assignment":
-        return JsonResponse({"error": "Only assignment rows take uploads."}, status=400)
-
-    display_name = _safe_filename(upload.name)
-    blob_name = f"{row['aptem_id']}/{row['month']}/{row_id}/{display_name}"
-    try:
-        _ensure_assignment_container()
-        evidence_storage.upload_blob(
-            upload, ASSIGNMENT_CONTAINER, blob_name,
-            upload.content_type or "application/octet-stream",
-        )
-    except Exception as error:
-        return JsonResponse(
-            {"error": "Azure upload failed.", "details": str(error)}, status=502,
-        )
-    try:
-        with _connection().cursor() as cursor:
-            cursor.execute(
-                f"""
-                INSERT INTO {MANUAL_DOCS} (
-                    manual_activity_id, aptem_id, month, container, blob_name,
-                    display_name, content_type, size_bytes, uploaded_by
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                RETURNING id, manual_activity_id, aptem_id, month, container,
-                          blob_name, display_name, content_type, size_bytes,
-                          uploaded_by, uploaded_at
-                """,
-                [
-                    row_id, row["aptem_id"], row["month"], ASSIGNMENT_CONTAINER,
-                    blob_name, display_name,
-                    upload.content_type or "application/octet-stream",
-                    upload.size, _actor(request.POST.get("uploaded_by")),
-                ],
-            )
-            created = _dict_rows(cursor)[0]
-    except DatabaseError as error:
-        # keep storage tidy if the record could not be written
-        try:
-            evidence_storage.delete_blob(ASSIGNMENT_CONTAINER, blob_name)
-        except Exception:
-            pass
-        return JsonResponse(
-            {"error": "Could not record the uploaded document.", "details": str(error)},
-            status=503,
-        )
-    return JsonResponse(_doc_payload(created), status=201)
+        return JsonResponse({"error": "Invalid document request; supply only the supported fields and integer IDs."}, status=400)
+    except ServiceError as error:
+        return JsonResponse({"error": str(error), "code": error.code}, status=error.status)
+    except DatabaseError:
+        # Never delete a physical blob as compensation: a failed commit may
+        # leave a new unreferenced upload, which requires separate review.
+        return JsonResponse({"error": "Could not save or read the document. Any uploaded file was retained."}, status=503)
 
 
 def _ledger_participants(cursor, condition, params):
@@ -2107,6 +2031,7 @@ def _collect_import_candidates(cursor, aptem_id, month, learner):
 
 
 @require_GET
+@staff_only()
 def document_url(request: HttpRequest) -> JsonResponse:
     """A short-lived read URL for one manual/evidence document, so the /doc
     preview page inside the system can embed it (PDF links land there too)."""
@@ -2116,15 +2041,7 @@ def document_url(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"error": "id (int) is required"}, status=400)
     try:
         with _connection().cursor() as cursor:
-            _ensure_manual_tables(cursor)
-            cursor.execute(
-                f"""
-                SELECT id, container, blob_name, display_name, content_type
-                FROM {MANUAL_DOCS} WHERE id = %s AND deleted_at IS NULL
-                """,
-                [doc_id],
-            )
-            found = _dict_rows(cursor)
+            found = journal_documents.read(cursor, document_id=doc_id)
     except DatabaseError as error:
         return JsonResponse(
             {"error": "Could not read the document.", "details": str(error)},
@@ -2230,13 +2147,14 @@ def _attach_assignment_evidence_docs(cursor, aptem_id, month):
     report) as documents on the month's assignment rows, keyed by the
     ``asg:<component_id>`` source ref. Idempotent — existing documents are
     never duplicated — and it also heals rows added before this feature."""
+    owner = profile_by_aptem(aptem_id, cursor=cursor)
     cursor.execute(
         f"""
         SELECT id, source_ref FROM {MANUAL_ROWS}
-        WHERE aptem_id = %s AND month = %s AND deleted_at IS NULL
+        WHERE learner_id = %s AND month = %s AND deleted_at IS NULL
           AND category = 'assignment' AND source_ref LIKE 'asg:%%'
         """,
-        [aptem_id, month],
+        [owner["id"], month],
     )
     rows_by_component = {}
     for row_id, source_ref in cursor.fetchall():
@@ -2268,21 +2186,10 @@ def _attach_assignment_evidence_docs(cursor, aptem_id, month):
         ):
             if not blob:
                 continue
-            cursor.execute(
-                f"""
-                INSERT INTO {MANUAL_DOCS} (
-                    manual_activity_id, aptem_id, month, container,
-                    blob_name, display_name, uploaded_by
-                )
-                SELECT %s, %s, %s, %s, %s, %s, 'aptem-evidence'
-                WHERE NOT EXISTS (
-                    SELECT 1 FROM {MANUAL_DOCS}
-                    WHERE manual_activity_id = %s AND blob_name = %s AND deleted_at IS NULL
-                )
-                """,
-                [row_id, aptem_id, month, EVIDENCE_CONTAINER, blob, label[:200], row_id, blob],
-            )
-            inserted += cursor.rowcount
+            created = journal_documents.create(cursor, row_id, learner_id=owner["id"],
+                container=EVIDENCE_CONTAINER, blob_name=blob, display_name=label[:200],
+                uploaded_by='aptem-evidence', mirrored=True)
+            inserted += int(created is not None)
     return inserted
 
 
@@ -2393,6 +2300,10 @@ def rows_auto_import(request: HttpRequest) -> JsonResponse:
                 learner = _load_learner(cursor, aptem_id)
                 if not learner:
                     return JsonResponse({"error": f"no Aptem learner {aptem_id}"}, status=404)
+                from learner_api.finalization_locks import lock_scopes
+                canonical_owner = profile_by_aptem(aptem_id, cursor=cursor)
+                learner['learner_id'] = canonical_owner['id']
+                lock_scopes(cursor, [(canonical_owner['id'], month)])
                 candidates = _collect_import_candidates(cursor, aptem_id, month, learner)
                 attendance_source = candidates["attendance_source"]
 
@@ -2512,6 +2423,8 @@ def rows_auto_import(request: HttpRequest) -> JsonResponse:
                 # Give every assignment row its Azure-mirrored evidence files
                 # as documents (also heals rows filed before this feature).
                 _attach_assignment_evidence_docs(cursor, aptem_id, month)
+    except ServiceError as error:
+        return JsonResponse({"error": str(error), "code": error.code}, status=error.status)
     except IntegrityError as error:
         return JsonResponse(
             {"error": "The auto-import collided with an existing row.", "details": str(error)},
@@ -2576,6 +2489,21 @@ def rows_bulk(request: HttpRequest) -> JsonResponse:
                 if not learner:
                     return JsonResponse({"error": f"no Aptem learner {aptem_id}"}, status=404)
                 _ensure_manual_tables(cursor)
+                from learner_api.finalization_locks import lock_scopes
+                canonical_owner = profile_by_aptem(aptem_id, cursor=cursor)
+                learner['learner_id'] = canonical_owner['id']
+                affected_ids = sorted(set(delete_ids + [row_id for row_id, _ in validated_updates]))
+                cursor.execute(f'SELECT learner_id,month FROM {MANUAL_ROWS} WHERE aptem_id=%s AND id=ANY(%s)',
+                               [aptem_id, affected_ids])
+                original_scopes = sorted(cursor.fetchall())
+                scopes = list(original_scopes)
+                scopes.extend((int(learner['learner_id']), values['month']) for _, values in validated_creates)
+                scopes.extend((int(learner['learner_id']), values['month']) for _, values in validated_updates if 'month' in values)
+                lock_scopes(cursor, scopes)
+                cursor.execute(f'SELECT learner_id,month FROM {MANUAL_ROWS} WHERE aptem_id=%s AND id=ANY(%s)',
+                               [aptem_id, affected_ids])
+                if sorted(cursor.fetchall()) != original_scopes:
+                    raise ServiceError('Journal scope changed. Reload before saving.', 'record_changed', 409)
                 for key, values in validated_creates:
                     cursor.execute(
                         INSERT_ROW_SQL
@@ -2644,6 +2572,8 @@ def rows_bulk(request: HttpRequest) -> JsonResponse:
                 for month in sorted({values["month"] for _, values in validated_creates
                                      if str(values.get("source_ref") or "").startswith("asg:")}):
                     _attach_assignment_evidence_docs(cursor, aptem_id, month)
+    except ServiceError as error:
+        return JsonResponse({"error": str(error), "code": error.code}, status=error.status)
     except IntegrityError as error:
         return JsonResponse(
             {"error": "A change collided with an existing row.", "details": str(error)},

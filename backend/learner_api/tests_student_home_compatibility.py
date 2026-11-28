@@ -1,5 +1,6 @@
 ﻿"""Student Home compatibility regressions; database and network are prohibited."""
 import ast
+import inspect
 import json
 from datetime import date
 from pathlib import Path
@@ -113,6 +114,7 @@ class StudentHomeCompatibilityTests(SimpleTestCase):
                          patch.object(detail, 'student_activity_available', return_value=False), \
                          patch.object(overview, 'read_week', return_value={'homeProgress': {}}), \
                          patch.object(training, 'read_dashboard', return_value={'events': []}), \
+                         patch.object(training, 'install_canonical_training_plan_module_ids', return_value=[]), \
                          patch.object(canonical, 'require_profile', return_value={'id': 321, 'enrolment_id': 265}):
                         source = self.source(kind)
                         source.__dict__['_placement_names'] = (None, None, None)
@@ -121,6 +123,27 @@ class StudentHomeCompatibilityTests(SimpleTestCase):
                         self.assertEqual(response.status_code, expected)
                         if expected != 200:
                             only.assert_not_called()
+
+    def test_upcoming_alone_uses_the_module_identity_plan(self):
+        view = inspect.unwrap(training.training_plan_dashboard)
+        owner = {'id': 407, 'enrolment_id': 285}
+        for section, compact_expected in (('upcoming', True), ('overview', False)):
+            source = self.source('commercial')
+            source.pk = 285
+            with self.subTest(section=section), \
+                 patch('learner_api.case_file_sources.source_for_case_file', return_value=source), \
+                 patch.object(canonical, 'require_profile', return_value=owner), \
+                 patch.object(training, 'install_canonical_training_plan_module_ids') as compact, \
+                 patch.object(training, 'install_canonical_training_plan') as complete, \
+                 patch.object(training, 'read_dashboard', return_value={'events': []}):
+                response = view(RequestFactory().get(f'/?section={section}'), 'commercial', 285)
+            self.assertEqual(response.status_code, 200)
+            if compact_expected:
+                compact.assert_called_once_with(source, owner)
+                complete.assert_not_called()
+            else:
+                compact.assert_not_called()
+                complete.assert_called_once_with(source, profile_id=407)
 
     def test_learner_metrics_never_add_review_planned_hours(self):
         from . import journal_sources

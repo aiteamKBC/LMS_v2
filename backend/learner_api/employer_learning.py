@@ -31,12 +31,15 @@ def read_dashboard(source, kind, tab, request):
 
 
 def _prepare_source(source):
+    from .learning_plan import install_canonical_training_plan_module_ids
+
     owner = canonical_learning.require_profile(source.pk)
     profile = learner_profile_for_source(source, source.pk, heal=False)
     if profile is None or profile.pk != owner['id'] or profile.enrolment_id != source.pk:
         raise ServiceError('The consolidated learner identity needs review.', 'identity_review_required', 409)
     source._canonical_profile = owner
     source._case_file_profile = profile
+    install_canonical_training_plan_module_ids(source, owner)
     dashboard_tabs.install_request_caches(source)
     return profile
 

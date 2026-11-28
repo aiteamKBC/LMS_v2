@@ -83,101 +83,6 @@ BASIS_ELAPSED = "timestamp_elapsed"
 MAX_JOURNAL_HOURS = Decimal("50")
 
 
-REVISION_DDL = f"""
-create table if not exists {JOURNAL_REVISION} (
-    revision_id            bigserial primary key,
-    row_id                 bigint not null references {MANUAL_ROWS} (id) on delete cascade,
-    aptem_id               bigint not null,
-    selected_month         text   not null,
-    category               text   not null,
-    previous_actual_hours  numeric,
-    proposed_actual_hours  numeric,
-    previous_planned_hours numeric,
-    proposed_planned_hours numeric,
-    planned_basis          text,
-    proposed_seconds       integer,
-    basis                  text,
-    reference_seconds      integer,
-    offset_minutes         integer not null default 0,
-    offset_mode            text    not null default 'fixed',
-    status                 text    not null default 'pending',
-    proposed_by            text    not null,
-    proposed_by_source     text,
-    proposed_at            timestamptz not null default now(),
-    decided_by             text,
-    decided_by_source      text,
-    decided_at             timestamptz,
-    comment                text,
-    base_fingerprint       text    not null,
-    rule_version           text    not null,
-    created_at             timestamptz not null default now(),
-    updated_at             timestamptz not null default now(),
-    constraint manual_activity_hours_revision_status_check
-        check (status in ('pending', 'approved', 'rejected', 'superseded')),
-    constraint manual_activity_hours_revision_seconds_check
-        check (proposed_seconds is null or proposed_seconds > 0),
-    -- A revision has to propose something: actual hours, planned hours or both.
-    constraint manual_activity_hours_revision_has_a_value_check
-        check (proposed_actual_hours is not null or proposed_planned_hours is not null),
-    constraint manual_activity_hours_revision_month_check
-        check (selected_month ~ '^[0-9]{{4}}-[0-9]{{2}}$'),
-    -- Two-person approval applies to identified auditors. The unattended
-    -- workspace actor is exempt: the Activity-log page asks for no identity,
-    -- so one actor both calculates and approves there by design.
-    constraint manual_activity_hours_revision_two_person_check
-        check (decided_by is null
-               or decided_by <> proposed_by
-               or proposed_by_source = 'workspace'),
-    constraint manual_activity_hours_revision_decision_check
-        check (
-            (status in ('pending', 'superseded') and decided_by is null and decided_at is null)
-            or (status in ('approved', 'rejected') and decided_by is not null and decided_at is not null)
-        )
-)
-"""
-
-# Additive column for databases created before the per-run offset existed.
-ALTER_DDL = (
-    f"alter table {JOURNAL_REVISION} add column if not exists offset_minutes integer not null default 0",
-    f"alter table {JOURNAL_REVISION} add column if not exists offset_mode text not null default 'fixed'",
-    f"alter table {JOURNAL_REVISION} add column if not exists previous_planned_hours numeric",
-    f"alter table {JOURNAL_REVISION} add column if not exists proposed_planned_hours numeric",
-    f"alter table {JOURNAL_REVISION} add column if not exists planned_basis text",
-    # Actual and planned are independent proposals now: a run can calculate one
-    # without the other, so neither column may be NOT NULL.
-    f"alter table {JOURNAL_REVISION} alter column proposed_actual_hours drop not null",
-    f"alter table {JOURNAL_REVISION} alter column proposed_seconds drop not null",
-    f"alter table {JOURNAL_REVISION} alter column basis drop not null",
-    f"alter table {JOURNAL_REVISION} drop constraint if exists manual_activity_hours_revision_seconds_check",
-    f"""alter table {JOURNAL_REVISION} add constraint manual_activity_hours_revision_seconds_check
-        check (proposed_seconds is null or proposed_seconds > 0)""",
-    f"alter table {JOURNAL_REVISION} drop constraint if exists manual_activity_hours_revision_has_a_value_check",
-    f"""alter table {JOURNAL_REVISION} add constraint manual_activity_hours_revision_has_a_value_check
-        check (proposed_actual_hours is not null or proposed_planned_hours is not null)""",
-    # Relax the two-person CHECK for workspace-sourced runs on databases created
-    # before the Activity-log page dropped its auditor name box. Additive and
-    # non-destructive: existing rows are untouched.
-    f"alter table {JOURNAL_REVISION} drop constraint if exists manual_activity_hours_revision_two_person_check",
-    f"""alter table {JOURNAL_REVISION} add constraint manual_activity_hours_revision_two_person_check
-        check (decided_by is null or decided_by <> proposed_by or proposed_by_source = 'workspace')""",
-)
-
-INDEX_DDL = (
-    f"create index if not exists manual_activity_hours_revision_scope_idx "
-    f"on {JOURNAL_REVISION} (aptem_id, selected_month, status)",
-    f"create unique index if not exists manual_activity_hours_revision_pending_uq "
-    f"on {JOURNAL_REVISION} (row_id) where status = 'pending'",
-)
-
-
-def ensure_journal_hours_tables(cursor):
-    cursor.execute(REVISION_DDL)
-    for statement in ALTER_DDL:
-        cursor.execute(statement)
-    for statement in INDEX_DDL:
-        cursor.execute(statement)
-
-
 def journal_tables_present(cursor) -> bool:
     cursor.execute(
         """
@@ -314,19 +219,43 @@ def _reference_seconds(row, offset_minutes: int = 0):
     return seconds, basis, None
 
 
-def scope_rows(cursor, aptem_id: int, month: str) -> list[dict]:
+def require_writable_month(cursor, learner_id: int, month: str):
+    """Serialize revisions with finalization before taking journal row locks."""
+    from learner_api.finalization_locks import lock_scopes
+    from learner_api.manual_time_corrections import require_open_month
+    from old_otjh.service import ServiceError as MonthError
+
+    lock_scopes(cursor, [(learner_id, month)])
+    cursor.execute('SELECT id,aptem_id FROM "Learner".learners WHERE id=%s', [learner_id])
+    owner = cursor.fetchone()
+    if owner is None:
+        raise ServiceError('Learner not found.', status=404, code='not_found')
+
+    def query(sql, params):
+        cursor.execute(sql, params)
+        return _dict_rows(cursor)
+
+    try:
+        require_open_month({'id': owner[0], 'aptem_id': owner[1]}, month, query=query)
+    except MonthError as error:
+        raise ServiceError('This monthly log is protected; no revision was changed.',
+                           status=error.status, code=error.code) from error
+
+
+def scope_rows(cursor, learner_id: int, month: str) -> list[dict]:
     cursor.execute(
         f"""
-        select m.id, m.aptem_id, m.learner_id, m.month, m.category, m.title,
+        select m.id, m.learner_id, m.month, m.category, m.title,
                m.activity_id, m.planned_hours, m.actual_hours, m.timestamp_label,
                m.accepted, a.configured_duration_min,
                a.quiz_id, a.reading_type, a.reading_iframe_url, a.reading_text_body
         from {MANUAL_ROWS} m
         left join {ACTIVITIES} a on a.activity_id = m.activity_id
-        where m.aptem_id = %s and m.month = %s and m.deleted_at is null
+        where m.learner_id = %s and m.month = %s and m.deleted_at is null
         order by m.category, m.id
+        for update of m
         """,
-        [aptem_id, month],
+        [learner_id, month],
     )
     return _dict_rows(cursor)
 
@@ -435,7 +364,7 @@ def planned_allocation(total_hours: Decimal, row_ids) -> dict:
     return allocation
 
 
-def calculate(cursor, *, aptem_id: int, month: str, actor,
+def calculate(cursor, *, learner_id: int, aptem_id: int, month: str, actor,
               offset_minutes: int = 0, offset_mode: str = MODE_SPREAD,
               fields: str = FIELD_BOTH) -> dict:
     """Propose hours for one learner-month.
@@ -451,7 +380,8 @@ def calculate(cursor, *, aptem_id: int, month: str, actor,
     wants_actual = fields in (FIELD_BOTH, FIELD_ACTUAL)
     wants_planned = fields in (FIELD_BOTH, FIELD_PLANNED)
 
-    rows = scope_rows(cursor, aptem_id, month)
+    require_writable_month(cursor, learner_id, month)
+    rows = scope_rows(cursor, learner_id, month)
     summary = {
         "fields": fields,
         "offset_mode": offset_mode,
@@ -561,11 +491,12 @@ def calculate(cursor, *, aptem_id: int, month: str, actor,
 
         # --- merge with whatever is already pending on this row ------------
         cursor.execute(
-            f"""select revision_id, proposed_actual_hours, proposed_seconds, basis,
+            f"""select revision_id, proposed_actual_hours,
+                       round(proposed_actual_hours * 3600)::integer as proposed_seconds, basis,
                        offset_minutes, offset_mode, proposed_planned_hours
                   from {JOURNAL_REVISION}
-                 where row_id = %s and status = 'pending' for update""",
-            [row["id"]],
+                 where row_id = %s and learner_id = %s and status = 'pending' for update""",
+            [row["id"], learner_id],
         )
         existing = cursor.fetchone()
 
@@ -610,17 +541,17 @@ def calculate(cursor, *, aptem_id: int, month: str, actor,
         cursor.execute(
             f"""
             insert into {JOURNAL_REVISION}
-                (row_id, aptem_id, selected_month, category, previous_actual_hours,
-                 proposed_actual_hours, proposed_seconds, basis, reference_seconds,
+                (row_id, learner_id, selected_month, category, previous_actual_hours,
+                 proposed_actual_hours, basis, reference_seconds,
                  offset_minutes, offset_mode, previous_planned_hours,
                  proposed_planned_hours, planned_basis, status, proposed_by,
                  proposed_by_source, base_fingerprint, rule_version)
-            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                     'pending', %s, %s, %s, %s)
             on conflict do nothing
             """,
-            [row["id"], aptem_id, month, row["category"], row.get("actual_hours"),
-             merged_actual, merged_seconds, merged_basis, merged_seconds,
+            [row["id"], learner_id, month, row["category"], row.get("actual_hours"),
+             merged_actual, merged_basis, merged_seconds,
              merged_offset if merged_offset is not None else 0,
              merged_mode or offset_mode,
              current_planned, merged_planned,
@@ -651,36 +582,40 @@ def _same(left, right) -> bool:
     return Decimal(str(left)) == Decimal(str(right))
 
 
-def pending(cursor, aptem_id: int, month: str) -> list[dict]:
+def pending(cursor, learner_id: int, month: str) -> list[dict]:
     cursor.execute(
         f"""
         select revision_id, row_id, category, previous_actual_hours, proposed_actual_hours,
                previous_planned_hours, proposed_planned_hours, planned_basis,
-               proposed_seconds, basis, offset_minutes, offset_mode, proposed_by, proposed_at
+               round(proposed_actual_hours * 3600)::integer as proposed_seconds,
+               basis, offset_minutes, offset_mode, proposed_by, proposed_at
         from {JOURNAL_REVISION}
-        where aptem_id = %s and selected_month = %s and status = 'pending'
+        where learner_id = %s and selected_month = %s and status = 'pending'
+          and exists (select 1 from {MANUAL_ROWS} m
+                      where m.id = row_id and m.learner_id = {JOURNAL_REVISION}.learner_id
+                        and m.deleted_at is null)
         order by row_id
         """,
-        [aptem_id, month],
+        [learner_id, month],
     )
     return _dict_rows(cursor)
 
 
-def history(cursor, aptem_id: int, month: str, limit: int = 200) -> list[dict]:
+def history(cursor, learner_id: int, month: str, limit: int = 200) -> list[dict]:
     cursor.execute(
         f"""
         select revision_id, row_id, status, previous_actual_hours, proposed_actual_hours,
                basis, offset_minutes, offset_mode, proposed_by, proposed_at, decided_by, decided_at
         from {JOURNAL_REVISION}
-        where aptem_id = %s and selected_month = %s
+        where learner_id = %s and selected_month = %s
         order by revision_id desc limit %s
         """,
-        [aptem_id, month, limit],
+        [learner_id, month, limit],
     )
     return _dict_rows(cursor)
 
 
-def decide(cursor, *, aptem_id: int, month: str, actor, approve: bool,
+def decide(cursor, *, learner_id: int, month: str, actor, approve: bool,
            revision_ids=None, comment=None) -> dict:
     """Approve (apply) or reject the month's pending proposals.
 
@@ -691,8 +626,15 @@ def decide(cursor, *, aptem_id: int, month: str, actor, approve: bool,
         raise ServiceError("This identity may not decide proposals.",
                            status=403, code="identity_not_permitted")
 
-    conditions = ["aptem_id = %s", "selected_month = %s", "status = 'pending'"]
-    params: list = [aptem_id, month]
+    validate_comment(comment)
+
+    # Match calculation's lock order: parent rows before pending revisions.
+    # This also serializes calculate/approve races for the same learner-month.
+    require_writable_month(cursor, learner_id, month)
+    scope_rows(cursor, learner_id, month)
+
+    conditions = ["learner_id = %s", "selected_month = %s", "status = 'pending'"]
+    params: list = [learner_id, month]
     if revision_ids:
         conditions.append("revision_id = any(%s)")
         params.append([int(value) for value in revision_ids])
@@ -727,12 +669,12 @@ def decide(cursor, *, aptem_id: int, month: str, actor, approve: bool,
             # otherwise the row keeps the planned hours it already has.
             cursor.execute(
                 f"""update {MANUAL_ROWS}
-                       set actual_hours = %s,
+                       set actual_hours = coalesce(%s, actual_hours),
                            planned_hours = coalesce(%s, planned_hours),
                            updated_by = %s, updated_at = now()
-                     where id = %s and aptem_id = %s and month = %s and deleted_at is null""",
+                     where id = %s and learner_id = %s and month = %s and deleted_at is null""",
                 [proposal["proposed_actual_hours"], proposal["proposed_planned_hours"],
-                 actor.label, proposal["row_id"], aptem_id, month],
+                 actor.label, proposal["row_id"], learner_id, month],
             )
             if cursor.rowcount != 1:
                 raise ServiceError("A journal row changed while approving; nothing was applied.",
@@ -740,9 +682,9 @@ def decide(cursor, *, aptem_id: int, month: str, actor, approve: bool,
         cursor.execute(
             f"""update {JOURNAL_REVISION}
                    set status = %s, decided_by = %s, decided_by_source = %s,
-                       decided_at = now(), comment = coalesce(%s, comment), updated_at = now()
+                       decided_at = now(), updated_at = now()
                  where revision_id = %s and status = 'pending'""",
-            ["approved" if approve else "rejected", actor.key, actor.source, comment,
+            ["approved" if approve else "rejected", actor.key, actor.source,
              proposal["revision_id"]],
         )
         applied += 1
@@ -753,3 +695,10 @@ def decide(cursor, *, aptem_id: int, month: str, actor, approve: bool,
         "skipped_own_proposals": skipped_own,
         "status": "approved" if approve else "rejected",
     }
+
+
+def validate_comment(comment):
+    """Empty legacy payloads are compatible; entered comments cannot be stored."""
+    if comment not in (None, ""):
+        raise ServiceError("Revision comments are no longer supported; no decision was saved.",
+                           status=400, code="revision_comment_not_supported")

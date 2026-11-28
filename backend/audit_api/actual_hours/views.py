@@ -59,8 +59,11 @@ _NOT_INSTALLED_MESSAGE = (
 
 
 def _not_installed(absent):
+    message = _NOT_INSTALLED_MESSAGE
+    if "manual_activity_hours_revision" in absent:
+        message = "The canonical journal revision schema must be provisioned by the database migration."
     return JsonResponse(
-        {"error": _NOT_INSTALLED_MESSAGE, "code": "not_installed",
+        {"error": message, "code": "not_installed",
          "details": {"missing_tables": absent}},
         status=503,
     )
@@ -392,6 +395,16 @@ def reject(request):
     return _decide(request, approve=False)
 
 
+def _journal_owner(cursor, aptem_id):
+    from learner_api.canonical_learning import profile_by_aptem
+    from old_otjh.service import ServiceError as IdentityError
+
+    try:
+        return profile_by_aptem(aptem_id, cursor=cursor)["id"]
+    except IdentityError as error:
+        raise ServiceError(str(error), status=error.status, code=error.code) from error
+
+
 # --- Learner Journal Activity-log hours -------------------------------------
 # These act on the employee-arranged ledger rows the monthly report shows, not
 # on Last_audit.activity_actual_hours. Same rules, same two-person approval.
@@ -410,8 +423,11 @@ def journal_summary(request):
         with _connection().cursor() as cursor:
             if not journal_hours.journal_tables_present(cursor):
                 return _not_installed(["manual_activity_hours_revision"])
-            pending = journal_hours.pending(cursor, aptem_id, month)
-            history = journal_hours.history(cursor, aptem_id, month)
+            learner_id = _journal_owner(cursor, aptem_id)
+            pending = journal_hours.pending(cursor, learner_id, month)
+            history = journal_hours.history(cursor, learner_id, month)
+    except ServiceError as error:
+        return _error(error.message, error.status, error.code)
     except DatabaseError as error:
         return _error("Could not read the calculated hours.", status=503,
                       details={"error": str(error)})
@@ -476,7 +492,7 @@ def journal_calculate(request):
                 if not journal_hours.journal_tables_present(cursor):
                     return _not_installed(["manual_activity_hours_revision"])
                 result = journal_hours.calculate(
-                    cursor, aptem_id=aptem_id, month=month, actor=auditor,
+                    cursor, learner_id=_journal_owner(cursor, aptem_id), aptem_id=aptem_id, month=month, actor=auditor,
                     offset_minutes=offset_minutes, offset_mode=offset_mode,
                     fields=fields,
                 )
@@ -495,6 +511,7 @@ def _journal_decide(request, approve):
     try:
         body = _body(request)
         aptem_id, month = _scope(request, body)
+        journal_hours.validate_comment(body.get("comment"))
         auditor = resolve_journal_actor(request, approving=True)
     except ServiceError as error:
         return _error(error.message, error.status, error.code)
@@ -506,8 +523,8 @@ def _journal_decide(request, approve):
                 if not journal_hours.journal_tables_present(cursor):
                     return _not_installed(["manual_activity_hours_revision"])
                 result = journal_hours.decide(
-                    cursor, aptem_id=aptem_id, month=month, actor=auditor, approve=approve,
-                    revision_ids=revision_ids, comment=(body.get("comment") or None),
+                    cursor, learner_id=_journal_owner(cursor, aptem_id), month=month, actor=auditor, approve=approve,
+                    revision_ids=revision_ids, comment=body.get("comment"),
                 )
     except ServiceError as error:
         return _error(error.message, error.status, error.code, error.details)

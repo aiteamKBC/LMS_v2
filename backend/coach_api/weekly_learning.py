@@ -116,7 +116,10 @@ def week_rows(modules, today):
 def read_weekly_learning(context, selection=None, *, module_id=None, include_weeks=True, include_actions=False,
                          module_navigation=False, prefer_current=True):
     from learner_api.weekly_hours import module_activity_hours, selected_activity_hours, activity_hours_index
-    from learner_api.learning_plan import _effective_plan_ids
+    from learner_api.learning_plan import (
+        _effective_plan_ids,
+        install_canonical_training_plan_module_ids,
+    )
     from learner_api import canonical_learning
     from learner_api.training_plan_dashboard import rows, attach_curriculum_slots, plan_session
     from learner_api.learner_detail import _display_component_title, _display_quiz_title, _component_ksb_items, _RESOURCE_URL_KEYS
@@ -126,6 +129,7 @@ def read_weekly_learning(context, selection=None, *, module_id=None, include_wee
     if source is None:
         raise LookupError('Learner enrolment is unavailable.')
     owner = getattr(source, '_canonical_profile', None) or canonical_learning.require_profile(source.pk)
+    install_canonical_training_plan_module_ids(source, owner)
     canonical_only = bool(owner.get('_canonical_plan_only'))
     canonical_plan = list(getattr(source, '_canonical_training_plan', None) or [])
     assigned_ids = (list(dict.fromkeys(

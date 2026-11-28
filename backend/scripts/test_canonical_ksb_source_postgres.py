@@ -196,11 +196,13 @@ def run(config):
 
         def test_progress_filters_unresolved_excluded_wrong_versions_and_deleted(self):
             self.progress_fixture()
+            self.install_month_locks()
             rows = self.db.execute(f'SELECT progress_id,position,ksb_code FROM {official_progress_relation()} k ORDER BY 1,2').fetchall()
             self.assertEqual(rows,[(1,1,'K1'),(1,2,'K1'),(2,1,'K1'),(3,1,'K1'),(5,1,'K1')])
 
         def test_points_preserve_acceptance_completion_distinction_without_duplicates(self):
             self.progress_fixture()
+            self.install_month_locks()
             # 3 distinct evidence activities; 2 accepted; only 1 also completed.
             self.assertEqual(self.db.execute(point_counts_sql(),[1]).fetchall(),
                              [('K1','Canonical knowledge',3,1,2)])
@@ -211,6 +213,7 @@ def run(config):
         def test_pin_creation_is_exact_immutable_and_does_not_create_definitions(self):
             from learner_api.ksb_domain import pin_learner_standard
             self.progress_fixture()
+            self.install_month_locks()
             self.db.execute('UPDATE "Learner".learners SET standard_ref=NULL,standard_version=NULL WHERE id=1')
             with self.db.transaction(),self.db.cursor() as cursor:
                 self.assertEqual(pin_learner_standard(cursor,1),('ST0612','1.0'))
@@ -226,23 +229,35 @@ def run(config):
 
         def test_learner_pin_survives_programme_version_change(self):
             self.progress_fixture()
+            self.install_month_locks()
             self.db.execute("UPDATE curriculum.programmes SET standard_version='2.0' WHERE programme_id='P1'")
             self.assertEqual(self.db.execute(point_counts_sql(),[1]).fetchone(),('K1','Canonical knowledge',3,1,2))
 
         def test_conflicting_programme_reference_does_not_leak_same_codes(self):
             self.progress_fixture()
+            self.install_month_locks()
             self.db.execute("UPDATE curriculum.programmes SET standard_ref='ST9999' WHERE programme_id='P1'")
             self.assertEqual(self.db.execute(point_counts_sql(),[1]).fetchall(),[])
 
         def test_unpinned_learner_uses_only_exact_programme_pair(self):
             self.progress_fixture()
+            self.install_month_locks()
             self.db.execute('UPDATE "Learner".learners SET standard_ref=NULL,standard_version=NULL WHERE id=1')
             self.assertEqual(self.db.execute(point_counts_sql(),[1]).fetchone(),('K1','Canonical knowledge',3,1,2))
             self.db.execute("UPDATE curriculum.programmes SET standard_version='9.0' WHERE programme_id='P1'")
             self.assertEqual(self.db.execute(point_counts_sql(),[1]).fetchall(),[])
 
+        def install_month_locks(self):
+            self.db.execute('''CREATE SCHEMA IF NOT EXISTS "Audit";
+                CREATE TABLE IF NOT EXISTS "Audit".monthly_audit_signoffs(learner_id text,report_month text,review_confirmed boolean);
+                CREATE TABLE IF NOT EXISTS "Learner".monthly_audit_signoffs(learner_id text,report_month text,review_confirmed boolean);
+                CREATE TABLE IF NOT EXISTS "Learner".learner_monthly_targets(learner_id bigint,report_month text,month_status text);
+                CREATE TABLE IF NOT EXISTS "Learner".learner_monthly_signatures(learner_id bigint,report_month text,review_confirmed boolean);
+''')
+
         def journal_fixture(self):
             self.progress_fixture()
+            self.install_month_locks()
             self.db.execute('''ALTER TABLE "Learner".learners ADD COLUMN aptem_id bigint;
                 UPDATE "Learner".learners SET aptem_id=id+100;
                 ALTER TABLE "Learner".learner_progress_entries ADD COLUMN reporting_month text;
@@ -254,7 +269,7 @@ def run(config):
                 CREATE TABLE "Learner".ksb_learner_activity_mappings(learner_id bigint,source_kind text,
                     activity_id bigint,source_preference text CHECK(source_preference IN ('material','learner')),ksbs jsonb,
                     CHECK(source_kind IN ('learner_activity','aptem_component')));
-                CREATE TABLE "Learner".manual_month_finalization_events(id bigint,aptem_id bigint,
+                CREATE TABLE "Learner".manual_month_finalization_events(id bigint,learner_id bigint,
                     report_month text,event_type text);''')
 
         def test_journal_fill_preserves_history_metadata_and_learner_override_namespace(self):
@@ -301,13 +316,13 @@ def run(config):
         def test_journal_fill_rejects_finalized_month_and_wrong_owner_and_rolls_back(self):
             from learner_api.journal_ksbs import fill_missing_snapshot
             self.journal_fixture()
-            self.db.execute("INSERT INTO \"Learner\".manual_month_finalization_events VALUES(1,101,'2026-11','finalized')")
+            self.db.execute("INSERT INTO \"Learner\".manual_month_finalization_events VALUES(1,1,'2026-11','finalized')")
             with self.assertRaisesRegex(ValueError,'finalized'):
                 with self.db.transaction(), self.db.cursor() as cursor:
                     fill_missing_snapshot(cursor,10,101,[{'code':'S2'}],actor='test')
             with self.db.transaction(), self.db.cursor() as cursor:
                 self.assertIsNone(fill_missing_snapshot(cursor,10,102,[{'code':'S2'}],actor='test'))
-            self.db.execute("INSERT INTO \"Learner\".manual_month_finalization_events VALUES(2,101,'2026-11','reopened')")
+            self.db.execute("INSERT INTO \"Learner\".manual_month_finalization_events VALUES(2,1,'2026-11','reopened')")
             with self.assertRaisesRegex(RuntimeError,'rollback'):
                 with self.db.transaction(), self.db.cursor() as cursor:
                     fill_missing_snapshot(cursor,10,101,[{'code':'S2'}],actor='test')
@@ -322,14 +337,21 @@ def run(config):
                 'specs/ksb-canonical-architecture/database-evidence.json').read_text(encoding='utf-8'))
             guard = next(row for row in evidence['journal_ksb_guards'] if row[0]=='trg_guard_finalized_manual_rows')
             # Captured read-only from Development; installed only in this disposable DB.
-            self.db.execute(guard[2])
+            sql=(Path(__file__).parents[1]/'scripts/fixtures/development_finalization_installed.sql').read_text(encoding='utf-8')
+            self.db.execute(sql[sql.index('CREATE OR REPLACE FUNCTION "Learner".guard_finalized_journal_month'):sql.index('CREATE OR REPLACE FUNCTION "Learner".lock_manual_finalization_event_scope')])
+            self.db.execute('''CREATE SCHEMA IF NOT EXISTS "Audit";
+                CREATE TABLE IF NOT EXISTS "Audit".monthly_audit_signoffs(learner_id text,report_month text,review_confirmed boolean);
+                CREATE TABLE IF NOT EXISTS "Learner".monthly_audit_signoffs(learner_id text,report_month text,review_confirmed boolean);
+                CREATE TABLE IF NOT EXISTS "Learner".learner_monthly_targets(learner_id bigint,report_month text,month_status text);
+                CREATE TABLE IF NOT EXISTS "Learner".learner_monthly_signatures(learner_id bigint,report_month text,review_confirmed boolean);
+''')
             self.db.execute(guard[1])
-            self.db.execute("INSERT INTO \"Learner\".manual_month_finalization_events VALUES(1,101,'2026-11','finalized')")
+            self.db.execute("INSERT INTO \"Learner\".manual_month_finalization_events VALUES(1,1,'2026-11','finalized')")
             with self.assertRaises(psycopg.errors.ObjectNotInPrerequisiteState):
                 with self.db.transaction():
                     self.db.execute('UPDATE "Learner".learner_journal_rows SET ksb_snapshot=\'[]\' WHERE id=10')
             self.assertIsNone(self.db.execute('SELECT ksb_snapshot FROM "Learner".learner_journal_rows WHERE id=10').fetchone()[0])
-            self.db.execute("INSERT INTO \"Learner\".manual_month_finalization_events VALUES(2,101,'2026-11','reopened')")
+            self.db.execute("INSERT INTO \"Learner\".manual_month_finalization_events VALUES(2,1,'2026-11','reopened')")
             self.db.execute('UPDATE "Learner".learner_journal_rows SET ksb_snapshot=\'[]\' WHERE id=10')
             self.assertEqual(self.db.execute('SELECT ksb_snapshot FROM "Learner".learner_journal_rows WHERE id=10').fetchone()[0],[])
 
@@ -365,6 +387,7 @@ def run(config):
         def test_extra_activity_ksb_write_preserves_exclusion_and_is_idempotent_and_atomic(self):
             from learner_api.extra_activity_progress import _sync_ksbs
             self.progress_fixture()
+            self.install_month_locks()
             self.db.execute('''UPDATE "Learner".ksb_learner_progress SET is_excluded=true,
                 exclusion_reason='Keep',legacy_definition_snapshot='{"source":"historic"}',
                 exclusion_metadata='{"audit":"retained"}' WHERE progress_id=2''')
@@ -383,6 +406,7 @@ def run(config):
         def test_curriculum_propagation_preserves_finalized_months_and_learner_overrides(self):
             from learner_api.ksb_write_scope import mutable_progress_ids
             self.progress_fixture()
+            self.install_month_locks()
             self.db.execute('''ALTER TABLE "Learner".learners ADD COLUMN aptem_id bigint;
                 UPDATE "Learner".learners SET aptem_id=id+100;
                 ALTER TABLE "Learner".learner_progress_entries ADD COLUMN reporting_month text,
@@ -392,19 +416,37 @@ def run(config):
                     month text,activity_id bigint,deleted_at timestamptz);
                 CREATE TABLE "Learner".ksb_learner_activity_mappings(learner_id bigint,source_kind text,
                     activity_id bigint,source_preference text);
-                CREATE TABLE "Learner".manual_month_finalization_events(id bigint,aptem_id bigint,
+                CREATE TABLE "Learner".manual_month_finalization_events(id bigint,learner_id bigint,
                     report_month text,event_type text);
                 INSERT INTO "Learner".learner_journal_rows VALUES(1,1,1,'2026-10',77,NULL);
-                INSERT INTO "Learner".manual_month_finalization_events VALUES(1,101,'2026-10','finalized');
+                INSERT INTO "Learner".manual_month_finalization_events VALUES(1,1,'2026-10','finalized');
                 INSERT INTO "Learner".ksb_learner_activity_mappings VALUES(1,'aptem_component',77,'learner');''')
             with self.db.transaction(), self.db.cursor() as cursor:
                 self.assertEqual(mutable_progress_ids(cursor,['C1']),[2,3,5,6])
-            self.db.execute('''INSERT INTO "Learner".manual_month_finalization_events VALUES(2,101,'2026-10','reopened')''')
+            self.db.execute('''INSERT INTO "Learner".manual_month_finalization_events VALUES(2,1,'2026-10','reopened')''')
             with self.db.transaction(), self.db.cursor() as cursor:
                 self.assertEqual(mutable_progress_ids(cursor,['C1']),[1,2,3,5,6])
             self.db.execute('''INSERT INTO "Learner".ksb_learner_activity_mappings VALUES(1,'learner_activity',77,'learner')''')
             with self.db.transaction(), self.db.cursor() as cursor:
                 self.assertEqual(mutable_progress_ids(cursor,['C1']),[2,3,5,6])
+            self.db.execute("UPDATE \"Learner\".learners SET aptem_id=NULL WHERE id=2")
+            self.db.execute("INSERT INTO \"Learner\".learner_monthly_signatures VALUES(2,'2026-11',true)")
+            with self.db.transaction(), self.db.cursor() as cursor:
+                self.assertEqual(mutable_progress_ids(cursor,['C1']),[2,3,6])
+
+        def test_no_aptem_snapshot_fill_respects_signature_and_finalization(self):
+            from learner_api.journal_ksbs import fill_missing_snapshot
+            self.journal_fixture()
+            self.db.execute('UPDATE "Learner".learners SET aptem_id=NULL WHERE id=1')
+            self.db.execute("INSERT INTO \"Learner\".learner_monthly_signatures VALUES(1,'2026-11',true)")
+            with self.assertRaisesRegex(ValueError,'signed'):
+                with self.db.transaction(),self.db.cursor() as cursor:
+                    fill_missing_snapshot(cursor,10,None,[{'code':'K1'}],actor='test',learner_id=1)
+            self.db.execute('DELETE FROM "Learner".learner_monthly_signatures')
+            with self.db.transaction(),self.db.cursor() as cursor:
+                result = fill_missing_snapshot(cursor,10,None,[{'code':'K1'}],actor='test',learner_id=1)
+                self.assertEqual(result['learner_id'],1)
+                self.assertIsNone(fill_missing_snapshot(cursor,10,None,[{'code':'S2'}],actor='retry',learner_id=1))
 
         def template_fixture(self):
             self.db.execute('''CREATE TABLE curriculum.components(id text PRIMARY KEY);
@@ -469,7 +511,7 @@ def run(config):
             self.template_fixture()
             with self.db.transaction(), self.db.cursor() as cursor:
                 replace(cursor,'T1',[{'standardKsbId':2,'weight':1}])
-            with self.assertRaises(psycopg.errors.RestrictViolation), self.db.transaction():
+            with self.assertRaises(psycopg.errors.ForeignKeyViolation), self.db.transaction():
                 self.db.execute("DELETE FROM curriculum.week_template_components WHERE id='T1'")
             self.db.execute("DELETE FROM curriculum.ksb_component_mappings WHERE template_component_id='T1'")
             self.db.execute("DELETE FROM curriculum.week_template_components WHERE id='T1'")
@@ -479,6 +521,7 @@ def run(config):
             from types import SimpleNamespace
             from learner_api.canonical_ksb_migration import verify_schema, verify_template_ownership
             self.progress_fixture()
+            self.install_month_locks()
             self.template_fixture()
             self.db.execute('''CREATE TABLE "Learner".ksb_learner_activity_mappings(
                 learner_id bigint,source_kind text,activity_id bigint,source_metadata jsonb)''')

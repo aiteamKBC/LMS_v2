@@ -84,6 +84,10 @@ def year_activities(owner):
             FROM "Learner".learner_progress_entries
             WHERE learner_id=%s AND deleted_at IS NULL) p
         GROUP BY reporting_month''', [owner['id']])
+    # The PostgreSQL JSON text loader also handles aggregates. Decode before
+    # iterating, preserving undated activities and their stored hours.
+    for row in activities:
+        row['unallocated_activities'] = logs.sources.decoded(row.get('unallocated_activities'), [])
     by_month = {row['month']: dict(row) for row in activities}
     unallocated = {str(item['id']): item for row in activities
                    for item in row.get('unallocated_activities') or []}
@@ -126,17 +130,23 @@ def project_year(learner, year):
     current_month = timezone.localdate().strftime('%Y-%m')
     available = sorted(month for month in (activity_by_month.keys() | targets.keys() | signs_by_month.keys())
                        if month <= current_month)
+    states = logs.lock_states(learner['id'], available, canonical_owner=owner)
     months = []
     for month in available:
         if not month.startswith(f'{year}-'):
             continue
         activity = activity_by_month.get(month, {})
         signature = signs_by_month.get(month, {})
+        state = states.get(month, {})
+        month_status = state.get('month_status') or logs._effective_month_status(
+            'open', [role for role, present in (('learner', signature.get('learner_signed')),
+                                                ('coach', signature.get('coach_signed'))) if present])
         months.append({'month': month, 'activities': activity.get('activities', 0),
                        'acceptedOtjhHours': float(activity.get('accepted_hours', 0)),
                        'targetHours': targets.get(month), 'isOpen': month == current_month,
                        'learnerSigned': bool(signature.get('learner_signed')),
-                       'coachSigned': bool(signature.get('coach_signed'))})
+                       'coachSigned': bool(signature.get('coach_signed')),
+                       'monthStatus': month_status})
     closed = [month for month in available if month < current_month]
     return {'learner': {'id': learner['id'], 'name': learner['name'],
                         'initials': initials(learner['name']), 'programme': learner['programme']},

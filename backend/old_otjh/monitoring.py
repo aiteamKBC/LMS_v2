@@ -55,13 +55,19 @@ def load_records():
           ON s.learner_id=t.aptem_id::text AND s.programme_key='otjh-transition:' || t.learner_id::text
         WHERE t.learner_id=ANY(%s) AND s.audit_version=%s
           AND s.review_confirmed IS TRUE AND coalesce(s.signature_data,'')<>'' ''', [enrolment_ids, repo.VERSION])
-    finals = repo.query(f'''SELECT DISTINCT ON (aptem_id, report_month)
-        aptem_id, report_month, event_type, created_at FROM {repo.FINALIZATIONS}
-        WHERE aptem_id=ANY(%s) AND report_month<=%s
-        ORDER BY aptem_id, report_month, id DESC''', [aptem_ids, repo.CUTOFF])
-    pending = repo.query('''SELECT aptem_id, selected_month AS month, count(*) AS count
-        FROM structured_manual_activities.manual_activity_hours_revision
-        WHERE aptem_id=ANY(%s) AND status='pending' GROUP BY aptem_id, selected_month''', [aptem_ids])
+    finals = repo.query(f'''SELECT DISTINCT ON (f.learner_id, f.report_month)
+        l.aptem_id, f.report_month, f.event_type, f.created_at FROM {repo.FINALIZATIONS} f
+        JOIN "Learner".learners l ON l.id=f.learner_id
+        WHERE l.aptem_id=ANY(%s) AND f.report_month<=%s
+          AND NOT EXISTS (SELECT 1 FROM "Learner".learners other
+              WHERE other.aptem_id=l.aptem_id AND other.id<>l.id)
+        ORDER BY f.learner_id, f.report_month, f.id DESC''', [aptem_ids, repo.CUTOFF])
+    pending = repo.query('''SELECT l.aptem_id, r.selected_month AS month, count(*) AS count
+        FROM "Learner".manual_activity_hours_revision r
+        JOIN "Learner".learners l ON l.id=r.learner_id
+        JOIN "Learner".learner_journal_rows j ON j.id=r.row_id AND j.learner_id=r.learner_id
+        WHERE l.aptem_id=ANY(%s) AND r.status='pending' AND j.deleted_at IS NULL
+        GROUP BY l.aptem_id, r.selected_month''', [aptem_ids])
     return assemble(learners, sources, transitions, signs, finals, pending)
 
 

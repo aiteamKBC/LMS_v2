@@ -6,6 +6,8 @@ repair data, or create records. Route identities are verified before reading.
 from datetime import datetime
 from html import escape
 from zoneinfo import ZoneInfo
+from .activity_document_projection import active_relation as active_document_relation
+
 import re
 
 from old_otjh import repository
@@ -134,13 +136,24 @@ def programme_planned_hours(learner_id, *, owner=None):
     return round(hours, 4) if isfinite(hours) and hours >= 0 else None
 
 
-def profile_by_aptem(aptem_id):
+def profile_by_aptem(aptem_id, *, cursor=None):
     """For already-authorized Audit callers; never use an Aptem ID as a PK."""
-    records = query(f'''SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,l.full_name AS name,
-        p.name AS programme,{_owner_coach_sql()},l.email,l.start_date,l.end_date,l.learner_type
+    coach_columns = (_owner_coach_sql() if cursor is None else
+                     '(SELECT c.name FROM curriculum.coaches c WHERE c.id=l.coach_id) AS coach_name,'
+                     '(SELECT c.email FROM curriculum.coaches c WHERE c.id=l.coach_id) AS coach_email')
+    sql = f'''SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,l.full_name AS name,
+        p.name AS programme,{coach_columns},l.email,l.start_date,l.end_date,l.learner_type
         FROM "Learner".learners l
         LEFT JOIN curriculum.programmes p ON p.programme_id=l.programme_id
-        WHERE l.aptem_id=%s''', [aptem_id])
+        WHERE l.aptem_id=%s'''
+    if cursor is None:
+        records = query(sql, [aptem_id])
+    else:
+        # Audit mounts must resolve identity on the same database/transaction
+        # as their revision writes, including the isolated hours-test mount.
+        cursor.execute(sql, [aptem_id])
+        columns = [column[0] for column in cursor.description]
+        records = [dict(zip(columns, row)) for row in cursor.fetchall()]
     if len(records) != 1:
         raise ServiceError('The consolidated learner identity needs review.', 'identity_review_required', 409)
     return records[0]
@@ -259,18 +272,17 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
         'source_course_ref',c.source_course_ref,'activity_status',s.activity_status)'''
         if monthly_log_summary else fact_sql(SOURCE_FIELDS, compact=catalogue_summary))
     journal_payload = fact_sql(JOURNAL_FIELDS, compact=catalogue_summary)
-    document_cte = ''' , activity_documents AS (
+    document_cte = f''' , activity_documents AS (
             SELECT d.progress_id,jsonb_agg(jsonb_build_object(
                 'id',d.id,'display_name',d.display_name,'content_type',d.content_type) ORDER BY d.id) AS payload
-            FROM "Learner".learner_activity_documents d
+            FROM {active_document_relation()} d
             JOIN canonical p ON p.id=d.progress_id AND p.learner_id=d.learner_id
             WHERE d.deleted_at IS NULL
             GROUP BY d.progress_id
         )''' if monthly_log_summary else ''
     ksb_cte = '' if catalogue_summary else f''', progress_ksbs AS (
         SELECT k.progress_id,jsonb_agg(k.ksb_code ORDER BY k.position) AS payload
-        FROM {official_progress_relation()} k
-        JOIN canonical p ON p.id=k.progress_id
+        FROM {official_progress_relation(progress_relation='canonical')} k
         GROUP BY k.progress_id
     )'''
     with projection_stage('ledger_read'):
@@ -660,8 +672,8 @@ def rows_for(owner, records=None):
     for item in result:
         if item.get('progress_id') is not None:
             by_id.setdefault(item['progress_id'], []).append(item)
-    documents = query('''SELECT id,progress_id,display_name,content_type
-        FROM "Learner".learner_activity_documents
+    documents = query(f'''SELECT id,progress_id,display_name,content_type
+        FROM {active_document_relation()} active_documents
         WHERE learner_id=%s AND deleted_at IS NULL ORDER BY id''', [owner['id']])
     for document in documents:
         for item in by_id.get(document['progress_id'], []):
@@ -1643,10 +1655,13 @@ def metrics_bulk(learner_ids, *, learner_workspace=False, include_ksb_points=Fal
     progress_ids = list(records_by_progress)
     if progress_ids:
         definition_columns = ",k.standard_ksb_id::text AS ksb_definition_id,k.ksb_code AS definition_code" if include_ksb_points else ''
-        for item in query(f'''SELECT k.progress_id,k.ksb_code{definition_columns}
-            FROM {official_progress_relation()} k
-            WHERE k.progress_id=ANY(%s)
-            ORDER BY k.progress_id,k.position''', [progress_ids]):
+        for item in query(f'''WITH canonical AS MATERIALIZED (
+            SELECT p.id,p.learner_id
+            FROM "Learner".learner_progress_entries p
+            WHERE p.learner_id=ANY(%s) AND p.id=ANY(%s) AND p.deleted_at IS NULL
+        ) SELECT k.progress_id,k.ksb_code{definition_columns}
+            FROM {official_progress_relation(progress_relation='canonical')} k
+            ORDER BY k.progress_id,k.position''', [learner_profile_ids, progress_ids]):
             record = records_by_progress.get(int(item['progress_id']))
             if record is not None:
                 record['ksbs'].append(item['ksb_code'])

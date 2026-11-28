@@ -4,6 +4,7 @@ No application database is connected. Uses installed PostgreSQL binaries; no
 packages, environment files, migrations or external integrations are changed.
 """
 import json
+import os
 from pathlib import Path
 import socket
 import subprocess
@@ -183,7 +184,12 @@ def run(config):
 
 
 def main():
-    binaries = Path('C:/Program Files/PostgreSQL/18/bin')
+    binaries = Path(os.environ.get('POSTGRES_BIN', 'C:/Program Files/PostgreSQL/18/bin')).resolve()
+    if not all((binaries / name).is_file() for name in ('initdb.exe', 'pg_ctl.exe')):
+        raise RuntimeError(
+            'A local PostgreSQL bin directory is required. Set POSTGRES_BIN; '
+            'no package install or existing server fallback is attempted.'
+        )
     root = Path(tempfile.mkdtemp(prefix='lms_ksb_closure_')).resolve()
     directory = root / 'data'
     with socket.socket() as listener:

@@ -22,7 +22,8 @@ function response(path: string) {
   return { learner: learners[0], year: requestedYear, years: [year - 1, year],
     summary: { coachSignatures: { completed: 0, total: 12 }, acceptedOtjhHours: 12, trainingPlanHours: 24 },
     months: Array.from({ length: 12 }, (_, index) => ({ month: `${requestedYear}-${String(index + 1).padStart(2, '0')}`,
-      activities: 1, acceptedOtjhHours: 1, targetHours: 2, isOpen: false, learnerSigned: false, coachSigned: false })) };
+      activities: 1, acceptedOtjhHours: 1, targetHours: 2, isOpen: false, learnerSigned: false, coachSigned: false,
+      monthStatus: 'open' as const })) };
 }
 function Workspace() {
   const { id, month } = useParams();
@@ -122,5 +123,26 @@ it('refreshes after 60 seconds on a new visit', async () => {
   mount('/coach/monthly-logs/7', view.client);
   await waitFor(() => expect(coachFetch).toHaveBeenCalledTimes(4));
   await screen.findByRole('table');
+  view.client.clear();
+});
+
+it('recovers from an HTML server error and loads another learner independently', async () => {
+  let failYear = true;
+  vi.mocked(coachFetch).mockImplementation(async path => {
+    if (String(path).includes('/7?') && failYear) {
+      failYear = false;
+      return new Response('<!doctype html><title>Server Error</title>', { status: 500 });
+    }
+    return new Response(JSON.stringify(response(String(path))));
+  });
+  const view = mount('/coach/monthly-logs/7');
+  expect(await screen.findByText('Monthly logs could not be loaded (HTTP 500). Please try again.')).toBeVisible();
+  expect(screen.queryByText(/Unexpected token/)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+  await screen.findByRole('table');
+  fireEvent.click(screen.getByRole('link', { name: /Other learner/ }));
+  await waitFor(() => expect(coachFetch).toHaveBeenLastCalledWith(`/coach_api/coach/monthly-logs/8?year=${year}`));
+  await screen.findByRole('table');
+  expect(screen.queryByText('Unable to load monthly logs')).not.toBeInTheDocument();
   view.client.clear();
 });

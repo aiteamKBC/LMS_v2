@@ -8,7 +8,7 @@ export interface CoachingMedia {
   state: RecordingState;
   readyCount: number;
   recordings: { id: string; state: RecordingState; startsAt?: string | null; endsAt?: string | null;
-    source?: 'microsoft' | null }[];
+    source?: 'microsoft' | 'bunny' | null }[];
   check?: { state: 'pending' | 'complete' | 'failed'; checkedAt: string | null;
     reason?: 'no-teams-link' | 'no-recordings-returned' };
 }

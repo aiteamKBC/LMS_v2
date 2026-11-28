@@ -38,7 +38,7 @@ _LOOKUP_SQL = '''
 # A cohort's holiday choices ride the same round trip (they are read wherever a
 # cohort row is). h.id keeps the order they were chosen in.
 _CHOICES_SQL = '''
-    union all select 'h', h.cohort_id::text, ch.source_record_id::text, h.is_selected::text, h.is_excluded::text,
+    union all select 'h', h.cohort_id::text, ch.source_record_id::text, ({selected})::text, ({excluded})::text,
                      null, null, h.id::text
     from curriculum.cohort_calendar_holidays h join curriculum.calendar_holidays ch on ch.id = h.calendar_holiday_id
 '''
@@ -105,11 +105,16 @@ def lookups(using='default'):
     choices = []
     coach_links = []
     with connections[using].cursor() as cursor:
+        from .calendar_holidays import choice_flag_sql
+
         extra = _optional_tables(using)
         group_coach = 'coach_id::text' if extra.get('group_coach_column') else 'null::text'
         cursor.execute(_LOOKUP_SQL.format(group_coach=group_coach)
                        + (_GROUP_COACHES_SQL if extra.get('group_coaches') else '')
-                       + (_CHOICES_SQL if extra['choices'] else '')
+                       + (_CHOICES_SQL.format(
+                           selected=choice_flag_sql('h', 'include', 'is_selected'),
+                           excluded=choice_flag_sql('h', 'exclude', 'is_excluded'),
+                       ) if extra['choices'] else '')
                        + (_STANDARDS_SQL if extra['standards'] else ''))
         for kind, key, name, a, b, c, d, status in cursor.fetchall():
             if kind == 's':

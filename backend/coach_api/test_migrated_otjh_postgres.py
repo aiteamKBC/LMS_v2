@@ -21,6 +21,7 @@ from .tests_migrated_completion import PNG
 
 @skipUnless(connection.vendor == "postgresql", "Requires verified disposable PostgreSQL")
 class PostgresHoursTests(TransactionTestCase):
+    databases = {'default', 'enrolment'}
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
@@ -38,9 +39,9 @@ class PostgresHoursTests(TransactionTestCase):
                 canonical_activity_key text,component_link_source text,component_link_status text,accepted boolean,
                 activity_status text,submitted_at timestamptz,source_payload jsonb,deleted_at timestamptz,
                 UNIQUE(learner_id,canonical_activity_key))''',
-            '''CREATE TABLE "Learner".learner_monthly_locks (learner_id bigint,report_month text,locked_at timestamptz,unlocked_at timestamptz)''',
+            '''CREATE TABLE "Learner".learner_monthly_targets (learner_id bigint,report_month text,month_status text)''',
             '''CREATE TABLE "Learner".learner_monthly_signatures (learner_id bigint,report_month text,review_confirmed boolean)''',
-            '''CREATE TABLE "Learner".manual_month_finalization_events (id bigint,aptem_id bigint,report_month text,event_type text)''',
+            '''CREATE TABLE "Learner".manual_month_finalization_events (id bigint,learner_id bigint,report_month text,event_type text)''',
             '''CREATE TABLE "Learner".monthly_audit_signoffs (learner_id text,report_month text,review_confirmed boolean)''',
         ]
         for sql in statements: hours.query(sql)
@@ -49,7 +50,7 @@ class PostgresHoursTests(TransactionTestCase):
     def tearDownClass(cls):
         # Only objects provisioned above, inside the runner's disposable DB.
         for name in ("monthly_audit_signoffs", "manual_month_finalization_events", "learner_monthly_signatures",
-                     "learner_monthly_locks", "learner_progress_entries", "reviews", "learners"):
+                     "learner_monthly_targets", "learner_progress_entries", "reviews", "learners"):
             hours.query(f'DROP TABLE "Learner"."{name}"')
         hours.query('DROP TABLE enrolment."Created_users"')
         super().tearDownClass()
@@ -59,7 +60,7 @@ class PostgresHoursTests(TransactionTestCase):
         booking.start()
         self.addCleanup(booking.stop)
         for name in ("monthly_audit_signoffs", "manual_month_finalization_events", "learner_monthly_signatures",
-                     "learner_monthly_locks", "learner_progress_entries", "reviews", "learners"):
+                     "learner_monthly_targets", "learner_progress_entries", "reviews", "learners"):
             hours.query(f'DELETE FROM "Learner"."{name}"')
         hours.query('DELETE FROM enrolment."Created_users"')
         hours.query('INSERT INTO "Learner".learners VALUES (17,117,5017,20)')

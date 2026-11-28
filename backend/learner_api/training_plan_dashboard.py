@@ -17,8 +17,9 @@ from old_otjh.service import ServiceError
 from .learner_detail import SOURCE_MODELS
 from .module_placement_sql import group_coach_name_sql, module_placement_names_sql, module_tutor_name_sql
 from .models import LearnerProfile, StaffUser
-from .learning_plan import (_aptem_subject_modules, _effective_plan_ids,
-                            install_canonical_training_plan, request_preset_cache)
+from .learning_plan import (_aptem_subject_modules,
+                            install_canonical_training_plan,
+                            install_canonical_training_plan_module_ids)
 from .coach_assignment import learner_profile_coach as current_coach
 from .student_activity import _builder_subject_metadata, builder_subject_links
 from .subject_content import as_list, clean_text, safe_url
@@ -369,13 +370,13 @@ def plan_module_ids(cur, source, owner):
     # The normalized plan-module rows are authoritative for learner pages.
     # Builder metadata enriches those assignments (and supplies legacy
     # links), but a missing builder row must not hide an assigned module.
-    if hasattr(source, '_canonical_training_plan'):
-        current_module_ids = list(dict.fromkeys(
-            str(entry.get('moduleId')) for entry in source._canonical_training_plan or []
-            if isinstance(entry, dict) and entry.get('moduleId')
-        ))
-    else:
-        current_module_ids = list(dict.fromkeys(_effective_plan_ids(source, request_preset_cache(source))))
+    if not hasattr(source, '_canonical_training_plan'):
+        owner = owner or canonical_learning.require_profile(source.pk)
+        install_canonical_training_plan_module_ids(source, owner)
+    current_module_ids = list(dict.fromkeys(
+        str(entry.get('moduleId')) for entry in source._canonical_training_plan or []
+        if isinstance(entry, dict) and entry.get('moduleId')
+    ))
     # Imported/source-course memberships remain visible in My Courses, but are
     # not saved Training Plan assignments and must not extend this schedule.
     current_module_ids = list(dict.fromkeys(current_module_ids))
@@ -854,9 +855,12 @@ def training_plan_dashboard(request, kind, pk):
             if source is None:
                 source = model.all_learners.only(*TRAINING_PLAN_SOURCE_FIELDS).get(pk=pk)
             source._canonical_profile = canonical_learning.require_profile(pk)
-            install_canonical_training_plan(
-                source, profile_id=source._canonical_profile['id'],
-            )
+            if section == 'upcoming':
+                install_canonical_training_plan_module_ids(source, source._canonical_profile)
+            else:
+                install_canonical_training_plan(
+                    source, profile_id=source._canonical_profile['id'],
+                )
         # ``learning`` is the detailed weekly dashboard projection.  Keep it
         # on the same read path as overview so clients can request the weekly
         # modules/sessions without being rejected by the section guard.

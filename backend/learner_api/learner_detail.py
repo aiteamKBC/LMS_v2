@@ -2662,10 +2662,13 @@ def _activity_module_components(components, component_id):
 def _activity_plan_assignments(source, learner_profile, component_id):
     """All assigned module identities plus the selected module's saved tree.
 
-    One normalized query validates the component through the exact learner ->
-    plan module -> plan week -> plan component hierarchy. Unrelated modules are
-    retained as identities for programme/KSB rules, but their children are not
-    transferred merely to open one activity.
+    Prefer an exact normalized component assignment so a saved historical
+    placement still wins after curriculum re-parenting. If the component was
+    authored after the learner's plan snapshot, accept its current placement
+    only when exactly one of this learner's normalized module assignments owns
+    that module. Unrelated modules are retained as identities for
+    programme/KSB rules, but their children are not transferred merely to open
+    one activity.
     """
     source_id = getattr(source, 'pk', None) or getattr(source, 'id', None)
     if (learner_profile is None or source_id is None
@@ -2700,27 +2703,46 @@ def _activity_plan_assignments(source, learner_profile, component_id):
                      plan_component.position,plan_component.id
         ''', [learner_profile.pk, component_id, learner_profile.pk])
         rows = cursor.fetchall()
+        assignments = {}
+        weeks = {}
+        owners = set()
+        for plan_module_id, module_id, is_owner, plan_week_id, week_id, _plan_component_id, assigned_component_id in rows:
+            module = assignments.setdefault(plan_module_id, {
+                'moduleId': _s(module_id) or None,
+                'weeks': [],
+            })
+            if not is_owner:
+                continue
+            owners.add(plan_module_id)
+            if plan_week_id is None:
+                continue
+            week = weeks.get(plan_week_id)
+            if week is None:
+                week = {'weekId': _s(week_id) or None, 'components': []}
+                weeks[plan_week_id] = week
+                module['weeks'].append(week)
+            if assigned_component_id:
+                week['components'].append({'componentId': _s(assigned_component_id)})
 
-    assignments = {}
-    weeks = {}
-    owners = set()
-    for plan_module_id, module_id, is_owner, plan_week_id, week_id, _plan_component_id, assigned_component_id in rows:
-        module = assignments.setdefault(plan_module_id, {
-            'moduleId': _s(module_id) or None,
-            'weeks': [],
-        })
-        if not is_owner:
-            continue
-        owners.add(plan_module_id)
-        if plan_week_id is None:
-            continue
-        week = weeks.get(plan_week_id)
-        if week is None:
-            week = {'weekId': _s(week_id) or None, 'components': []}
-            weeks[plan_week_id] = week
-            module['weeks'].append(week)
-        if assigned_component_id:
-            week['components'].append({'componentId': _s(assigned_component_id)})
+        if not owners:
+            cursor.execute('''
+                SELECT plan_module.id,component.week_id
+                FROM "Learner".learner_training_plan_modules plan_module
+                JOIN curriculum.components component
+                  ON component.module_catalogue_id=plan_module.curriculum_module_id
+                WHERE plan_module.learner_id=%s AND component.id=%s
+                ORDER BY plan_module.id
+            ''', [learner_profile.pk, component_id])
+            current_owners = cursor.fetchall()
+            if len(current_owners) == 1:
+                plan_module_id, week_id = current_owners[0]
+                owner = assignments.get(plan_module_id)
+                if owner is not None:
+                    owners.add(plan_module_id)
+                    owner['weeks'].append({
+                        'weekId': _s(week_id) or None,
+                        'components': [{'componentId': _s(component_id)}],
+                    })
 
     if len(owners) != 1:
         raise ActivityComponentNotFound()

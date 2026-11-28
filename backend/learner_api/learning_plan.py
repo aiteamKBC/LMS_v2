@@ -117,6 +117,42 @@ def install_canonical_training_plan(source, profile=None, *, profile_id=None):
     return plan
 
 
+def install_canonical_training_plan_module_ids(source, owner):
+    """Attach only the normalized module identities needed by Home Upcoming.
+
+    Upcoming obtains sessions, assignment deadlines, component links and
+    reviews from their own authoritative readers.  It uses the attached plan
+    solely in ``plan_module_ids``, so loading every saved week and component is
+    unnecessary.  Keep the exact enrolment-to-canonical-owner check before the
+    scoped module read; a coincident canonical ID must never select a learner.
+    """
+    if hasattr(source, "_canonical_training_plan"):
+        return source._canonical_training_plan
+    source_id = getattr(source, "pk", None) or getattr(source, "id", None)
+    profile_id = owner.get("id") if isinstance(owner, dict) else getattr(owner, "pk", None)
+    enrolment_id = (
+        owner.get("enrolment_id")
+        if isinstance(owner, dict)
+        else getattr(owner, "enrolment_id", None)
+    )
+    if source_id is None or profile_id is None or enrolment_id != source_id:
+        raise ValueError("The learner profile does not own this enrolment source.")
+    with connections[TRAINING_PLAN_DATABASE].cursor() as cursor:
+        cursor.execute('''
+            SELECT plan_module.curriculum_module_id
+            FROM "Learner".learner_training_plan_modules plan_module
+            WHERE plan_module.learner_id=%s
+            ORDER BY plan_module.position,plan_module.id
+        ''', [profile_id])
+        plan = [
+            {"moduleId": _s(module_id)}
+            for module_id, in cursor.fetchall()
+            if module_id
+        ]
+    source._canonical_training_plan = plan
+    return plan
+
+
 def install_canonical_training_plan_modules(source, profile):
     """Attach a compact normalized plan tree in one read.
 
@@ -1601,13 +1637,19 @@ def _effective_plan_ids(learner, preset_cache, *, saved_plan=...):
     same way, so a module inherited from the group reads as assigned here too
     and the picker cannot contradict the modal.
     """
-    if saved_plan is ... and hasattr(learner, "_canonical_training_plan"):
+    canonical = saved_plan is ... and hasattr(learner, "_canonical_training_plan")
+    if canonical:
         saved = list(learner._canonical_training_plan or [])
     else:
         saved = stored_training_plan(learner) if saved_plan is ... else saved_plan
     if saved is None:
         return list(_preset_ids_for(learner, preset_cache))
     ids = [_s(entry.get("moduleId")) for entry in saved if _s(entry.get("moduleId"))]
+    # Normalized rows are the complete current assignment. Group presets and
+    # Created_users JSON are compatibility inputs only and must not broaden an
+    # installed canonical plan, including a deliberately empty one.
+    if canonical:
+        return ids
     # An emptied plan stays empty, and is not re-filled from the group. Same
     # rule as _serialize. Explicit curriculum selections also keep their scope.
     if not ids or any(entry.get('assignmentMode') == 'explicit' for entry in saved):

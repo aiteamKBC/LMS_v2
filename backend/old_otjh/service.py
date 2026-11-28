@@ -327,6 +327,7 @@ def sign_months(learner, months, account, actor_role, image_bytes, request_metad
         if needs_image:
             file_id = storage.save(image_bytes)
         with repo.atomic():
+            repo.lock_finalization_scopes(learner, selected)
             transition = transition_for(learner, lock=True)
             if not transition or set(selected) != set(transition['required_months']):
                 raise ServiceError('Your month list has changed. Refresh the page before signing.', 'record_changed', 409)
@@ -393,6 +394,7 @@ def content_review(learner, month):
 
 
 def _locked_scope(learner, month):
+    repo.lock_finalization_scopes(learner, [month])
     transition = transition_for(learner, lock=True)
     require_month(transition, month)
     state = next(m for m in summary(learner, transition)['months'] if m['month'] == month)

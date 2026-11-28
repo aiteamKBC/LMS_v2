@@ -183,7 +183,10 @@ class LearningPlanJourneyParityTests(SimpleTestCase):
                 initial.assert_not_called()
 
     def test_timeline_uses_shared_progress_and_preserves_delivery_end_and_notes(self):
-        context = SimpleNamespace(source=SimpleNamespace(pk=201), profile=SimpleNamespace(lifecycle_status='active'))
+        context = SimpleNamespace(
+            source=SimpleNamespace(pk=201, _canonical_training_plan=[{'moduleId': 'M1'}]),
+            profile=SimpleNamespace(lifecycle_status='active'),
+        )
         scheduled = [{'id':'M1','title':'Module','start_date':'2026-10-01','end_date':'2026-10-20','session_week_day':'Friday'}]
         authored = [{'id':'W1','module_catalogue_id':'M1','week_number':1,'title':'Week 1',
                      'holiday_note_enabled':True,'holiday_note':'Published hint'}]

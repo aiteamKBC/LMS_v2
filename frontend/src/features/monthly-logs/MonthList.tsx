@@ -8,6 +8,13 @@ import type { LogMonth, LogPerspective, LogSummary, UnallocatedActivity } from '
 import styles from './monthlyLogs.module.css';
 import type { CoachLogYear } from '@/features/coach/monthly-logs/api/monthlyLogsApi';
 
+function canonicalMonthStatus(item: LogMonth) {
+  if (!item.month_status) return monthStatus(item);
+  if (item.month_status === 'partially_signed') return 'Partially signed';
+  if (item.month_status === 'locked') return 'Locked';
+  return 'Open';
+}
+
 export function MonthList({ summary, base, perspective, onMonthSelect }: { summary: LogSummary; base: string; perspective: LogPerspective; onMonthSelect?: (month: string) => void }) {
   return perspective === 'coach'
     ? <CoachMonthList summary={summary} base={base} />
@@ -92,7 +99,7 @@ function LearnerMonthList({ summary, base, perspective, onMonthSelect }: { summa
             <dl className={styles.hours}><div><dt>Accepted hours</dt><dd><AppIcon className="ri-time-line" />{duration(item.actual_hours)}</dd></div><div><dt>Target hours</dt><dd><AppIcon className="ri-focus-2-line" />{targetFor(item) == null ? 'Unavailable' : `${hours(targetFor(item))} h`}</dd></div></dl>
             {Number(item.estimated_hours || 0) > 0 && <p className="mt-2 text-xs font-medium text-amber-700">Estimated — approval required: {duration(item.estimated_hours)}</p>}
             <div className={styles.signatures}>{item.is_open ? <span className={styles.unsigned}><AppIcon className="ri-time-line" />Month in progress</span> : <><SignatureState role="Learner" signed={!!item.student_signature} /><SignatureState role="Coach" signed={!!item.coach_signature} /></>}</div>
-            <span className={`${styles.status} ${item.status === 'complete' ? styles.complete : ''}`}><AppIcon className={item.status === 'complete' ? 'ri-check-line' : 'ri-time-line'} />{item.is_open ? 'In progress' : monthStatus(item)}</span>
+            <span className={`${styles.status} ${item.month_status === 'locked' || item.status === 'complete' ? styles.complete : ''}`}><AppIcon className={item.month_status === 'locked' || item.status === 'complete' ? 'ri-check-line' : 'ri-time-line'} />{item.is_open ? 'In progress' : canonicalMonthStatus(item)}</span>
             {onMonthSelect
               ? <button type="button" className={styles.openMonth} onClick={() => onMonthSelect(item.month)} aria-label={`Review month: ${monthLabel(item.month)}`}><span>{item.is_open ? 'View current log' : 'View report'}</span><AppIcon className="ri-arrow-right-line" /></button>
               : <Link className={styles.openMonth} to={`${base}/${item.month}`} aria-label={`Review month: ${monthLabel(item.month)}`}><span>{item.is_open ? 'View current log' : 'View report'}</span><AppIcon className="ri-arrow-right-line" /></Link>}
@@ -111,7 +118,8 @@ export function CoachMonthList({ summary, projection, base, year: controlledYear
   const [year, setYear] = useState('');
   const months = projection ? projection.months.map(item => ({ month: item.month, row_count: item.activities,
     actual_hours: item.acceptedOtjhHours, training_plan_target: item.targetHours, is_open: item.isOpen,
-    student_signature: item.learnerSigned, coach_signature: item.coachSigned, target_warning: null })) : summary!.months;
+    student_signature: item.learnerSigned, coach_signature: item.coachSigned, month_status: item.monthStatus,
+    target_warning: null })) : summary!.months;
   const [localPending, setLocalPending] = useState(false);
   const pendingOnly = controlledPending ?? localPending;
   const setPendingOnly = onPendingChange ?? setLocalPending;
@@ -168,7 +176,7 @@ export function CoachMonthList({ summary, projection, base, year: controlledYear
       {!months.length ? <EmptyState title="No monthly logs yet" description="Recorded learner activities will appear here as they are completed." />
         : !visible.length ? <div className={styles.coachNoMonths}><AppIcon className="ri-checkbox-circle-line" /><h3>All signatures saved for {selectedYear}</h3><p>There are no months awaiting a coach signature in this view.</p><button type="button" onClick={() => setPendingOnly(false)}>View all months</button></div>
           : <div className={styles.coachTableScroll}><table className={styles.coachMonthTable}>
-            <thead><tr><th scope="col">Month</th><th scope="col">Activities</th><th scope="col">Accepted OTJ hours</th><th scope="col">Target hours</th><th scope="col">Learner signature</th><th scope="col">Coach signature</th><th scope="col">Report</th></tr></thead>
+            <thead><tr><th scope="col">Month</th><th scope="col">Activities</th><th scope="col">Accepted OTJ hours</th><th scope="col">Target hours</th><th scope="col">Learner signature</th><th scope="col">Coach signature</th><th scope="col">Status</th><th scope="col">Report</th></tr></thead>
             <tbody>{visible.map(item => <tr key={item.month}>
               <td><strong>{monthLabel(item.month)}</strong></td>
               <td>{item.row_count} {item.row_count === 1 ? 'activity' : 'activities'}</td>
@@ -176,6 +184,7 @@ export function CoachMonthList({ summary, projection, base, year: controlledYear
               <td>{item.training_plan_target == null ? 'Unavailable' : `${hours(item.training_plan_target)} h`}</td>
               <td><CoachSignatureState signed={!!item.student_signature} open={!!item.is_open} /></td>
               <td><CoachSignatureState signed={!!item.coach_signature} open={!!item.is_open} /></td>
+              <td>{item.is_open ? 'In progress' : canonicalMonthStatus(item as LogMonth)}</td>
               <td><Link className={styles.coachReportButton} to={`${base}/${item.month}`} aria-label={`Review month: ${monthLabel(item.month)}`}>{item.is_open ? 'View log' : 'View report'}</Link></td>
             </tr>)}</tbody>
           </table></div>}

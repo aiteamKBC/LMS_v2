@@ -106,6 +106,12 @@ class MonthlyLogsTests(SimpleTestCase):
         self.assertEqual(changed['status'], 'complete')
         self.assertEqual(changed['student_signature']['url'], signature['url'])
 
+    def test_canonical_month_status_uses_the_most_protective_evidence(self):
+        self.assertEqual(logs._effective_month_status('open', []), 'open')
+        self.assertEqual(logs._effective_month_status('open', ['coach']), 'partially_signed')
+        self.assertEqual(logs._effective_month_status('open', ['learner', 'coach']), 'locked')
+        self.assertEqual(logs._effective_month_status('locked', []), 'locked')
+
     def test_canonical_source_lineage_does_not_discard_accepted_hours(self):
         legacy = {**self.row, 'source_system': 'old_lms'}
         state = logs.month_state('2026-09', [self.row, legacy], [])
@@ -371,16 +377,23 @@ class MonthlyLogsTests(SimpleTestCase):
                   'snapshot_digest': 'canonical-mcm-digest'}
         learner = {**self.learner, 'aptem_id': None}
         owner = {'id': 683, 'enrolment_id': 7, 'aptem_id': None}
-        with patch.object(logs, 'detail_data', return_value=report), \
+        def snapshot_after_lock(*args, **kwargs):
+            month_lock.assert_called_once()
+            self.assertEqual(month_lock.call_args.args[1], [(683, '2026-09')])
+            return report
+        with patch('learner_api.finalization_locks.lock_query') as month_lock, \
+             patch.object(logs, 'detail_data', side_effect=snapshot_after_lock), \
              patch.object(logs.canonical, 'enabled', return_value=True), \
              patch.object(logs.canonical, 'profile', return_value=owner), \
              patch.object(logs.transaction, 'atomic', return_value=nullcontext()), \
+             patch('learner_api.monthly_actual_cache.require_actuals_for_signing') as actuals, \
              patch.object(logs.old_repo, 'query', side_effect=lambda sql, params: [{'id': 42}] if 'RETURNING id' in sql else []) as query:
             result = logs.mirror_mcm_learner_signature(
                 learner, '2026-09', 'data:image/png;base64,mcm', 'Learner',
             )
 
         self.assertEqual(result['status'], 'synced')
+        actuals.assert_called_once_with(683, '2026-09')
         insert = next(call for call in query.call_args_list if 'INSERT INTO' in call.args[0])
         self.assertIn('source_learner_id,programme_key', insert.args[0])
         self.assertIn('ON CONFLICT (source_learner_id,programme_key,report_month,signer_role)', insert.args[0])
@@ -397,17 +410,19 @@ class MonthlyLogsTests(SimpleTestCase):
         with patch.object(logs, 'scope', return_value=(learner, 'learner')), \
              patch.object(logs.storage, 'sanitize', return_value=b'clean'), \
              patch.object(logs, 'detail_data', return_value=report), \
-             patch.object(logs, 'lock_if_fully_signed'), \
              patch.object(logs.canonical, 'enabled', return_value=True), \
              patch.object(logs.canonical, 'profile', return_value=owner), \
              patch.object(logs.transaction, 'atomic', return_value=nullcontext()), \
+             patch('learner_api.monthly_actual_cache.require_actuals_for_signing') as actuals, \
              patch.object(logs.old_repo, 'query', return_value=[]) as query:
             response = unwrap(logs.sign)(request, 7, '2026-09')
 
         self.assertEqual(response.status_code, 200)
+        actuals.assert_called_once_with(683, '2026-09')
         insert = next(call for call in query.call_args_list if 'INSERT INTO' in call.args[0])
         self.assertIn('ON CONFLICT (source_learner_id,programme_key,report_month,signer_role)', insert.args[0])
         self.assertEqual(insert.args[1][-2:], ['7', 'lms:7'])
+        self.assertFalse(any('monthly_log_locks' in call.args[0] for call in query.call_args_list))
 
     def test_mcm_signoff_uses_target_month_when_booking_is_later(self):
         record = SimpleNamespace(
@@ -426,9 +441,11 @@ class MonthlyLogsTests(SimpleTestCase):
                  patch.object(logs.canonical, 'enabled', return_value=consolidated), \
                  patch.object(logs.canonical, 'profile', return_value={'id': 683, 'enrolment_id': 7, 'aptem_id': 'synthetic'}), \
                  patch.object(logs.transaction, 'atomic', return_value=nullcontext()), \
+                 patch('learner_api.monthly_actual_cache.require_actuals_for_signing') as actuals, \
                  patch.object(logs.old_repo, 'query', return_value=[]) as query:
                 with self.assertRaisesMessage(logs.old.ServiceError, 'signature was not saved'):
                     logs.mirror_mcm_learner_signature(learner, '2026-10', 'data:image/png;base64,mcm', 'Learner')
+                self.assertEqual(actuals.call_count, int(consolidated))
                 insert = next(call for call in query.call_args_list if 'INSERT INTO' in call.args[0])
                 self.assertIn('DO NOTHING', insert.args[0])
                 self.assertIn('RETURNING id', insert.args[0])
@@ -566,7 +583,8 @@ class MonthlyLogsTests(SimpleTestCase):
 
     def test_existing_signature_is_not_replaced_after_source_updates(self):
         report = {**logs.month_state('2026-09', [self.row], []), 'rows': [self.row],
-                  'student_signature': {'url': 'saved', 'signed_at': '2026-10-01'}}
+                  'student_signature': {'url': 'saved', 'signed_at': '2026-10-01'},
+                  'month_status': 'locked', 'locked': True}
         request = self.request('post', snapshot_digest='old', confirmed='true', capture_method='draw',
                                signature=SimpleUploadedFile('signature.png', b'fake', content_type='image/png'))
         with patch.object(logs, 'scope', return_value=(self.learner, 'learner')), \
@@ -576,6 +594,22 @@ class MonthlyLogsTests(SimpleTestCase):
              patch.object(logs, 'detail_data', return_value=report):
             response = unwrap(logs.sign)(request, 7, '2026-09')
         self.assertEqual(json.loads(response.content)['student_signature']['url'], 'saved')
+        self.assertFalse(any('INSERT' in call.args[0] for call in query.call_args_list))
+
+    def test_locked_month_rejects_the_missing_signer_without_writing(self):
+        report = {**logs.month_state('2026-09', [self.row], []), 'rows': [self.row],
+                  'student_signature': {'url': 'saved', 'signed_at': '2026-10-01'},
+                  'month_status': 'locked', 'locked': True}
+        request = self.request('post', snapshot_digest=report['snapshot_digest'], confirmed='true', capture_method='draw',
+                               signature=SimpleUploadedFile('signature.png', b'fake', content_type='image/png'))
+        with patch.object(logs, 'scope', return_value=(self.learner, 'coach')), \
+             patch.object(logs.storage, 'sanitize', return_value=b'clean'), \
+             patch.object(logs.transaction, 'atomic', return_value=nullcontext()), \
+             patch.object(logs.old_repo, 'query', return_value=[]) as query, \
+             patch.object(logs, 'detail_data', return_value=report), \
+             self.assertRaises(ServiceError) as result:
+            unwrap(logs.sign)(request, 7, '2026-09')
+        self.assertEqual(result.exception.code, 'month_locked')
         self.assertFalse(any('INSERT' in call.args[0] for call in query.call_args_list))
 
     def test_reflection_enriches_progress_without_adding_hours_twice(self):
@@ -668,12 +702,33 @@ class MonthlyLogsTests(SimpleTestCase):
 class MonthlyLogLockBatchTests(SimpleTestCase):
     def test_summary_lock_states_are_loaded_in_one_query(self):
         with patch.object(logs.old_repo, 'query', return_value=[{
-            'report_month': '2026-09', 'locked_at': date(2026, 10, 1),
-            'unlocked_at': None, 'unlocked_by': None,
+            'report_month': '2026-08', 'month_status': 'open',
+            'learner_signed': False, 'coach_signed': True,
+        }, {
+            'report_month': '2026-09', 'month_status': 'partially_signed',
+            'learner_signed': True, 'coach_signed': True,
         }]) as query:
             states = logs.lock_states(
                 7, ['2026-08', '2026-09'], canonical_owner={'id': 70},
             )
         query.assert_called_once()
+        self.assertEqual(states['2026-08']['month_status'], 'partially_signed')
         self.assertFalse(states['2026-08']['locked'])
+        self.assertEqual(states['2026-09']['month_status'], 'locked')
+        self.assertTrue(states['2026-09']['locked'])
+        self.assertIsNone(states['2026-09']['locked_at'])
+        self.assertIn('learner_monthly_targets', query.call_args.args[0])
+
+    def test_canonical_signatures_do_not_write_a_parallel_lock_table(self):
+        with patch.object(logs.canonical, 'enabled', return_value=True), \
+             patch.object(logs.old_repo, 'query') as query:
+            logs.lock_if_fully_signed(7, '2026-09')
+        query.assert_not_called()
+
+    def test_an_open_target_does_not_hide_a_locked_target_in_the_same_month(self):
+        with patch.object(logs.old_repo, 'query', return_value=[
+            {'report_month': '2026-09', 'month_status': 'locked'},
+            {'report_month': '2026-09', 'month_status': 'open'},
+        ]):
+            states = logs.lock_states(7, ['2026-09'], canonical_owner={'id': 70})
         self.assertTrue(states['2026-09']['locked'])

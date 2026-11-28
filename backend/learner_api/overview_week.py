@@ -24,10 +24,9 @@ from . import subject_cache
 from .student_activity import CURRENT_SUBJECTS_SQL, _direct_progress_records, _direct_progress_otjh
 
 
-# Home needs both assignment interpretations: My Learning treats an explicit
-# JSON plan as authoritative, while Attendance intentionally also includes the
-# normalised mirror. Returning both scopes from one query avoids reading the
-# same learner plan twice without changing either rule.
+# Home retains legacy plan entries only as historical subject lineage. Current
+# ownership is set exclusively by normalized plan rows, so stale JSON can
+# neither grant nor deny current Home/upcoming content.
 # curriculum.modules has no deletion marker in the canonical schema. Every
 # assigned module row is returned, so Attendance keeps an inactive module's
 # history; Option A (hide inactive modules from current lists) is applied only
@@ -38,13 +37,12 @@ HOME_SUBJECTS_SQL = f'''
             THEN "Training_plan"::jsonb ELSE "Learning_plan"::jsonb END AS plan
         FROM enrolment."Created_users" WHERE id=%s
     ), assigned AS (
-        SELECT entry->>'moduleId' AS module_id, true AS current_plan FROM source
+        SELECT entry->>'moduleId' AS module_id, false AS current_plan FROM source
         CROSS JOIN LATERAL jsonb_array_elements(
             CASE WHEN jsonb_typeof(plan)='array' THEN plan ELSE '[]'::jsonb END
         ) entry
         UNION ALL
-        SELECT m.curriculum_module_id,
-               jsonb_typeof(source.plan) IS DISTINCT FROM 'array'
+        SELECT m.curriculum_module_id, true AS current_plan
         FROM source
         JOIN "Learner".learners l ON l.enrolment_id=source.id
         JOIN "Learner".learner_training_plan_modules m ON m.learner_id=l.id

@@ -71,11 +71,13 @@ class ProgressKsbBreakdownTests(unittest.TestCase):
         self.assertEqual(calls[0].args[1], [190])
         self.assertEqual(calls[1].args[1], [315])
         sql = calls[1].args[0]
+        self.assertTrue(sql.startswith('WITH canonical AS'))
         self.assertIn('k.progress_id=p.id', sql)
-        self.assertEqual(sql.rsplit('WHERE', 1)[1].split('ORDER BY')[0].strip(),
-                         'p.learner_id=%s AND p.deleted_at IS NULL')
+        self.assertIn('WHERE p.learner_id=%s AND p.deleted_at IS NULL', sql)
+        self.assertIn('FROM canonical entry', sql)
+        self.assertNotIn('EXISTS (SELECT 1 FROM', sql)
+        self.assertTrue(calls[0].args[0].startswith('SELECT'))
         for call in calls:
-            self.assertTrue(call.args[0].startswith('SELECT'))
             for forbidden in ['aptem_id', 'Aptem_users', 'aptem_component_ksbs', 'curriculum.ksb_component_mappings', 'legacy_aptem_component']:
                 self.assertNotIn(forbidden, call.args[0])
 
@@ -88,7 +90,7 @@ class ProgressKsbBreakdownTests(unittest.TestCase):
         result = read_breakdown(connection, 315, code='B1')
         sql, params = cursor.execute.call_args.args
         self.assertEqual(params, [315, 'B1'])
-        self.assertIn('AND k.ksb_code=%s', sql)
+        self.assertIn('WHERE k.ksb_code=%s', sql)
         for fuzzy in ('ILIKE', 'LIKE', 'lower(', 'component_title='):
             self.assertNotIn(fuzzy, sql)
         row = result['rows'][0]

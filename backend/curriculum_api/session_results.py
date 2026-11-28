@@ -892,12 +892,26 @@ def learner_series(kind, learner_id, series_id, linked_recordings=False):
     in one of the learner's modules links to it, carrying the linked
     ``linked_session_numbers`` -- the only sessions the caller may then serve.
     """
+    from learner_api.attendance_lectures import (
+        read_assigned_modules,
+        shared_teams_sources,
+    )
+    from learner_api.identity import learner_profile_for_source
     from learner_api.learner_detail import SOURCE_MODELS
-    from learner_api.attendance_lectures import read_assigned_modules, shared_teams_sources
+    from learner_api.learning_plan import install_canonical_training_plan_module_ids
     model = SOURCE_MODELS.get(kind)
     learner = model.all_learners.filter(pk=learner_id).first() if model else None
     if not learner:
         return None, None
+    profile = learner_profile_for_source(
+        learner, learner_id, heal=False, fields=('id', 'enrolment_id'),
+    )
+    if profile is None:
+        return None, None
+    # Session access follows the same normalized learner-owned plan as the
+    # activity page.  Created_users JSON is only a compatibility projection
+    # and can lag behind canonical assignments after plan restructuring.
+    install_canonical_training_plan_module_ids(learner, profile)
     modules = {str(item['id']) for item in read_assigned_modules(learner)}
     # Joining is a current-content action, so an explicitly inactive module is
     # unavailable. Saved recordings/results are historical evidence: keep them

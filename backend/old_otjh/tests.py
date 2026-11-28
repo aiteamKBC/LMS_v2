@@ -53,6 +53,7 @@ class TransitionTests(SimpleTestCase):
             'programme_dates': lambda *_: {'start_date': None, 'planned_end_date': None},
             'report_profile': lambda *_: {'start_date': None, 'planned_end_date': None, 'first_evidence_date': None},
             'atomic': nullcontext,
+            'lock_finalization_scopes': lambda *_: None,
             'save_signature': self.save_sign,
             'save_learner_signature': lambda *_: None,
             'finalize': self.finalize,
@@ -595,6 +596,14 @@ class TransitionTests(SimpleTestCase):
         self.mocks['save_learner_signature'].assert_not_called()
 
     def test_bulk_learner_completes_every_month_without_material_reads(self):
+        locked = []
+        self.mocks['lock_finalization_scopes'].side_effect = lambda learner, months: locked.extend(months)
+        original_transition = self.mocks['transition'].side_effect
+        def checked_transition(learner, lock=False):
+            if lock:
+                self.assertEqual(sorted(locked), sorted(self.bulk_months()))
+            return original_transition(learner, lock=lock)
+        self.mocks['transition'].side_effect = checked_transition
         self.mocks['content_review'].side_effect = AssertionError('Materials must not be fetched')
         self.mocks['month_rows'].side_effect = AssertionError('Full activity rows must not be fetched')
         result = service.sign_months(self.learner(), self.bulk_months(), self.user, 'learner', b'clean-png', {})

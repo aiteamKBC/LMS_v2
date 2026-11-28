@@ -25,7 +25,6 @@ import json
 from django.core.management.base import BaseCommand, CommandError
 from django.db import DatabaseError, connections, transaction
 
-from ...actual_hours.journal_hours import ensure_journal_hours_tables
 from ...actual_hours.tables import BANK_HOLIDAY_TABLE, ensure_actual_hours_tables
 
 
@@ -77,7 +76,6 @@ class Command(BaseCommand):
             try:
                 with transaction.atomic(using=alias):
                     ensure_actual_hours_tables(cursor)
-                    ensure_journal_hours_tables(cursor)
                     seeded = self._seed_holidays(cursor, options["seed_holidays"])
             except DatabaseError as error:
                 raise CommandError(f"DDL failed: {error}") from error

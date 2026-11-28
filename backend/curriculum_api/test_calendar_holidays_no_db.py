@@ -70,6 +70,30 @@ class ShapeTests(SimpleTestCase):
 
 
 class CohortChoiceTests(SimpleTestCase):
+    def test_choices_read_normalized_decisions_and_legacy_flags_without_physical_column_assumptions(self):
+        cursor = Cursor([[
+            ('C-1', 'included', True, False),
+            ('C-1', 'excluded', False, True),
+            ('C-1', 'neither', False, False),
+            ('C-1', 'legacy-both', True, True),
+        ]])
+        with patched(cursor):
+            choices = ch.cohort_choices(['C-1'])
+        self.assertEqual(choices, {
+            'C-1': {
+                'selected': ['included', 'legacy-both'],
+                'excluded': ['excluded', 'legacy-both'],
+            },
+        })
+        sql, params = cursor.statements[0]
+        self.assertIn("nullif(to_jsonb(h)->>'decision', '') = 'include'", sql)
+        self.assertIn("nullif(to_jsonb(h)->>'decision', '') = 'exclude'", sql)
+        self.assertIn("to_jsonb(h)->>'is_selected'", sql)
+        self.assertIn("to_jsonb(h)->>'is_excluded'", sql)
+        self.assertNotIn('h.is_selected', sql)
+        self.assertNotIn('h.is_excluded', sql)
+        self.assertEqual(params, [['C-1']])
+
     def test_a_save_replaces_the_choices_and_the_returned_row_shows_them(self):
         cursor = Cursor([
             [],  # cohort_choices: nothing stored yet

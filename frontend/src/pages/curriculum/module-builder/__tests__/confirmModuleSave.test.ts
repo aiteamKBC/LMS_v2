@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { confirmModuleSave } from '../confirmModuleSave';
+import { confirmModuleSave, sameAuthoredModule } from '../confirmModuleSave';
 import { createEmptyComponent, createLocalModuleDraft, type ModuleCatalogueItem } from '../moduleAuthoringData';
 
 function moduleFixture(): ModuleCatalogueItem {
@@ -17,6 +17,27 @@ describe('confirming an ambiguous module save', () => {
     const sent = moduleFixture();
     const stored = { ...structuredClone(sent), structureRevision: 'committed', totalOtjh: 99, qualityScore: 25 };
     expect(await confirmModuleSave(sent, async () => stored)).toBe(stored);
+  });
+
+  it('ignores read-only week dates and holiday metadata while preserving authored changes', () => {
+    const saved = moduleFixture();
+    const displayed = structuredClone(saved);
+    Object.assign(displayed.weekStructure[0], { sessionDate: '2026-12-03', sessionDay: 'Thursday', liveSessionsClosed: false,
+      studyWeekStartDate: '2026-11-30', studyWeekEndDate: '2026-12-06', studyWeekHolidays: [] });
+    expect(sameAuthoredModule(saved, displayed)).toBe(true);
+    displayed.weekStructure[0].title = 'An actual week edit';
+    expect(sameAuthoredModule(saved, displayed)).toBe(false);
+  });
+
+  it('still detects authored session dates, times and meeting settings', () => {
+    const saved = moduleFixture();
+    saved.weekStructure[0].components[0].type = 'live-session';
+    for (const [key, value] of Object.entries({ sessionDate: '2026-12-03', sessionTime: '10:00', durationMinutes: 90,
+      presenters: 'new@example.invalid', teamsOccurrenceId: 'OCC-OTHER' })) {
+      const changed = structuredClone(saved);
+      changed.weekStructure[0].components[0].settings[key] = value;
+      expect(sameAuthoredModule(saved, changed), key).toBe(false);
+    }
   });
 
   it.each(['title', 'video', 'order', 'deleted', 'scope'])('does not confirm different %s values', async kind => {

@@ -46,7 +46,7 @@ class MonthlyActualWriterTests(SimpleTestCase):
     def test_refresh_updates_only_existing_selected_target_rows(self):
         cursor = MagicMock()
         cursor.__enter__.return_value = cursor
-        cursor.fetchone.return_value = (True,)
+        cursor.fetchone.side_effect = [(True,), ('read committed',)]
         cursor.fetchall.return_value = [(41, '2026-10'), (42, '2026-11')]
         cursor.rowcount = 1
         connection = SimpleNamespace(cursor=lambda: cursor)

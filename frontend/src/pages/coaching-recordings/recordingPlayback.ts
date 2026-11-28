@@ -7,6 +7,7 @@ export interface RecordingOccurrence {
 
 interface PlaybackRequest {
   eventKey: string; recordingId: string; reference?: string; occurrence?: RecordingOccurrence;
+  source?: 'microsoft' | 'bunny' | null;
 }
 
 export async function prepareRecordingPlayback(input: PlaybackRequest, signal: AbortSignal) {
@@ -18,6 +19,7 @@ export async function prepareRecordingPlayback(input: PlaybackRequest, signal: A
   try {
     controller.signal.throwIfAborted();
     let reference = input.reference;
+    let source = input.source;
     if (reference && input.occurrence) {
       const occurrence = input.occurrence;
       // The drawer can outlive its one-hour signed reference. Renew through the
@@ -33,9 +35,31 @@ export async function prepareRecordingPlayback(input: PlaybackRequest, signal: A
         throw new Error('This recording is no longer available for this meeting. Refresh its details.');
       }
       reference = meeting.recordingsReference;
+      source = meeting.media.recordings.find(file => file.id === input.recordingId)?.source ?? source;
     }
     controller.signal.throwIfAborted();
     const url = coachingRecordingUrl(input.eventKey, input.recordingId, true, reference);
+    if (source === 'bunny') {
+      const response = await fetch(`${url}&format=playback`, { credentials: 'include', cache: 'no-store', signal: controller.signal });
+      if (!response.ok) {
+        if (response.status === 401) throw new Error('Your session has expired. Sign in again to play this recording.');
+        if (response.status === 403) throw new Error('You no longer have access to this recording.');
+        throw new Error('This recording is not available yet. Refresh its details and retry playback.');
+      }
+      const manifest = await response.json() as { kind?: string; url?: string; libraryId?: string; videoId?: string };
+      const player = new URL(manifest.url ?? '');
+      if (manifest.kind !== 'bunny' || player.protocol !== 'https:' || player.hostname !== 'iframe.mediadelivery.net'
+        || player.username || player.password || player.port || !/^\d+$/.test(manifest.libraryId ?? '')
+        || !/^[0-9a-f-]{36}$/i.test(manifest.videoId ?? '')
+        || player.pathname !== `/embed/${manifest.libraryId}/${manifest.videoId}`
+        || !/^[0-9a-f]{64}$/.test(player.searchParams.get('token') ?? '')
+        || !/^\d+$/.test(player.searchParams.get('expires') ?? '')
+        || Number(player.searchParams.get('expires')) <= Date.now() / 1000) {
+        throw new Error('The recording player could not be verified. Refresh its details.');
+      }
+      controller.signal.throwIfAborted();
+      return { url: player.href, reference, kind: 'bunny' as const };
+    }
     // A native video error hides the HTTP response. Check a bounded range first;
     // Range also keeps this request outside the JSON GET-batching transport.
     const response = await fetch(url, { credentials: 'include', cache: 'no-store',
