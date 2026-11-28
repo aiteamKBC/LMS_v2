@@ -395,7 +395,7 @@ export function fetchEmployerLearnerWeek(employerId: string, kind: LearnerKind, 
   return overviewPart<OverviewWeek>(employerId, kind, learnerId, 'week', signal);
 }
 
-/** Employer attendance counts, with recording completion deduplicated by lecture. */
+/** Live attendance only; Recorded periods add actual live visits to the target. */
 export interface EmployerLearnerAttendance {
   sessions: number;
   present: number;

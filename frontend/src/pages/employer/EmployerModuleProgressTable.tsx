@@ -16,8 +16,12 @@ type Props = {
   onRetry: () => void;
 };
 const percentLabel = (value: number) => `${new Intl.NumberFormat('en-GB', { maximumFractionDigits: 2 }).format(value)}%`;
+const moduleKey = (module: { id: string; title: string }) => {
+  const title = module.title.trim().replace(/\s+/g, ' ').toLowerCase();
+  return title ? `title:${title}` : `id:${module.id}`;
+};
 
-/** Rows and columns share the canonical programme percentages used by the module cards. */
+/** Same-name modules share a column and add their programme percentages per learner. */
 export function EmployerModuleProgressTable({ employerId, learners, records, moduleId, onRetry }: Props) {
   const location = useLocation();
   const headingId = useId();
@@ -29,20 +33,27 @@ export function EmployerModuleProgressTable({ employerId, learners, records, mod
     const progress = new Map<string, number | null>();
     if (resource?.status === 'ready') {
       const facts = new Map(overviewModulesForDisplay(resource.data?.modules || []).map(module => [module.id, module]));
-      for (const module of resource.data?.programme || []) {
-        if ((moduleId && module.id !== moduleId) || progress.has(module.id)) continue;
+      const programme = resource.data?.programme || [];
+      const selected = moduleId ? programme.find(module => module.id === moduleId) : undefined;
+      const selectedKey = selected ? moduleKey(selected) : undefined;
+      const seen = new Set<string>();
+      for (const module of programme) {
+        const key = moduleKey(module);
+        if ((moduleId && key !== selectedKey) || seen.has(module.id)) continue;
+        seen.add(module.id);
         const percent = module.percent != null && Number.isFinite(module.percent)
           ? Math.max(0, Math.min(100, module.percent)) : null;
         const fact = facts.get(module.id);
         const start = moduleDate(fact?.start);
         const started = (fact?.attendance?.attended || 0) > 0 || (percent || 0) > 0;
-        const column = modules.get(module.id) || { id: module.id, title: module.title, start: '', started: false };
+        const column = modules.get(key) || { id: key, title: module.title.trim().replace(/\s+/g, ' '), start: '', started: false };
         // A shared column uses the earliest study date among learners who started it.
         if (started && !column.started) column.start = start;
         else if (started === column.started && start && (!column.start || start < column.start)) column.start = start;
         column.started ||= started;
-        modules.set(module.id, column);
-        progress.set(module.id, percent);
+        modules.set(key, column);
+        const previous = progress.get(key);
+        progress.set(key, percent == null ? previous ?? null : Math.min(100, (previous ?? 0) + percent));
       }
     }
     return { learner, resource, progress };
@@ -69,7 +80,7 @@ export function EmployerModuleProgressTable({ employerId, learners, records, mod
       : visible.length === 0 ? <div className={styles.empty}><p>No learners match your search.</p><button type="button" onClick={() => setQuery('')}>Clear learner search</button></div>
       : <div className={styles.scroll} role="region" aria-label="Learner module progress table" aria-describedby={helpId} tabIndex={0}>
         <table className={styles.table}>
-          <caption className="sr-only">Module progress for {visible.length} learners. Percentages use the same progress data as the module cards.</caption>
+          <caption className="sr-only">Module progress for {visible.length} learners. Same-name modules appear once, with their percentages added per learner up to 100%.</caption>
           <thead><tr><th scope="col">Learner</th>{columns.length ? columns.map(module => <th scope="col" key={module.id} title={module.title}>{module.title}</th>) : <th scope="col">Module progress</th>}</tr></thead>
           <tbody>{visible.map(({ learner, resource, progress }) => {
             const pending = !resource || resource.status === 'loading';

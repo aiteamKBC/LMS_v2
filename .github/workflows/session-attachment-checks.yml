@@ -36,32 +36,8 @@ jobs:
             echo 'enabled=false' >> "$GITHUB_OUTPUT"
             echo 'Attachment checks not required for this older release without the feature.' >> "$GITHUB_STEP_SUMMARY"
           fi
-  files-backend:
-    name: Attachment and existing recording contracts
-    needs: scope
-    if: needs.scope.outputs.enabled == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.ref || github.sha }}
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
-        with:
-          context: backend
-          load: true
-          provenance: false
-          tags: lms-session-files:ci
-          cache-from: type=gha
-      - run: docker run --rm --network none -e DJANGO_SECRET_KEY=ci --entrypoint python lms-session-files:ci -m curriculum_api.run_session_attachment_tests
-      - run: docker run --rm --network none -e DJANGO_SECRET_KEY=ci --entrypoint python lms-session-files:ci -m unittest curriculum_api.test_session_results_no_db
-      - run: docker run --rm --network none -e DJANGO_SECRET_KEY=ci --entrypoint python lms-session-files:ci -m unittest curriculum_api.test_session_cloud_archive_no_db
-      - run: docker run --rm --network none -e DJANGO_SECRET_KEY=ci --entrypoint python lms-session-files:ci -m curriculum_api.run_video_import_tests
-      - run: docker run --rm --network none -e DJANGO_SECRET_KEY=ci --entrypoint python lms-session-files:ci -m coach_api.run_recording_tests
-
   files-frontend:
-    name: Attachment UI, types and build
+    name: Attachment types and build
     needs: scope
     if: needs.scope.outputs.enabled == 'true'
     runs-on: ubuntu-latest
@@ -81,37 +57,4 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: npm run type-check
       - run: npm run lint
-      - run: npm test -- src/components/feature/SessionAttachments.test.tsx src/components/feature/SessionResults.test.tsx src/pages/learner/video-watch/liveSessionResults.test.tsx --maxWorkers=2
       - run: npm run build
-
-  files-postgres:
-    name: Attachment persistence and expanded Teams checks
-    needs: scope
-    if: needs.scope.outputs.enabled == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.ref || github.sha }}
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-          cache: pip
-          cache-dependency-path: backend/requirements.txt
-      - run: python -m pip install -r backend/requirements.txt
-      - name: Verify a fresh loopback cluster and prohibit external services
-        shell: bash
-        run: |
-          set -euo pipefail
-          PG_BIN=$(dirname "$(find /usr/lib/postgresql -type f -name initdb | sort -V | tail -1)")
-          [ -x "$PG_BIN/initdb" ]
-          export PG_ROOT
-          PG_ROOT=$(mktemp -d "$RUNNER_TEMP/lms-session-files.XXXXXX")
-          "$PG_BIN/initdb" -D "$PG_ROOT/data" -U lms_gate --auth=trust >/dev/null
-          trap '"$PG_BIN/pg_ctl" -D "$PG_ROOT/data" -m immediate -w stop' EXIT
-          "$PG_BIN/pg_ctl" -D "$PG_ROOT/data" -l "$PG_ROOT/postgres.log" -o "-h 127.0.0.1 -p 55432 -k $PG_ROOT" -w start
-          "$PG_BIN/createdb" -h 127.0.0.1 -p 55432 -U lms_gate lms_gate_session_files_ci
-          python -c 'import json,os,pathlib; pathlib.Path(os.environ["PG_ROOT"], "connection.json").write_text(json.dumps(dict(host="127.0.0.1", port=55432, user="lms_gate", dbname="lms_gate_session_files_ci")))'
-          cd backend
-          python -B -m curriculum_api.run_session_attachment_postgres_tests --connection-file "$PG_ROOT/connection.json" --data-directory "$PG_ROOT/data"

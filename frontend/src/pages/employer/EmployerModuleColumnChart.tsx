@@ -41,8 +41,9 @@ export function EmployerModuleColumnChart({ learners, records, moduleId }: Props
                       aria-valuemin={missing ? undefined : 0} aria-valuemax={missing ? undefined : 100}
                       aria-valuenow={measure.value ?? undefined} aria-valuetext={missing ? undefined : `${state}; ${measure.available} of ${assigned} learners have data`}>
                       {missing ? <span className={styles.columnMissing} title={state}>{loading ? 'Loading…' : 'N/A'}</span> : <>
-                        <span className={styles.columnOutsideValue} style={{ bottom: `calc(${measure.value}% + 5px)` }} aria-hidden="true">{state}</span>
-                        <span className={measure.value === 0 ? styles.columnZero : styles.columnBar} style={measure.value === 0 ? undefined : { height: `${measure.value}%` }} />
+                        <span className={measure.value === 0 ? styles.columnZero : styles.columnBar} style={measure.value === 0 ? undefined : { height: `${measure.value}%` }}>
+                          <span className={styles.columnValue} data-outside={measure.value! < 15 || undefined} aria-hidden="true">{state}</span>
+                        </span>
                       </>}
                     </div>
                   </div>;

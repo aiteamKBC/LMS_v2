@@ -1,7 +1,7 @@
 @import './employer-palette.css';
 
 .journeys { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
-.learnerJourneys { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+.coachingJourney { min-width: 0; border-top: 1px solid var(--employer-line); }
 .heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 2px 2px 0; }
 .heading h2 { display: flex; align-items: center; gap: 9px; font-size: 17px; line-height: 1.4; font-weight: 700; color: var(--employer-ink); }
 .heading h2 svg { color: var(--employer-primary); }

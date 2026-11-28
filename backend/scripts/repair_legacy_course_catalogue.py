@@ -193,7 +193,7 @@ def projections(state, *, include_placements=True):
     # Run the existing pure catalogue reader through its established no-startup
     # adapter. Hydrate its source/journal/segment inputs without a Django server.
     sys.path.insert(0, str(ROOT))
-    from learner_api.test_canonical_learning_no_db import adapter
+    from canonical_learning_projection import adapter
     scope = adapter(None)
     definitions = {d['id']: d for d in state['definitions'] if d['deleted_at'] is None}
     course = state['course']
