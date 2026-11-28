@@ -41,6 +41,7 @@
     "@playwright/test": "^1.62.1",
     "@testing-library/jest-dom": "^7.0.0",
     "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^6.0.1",
@@ -68,8 +69,9 @@
     "dev": "vite",
     "lint": "eslint src --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
-    "test:assignment-timer": "vitest run src/pages/learner/video-watch/TopicAssignment.test.tsx src/pages/learner/video-watch/useAssignmentTimer.test.ts --maxWorkers=2",
-    "type-check": "tsc --noEmit --project tsconfig.app.json"
+    "type-check": "tsc --noEmit --project tsconfig.app.json",
+    "test": "vitest run",
+    "test:assignment-timer": "vitest run src/pages/learner/video-watch/TopicAssignment.test.tsx src/pages/learner/video-watch/useAssignmentTimer.test.ts src/pages/learner/video-watch/AssignmentCoachingBooking.test.tsx src/pages/learner/video-watch/AssignmentSubmissionWizard.test.tsx src/lib/__tests__/assignmentTopics.test.ts src/api/reflectionSubmission.test.ts --maxWorkers=2"
   },
   "type": "module",
   "version": "0.0.0"
