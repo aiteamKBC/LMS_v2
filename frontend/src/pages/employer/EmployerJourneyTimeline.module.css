@@ -21,9 +21,10 @@
 .viewport { overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: thin; margin: 0 12px; border-radius: 10px; }
 .viewport:focus-visible, .section button:focus-visible, .section a:focus-visible { outline: 2px solid var(--employer-primary); outline-offset: -3px; }
 .canvas { display: grid; gap: 4px; width: 100%; padding-inline: 20px; box-sizing: border-box; }
-.moduleSegment { --module-color: hsl(var(--module-hue) 85% 31%); --module-tint: color-mix(in srgb, var(--module-color) 5%, var(--employer-surface)); min-width: 0; display: flex; flex-direction: column; border-radius: 9px; background: linear-gradient(125deg, var(--module-tint), color-mix(in srgb, var(--module-tint) 65%, var(--employer-surface))); }
+.moduleSegment { --module-color: hsl(var(--module-hue) 85% 31%); --module-tint: color-mix(in srgb, var(--module-color) 5%, var(--employer-surface)); min-width: 0; display: grid; grid-row: span 2; grid-template-rows: subgrid; row-gap: 0; border-radius: 9px; background: linear-gradient(125deg, var(--module-tint), color-mix(in srgb, var(--module-tint) 65%, var(--employer-surface))); }
 .moduleSegment:last-child { border-right: 0; }
-.moduleHeader { min-width: 0; position: relative; flex: 0 0 210px; padding: 20px 24px 16px; border-top: 5px solid var(--module-color); border-radius: 9px 9px 0 0; }
+/* Share header height across modules when status text wraps onto another line. */
+.moduleHeader { min-width: 0; min-height: 210px; position: relative; padding: 20px 24px 16px; border-top: 5px solid var(--module-color); border-radius: 9px 9px 0 0; }
 .moduleMeta { display: flex; justify-content: space-between; align-items: center; gap: 6px; color: var(--module-color); font-size: 12px; font-weight: 750; letter-spacing: 1px; }
 .moduleMeta > span:last-child { display: flex; align-items: center; gap: 4px; letter-spacing: 0; }
 .section .moduleHeader h3 { margin: 14px 0 10px; height: 52px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-size: 20px; font-weight: 750; line-height: 26px; letter-spacing: -.5px; overflow-wrap: anywhere; }
@@ -46,6 +47,8 @@
 .scale > span:first-child { transform: translateX(-50%); }
 .scale > span:nth-child(2) { position: absolute; left: 50%; transform: translateX(-50%); }
 .scale > span:last-child { transform: translateX(50%); }
+.pinConnector { position: absolute; width: 0; border-left: 1px dashed var(--module-color); pointer-events: none; }
+.pinConnector::after { content: ''; position: absolute; bottom: -4px; left: -4px; width: 7px; height: 7px; border-radius: 50%; background: var(--module-color); box-shadow: 0 0 0 2px var(--employer-surface); }
 .pin { position: absolute; top: 20px; z-index: 1; width: 36px; transform: translateX(-50%); display: flex; align-items: center; flex-direction: column; border: 0; padding: 0; background: transparent; color: var(--module-color); cursor: pointer; }
 .pinHead { position: relative; display: grid; place-items: center; width: 35px; height: 43px; filter: drop-shadow(0 2px 2px #0002); }
 .pinHead::before { content: ''; position: absolute; top: 2px; width: 31px; height: 31px; border: 2px solid var(--employer-surface); border-radius: 50% 50% 50% 3px; background: var(--module-color); transform: rotate(-45deg); }

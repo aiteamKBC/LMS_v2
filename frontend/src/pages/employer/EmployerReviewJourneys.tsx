@@ -72,8 +72,7 @@ export function EmployerReviewJourneys({ employerId, learners, totalLearners, re
         const href = learnerHref(employerId, learner, 'reviews');
         const initials = learner.name.split(/\s+/).filter(Boolean).slice(0, 2).map(word => word[0]).join('').toUpperCase();
         return (
-          <div key={learnerKey(learner)} className={styles.learnerJourneys}>
-            <article className={styles.learner} aria-label={`${learner.name} reviews`}>
+            <article key={learnerKey(learner)} className={styles.learner} aria-label={`${learner.name} reviews`}>
               <header className={styles.learnerHeader}>
                 <div className={styles.identity}>
                   <span className={styles.avatar} aria-hidden>{initials || '?'}</span>
@@ -127,23 +126,10 @@ export function EmployerReviewJourneys({ employerId, learners, totalLearners, re
               ) : <p className={styles.notice}><CalendarDays size={19} aria-hidden />No progress reviews planned yet.</p>
                 : resource?.status === 'error' ? <div className={styles.error} role="alert"><CircleAlert size={20} aria-hidden /><p>Reviews could not be loaded for this learner.</p><button type="button" className={styles.retry} onClick={onRetry}>Retry reviews</button></div>
                   : <p className={styles.notice} ><LoadingSkeleton label="Loading progress reviews…" variant="rows" /></p>}
+              <div className={styles.coachingJourney}>
+                <EmployerMcmTimeline employerId={employerId} learner={learner} />
+              </div>
             </article>
-            <article className={styles.learner} aria-label={`${learner.name} coaching journey`}>
-              <header className={styles.learnerHeader}>
-                <div className={styles.identity}>
-                  <span className={styles.avatar} aria-hidden>{initials || '?'}</span>
-                  <div>
-                    <h3>{learner.name}</h3>
-                    <div className={styles.metadata}>
-                      <span><BookOpen size={14} aria-hidden />{learner.programme || 'Programme not assigned'}</span>
-                      <span><Layers size={14} aria-hidden />{learner.cohort || 'Cohort not assigned'}</span>
-                    </div>
-                  </div>
-                </div>
-              </header>
-              <EmployerMcmTimeline employerId={employerId} learner={learner} />
-            </article>
-          </div>
         );
       })}
     </section>

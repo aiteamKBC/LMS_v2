@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
+import { Fragment, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useLocation } from 'react-router-dom';
 import { BookOpen, CalendarDays, Check, ChevronLeft, ChevronRight, Circle, CircleAlert, GitFork, GraduationCap, MapPin, Route, SkipForward, Users } from 'lucide-react';
@@ -215,18 +215,27 @@ function JourneyPinField({ title, pins, width, lanes, laneOffset, layoutKey, par
   }, [curved, width, layoutKey]);
   const xAt = (percent: number) => progressX(percent, geometry.width);
   const yAt = (percent: number) => curveY(geometry.offset + xAt(percent)) + laneOffset;
+  // Each field shows a window onto the same path, including its dash phase.
+  // Extend that window through the grid gap up to the next module.
+  const roadWidth = geometry.width + Math.min(4, Math.max(0, geometry.canvasInset + geometry.canvasWidth - geometry.offset - geometry.width));
+  const roadPath = curved ? curvePath(0, geometry.canvasInset + geometry.canvasWidth) : '';
   return <div ref={field} className={styles.pinField} style={{ '--pin-lane-offset': `${laneOffset}px`, '--progress-inset': `${progressInset}px` } as CSSProperties}
     role="group" aria-label={`${title} ${parallel ? 'parallel learner' : 'learner'} pins`}>
-    {curved ? <svg className={styles.curvedRail} viewBox={`0 0 ${geometry.width} 340`} preserveAspectRatio="none" aria-hidden="true">
-      <path className={styles.road} d={curvePath(geometry.offset, geometry.width)} vectorEffect="non-scaling-stroke" />
-      <path className={styles.roadDashes} d={curvePath(geometry.offset, geometry.width)} vectorEffect="non-scaling-stroke" />
+    {curved ? <svg className={styles.curvedRail} style={{ width: roadWidth }} viewBox={`${geometry.offset} 0 ${roadWidth} 340`} preserveAspectRatio="none" aria-hidden="true">
+      <path className={styles.road} d={roadPath} vectorEffect="non-scaling-stroke" />
+      <path className={styles.roadDashes} d={roadPath} vectorEffect="non-scaling-stroke" />
     </svg> : <div className={styles.sharedRail} aria-hidden="true" />}
     <div className={styles.scale} aria-hidden="true"><span>0%</span><span>50%</span><span>100%</span></div>
     {pins.map(({ pin, learner }, index) => {
       const value = pin.percent ?? 0;
       const left = xAt(value);
       const top = (curved ? yAt(value) - 55 : 30 + laneOffset) - lanes[index] * (curved ? 176 : 128);
-      return <LearnerPin key={learnerKey(learner)} pin={pin} learner={learner} left={left} top={top} fieldWidth={geometry.width} />;
+      const railTop = curved ? yAt(value) : 75 + laneOffset;
+      return <Fragment key={learnerKey(learner)}>
+        {lanes[index] > 0 && <span className={styles.pinConnector} aria-hidden="true"
+          style={{ left, top: top + 40, height: railTop - top - 40 }} />}
+        <LearnerPin pin={pin} learner={learner} left={left} top={top} fieldWidth={geometry.width} />
+      </Fragment>;
     })}
     {journeyHolidayMarks(holidays, geometry).map(mark => <HolidayMarker key={JSON.stringify(mark.holidays.map(holiday => holiday.key))}
       holidays={mark.holidays} year={year} left={mark.left}
