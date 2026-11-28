@@ -1,0 +1,998 @@
+{
+ "ksbs": [
+  {
+   "code": "K1",
+   "type": "K",
+   "description": "The differences between projects and business as usual"
+  },
+  {
+   "code": "K2",
+   "type": "K",
+   "description": "The importance of alignment between the project and organisational objectives"
+  },
+  {
+   "code": "K3",
+   "type": "K",
+   "description": "The interdependencies between project, programme, and portfolio management."
+  },
+  {
+   "code": "K4",
+   "type": "K",
+   "description": "Techniques used to understand the project context, such as PESTLE (political, economic, social, technological, legal, and environmental), SWOT (strength, weakness, opportunities, threats) or VUCA (velocity, uncertainty, complexity, ambiguity)."
+  },
+  {
+   "code": "K5",
+   "type": "K",
+   "description": "The need and benefit of the project governance structure, requirements, and process and the impact on their role"
+  },
+  {
+   "code": "K6",
+   "type": "K",
+   "description": "The need and benefit of the project governance structure, requirements, and process and the impact on their role"
+  },
+  {
+   "code": "K7",
+   "type": "K",
+   "description": "Different roles and responsibilities within a project environment."
+  },
+  {
+   "code": "K8",
+   "type": "K",
+   "description": "The differences and comparative benefits between linear, iterative and hybrid life cycle approaches"
+  },
+  {
+   "code": "K9",
+   "type": "K",
+   "description": "Importance, content, and purpose of a business case."
+  },
+  {
+   "code": "K10",
+   "type": "K",
+   "description": "Approaches to the maintenance of a business case and the management of the benefits which will be achieved upon the successful delivery of the project."
+  },
+  {
+   "code": "K11",
+   "type": "K",
+   "description": "The purpose, format, and significance of the project management plan."
+  },
+  {
+   "code": "K12",
+   "type": "K",
+   "description": "Methods used to define, record, integrate, deliver, and manage scope."
+  },
+  {
+   "code": "K13",
+   "type": "K",
+   "description": "The identification, analysis, and management of stakeholders."
+  },
+  {
+   "code": "K14",
+   "type": "K",
+   "description": "Communication techniques and approaches to interact with stakeholders to meet their requirements."
+  },
+  {
+   "code": "K15",
+   "type": "K",
+   "description": "The use of information management."
+  },
+  {
+   "code": "K16",
+   "type": "K",
+   "description": "Techniques for managing conflict and negotiation."
+  },
+  {
+   "code": "K17",
+   "type": "K",
+   "description": "Techniques for working collaboratively within a team and with stakeholders."
+  },
+  {
+   "code": "K18",
+   "type": "K",
+   "description": "How and when to apply different estimating methods."
+  },
+  {
+   "code": "K19",
+   "type": "K",
+   "description": "Configuration management and change control."
+  },
+  {
+   "code": "K20",
+   "type": "K",
+   "description": "The principles of earned value management (EVM) and the interpretation of EVM information."
+  },
+  {
+   "code": "K21",
+   "type": "K",
+   "description": "Project scheduling and maintenance, including critical path analysis."
+  },
+  {
+   "code": "K22",
+   "type": "K",
+   "description": "Allocation and management of resources throughout the project life cycle"
+  },
+  {
+   "code": "K23",
+   "type": "K",
+   "description": "Principles of project risk and issue management."
+  },
+  {
+   "code": "K24",
+   "type": "K",
+   "description": "Procurement strategies and processes that are both ethical and sustainable."
+  },
+  {
+   "code": "K25",
+   "type": "K",
+   "description": "The role and purpose of quality requirements, planning and control in a project environment."
+  },
+  {
+   "code": "K26",
+   "type": "K",
+   "description": "Principles for evaluating project success, including how lessons learned are captured and can impact future project delivery"
+  },
+  {
+   "code": "K27",
+   "type": "K",
+   "description": "Relevant regulations and legislation such as data protection, and how they impact on their role."
+  },
+  {
+   "code": "K28",
+   "type": "K",
+   "description": "The impact of project objectives and how to respond to challenges around sustainability and the UK Government\u2019s policy to achieve net carbon zero."
+  },
+  {
+   "code": "K29",
+   "type": "K",
+   "description": "Principles of conducting project management activities which are ethical and inclusive"
+  },
+  {
+   "code": "K30",
+   "type": "K",
+   "description": "Technology and software used in the performance of project management activities."
+  },
+  {
+   "code": "K31",
+   "type": "K",
+   "description": "Presentation tools and techniques"
+  },
+  {
+   "code": "S1",
+   "type": "S",
+   "description": "Use project monitoring and reporting techniques to track, interpret and report on performance."
+  },
+  {
+   "code": "S2",
+   "type": "S",
+   "description": "Manage and engage with stakeholders."
+  },
+  {
+   "code": "S3",
+   "type": "S",
+   "description": "Influence and negotiate with others to create a positive outcome for the project."
+  },
+  {
+   "code": "S4",
+   "type": "S",
+   "description": "Resolve conflict as and when required with stakeholders within limits of responsibilit"
+  },
+  {
+   "code": "S5",
+   "type": "S",
+   "description": "Adapt communications to different stakeholders"
+  },
+  {
+   "code": "S6",
+   "type": "S",
+   "description": "Communicate and support the project vision, to ensure buy in to the project objectives."
+  },
+  {
+   "code": "S7",
+   "type": "S",
+   "description": "Collate and analyse information and provide input to support negotiations relating to project objectives"
+  },
+  {
+   "code": "S8",
+   "type": "S",
+   "description": "Monitor and analyse project budgets."
+  },
+  {
+   "code": "S9",
+   "type": "S",
+   "description": "Review and provide feedback on a project business case to ensure the project remains valid."
+  },
+  {
+   "code": "S10",
+   "type": "S",
+   "description": "Apply change control processes to support the management of project scope"
+  },
+  {
+   "code": "S11",
+   "type": "S",
+   "description": "Evaluate an integrated project management plan to provide recommendations on areas for improvement."
+  },
+  {
+   "code": "S12",
+   "type": "S",
+   "description": "Prepare, monitor, and schedule activities that contribute to the delivery of the overall project schedule and objectives"
+  },
+  {
+   "code": "S13",
+   "type": "S",
+   "description": "Evaluate and make recommendations on the risk management plan to threats to delivery and recommend solutions"
+  },
+  {
+   "code": "S14",
+   "type": "S",
+   "description": "Identify and monitor project risks and issues; and plan and implement responses to them."
+  },
+  {
+   "code": "S15",
+   "type": "S",
+   "description": "Deliver a Quality Management Plan which contributes to quality control processes."
+  },
+  {
+   "code": "S16",
+   "type": "S",
+   "description": "Use an organisation\u2019s continual improvement process including lessons learned to improve performance."
+  },
+  {
+   "code": "S17",
+   "type": "S",
+   "description": "Support the preparation or maintenance of a resource management plan for project activities."
+  },
+  {
+   "code": "S18",
+   "type": "S",
+   "description": "Work with stakeholders to deliver the project."
+  },
+  {
+   "code": "S19",
+   "type": "S",
+   "description": "Use digital tools and software to meet project objectives for example research, collaboration, presentations, and resolution of problems."
+  },
+  {
+   "code": "S20",
+   "type": "S",
+   "description": "Provide underpinning data to support the written submission through the governance process."
+  },
+  {
+   "code": "S21",
+   "type": "S",
+   "description": "Work within the approved project budget"
+  },
+  {
+   "code": "S22",
+   "type": "S",
+   "description": "Ensure that integrated schedules support critical path analysis, interface management, resource forecasting and risk management."
+  },
+  {
+   "code": "S23",
+   "type": "S",
+   "description": "Apply relevant legislation, regulations, codes of practice, and ethical guidance where appropriate to their work"
+  },
+  {
+   "code": "S24",
+   "type": "S",
+   "description": "Use data to inform decisions on actions to take to mitigate risks on project."
+  },
+  {
+   "code": "S25",
+   "type": "S",
+   "description": "Use configuration management and change control to schedule and maintain projects."
+  },
+  {
+   "code": "S26",
+   "type": "S",
+   "description": "Manages resources through the project lifecycle."
+  },
+  {
+   "code": "B1",
+   "type": "B",
+   "description": "Works flexibly and adapts to circumstances."
+  },
+  {
+   "code": "B2",
+   "type": "B",
+   "description": "Works collaboratively and builds strong relationships with others across the organisation and external stakeholders"
+  },
+  {
+   "code": "B3",
+   "type": "B",
+   "description": "Has accountability and ownership of their tasks and workload"
+  },
+  {
+   "code": "B4",
+   "type": "B",
+   "description": "Operates professionally with integrity and confidentiality."
+  },
+  {
+   "code": "B5",
+   "type": "B",
+   "description": "Seeks learning opportunities and continuous professional developmen"
+  }
+ ],
+ "components": [
+  {
+   "componentId": "COMP-20260721161356697615",
+   "component": "Live session \u00b7 Title of Live Session Will Be Here =>osama",
+   "module": "Fouda-Module",
+   "week": "Week1 Title is here ==> Osama",
+   "type": "live_session",
+   "ksbMappings": [
+    {
+     "code": "K1",
+     "weight": 50.0,
+     "classification": "main"
+    },
+    {
+     "code": "K1.1",
+     "weight": 30.0,
+     "classification": "secondary"
+    }
+   ]
+  },
+  {
+   "componentId": "COMP-20260721161357055611",
+   "component": "Recording placeholder \u00b7 Recorded session title will be here =>osama",
+   "module": "Fouda-Module",
+   "week": "Week1 Title is here ==> Osama",
+   "type": "recording_placeholder",
+   "ksbMappings": [
+    {
+     "code": "B2",
+     "weight": 20.0,
+     "classification": "possible"
+    },
+    {
+     "code": "S1",
+     "weight": 50.0,
+     "classification": "main"
+    },
+    {
+     "code": "S5.1",
+     "weight": 50.0,
+     "classification": "main"
+    }
+   ]
+  },
+  {
+   "componentId": "COMP-20260721161357553722",
+   "component": "Video \u00b7 Pre-recorded video =>osama",
+   "module": "Fouda-Module",
+   "week": "Week1 Title is here ==> Osama",
+   "type": "video",
+   "ksbMappings": [
+    {
+     "code": "B2.2",
+     "weight": 50.0,
+     "classification": "main"
+    },
+    {
+     "code": "K3.1",
+     "weight": 45.0,
+     "classification": "main"
+    },
+    {
+     "code": "S1.2",
+     "weight": 30.0,
+     "classification": "secondary"
+    }
+   ]
+  },
+  {
+   "componentId": "COMP-20260721161358049897",
+   "component": "Podcast \u00b7 Podcast =>osama",
+   "module": "Fouda-Module",
+   "week": "Week1 Title is here ==> Osama",
+   "type": "podcast",
+   "ksbMappings": [
+    {
+     "code": "B3",
+     "weight": 50.0,
+     "classification": "main"
+    },
+    {
+     "code": "K3",
+     "weight": 50.0,
+     "classification": "main"
+    },
+    {
+     "code": "S2.1",
+     "weight": 50.0,
+     "classification": "main"
+    }
+   ]
+  },
+  {
+   "componentId": "COMP-20260721161358547129",
+   "component": "Reading \u00b7 Reading Material =>osama",
+   "module": "Fouda-Module",
+   "week": "Week1 Title is here ==> Osama",
+   "type": "reading",
+   "ksbMappings": [
+    {
+     "code": "B3",
+     "weight": 20.0,
+     "classification": "possible"
+    },
+    {
+     "code": "K2",
+     "weight": 50.0,
+     "classification": "main"
+    },
+    {
+     "code": "K8",
+     "weight": 50.0,
+     "classification": "main"
+    },
+    {
+     "code": "S11",
+     "weight": 30.0,
+     "classification": "secondary"
+    }
+   ]
+  },
+  {
+   "componentId": "COMP-20260721161359193228",
+   "component": "Quiz \u00b7 Weekly quiz Title==> Osama",
+   "module": "Fouda-Module",
+   "week": "Week1 Title is here ==> Osama",
+   "type": "quiz",
+   "ksbMappings": [
+    {
+     "code": "K1",
+     "weight": 50.0,
+     "classification": "main"
+    },
+    {
+     "code": "K4",
+     "weight": 50.0,
+     "classification": "main"
+    }
+   ]
+  },
+  {
+   "componentId": "COMP-20260721161359548843",
+   "component": "Powerpoint \u00b7 Power Point =>osama",
+   "module": "Fouda-Module",
+   "week": "Week1 Title is here ==> Osama",
+   "type": "powerpoint",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-202607250901108741FK2TV",
+   "component": "Assignment \u00b7 Assignment test",
+   "module": "Fouda-Module",
+   "week": "Week1 Title is here ==> Osama",
+   "type": "assignment",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161359694216",
+   "component": "Live session \u00b7 Live Teams session",
+   "module": "Fouda-Module",
+   "week": "Week 2 Title Here => osama",
+   "type": "live_session",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161359768007",
+   "component": "Recording placeholder \u00b7 Recorded session placeholder",
+   "module": "Fouda-Module",
+   "week": "Week 2 Title Here => osama",
+   "type": "recording_placeholder",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161359843622",
+   "component": "Podcast",
+   "module": "Fouda-Module",
+   "week": "Week 2 Title Here => osama",
+   "type": "podcast",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161359918120",
+   "component": "Reading \u00b7 Reading text",
+   "module": "Fouda-Module",
+   "week": "Week 2 Title Here => osama",
+   "type": "reading",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161359994663",
+   "component": "Powerpoint \u00b7 Power Point",
+   "module": "Fouda-Module",
+   "week": "Week 2 Title Here => osama",
+   "type": "powerpoint",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161400067992",
+   "component": "Quiz \u00b7 Weekly quiz",
+   "module": "Fouda-Module",
+   "week": "Week 2 Title Here => osama",
+   "type": "quiz",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161400145385",
+   "component": "Reflection \u00b7 Reflection activity",
+   "module": "Fouda-Module",
+   "week": "Week 2 Title Here => osama",
+   "type": "reflection",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161400288446",
+   "component": "Live session \u00b7 Live Teams session",
+   "module": "Fouda-Module",
+   "week": "Week 3 Title Here",
+   "type": "live_session",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161400361836",
+   "component": "Recording placeholder \u00b7 Recorded session placeholder",
+   "module": "Fouda-Module",
+   "week": "Week 3 Title Here",
+   "type": "recording_placeholder",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161400434388",
+   "component": "Video \u00b7 Pre-recorded video",
+   "module": "Fouda-Module",
+   "week": "Week 3 Title Here",
+   "type": "video",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161400508407",
+   "component": "Podcast",
+   "module": "Fouda-Module",
+   "week": "Week 3 Title Here",
+   "type": "podcast",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161400581922",
+   "component": "Reading \u00b7 Reading text",
+   "module": "Fouda-Module",
+   "week": "Week 3 Title Here",
+   "type": "reading",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161400656056",
+   "component": "Powerpoint \u00b7 Power Point",
+   "module": "Fouda-Module",
+   "week": "Week 3 Title Here",
+   "type": "powerpoint",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161400730584",
+   "component": "Quiz \u00b7 Weekly quiz",
+   "module": "Fouda-Module",
+   "week": "Week 3 Title Here",
+   "type": "quiz",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161400807103",
+   "component": "Reflection \u00b7 Reflection activity",
+   "module": "Fouda-Module",
+   "week": "Week 3 Title Here",
+   "type": "reflection",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161400953260",
+   "component": "Live session \u00b7 Live Teams session",
+   "module": "Fouda-Module",
+   "week": "Week 4 Title Here",
+   "type": "live_session",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161401026981",
+   "component": "Recording placeholder \u00b7 Recorded session placeholder",
+   "module": "Fouda-Module",
+   "week": "Week 4 Title Here",
+   "type": "recording_placeholder",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161401100261",
+   "component": "Video \u00b7 Pre-recorded video",
+   "module": "Fouda-Module",
+   "week": "Week 4 Title Here",
+   "type": "video",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161401173572",
+   "component": "Podcast",
+   "module": "Fouda-Module",
+   "week": "Week 4 Title Here",
+   "type": "podcast",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161401246917",
+   "component": "Reading \u00b7 Reading text",
+   "module": "Fouda-Module",
+   "week": "Week 4 Title Here",
+   "type": "reading",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161401321288",
+   "component": "Powerpoint \u00b7 Power Point",
+   "module": "Fouda-Module",
+   "week": "Week 4 Title Here",
+   "type": "powerpoint",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161401395683",
+   "component": "Quiz \u00b7 Weekly quiz",
+   "module": "Fouda-Module",
+   "week": "Week 4 Title Here",
+   "type": "quiz",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260722153923465G6T99R",
+   "component": "Live session \u00b7 Live Teams Session 1",
+   "module": "Fouda-Module",
+   "week": "test",
+   "type": "live_session",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260722153923465B65AUK",
+   "component": "Video \u00b7 Recorded Session 2",
+   "module": "Fouda-Module",
+   "week": "test",
+   "type": "video",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260722153923465OZX0OI",
+   "component": "Podcast \u00b7 Podcast 333",
+   "module": "Fouda-Module",
+   "week": "test",
+   "type": "podcast",
+   "ksbMappings": [
+    {
+     "code": "K1",
+     "weight": 40.0,
+     "classification": "main"
+    }
+   ]
+  },
+  {
+   "componentId": "COMP-20260722153923465AWPHA6",
+   "component": "Quiz \u00b7 Quiz 4",
+   "module": "Fouda-Module",
+   "week": "test",
+   "type": "quiz",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161514185659",
+   "component": "Live session \u00b7 Week 1",
+   "module": "Osama-Fouda-Module-Disc",
+   "week": "Week 1",
+   "type": "live_session",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161514510872",
+   "component": "Live session \u00b7 Week 2",
+   "module": "Osama-Fouda-Module-Disc",
+   "week": "Week 2",
+   "type": "live_session",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161514836451",
+   "component": "Live session \u00b7 Week 3",
+   "module": "Osama-Fouda-Module-Disc",
+   "week": "Week 3",
+   "type": "live_session",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161515170424",
+   "component": "Live session \u00b7 Week 4",
+   "module": "Osama-Fouda-Module-Disc",
+   "week": "Week 4",
+   "type": "live_session",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161515531514",
+   "component": "Live session \u00b7 Week 5",
+   "module": "Osama-Fouda-Module-Disc",
+   "week": "Week 5",
+   "type": "live_session",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161515917633",
+   "component": "Live session \u00b7 Week 6",
+   "module": "Osama-Fouda-Module-Disc",
+   "week": "Week 6",
+   "type": "live_session",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161341984169",
+   "component": "Live session \u00b7 Risk Management in the Project Controls Environment",
+   "module": "Risk Management",
+   "week": "Risk Management in the Project Controls Environment",
+   "type": "live_session",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161342059337",
+   "component": "Video",
+   "module": "Risk Management",
+   "week": "Risk Management in the Project Controls Environment",
+   "type": "video",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161342134662",
+   "component": "Reading \u00b7 Reading Material",
+   "module": "Risk Management",
+   "week": "Risk Management in the Project Controls Environment",
+   "type": "reading",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161342282399",
+   "component": "Live session \u00b7 The Risk Management Process and Its Interfaces",
+   "module": "Risk Management",
+   "week": "The Risk Management Process and Its Interfaces",
+   "type": "live_session",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161342358930",
+   "component": "Live session \u00b7 Live Teams Session",
+   "module": "Risk Management",
+   "week": "The Risk Management Process and Its Interfaces",
+   "type": "live_session",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161342433853",
+   "component": "Recording placeholder",
+   "module": "Risk Management",
+   "week": "The Risk Management Process and Its Interfaces",
+   "type": "recording_placeholder",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161342509186",
+   "component": "Video",
+   "module": "Risk Management",
+   "week": "The Risk Management Process and Its Interfaces",
+   "type": "video",
+   "ksbMappings": [
+    {
+     "code": "K1",
+     "weight": 50.0,
+     "classification": "main"
+    },
+    {
+     "code": "K2",
+     "weight": 50.0,
+     "classification": "main"
+    }
+   ]
+  },
+  {
+   "componentId": "COMP-20260721161342870804",
+   "component": "Reading \u00b7 Reading Material",
+   "module": "Risk Management",
+   "week": "The Risk Management Process and Its Interfaces",
+   "type": "reading",
+   "ksbMappings": [
+    {
+     "code": "K2",
+     "weight": 20.0,
+     "classification": "possible"
+    },
+    {
+     "code": "K3",
+     "weight": 50.0,
+     "classification": "main"
+    }
+   ]
+  },
+  {
+   "componentId": "COMP-20260721161343304748",
+   "component": "Live session \u00b7 Risk Identification and Building a Credible Risk Register",
+   "module": "Risk Management",
+   "week": "Risk Identification and Building a Credible Risk Register",
+   "type": "live_session",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161343453104",
+   "component": "Live session \u00b7 Qualitative Assessment, Prioritisation and Risk Appetite",
+   "module": "Risk Management",
+   "week": "Qualitative Assessment, Prioritisation and Risk Appetite",
+   "type": "live_session",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161343601544",
+   "component": "Live session \u00b7 Quantitative Foundations for Risk Analysis",
+   "module": "Risk Management",
+   "week": "Quantitative Foundations for Risk Analysis",
+   "type": "live_session",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161343748027",
+   "component": "Live session \u00b7 Schedule Risk Analysis",
+   "module": "Risk Management",
+   "week": "Schedule Risk Analysis",
+   "type": "live_session",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161343893599",
+   "component": "Live session \u00b7 Cost Risk Analysis and Contingency",
+   "module": "Risk Management",
+   "week": "Cost Risk Analysis and Contingency",
+   "type": "live_session",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161344040074",
+   "component": "Live session \u00b7 Integrating Cost, Schedule and Risk",
+   "module": "Risk Management",
+   "week": "Integrating Cost, Schedule and Risk",
+   "type": "live_session",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161344185935",
+   "component": "Live session \u00b7 Risk Responses, Ownership and Residual Exposure",
+   "module": "Risk Management",
+   "week": "Risk Responses, Ownership and Residual Exposure",
+   "type": "live_session",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161344337183",
+   "component": "Live session \u00b7 Biases, Heuristics and Decision Quality",
+   "module": "Risk Management",
+   "week": "Biases, Heuristics and Decision Quality",
+   "type": "live_session",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161344483525",
+   "component": "Live session \u00b7 Risk Governance, Assurance and Reporting",
+   "module": "Risk Management",
+   "week": "Risk Governance, Assurance and Reporting",
+   "type": "live_session",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161344630339",
+   "component": "Live session \u00b7 Risk Maturity, Facilitation and Continuous Improvement",
+   "module": "Risk Management",
+   "week": "Risk Maturity, Facilitation and Continuous Improvement",
+   "type": "live_session",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161344777172",
+   "component": "Live session \u00b7 Case Workshop I",
+   "module": "Risk Management",
+   "week": "Case Workshop I",
+   "type": "live_session",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161344937062",
+   "component": "Live session \u00b7 Case Workshop II",
+   "module": "Risk Management",
+   "week": "Case Workshop II",
+   "type": "live_session",
+   "ksbMappings": [
+    {
+     "code": "B4",
+     "weight": 40.0,
+     "classification": "main"
+    },
+    {
+     "code": "B5",
+     "weight": 40.0,
+     "classification": "main"
+    }
+   ]
+  },
+  {
+   "componentId": "COMP-20260721161454364213",
+   "component": "Live session \u00b7 Week 1",
+   "module": "Test LMS Mod",
+   "week": "Week 1",
+   "type": "live_session",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161454506572",
+   "component": "Live session \u00b7 Week 2",
+   "module": "Test LMS Mod",
+   "week": "Week 2",
+   "type": "live_session",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161454648023",
+   "component": "Live session \u00b7 Week 3",
+   "module": "Test LMS Mod",
+   "week": "Week 3",
+   "type": "live_session",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161454790600",
+   "component": "Live session \u00b7 Week 4",
+   "module": "Test LMS Mod",
+   "week": "Week 4",
+   "type": "live_session",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161454932237",
+   "component": "Live session \u00b7 Week 5",
+   "module": "Test LMS Mod",
+   "week": "Week 5",
+   "type": "live_session",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161455200171",
+   "component": "Live session \u00b7 Week 6",
+   "module": "Test LMS Mod",
+   "week": "Week 6",
+   "type": "live_session",
+   "ksbMappings": []
+  },
+  {
+   "componentId": "COMP-20260721161455661599",
+   "component": "Live session \u00b7 Week 7",
+   "module": "Test LMS Mod",
+   "week": "Week 7",
+   "type": "live_session",
+   "ksbMappings": []
+  }
+ ],
+ "videoProgress": [
+  {
+   "componentId": "COMP-20260721161357553722"
+  }
+ ],
+ "componentProgress": [
+  {
+   "componentId": "COMP-202607090937403244300235"
+  },
+  {
+   "componentId": "COMP-202607250901108741FK2TV"
+  },
+  {
+   "componentId": "COMP-20260721161358049897"
+  }
+ ]
+}

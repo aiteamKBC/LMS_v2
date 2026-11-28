@@ -27,6 +27,7 @@ import { LearningHero } from './LearningCatalogue';
 import { useAuth } from "@/hooks/useAuth";
 import learningStyles from './SubjectWorkspace.module.css';
 import { useMyLearningCatalogue } from '@/api/myLearning';
+import { useLearnerQuizzes, type LearnerQuizList } from '@/api/learnerQuizzes';
 import { CompactModules } from './CompactModules';
 
 const learnerNav = roleNavMap.learner;
@@ -90,7 +91,8 @@ export default function MyLearningPage({ view = 'catalogue' }: { view?: 'catalog
   const requestedMode = new URLSearchParams(location.search).get('mode');
   const mode = view === 'map' ? 'courses' : requestedMode === 'free' ? 'free' : 'courses';
   const courseParams = new URLSearchParams(location.search);
-  const { isRealMode, real, loading, loadError, refresh } = useLearnerDetailParam(kind, id, false, isInitialized && tab !== 'modules', true);
+  const { isRealMode, real, loading, loadError, refresh } = useLearnerDetailParam(kind, id, false, isInitialized && tab === 'assignments' && mode === 'courses', true);
+  const quizzes = useLearnerQuizzes(kind as LearnerKind | undefined, id, isInitialized && tab === 'quizzes' && mode === 'courses');
   const catalogue = useMyLearningCatalogue(kind as LearnerKind | undefined, id, isInitialized && tab === 'modules' && mode === 'courses');
   const subjectOpen = view === 'catalogue' && mode === 'courses' && tab === 'modules'
     && !!(courseParams.get('subject') || courseParams.get('module') || courseParams.get('activity'));
@@ -113,8 +115,9 @@ export default function MyLearningPage({ view = 'catalogue' }: { view?: 'catalog
 
   const canTake = !!(kind && id) && canProgress;
 
-  const subtitle = real
-    ? [real.programme, real.name, real.cohort ? `Cohort ${real.cohort}` : ''].filter(Boolean).join(' · ')
+  const heading = tab === 'quizzes' ? quizzes.data : real;
+  const subtitle = heading
+    ? [heading.programme, heading.name, heading.cohort ? `Cohort ${heading.cohort}` : ''].filter(Boolean).join(' · ')
     : catalogue.data ? [catalogue.data.learner.programme, catalogue.data.learner.name, catalogue.data.learner.cohort ? `Cohort ${catalogue.data.learner.cohort}` : ''].filter(Boolean).join(' \u00b7 ') : '';
 
   const tabs: PageTabItem[] = [
@@ -134,8 +137,8 @@ export default function MyLearningPage({ view = 'catalogue' }: { view?: 'catalog
       workspaceLabel={learnerNav.workspaceLabel}
       pageTitle={view === 'map' ? 'Learner’s Map' : 'My Learning'}
       pageSubtitle={subtitle}
-      userName={real?.name || catalogue.data?.learner.name || 'Learner'}
-      userRole={(real?.programme || catalogue.data?.learner.programme) ? `${real?.programme || catalogue.data?.learner.programme} Learner` : 'Learner'}
+      userName={heading?.name || catalogue.data?.learner.name || 'Learner'}
+      userRole={(heading?.programme || catalogue.data?.learner.programme) ? `${heading?.programme || catalogue.data?.learner.programme} Learner` : 'Learner'}
       breadcrumbCurrentLabel={view === 'map' ? 'Learner’s Map' : 'My Learning'}
     >
       <PageContainer><div className={learningStyles.learningPage}>
@@ -169,7 +172,7 @@ export default function MyLearningPage({ view = 'catalogue' }: { view?: 'catalog
                 <CompactModules key={`${kind}:${id}`} kind={kind as LearnerKind | undefined} id={id} catalogue={catalogue.data} loading={catalogue.loading} error={catalogue.error} refresh={catalogue.refresh} showReadOnlyNotice={showReadOnlyNotice} view={view} sectionTabs={sectionTabs} canRequestTransfer={auth.account?.role === 'learner' && String(auth.account.subjectId) === id} />
               ) : (
                 tab === 'assignments' ? <AssignmentsTab key={`${kind}:${id}`} kind={kind} id={id} real={real} loading={loading} loadError={loadError} onRetry={refresh} canTake={canTake} /> :
-                <QuizzesTab real={real} loading={loading} loadError={loadError} kind={kind} id={id} canTake={canTake} navigate={navigate} onRetry={refresh} />
+                <QuizzesTab key={`${kind}:${id}`} real={quizzes.data} loading={quizzes.loading} loadError={quizzes.error || null} kind={kind} id={id} canTake={canTake} navigate={navigate} onRetry={quizzes.refresh} />
               )}
             </>
           )}
@@ -180,9 +183,11 @@ export default function MyLearningPage({ view = 'catalogue' }: { view?: 'catalog
 }
 
 type QuizFilter = 'all' | 'todo' | 'completed' | 'failed' | 'unavailable';
+const quizCourseKey = (component: LearnerQuizList['components'][number]) => component.moduleId
+  ? `module:${component.moduleId}` : `title:${component.module || ''}`;
 
 export function QuizzesTab({ real, loading, loadError, kind, id, canTake, navigate, onRetry }: {
-  real: ReturnType<typeof useLearnerDetailParam>['real'];
+  real: LearnerQuizList | null;
   loading: boolean;
   loadError: string | null;
   kind?: string;
@@ -192,7 +197,17 @@ export function QuizzesTab({ real, loading, loadError, kind, id, canTake, naviga
   onRetry?: () => void;
 }) {
   const [filter, setFilter] = useState<QuizFilter>('all');
-  const quizzes = useMemo(() => buildLinkedQuizzes(real), [real]);
+  const [course, setCourse] = useState('');
+  const courses = useMemo(() => Array.from(new Map((real?.components || [])
+    .filter(component => component.isQuiz && component.quizMeta?.quizId)
+    .map(component => [quizCourseKey(component), component.module || 'No course specified']))
+    .entries()).sort((a, b) => a[1].localeCompare(b[1])), [real]);
+  const selectedCourse = courses.some(([key]) => key === course) ? course : '';
+  // Filter placements before de-duplicating quizzes: a quiz can be linked in
+  // more than one course, with completion belonging to its own component.
+  const quizzes = useMemo(() => buildLinkedQuizzes(real && selectedCourse
+    ? { ...real, components: real.components.filter(component => quizCourseKey(component) === selectedCourse) }
+    : real), [real, selectedCourse]);
 
   const rows = useMemo(() => quizzes.map((q) => {
     const attempts = q.attempts;
@@ -217,8 +232,8 @@ export function QuizzesTab({ real, loading, loadError, kind, id, canTake, naviga
     { value: 'all', label: 'All', count: counts.all },
     { value: 'todo', label: 'To Do', count: counts.todo },
     { value: 'completed', label: 'Completed', count: counts.completed, tone: 'positive' },
-    { value: 'failed', label: 'Failed', count: counts.failed, tone: 'critical', hideWhenEmpty: true },
-    { value: 'unavailable', label: 'Result unavailable', count: counts.unavailable, hideWhenEmpty: true },
+    { value: 'failed', label: 'Failed', count: counts.failed, tone: 'critical', hideWhenEmpty: filter !== 'failed' },
+    { value: 'unavailable', label: 'Result unavailable', count: counts.unavailable, hideWhenEmpty: filter !== 'unavailable' },
   ];
 
   const filtered = filter === 'all' ? rows : rows.filter((r) => r.status === filter);
@@ -226,7 +241,16 @@ export function QuizzesTab({ real, loading, loadError, kind, id, canTake, naviga
   return (
     <div className="space-y-3">
       <SectionHeader title="Quizzes" description="Every quiz linked to your training plan" icon="ri-questionnaire-line" />
-      <PageTabs items={tabs} value={filter} onChange={(v) => setFilter(v as QuizFilter)} label="Filter quizzes" />
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <PageTabs items={tabs} value={filter} onChange={(v) => setFilter(v as QuizFilter)} label="Filter quizzes" />
+        <label className={`${learningStyles.selectLabel} w-full sm:max-w-sm`}>
+          Course
+          <select value={selectedCourse} onChange={event => setCourse(event.target.value)} disabled={loading || !!loadError || !courses.length}>
+            <option value="">All courses</option>
+            {courses.map(([key, title]) => <option key={key} value={key}>{title}</option>)}
+          </select>
+        </label>
+      </div>
 
       {loading ? (
         <Panel><RowsSkeleton rows={4} /></Panel>
@@ -290,7 +314,7 @@ function QuizListRow({ quiz, canTake, onTake }: {
         />
       </td>
       <td className="whitespace-nowrap px-4 py-3 text-right">
-        {canTake && <RowAction label={best ? 'Retake' : 'Start'} emphasis={status === 'todo' ? 'primary' : 'secondary'} onClick={onTake} />}
+        {canTake && <RowAction label={status === 'unavailable' ? 'Open quiz' : best ? 'Retake' : 'Start'} emphasis={status === 'todo' ? 'primary' : 'secondary'} onClick={onTake} />}
       </td>
     </tr>
   );

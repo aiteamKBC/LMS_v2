@@ -157,11 +157,16 @@ def projection(asset):
 
 
 def publish(asset):
+    from curriculum_api.shared_recordings import reference_owner
+    reference_owner(asset)
     database = router.db_for_write(CoachingRecordingJob) or 'default'
     with transaction.atomic(using=database):
         job = CoachingRecordingJob.objects.select_for_update().get(pk=asset.scope['evidence_job'])
         if job.owner_email != asset.scope['owner_email'] or job.context != asset.scope['context']:
             raise VideoImportError('The coaching evidence owner changed.')
+        if not any(item.get('graph_artifact_id') == asset.scope['graph_artifact_id']
+                   for item in job.result.get('artifacts', [])):
+            raise VideoImportError('The coaching recording is no longer present in its saved occurrence.')
         files = [{**item, 'lmsBunnyRecording': projection(asset)}
                  if item['graph_artifact_id'] == asset.scope['graph_artifact_id'] else item
                  for item in job.result.get('artifacts', [])]
@@ -178,12 +183,15 @@ def transfer(asset):
     from .recordings_calendar_sync import graph_target
     from .views import microsoft_graph_request
     from curriculum_api.recording_direct_fetch import transfer_direct
+    from curriculum_api import shared_recordings as shared
     coaches = {item['email']: item for item in _coaches()}
     context = asset.scope['context']
     if not enabled() or not eligible(context) or asset.scope['owner_email'] not in coaches:
         raise VideoImportError('This coaching recording is outside the enabled owner and date scope.')
-    if asset.library_id != library_id() or asset.target_id != calendar_key(context):
+    if (asset.library_id != library_id() and not shared.is_reference(asset)) or asset.target_id != calendar_key(context):
         raise VideoImportError('The coaching recording destination changed.')
+    if shared.is_reference(asset):
+        shared.reference_owner(asset)
     job = CoachingRecordingJob.objects.get(pk=asset.scope['evidence_job'], owner_email=asset.scope['owner_email'])
     if job.context != context or job.result.get('base') != asset.scope['microsoft_base']:
         raise VideoImportError('The saved coaching meeting identity changed.')
@@ -194,8 +202,22 @@ def transfer(asset):
         current_context = event_context(context['owner'], event)
     except (ValueError, TypeError, KeyError):
         raise VideoImportError('The coaching occurrence no longer has its saved schedule.') from None
-    if event.get('isCancelled') or current_context != context:
+    if event.get('isCancelled') or current_context['event'] != context['event']:
         raise VideoImportError('The coaching occurrence was cancelled or rescheduled.')
+    if current_context != context:
+        # A completed call keeps its original occurrence when somebody later
+        # moves this same calendar event. Require the previously successful,
+        # exact original snapshot; never reinterpret a future/rescheduled slot.
+        try:
+            original = job.result.get('event') or {}
+            historical = (job.last_success_at and not original.get('isCancelled')
+                and event_context(context['owner'], original) == context
+                and job.last_success_at >= _instant(context['start'])
+                and _instant(context['end']) <= timezone.now())
+        except (ValueError, TypeError, KeyError):
+            historical = False
+        if not historical:
+            raise VideoImportError('The coaching occurrence was cancelled or rescheduled.')
     base, organizer = graph_target(context, event)
     if base != job.result['base']:
         raise VideoImportError('The coaching Teams meeting changed.')
@@ -205,15 +227,37 @@ def transfer(asset):
         raise VideoImportError('The coaching source recording is no longer linked.')
     from .recordings_parts import occurrence_parts
     current = microsoft_graph_request('GET', base + '/recordings/' + quote(asset.scope['graph_artifact_id'], safe=''))
-    if current.get('id') != asset.scope['graph_artifact_id'] or not occurrence_parts(
-            [current], (_instant(context['start']), _instant(context['end']))):
+    window = (_instant(context['start']), _instant(context['end']))
+    belongs = current.get('id') == asset.scope['graph_artifact_id'] and occurrence_parts([current], window)
+    if current.get('id') == asset.scope['graph_artifact_id'] and not belongs:
+        # Early/restarted recording parts can sit outside the timetable. Only a
+        # fresh complete Graph list may anchor their shared physical call ID.
+        from curriculum_api.session_graph import collection
+        from .views import get_graph_settings
+        parts = collection(microsoft_graph_request, base + '/recordings', get_graph_settings()['base_url'])
+        target = next((part for part in parts if part.get('id') == current['id']), None)
+        identity_fields = ('id', 'callId', 'contentCorrelationId', 'createdDateTime', 'endDateTime')
+        if target and all(target.get(field) == current.get(field) for field in identity_fields):
+            belongs = occurrence_parts([current], window, anchors=parts)
+    if not belongs:
         raise VideoImportError('Microsoft no longer associates this recording with the saved coaching occurrence.')
+    if current_context != context:
+        asset.scope = {**asset.scope, 'original_occurrence_retained': True}
+    if shared.is_reference(asset):
+        shared.use_reference(asset)
+        if asset.status == 'ready':
+            refresh_captions(asset, job=job, artifact=artifact)
+        return
     client = BunnyStream(asset.library_id)
     collection = queue_coach(coaches[asset.scope['owner_email']])
     asset.collection_id = ensure_collection(collection, client)
-    asset.save(update_fields=['collection_id', 'updated_at'])
+    asset.save(update_fields=['collection_id', 'scope', 'updated_at'])
     video = transfer_direct(asset, client, asset.source_url, {**artifact, 'organizer_email': organizer})
     asset.status = 'ready' if video and video.get('status') == 4 else 'processing'
+    if shared.is_reference(asset):
+        if asset.status == 'ready':
+            refresh_captions(asset, job=job, artifact=artifact)
+        return
     if asset.status == 'ready':
         resolutions = [value.strip() for value in str(video.get('availableResolutions') or '').split(',') if value.strip()]
         if len(resolutions) != 1 or resolutions[0] not in ('240p', '360p', '480p', '720p'):
@@ -240,8 +284,17 @@ def refresh_captions(asset, *, job=None, artifact=None, client=None):
         if content:
             asset.scope = {**asset.scope, 'microsoft_captions_vtt': content}
             asset.save(update_fields=['scope', 'updated_at'])
-            (client or BunnyStream(asset.library_id)).caption(asset.video_id, content, label='English (Microsoft Teams)')
-        state = 'ready' if content else 'pending'
+        from curriculum_api.shared_recordings import is_reference, reference_owner
+        if is_reference(asset):
+            owner = reference_owner(asset)
+            ready = (owner.scope.get('captions_state') == 'ready'
+                     or owner.scope.get('lmsEnglishCaptions', {}).get('state') in ('ready', 'retained'))
+            state = 'ready' if ready else 'pending'
+            asset.scope = {**asset.scope, 'captions_source_import_id': str(owner.pk)}
+        else:
+            if content:
+                (client or BunnyStream(asset.library_id)).caption(asset.video_id, content, label='English (Microsoft Teams)')
+            state = 'ready' if content else 'pending'
     except Exception:
         state = 'failed'
     asset.scope = {**asset.scope, 'captions_state': state,
@@ -287,6 +340,8 @@ def playback(job, artifact):
         raise VideoImportError('The coaching player belongs to another recording scope.')
     if asset.status != 'ready' or asset.scope.get('playback_verified_video_id') != asset.video_id:
         raise VideoImportError('This coaching recording is still being prepared.')
+    from curriculum_api.shared_recordings import reference_owner
+    reference_owner(asset)
     return {'kind': 'bunny', 'url': signed_embed(asset.library_id, asset.video_id),
             'libraryId': asset.library_id, 'videoId': asset.video_id}
 
@@ -298,7 +353,7 @@ def run_pending(limit=10):
     limit = max(1, min(limit, 100))
     from .recordings_api import _coaches
     from .recordings_jobs import ensure_jobs, run_one
-    from curriculum_api.video_imports import process
+    from curriculum_api.recording_retry import run_pending as retry_recordings
     now = timezone.now()
     start = datetime.combine(CUTOVER_DAY, time.min, ZoneInfo(settings.TIME_ZONE))
     # Monthly windows bound Graph scans and include all unobserved days since
@@ -318,15 +373,9 @@ def run_pending(limit=10):
     for _ in range(limit):
         if run_one(('calendar', 'evidence')) is None:
             break
-    rows = CurriculumVideoImport.objects.filter(target_kind=KIND, status__in=('queued', 'processing', 'uploading', 'failed')).filter(
-        Q(lease_until__isnull=True) | Q(lease_until__lte=now)).order_by('updated_at')[:limit]
-    for row in list(rows):
-        try:
-            process(row.pk)
-        except Exception as failure:
-            log.warning('Coaching recording publication needs retry (%s).', type(failure).__name__)
+    checked = retry_recordings(limit=limit, kinds=(KIND,))
     captions = CurriculumVideoImport.objects.filter(target_kind=KIND, status='ready').exclude(scope__captions_state='ready').filter(
         Q(scope__captions_next_check__isnull=True) | Q(scope__captions_next_check__lte=now.isoformat())).order_by('updated_at')[:limit]
     for row in captions:
         refresh_captions(row)
-    return len(rows)
+    return checked

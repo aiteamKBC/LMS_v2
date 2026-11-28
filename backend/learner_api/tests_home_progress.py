@@ -1,0 +1,400 @@
+from datetime import date, datetime, timezone
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
+from django.db import DatabaseError
+from django.test import SimpleTestCase, RequestFactory
+
+from .home_progress import apply_canonical_home_metrics, read_home_progress, summarise_home
+from .overview_week import merged_activities, overview_week, read_week
+from .tests_overview_week import native, old
+
+START, END = date(2026, 9, 3), date(2026, 9, 13)
+
+
+class HomeLiveHoursTests(SimpleTestCase):
+    def test_manual_attendance_adds_component_hours_to_home_once(self):
+        credit = {'componentId': 'LIVE-1', 'moduleId': 'M1', 'hours': 2.5,
+                  'timeTrackingSource': 'manual_attendance'}
+        records = [{'component_ref': 'LIVE-1', 'accepted': True, 'actual_seconds': 7200}]
+        result, _ = self.read(actual=2, records=records, credits=[credit])
+        self.assertEqual(result['otjh']['actual'], 2.5)
+        again, _ = self.read(actual=2, records=records, credits=[credit, credit])
+        self.assertEqual(again['otjh'], result['otjh'])
+
+    def read(self, *, actual=0, planned=175, records=(), credits=None, unavailable=False, modules=None):
+        source = SimpleNamespace(pk=7, _canonical_profile={'id': 70})
+        credits = ([{'componentId': 'LIVE-1', 'moduleId': 'M1', 'hours': 2},
+                    {'componentId': 'LIVE-2', 'moduleId': 'M1', 'hours': 2}]
+                   if credits is None else credits)
+        lectures = [{'session_date': START, 'attendance_status': 'present'}]
+        metrics = {'otjh': {'actual': actual, 'planned': planned},
+                   'programme': {'completed': 0, 'total': 0, 'status': 'empty'}}
+        with patch('learner_api.home_progress.connections', {'enrolment': MagicMock()}), \
+             patch('learner_api.home_progress.rows', return_value=[]), \
+             patch('learner_api.home_progress._group_dates', return_value=(START, END, 'learner')), \
+             patch('learner_api.home_progress.lecture_register', return_value=lectures,
+                   side_effect=DatabaseError('offline') if unavailable else None) as register, \
+             patch('learner_api.live_session_progress.read_live_credits', return_value=credits) as read, \
+             patch('learner_api.module_progress.canonical_module_progress', return_value=modules or []) as catalogue, \
+             patch('learner_api.home_progress.canonical_learning.entries_for', return_value=list(records)) as entries, \
+             patch('learner_api.home_progress.plan_planned_hours', return_value=175):
+            result = read_home_progress(source, 'commercial', [], [], [], [('M1', 'Synthetic')], END,
+                                       canonical_metrics=metrics)
+        register.assert_called_once()
+        self.assertEqual(catalogue.call_args.args[0], source)
+        self.assertEqual(catalogue.call_args.args[1].enrolment_id, source.pk)
+        self.assertEqual(catalogue.call_args.args[1].pk, 70)
+        if not unavailable:
+            read.assert_called_once_with(source, module_ids=['M1'], register=lectures)
+        else:
+            read.assert_not_called()
+        self.assertEqual(metrics['otjh']['actual'], actual)
+        return result, entries
+
+    def test_verified_live_hours_reach_home_actual_and_percentage(self):
+        result, entries = self.read()
+        self.assertEqual(result['otjh']['actual'], 4)
+        self.assertEqual(result['otjh']['percent'], 2.29)
+        self.assertEqual(result['otjh']['submitted'], 0)
+        entries.assert_called_once_with({'id': 70}, lineage_only=True)
+
+    def test_existing_hours_are_topped_up_once_and_other_work_is_preserved(self):
+        records = [{'component_ref': 'LIVE-1', 'accepted': True, 'actual_seconds': 1800},
+                   {'component_ref': 'LIVE-2', 'accepted': True, 'actual_seconds': 7200},
+                   {'component_ref': 'READING', 'accepted': True, 'actual_seconds': 10800}]
+        first, _ = self.read(actual=5.5, records=records)
+        second, _ = self.read(actual=5.5, records=records)
+        self.assertEqual(first['otjh']['actual'], 7)
+        self.assertEqual(first, second)
+
+    def test_staff_zero_override_is_not_replaced_by_automatic_credit(self):
+        records = [{'component_ref': 'LIVE-1', 'accepted': True, 'actual_seconds': 0,
+                    'actual_basis': 'staff:module-progress'}]
+        result, _ = self.read(records=records)
+        self.assertEqual(result['otjh']['actual'], 2)
+
+    def test_missing_metrics_or_attendance_does_not_fabricate_hours(self):
+        result, entries = self.read(actual=None)
+        self.assertIsNone(result['otjh']['actual'])
+        self.assertIsNone(result['otjh']['percent'])
+        entries.assert_not_called()
+        result, entries = self.read(unavailable=True)
+        self.assertEqual(result['otjh']['actual'], 0)
+        self.assertIsNone(result['lectures'])
+        entries.assert_not_called()
+
+    def test_plan_fallback_uses_the_supplemented_hours(self):
+        result, _ = self.read(planned=None)
+        self.assertEqual((result['otjh']['actual'], result['otjh']['planned'], result['otjh']['percent']),
+                         (4, 175, 2.29))
+
+    def test_activities_count_the_full_my_learning_catalogue_not_saved_records(self):
+        result, _ = self.read(modules=[{'id': 'current:M1', 'completed': 2, 'total': 851},
+                                      {'id': 'current:M2', 'completed': 10, 'total': 10},
+                                      {'id': 'current:EMPTY', 'completed': 0, 'total': 0}])
+        self.assertEqual(result['activities'], {'completed': 12, 'total': 861})
+        self.assertEqual(result['modules'], {'completed': 1, 'total': 3})
+        self.assertEqual(result['assignments'], {'completed': 0, 'total': 0})
+        self.assertEqual(result['lectures'], {'completed': 1, 'total': 1})
+
+
+class HomeProgressTests(SimpleTestCase):
+    def summary(self, current=(), historical=(), progress=(), submissions=(), assigned=(),
+                start=START, lectures=(), links=None, historical_hours=0):
+        return summarise_home(merged_activities(list(historical), list(current), list(progress), set(), links or {}),
+                              current, list(progress), submissions, assigned, start, END, lectures, historical_hours)
+
+    def test_period_is_start_date_through_end_of_week_with_programme_wide_hours_and_modules(self):
+        current = [native(id='before', date='2026-09-02', module_id='PRE', expected_hours=1),
+                   native(id='start', date='2026-09-03', type='assignment', expected_hours=2),
+                   native(id='previous-week', date='2026-09-06', expected_hours=3),
+                   native(id='sunday', date='2026-09-13', type='assignment', expected_hours=4),
+                   native(id='future', date='2026-09-14', module_id='FUTURE', expected_hours=5)]
+        progress = [{'kind': 'component', 'componentId': key} for key in ['before', 'start', 'previous-week']]
+        result = self.summary(current=current, progress=progress, assigned=[('M1', ''), ('PRE', ''), ('FUTURE', ''), ('EMPTY', '')])
+        self.assertEqual(result['activities'], {'completed': 2, 'total': 3})
+        self.assertEqual(result['assignments'], {'completed': 1, 'total': 2})
+        self.assertEqual(result['modules'], {'completed': 1, 'total': 4})
+        self.assertEqual(result['otjh']['planned'], 15)
+        self.assertEqual(result['period']['start'], '2026-09-03')
+
+    def test_canonical_metrics_match_coach_values_and_preserve_home_only_metrics(self):
+        home = self.summary(
+            current=[native(type='assignment', expected_hours=5)],
+            submissions=[{'component_ref': 'new', 'status': 'submitted_for_tutor_review',
+                          'actual_time_hours': 2}],
+            lectures=[{'session_date': START.isoformat(), 'attendance_status': 'present'}],
+        )
+        result = apply_canonical_home_metrics(home, {
+            'otjh': {'completed_actual': 12.5, 'actual': 20, 'planned': 40},
+            'programme': {'completed': 7, 'total': 11, 'percent': 63.64, 'status': 'ready'},
+        })
+        self.assertEqual(result['otjh']['actual'], 12.5)
+        self.assertEqual(result['otjh']['planned'], 40)
+        self.assertEqual(result['otjh']['percent'], 31.25)
+        self.assertEqual(result['activities'], {'completed': 7, 'total': 11})
+        self.assertEqual(result['otjh']['submitted'], 2)
+        self.assertEqual(result['assignments'], home['assignments'])
+        self.assertEqual(result['lectures'], home['lectures'])
+        self.assertEqual(result['modules'], home['modules'])
+
+    def test_unavailable_canonical_programme_is_not_replaced_by_home_activity_counts(self):
+        home = self.summary(current=[native(expected_hours=5)])
+        result = apply_canonical_home_metrics(home, {
+            'otjh': {'completed_actual': None, 'planned': None},
+            'programme': {'status': 'unavailable'},
+        })
+        self.assertIsNone(result['activities'])
+        self.assertIsNone(result['otjh']['actual'])
+        self.assertIsNone(result['otjh']['planned'])
+        self.assertIsNone(result['otjh']['percent'])
+
+    def test_assignment_hours_move_from_submitted_to_actual_once_accepted(self):
+        current = [native(id='assignment', type='assignment', expected_hours=5), native(id='reading', expected_hours=10)]
+        progress = [{'kind': 'component', 'componentId': 'assignment', 'claimedSeconds': 7200, 'timeTrackingSource': 'component:input'},
+                    {'kind': 'component', 'componentId': 'reading', 'reportedTime': '60 minutes'}]
+        submission = {'component_ref': 'assignment', 'status': 'submitted_for_tutor_review', 'actual_time_hours': '2'}
+        result = self.summary(current=current, progress=progress, submissions=[submission])
+        self.assertEqual(result['otjh'], {'actual': 1, 'submitted': 2, 'planned': 15, 'percent': 6.67, 'missingPlannedActivities': 0})
+        self.assertEqual(result['assignments'], {'completed': 0, 'total': 1})
+        accepted = self.summary(current=current, progress=progress, submissions=[{**submission, 'status': 'accepted'}])
+        self.assertEqual(accepted['otjh']['actual'], 3)
+        self.assertEqual(accepted['otjh']['submitted'], 0)
+        self.assertEqual(accepted['assignments']['completed'], 1)
+        self.assertEqual(accepted['modules']['completed'], 1)
+
+    def test_rejected_draft_and_referred_assignments_do_not_count_as_completed_or_submitted(self):
+        for status in ['draft', 'rejected', 'referred', 'resubmission_required']:
+            with self.subTest(status=status):
+                result = self.summary(current=[native(type='assignment', expected_hours=4)],
+                    progress=[{'kind': 'component', 'componentId': 'new', 'expectedOtjh': 4}],
+                    submissions=[{'activity_id': 'new', 'status': status, 'actual_time_hours': 4}])
+                self.assertEqual(result['otjh']['actual'], 0)
+                self.assertEqual(result['otjh']['submitted'], 0)
+                self.assertEqual(result['activities']['completed'], 0)
+
+    def test_assignment_actual_uses_recorded_time_if_submission_hours_are_missing(self):
+        result = self.summary(current=[native(type='assignment', expected_hours=8)],
+            progress=[{'componentId': 'new', 'kind': 'component', 'verifiedSeconds': 1800, 'expectedOtjh': 8}],
+            submissions=[{'component_ref': 'new', 'status': 'accepted', 'actual_time_hours': None}])
+        self.assertEqual(result['otjh']['actual'], .5)
+        unknown = self.summary(current=[native(type='assignment', expected_hours=8)],
+            submissions=[{'component_ref': 'new', 'status': 'submitted_for_tutor_review', 'actual_time_hours': None}])
+        self.assertIsNone(unknown['otjh']['submitted'])
+
+    def test_imported_submission_does_not_duplicate_historical_actual(self):
+        result = self.summary(current=[native(type='assignment', expected_hours=3)],
+            progress=[{'componentId': 'new', 'kind': 'component', 'expectedOtjh': 3}], historical_hours=3,
+            submissions=[{'activity_id': 'new', 'status': 'accepted', 'actual_time_hours': 3, 'imported': True}])
+        self.assertEqual(result['otjh']['actual'], 3)
+
+    def test_submitted_includes_pending_extra_activities_separately_from_assignments(self):
+        submissions = [
+            {'activity_type': 'assignment', 'component_ref': 'new',
+             'status': 'submitted_for_tutor_review', 'actual_time_hours': 2},
+            {'activity_type': 'extra_activity', 'activity_id': 'extra:one',
+             'component_ref': 'new', 'status': 'submitted_for_tutor_review', 'actual_time_hours': 3},
+            {'activity_type': 'extra_activity', 'activity_id': 'extra:two',
+             'status': 'pending_review', 'actual_time_hours': '30:00'},
+            {'activity_type': 'quiz', 'component_ref': 'new',
+             'status': 'accepted', 'actual_time_hours': 9},
+        ]
+        result = self.summary(current=[native(type='assignment', expected_hours=5)], submissions=submissions)
+        self.assertEqual(result['otjh']['submitted'], 5.5)
+        self.assertEqual(result['otjh']['actual'], 0)
+        self.assertEqual(result['assignments']['completed'], 0)
+
+    def test_extra_activity_uses_latest_decision_and_excludes_imported_or_non_pending(self):
+        extra = {'activity_type': 'extra_activity', 'activity_id': 'extra:one',
+                 'status': 'submitted', 'actual_time_hours': 2}
+        for status in ('accepted', 'partial', 'draft', 'rejected', 'referred', 'resubmission_required'):
+            with self.subTest(status=status):
+                result = self.summary(submissions=[extra, {**extra, 'status': status}])
+                self.assertEqual(result['otjh']['submitted'], 0)
+        result = self.summary(submissions=[extra, {**extra, 'actual_time_hours': 3},
+            {**extra, 'activity_id': 'extra:imported', 'imported': True}])
+        self.assertEqual(result['otjh']['submitted'], 3)
+
+    def test_missing_pending_extra_activity_hours_are_unavailable_and_zero_is_valid(self):
+        extra = {'activity_type': 'extra_activity', 'activity_id': 'extra:one', 'status': 'submitted'}
+        for value in (None, '', 'NaN', '-1', 'invalid'):
+            with self.subTest(value=value):
+                result = self.summary(submissions=[{**extra, 'actual_time_hours': value}])
+                self.assertIsNone(result['otjh']['submitted'])
+        self.assertEqual(self.summary(submissions=[{**extra, 'actual_time_hours': 0}])['otjh']['submitted'], 0)
+
+    def test_submissions_for_unassigned_components_cannot_inflate_totals(self):
+        result = self.summary(current=[native(expected_hours=2)],
+            submissions=[{'component_ref': 'another-learner', 'status': 'accepted', 'actual_time_hours': 99}])
+        self.assertEqual(result['otjh']['actual'], 0)
+
+    def test_previously_earned_hours_survive_curriculum_replacement(self):
+        result = self.summary(current=[native(expected_hours=10)],
+            progress=[{'componentId': 'archived', 'kind': 'component', 'reportedTime': '120 minutes'}])
+        self.assertEqual(result['otjh']['actual'], 2)
+        self.assertEqual(result['otjh']['planned'], 10)
+        self.assertEqual(result['activities'], {'completed': 0, 'total': 1})
+
+    def test_archived_assignment_progress_still_counts_its_submission_once(self):
+        result = self.summary(current=[native(expected_hours=10)],
+            progress=[{'componentId': 'archived', 'componentType': 'assignment', 'kind': 'component', 'reportedTime': '120 minutes'}],
+            submissions=[{'component_ref': 'archived', 'status': 'submitted_for_tutor_review', 'actual_time_hours': 2}])
+        self.assertEqual(result['otjh']['actual'], 0)
+        self.assertEqual(result['otjh']['submitted'], 2)
+
+    def test_non_assignment_activity_hours_keep_the_existing_recorded_time_rule(self):
+        result = self.summary(current=[native(expected_hours=5)],
+            progress=[{'componentId': 'new', 'kind': 'component', 'reportedTime': '30 minutes'}],
+            submissions=[{'component_ref': 'new', 'status': 'submitted_for_tutor_review', 'actual_time_hours': .5}])
+        self.assertEqual(result['otjh']['actual'], .5)
+        self.assertEqual(result['otjh']['submitted'], 0)
+        self.assertEqual(result['activities']['completed'], 1)
+
+    def test_lecture_denominator_includes_scheduled_sessions_in_period_and_late_counts_attended(self):
+        lectures = [
+            {'session_date': '2026-09-02', 'attendance_status': 'present'},
+            {'session_date': '2026-09-03', 'attendance_status': 'present'},
+            {'session_date': '2026-09-06', 'attendance_status': 'late'},
+            {'session_date': '2026-09-10', 'attendance_status': 'absent'},
+            {'session_date': '2026-09-13', 'attendance_status': 'upcoming'},
+            {'session_date': '2026-09-14', 'attendance_status': 'upcoming'},
+        ]
+        self.assertEqual(self.summary(lectures=lectures)['lectures'], {'completed': 2, 'total': 4})
+        self.assertIsNone(self.summary(lectures=None)['lectures'])
+
+    def test_missing_start_or_undated_work_never_uses_import_timestamps(self):
+        current = [native(expected_hours=2, date=None)]
+        unknown = self.summary(current=current, start=None)
+        for key in ('activities', 'assignments', 'lectures'):
+            self.assertIsNone(unknown[key])
+        result = self.summary(current=current)
+        self.assertEqual(result['undatedActivities'], 1)
+        self.assertEqual(result['activities']['total'], 0)
+        self.assertEqual(result['otjh']['planned'], 2)
+        self.assertEqual(result['modules']['total'], 1)
+
+    def test_future_start_has_zero_period_counts_without_hiding_whole_plan(self):
+        result = self.summary(current=[native(expected_hours=2)], start=date(2026, 10, 1))
+        self.assertEqual(result['activities'], {'completed': 0, 'total': 0})
+        self.assertEqual(result['otjh']['planned'], 2)
+        self.assertEqual(result['modules']['total'], 1)
+
+    def test_missing_or_invalid_planned_hours_are_unavailable_not_zero(self):
+        for missing in (None, -1, 'NaN', 'Infinity'):
+            result = self.summary(current=[native(expected_hours=missing), native(id='valid', expected_hours=3)])
+            self.assertIsNone(result['otjh']['planned'])
+            self.assertIsNone(result['otjh']['percent'])
+            self.assertEqual(result['otjh']['missingPlannedActivities'], 1)
+        self.assertEqual(self.summary()['otjh']['planned'], 0)
+
+    def test_export_links_dedupe_plan_hours_and_module_identity_including_empty_assigned_modules(self):
+        result = self.summary(historical=[old(expected_hours=2), old(group_id=2, expected_hours=2)],
+            current=[native(id='linked', expected_hours=4), native(id='extra', expected_hours=3)],
+            links={'linked': ('1', '2')}, assigned=[('M1', ''), ('EMPTY', '')])
+        self.assertEqual(result['otjh']['planned'], 7)
+        self.assertEqual(result['activities'], {'completed': 2, 'total': 3})
+        self.assertEqual(result['modules'], {'completed': 1, 'total': 3})
+
+    def test_repository_filters_submission_identity_and_tolerates_attendance_failure(self):
+        connection = MagicMock()
+        cursor = connection.cursor.return_value.__enter__.return_value
+        source = SimpleNamespace(pk=499, aptem_id=None)
+        with patch('learner_api.home_progress.connections', {'enrolment': connection}), \
+             patch('learner_api.home_progress._group_dates', return_value=(START, END, 'learner')), \
+             patch('learner_api.home_progress.rows', return_value=[]), \
+             patch('learner_api.home_progress.lecture_register', side_effect=DatabaseError('offline')), \
+             patch('learner_api.home_progress.canonical_learning.metrics', return_value={
+                 'otjh': {'actual': 0, 'planned': 0},
+             }):
+            result = read_home_progress(source, 'apprenticeship', [], [], [], [], END)
+        self.assertEqual(cursor.execute.call_args.args[1], ['apprenticeship', '499'])
+        self.assertNotIn('structured_manual_activities', cursor.execute.call_args.args[0])
+        self.assertIsNone(result['lectures'])
+        self.assertEqual(result['otjh']['planned'], 0)
+
+    def test_home_actual_uses_the_canonical_ssot_total_when_available(self):
+        connection = MagicMock()
+        source = SimpleNamespace(pk=499, aptem_id=None)
+        canonical = {'otjh': {'actual': 12.5}}
+        with patch('learner_api.home_progress.connections', {'enrolment': connection}), \
+             patch('learner_api.home_progress._group_dates', return_value=(START, END, 'learner')), \
+             patch('learner_api.home_progress.rows', return_value=[]), \
+             patch('learner_api.home_progress.lecture_register', return_value=[]), \
+             patch('learner_api.home_progress.plan_planned_hours', return_value=None), \
+             patch('learner_api.home_progress.canonical_learning.profile', return_value=None), \
+             patch('learner_api.home_progress.canonical_learning.metrics', return_value=canonical) as metrics:
+            result = read_home_progress(source, 'commercial', [], [], [], [], END)
+        self.assertEqual(result['otjh']['actual'], 12.5)
+        self.assertIsNone(result['otjh']['percent'])
+        metrics.assert_called_once_with(499)
+
+    def test_home_planned_falls_back_to_the_learning_plan_without_an_ssot_plan(self):
+        connection = MagicMock()
+        source = SimpleNamespace(pk=499, aptem_id=None, _canonical_profile={'id': 7})
+        with patch('learner_api.home_progress.connections', {'enrolment': connection}), \
+             patch('learner_api.home_progress._group_dates', return_value=(START, END, 'learner')), \
+             patch('learner_api.home_progress.rows', return_value=[]), \
+             patch('learner_api.home_progress.lecture_register', return_value=[]), \
+             patch('learner_api.home_progress.plan_planned_hours', return_value=200) as plan, \
+             patch('learner_api.home_progress.canonical_learning.metrics',
+                   return_value={'otjh': {'actual': 12.5, 'planned': None}}):
+            result = read_home_progress(source, 'commercial', [], [], [], [], END)
+        plan.assert_called_once_with(source, {'id': 7})
+        self.assertEqual(result['otjh']['planned'], 200)
+        self.assertEqual(result['otjh']['percent'], 6.25)
+        self.assertEqual(result['otjh']['missingPlannedActivities'], 0)
+
+    def test_home_endpoint_keeps_route_enrolment_and_ignores_query_identity(self):
+        model = MagicMock()
+        model.DoesNotExist = type('Missing', (Exception,), {})
+        source = model.all_learners.only.return_value.get.return_value
+        with patch.dict('learner_api.overview_week.SOURCE_MODELS', {'commercial': model}), \
+             patch('learner_api.overview_week.read_week', return_value={}) as reader:
+            response = overview_week.__wrapped__.__wrapped__(RequestFactory().get('/?section=home&id=999&aptem_id=999'), 'commercial', 499)
+        reader.assert_called_once_with(source, home_kind='commercial')
+        model.all_learners.only.return_value.get.assert_called_once_with(pk=499)
+        self.assertEqual(response['Cache-Control'], 'private, no-store')
+
+    def test_home_reads_all_plan_activities_while_preserving_weekly_schedule_payload(self):
+        connection = MagicMock()
+        cursor = connection.cursor.return_value.__enter__.return_value
+        cursor.fetchall.return_value = [('M1', 'Marketing', True)]
+        current = [native(id='current', expected_hours=2), native(id='future', date='2027-01-01', expected_hours=10)]
+        dates = {row['id']: {'date': row['date']} for row in current}
+        source = SimpleNamespace(pk=499, aptem_id=None)
+        canonical = {'canonical': True, 'otjh': {'actual': 12.5, 'planned': 20}}
+        with patch('learner_api.overview_week.connections', {'enrolment': connection}), \
+             patch('learner_api.overview_week.rows', return_value=current), \
+             patch('learner_api.overview_week.read_builder_activity_dates', return_value=dates), \
+             patch('learner_api.overview_week._direct_progress_records', return_value=[]), \
+             patch('learner_api.overview_week.canonical_learning.metrics', return_value=canonical) as metrics, \
+             patch('learner_api.home_progress.read_home_progress', return_value={'sentinel': True}) as home:
+            result = read_week(source, datetime(2026, 9, 10, tzinfo=timezone.utc), home_kind='apprenticeship')
+        self.assertEqual(result['homeProgress'], {'sentinel': True})
+        self.assertEqual(len(list(home.call_args.args[2])), 2)
+        self.assertEqual(home.call_args.kwargs['attendance_module_ids'], ['M1'])
+        self.assertEqual(home.call_args.kwargs['canonical_metrics'], canonical)
+        metrics.assert_called_once_with(499)
+        self.assertEqual(result['modules'][0]['total'], 1)
+
+    def test_dashboard_metrics_use_the_same_canonical_ssot_total_as_the_metrics_endpoint(self):
+        connection = MagicMock()
+        cursor = connection.cursor.return_value.__enter__.return_value
+        cursor.fetchall.return_value = [('M1', 'Marketing')]
+        current = [native(id='current', expected_hours=2)]
+        source = SimpleNamespace(pk=499, aptem_id=None)
+        canonical = {'otjh': {'actual': 12.5}}
+        with patch('learner_api.overview_week.connections', {'enrolment': connection}), \
+             patch('learner_api.overview_week.rows', return_value=current), \
+             patch('learner_api.overview_week.read_builder_activity_dates', return_value={}), \
+             patch('learner_api.overview_week._direct_progress_records', return_value=[]), \
+             patch('learner_api.overview_week.canonical_learning.enabled', return_value=True), \
+             patch('learner_api.overview_week.canonical_learning.metrics', return_value=canonical) as metrics, \
+             patch('learner_api.overview_week.metrics_from_loaded') as legacy_metrics:
+            result = read_week(
+                source, datetime(2026, 9, 10, tzinfo=timezone.utc), dashboard_kind='commercial',
+            )
+        self.assertEqual(result['metrics'], canonical)
+        metrics.assert_called_once_with(499)
+        legacy_metrics.assert_not_called()

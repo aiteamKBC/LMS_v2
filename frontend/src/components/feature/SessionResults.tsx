@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import { AppIcon } from './AppIcon';
 import { SessionAccountCheck } from './SessionAccountCheck';
 import { SessionRecordingPlayer } from './SessionRecordingPlayer';
+import { SessionAttachments } from './SessionAttachments';
 import { SessionSyncStatus } from './SessionSyncStatus';
 import { SessionSyncIssues } from './SessionSyncIssues';
 import { recordingDay } from './recordingDay';
@@ -114,13 +115,14 @@ export function SessionResults({ seriesId, sessionNumber, moduleId, displayTitle
     setEditingLink(undefined); setCorrectionLearner('');
   }, [seriesId, sessionNumber, moduleId, kind, learnerId]);
   const files = session?.artifacts?.filter(file => ((!learner && !preview) || !file.hiddenFromLearners)
-    && (!recordingDate || recordingDay(file.createdAt) === recordingDate)) || [];
+    && (file.type === 'attachment' || !recordingDate || recordingDay(file.createdAt) === recordingDate)) || [];
   const recordings = files.filter(file => file.type === 'recording');
   const transcripts = files.filter(file => file.type === 'transcript');
+  const attachments = files.filter(file => file.type === 'attachment');
   const playableTranscripts = session?.artifacts?.filter(file => file.type === 'transcript'
     && ((!learner && !preview) || !file.hiddenFromLearners)) || [];
   const savedSessionReady = !upcoming && session?.reportReady && session.archiveReady !== false
-    && recordings.length > 0 && files.every(file => file.state === 'ready');
+    && recordings.length > 0 && files.filter(file => file.type !== 'attachment').every(file => file.state === 'ready');
   const recordingWatchTotal = recordings.reduce((total, file) => total + (recordingWatchSeconds[file.id] || 0), 0);
   useEffect(() => { onRecordingWatchTimeChange?.(recordingWatchTotal); }, [onRecordingWatchTimeChange, recordingWatchTotal]);
   const matchesSearch = (person: SessionPerson) => `${person.name} ${person.email}`.toLowerCase().includes(query.trim().toLowerCase());
@@ -245,6 +247,8 @@ export function SessionResults({ seriesId, sessionNumber, moduleId, displayTitle
               onWatchTimeChange={seconds => setRecordingWatchSeconds(current => current[file.id] === seconds ? current : { ...current, [file.id]: seconds })} />
               : <p role="status" className="rounded-lg bg-amber-50 p-3 text-sm">{session.archiveReady === false ? 'Teams has a recording for this session. A saved playback copy is not available yet.' : file.state === 'failed' ? 'Saving this recording needs retry. An administrator can request synchronization.' : 'Recording found. Saving a copy for playback…'}</p>}</div>)}
         </div>}
+        {tab === 'recordings' && <SessionAttachments seriesId={seriesId} sessionNumber={sessionNumber} files={attachments} learner={learner}
+          preview={preview} settings={saved.data?.attachmentSettings} onSaved={saved.refresh} />}
         {tab === 'transcripts' && <div className="space-y-4">{!transcripts.length && <p className="text-sm text-foreground-500">{upcoming ? 'Transcripts will appear here if this session is transcribed.' : 'No transcript has been received yet.'}</p>}
           {transcripts.map((file, index) => <div key={file.id} className="rounded-xl border p-4"><div className="mb-3 flex justify-between gap-3"><h3 className="font-semibold">Transcript {index + 1}</h3>
             {file.state === 'ready' && <a className="text-sm font-semibold text-primary-700 underline" href={sessionFileUrl(seriesId, file, learner, true)}>Download TXT</a>}</div>

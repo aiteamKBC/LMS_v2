@@ -1,0 +1,98 @@
+import { fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { ImportedReviewHistory } from './ImportedReviewHistory';
+import { clearAllCachedResources } from '@/api/cachedRequest';
+
+function reply(body: unknown): Response {
+  return {
+    ok: true,
+    status: 200,
+    json: async () => body,
+    text: async () => JSON.stringify(body),
+  } as Response;
+}
+
+beforeEach(() => {
+  clearAllCachedResources();
+  vi.stubGlobal('AppIcon', ({ className }: { className?: string }) => <i className={className} />);
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(reply({
+    learnerId: 272,
+    category: 'progress-review',
+    reviews: [
+      {
+        id: '72', aptemReviewId: 'A72', name: 'Progress Review August', type: 'Progress Review',
+        reviewerName: 'Coach One', plannedDate: '2026-08-13', plannedTime: '11:00',
+        completedDate: '2026-08-13', status: 'completed', extractionStatus: 'success', detailsAvailable: true,
+        sections: [{
+          id: 235, name: 'Learning Progress', order: 1,
+          fields: [{ label: 'Overall progress', value: '64%' }], tables: [], rawText: '',
+        }],
+      },
+      {
+        id: '71', aptemReviewId: 'A71', name: 'Progress Review September', type: 'Progress Review (+ Skills Radar)',
+        reviewerName: 'Coach Two', plannedDate: '2026-09-30', plannedTime: null,
+        completedDate: null, status: 'not-scheduled', extractionStatus: 'partial', detailsAvailable: false, sections: [],
+      },
+    ],
+  })));
+});
+
+afterEach(() => { clearAllCachedResources(); vi.unstubAllGlobals(); });
+
+describe('ImportedReviewHistory', () => {
+  it('opens the imported review sections inside the list page', async () => {
+    render(<ImportedReviewHistory kind="commercial" learnerId="125" category="progress-review" />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /Progress Review August/i }));
+
+    expect(screen.getByRole('heading', { name: 'Progress Review August' })).toBeInTheDocument();
+    expect(screen.getByText('Learning Progress')).toBeInTheDocument();
+    expect(screen.getByText('Overall progress')).toBeInTheDocument();
+    expect(screen.getByText('64%')).toBeInTheDocument();
+    expect(screen.queryByRole('table')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Back to reviews/i }));
+    expect(screen.getByRole('table')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Progress Review August' })).not.toBeInTheDocument();
+    expect(fetch).toHaveBeenCalledWith(
+      '/learner_api/review-history/commercial/125/?category=progress-review',
+      expect.objectContaining({ credentials: 'include', cache: 'no-store' }),
+    );
+  });
+
+  it('filters the imported records by status', async () => {
+    render(<ImportedReviewHistory kind="commercial" learnerId="125" category="progress-review" />);
+    await screen.findByText('Progress Review August');
+
+    fireEvent.change(screen.getByLabelText('Filter by status'), { target: { value: 'not-scheduled' } });
+
+    expect(screen.queryByText('Progress Review August')).not.toBeInTheDocument();
+    expect(screen.getByText('Progress Review September')).toBeInTheDocument();
+  });
+
+  it('shows when the table has no matching records', async () => {
+    render(<ImportedReviewHistory kind="commercial" learnerId="125" category="progress-review" />);
+    await screen.findByText('Progress Review August');
+    fireEvent.change(screen.getByLabelText('Search reviews'), { target: { value: 'unmatched search' } });
+    expect(screen.getByText('No reviews match these filters.')).toBeInTheDocument();
+    expect(screen.queryByText('Progress Review August')).not.toBeInTheDocument();
+  });
+
+  it('opens only the requested Aptem form by its stable Aptem review id', async () => {
+    render(<ImportedReviewHistory kind="commercial" learnerId="125" category="reviews" reviewId="A72" />);
+
+    expect(await screen.findByRole('heading', { name: 'Progress Review August' })).toBeInTheDocument();
+    expect(screen.getByText('Overall progress')).toBeInTheDocument();
+    expect(screen.getByText('64%')).toBeInTheDocument();
+    expect(screen.queryByText('Progress Review September')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Search reviews')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Back to reviews/i })).not.toBeInTheDocument();
+  });
+
+  it('does not fuzzy-match a missing requested form id', async () => {
+    render(<ImportedReviewHistory kind="commercial" learnerId="125" category="reviews" reviewId="A7" />);
+
+    expect(await screen.findByText('The requested imported review form could not be found.')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Progress Review August' })).not.toBeInTheDocument();
+  });
+});

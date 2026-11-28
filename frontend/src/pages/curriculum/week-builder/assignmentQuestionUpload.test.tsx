@@ -1,0 +1,58 @@
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, expect, it, vi } from 'vitest';
+import type { ComponentProps } from 'react';
+import { ComponentEditor } from './page';
+
+vi.mock('../module-builder/RichTextEditor', () => ({ RichTextDraft: () => <div>Question editor</div> }));
+
+afterEach(cleanup);
+it('uploads the assignment question using the supplied module uploader and preserves the written question', async () => {
+  const onChange = vi.fn();
+  const file = new File(['question'], 'brief.pdf', { type: 'application/pdf' });
+  const uploaded = { fileName: 'brief.pdf', url: '/curriculum_api/curriculum/uploads/brief.pdf', size: 8, contentType: 'application/pdf' };
+  const uploadResource = vi.fn().mockResolvedValue({ file: uploaded });
+  const component = { id: 'A1', type: 'assignment', title: 'Assignment', description: '', settings: { assignmentContent: '<p>Read the question.</p>' }, expectedOtjh: 2, points: 25, groupIds: [] } as unknown as ComponentProps<typeof ComponentEditor>['component'];
+  const { container } = render(<ComponentEditor component={component} onChange={onChange} onBack={vi.fn()} groupOptions={[]} weekScope={{} as ComponentProps<typeof ComponentEditor>['weekScope']} uploadResource={uploadResource} />);
+  expect(screen.getByLabelText('Files and videos')).toBeVisible();
+  fireEvent.change(container.querySelector('input[type="file"]')!, { target: { files: [file] } });
+  await waitFor(() => expect(onChange).toHaveBeenCalled());
+  const settings = onChange.mock.calls.at(-1)![0].settings;
+  expect(settings.assignmentContent).toBe('<p>Read the question.</p>');
+  expect(JSON.parse(settings.assignmentTopics)[0]).toMatchObject({ id: '1', question: '<p>Read the question.</p>', resources: [uploaded] });
+  expect(uploadResource).toHaveBeenCalledWith('A1', file, 'assignment', true);
+});
+
+
+it('moves focus to the selected component without stealing it while editing', () => {
+  const component = { id: 'A1', type: 'assignment', title: 'Assignment', description: '', settings: {}, expectedOtjh: 2, points: 25, groupIds: [] } as unknown as ComponentProps<typeof ComponentEditor>['component'];
+  const props = { onChange: vi.fn(), onBack: vi.fn(), groupOptions: [], weekScope: {} as ComponentProps<typeof ComponentEditor>['weekScope'] };
+  const view = render(<ComponentEditor {...props} component={component} />);
+  expect(screen.getByRole('region', { name: 'Component editor' })).toHaveFocus();
+  const title = screen.getByDisplayValue('Assignment');
+  title.focus();
+  view.rerender(<ComponentEditor {...props} component={{ ...component, title: 'Updated assignment' }} />);
+  expect(title).toHaveFocus();
+  view.rerender(<ComponentEditor {...props} component={{ ...component, id: 'A2' }} />);
+  expect(screen.getByRole('region', { name: 'Component editor' })).toHaveFocus();
+});
+
+it('saves the learner title without changing legacy settings and explains automatic monthly submission', async () => {
+  const { normaliseComponentSettings, validateComponentAuthoring } = await import('../module-builder/componentAuthoringModel');
+  const onChange = vi.fn();
+  const component = { id: 'A1', type: 'assignment', title: 'Imported legacy title', description: '', settings: { isMonthlyAssignment: true }, expectedOtjh: 2, points: 25, groupIds: [] } as unknown as ComponentProps<typeof ComponentEditor>['component'];
+  render(<ComponentEditor component={component} onChange={onChange} onBack={vi.fn()} groupOptions={[]} weekScope={{} as ComponentProps<typeof ComponentEditor>['weekScope']} />);
+  expect(screen.queryByRole('checkbox', { name: /Monthly assignment \(8-step submission\)/ })).toBeNull();
+  expect(screen.getByText('All assignments appear automatically in Monthly submission and use the 8-step submission.')).toBeVisible();
+  fireEvent.change(screen.getByLabelText('Title shown to learners'), { target: { value: 'Month 2 coach led assignment' } });
+  expect(onChange.mock.calls.at(-1)![0].settings.learnerTitle).toBe('Month 2 coach led assignment');
+  expect(onChange.mock.calls.at(-1)![0].settings.isMonthlyAssignment).toBe(true);
+
+  // Both survive normalisation as first-class keys: a key the schema does not
+  // declare is moved into `legacySettings`, where the learner API never reads it.
+  const saved = normaliseComponentSettings('assignment', { learnerTitle: 'Month 2 coach led assignment', isMonthlyAssignment: true });
+  expect(saved).toMatchObject({ learnerTitle: 'Month 2 coach led assignment', isMonthlyAssignment: true });
+  expect(saved.legacySettings).toBeUndefined();
+  expect(normaliseComponentSettings('assignment', {})).toMatchObject({ learnerTitle: '', isMonthlyAssignment: false });
+  expect(validateComponentAuthoring({ title: 'Assignment', type: 'assignment', expectedOtjh: 2, points: 25, reflectionRequired: false,
+    workplaceEvidenceRequired: false, settings: saved }).filter(issue => /Unsupported setting/.test(issue.message))).toEqual([]);
+});

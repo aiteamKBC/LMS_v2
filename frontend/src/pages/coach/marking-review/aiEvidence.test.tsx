@@ -1,0 +1,106 @@
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import CoachMarkingReviewPage from './page';
+import { coachFetch } from '@/lib/coachFetch';
+
+vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
+vi.mock('@/hooks/useCoachIdentity', () => ({ useCoachIdentity: () => ({ isInitialized: true, email: 'coach@example.invalid', name: 'Test Coach' }) }));
+vi.mock('@/lib/coachFetch', () => ({ coachFetch: vi.fn() }));
+vi.mock('@/api/evidence', () => ({ fetchEvidence: vi.fn().mockResolvedValue([]), getEvidenceDownloadUrl: vi.fn() }));
+
+beforeEach(() => vi.stubGlobal('AppIcon', () => null));
+afterEach(() => { cleanup(); vi.clearAllMocks(); vi.unstubAllGlobals(); });
+
+function review(activityType: string, evidenceFiles?: { filename: string; readable: boolean }[], failure = false) {
+  const item = { id: 'submission-1', learnerKind: 'apprenticeship', learnerId: '17', learner: 'Synthetic Learner',
+    activityType, activityId: 'COMP-1', activityTitle: 'Submitted coursework', status: 'pending', version: 1,
+    ksbCodes: [], ksbExplanations: {}, confidenceBefore: {}, confidenceAfter: {}, selectedBenefits: [],
+    learningReflection: 'Typed learner response.', qualityScore: 100 };
+  vi.mocked(coachFetch).mockImplementation(async url => {
+    const path = String(url);
+    if (path.endsWith('/ai-feedback')) {
+      return new Response(JSON.stringify(failure ? { error: 'The uploaded evidence could not be loaded. Please try again.' }
+        : { feedback: 'Draft grounded in the uploaded document.', meta: { ksbCount: 1, evidenceFiles } }), { status: failure ? 502 : 200 });
+    }
+    if (path.endsWith('/ai-prompt')) return new Response(JSON.stringify({ available: true, prompt: 'Original criteria', kind: activityType === 'assignment' ? 'assignment' : 'reflection' }));
+    if (path.includes('?status=all')) return new Response(JSON.stringify({ items: [], summary: {} }));
+    return new Response(JSON.stringify({ item }));
+  });
+  render(<MemoryRouter initialEntries={['/coach/marking-queue/submission-1']}>
+    <Routes><Route path='/coach/marking-queue/:submissionId' element={<CoachMarkingReviewPage />} /></Routes>
+  </MemoryRouter>);
+}
+
+it.each(['assignment', 'video'])('shows readable and unreadable evidence for %s drafts without saving a decision', async activityType => {
+  review(activityType, [{ filename: 'report.docx', readable: true }, { filename: 'scan.pdf', readable: false }]);
+  fireEvent.click(await screen.findByRole('button', { name: 'Generate AI draft' }));
+  await screen.findByText(/Readable text extracted from 1 of 2 uploaded files/);
+  expect(screen.getByText(/Could not read: scan.pdf. Review these files separately/)).toBeInTheDocument();
+  expect(screen.getByLabelText('Review feedback')).toHaveValue('Draft grounded in the uploaded document.');
+  expect(vi.mocked(coachFetch).mock.calls.some(([, init]) => init?.method === 'PATCH')).toBe(false);
+  expect(coachFetch).toHaveBeenCalledWith('/coach_api/coach/marking-queue/submission-1/ai-feedback', { method: 'POST' });
+});
+
+it('preserves draft generation when no evidence metadata is returned', async () => {
+  review('assignment');
+  fireEvent.click(await screen.findByRole('button', { name: 'Generate AI draft' }));
+  await screen.findByText(/AI-assisted draft generated against 1 assigned KSB/);
+  expect(screen.queryByText(/Readable text extracted/)).not.toBeInTheDocument();
+  expect(screen.getByLabelText('Review feedback')).toHaveValue('Draft grounded in the uploaded document.');
+});
+
+it('retains unsaved feedback when evidence cannot be loaded', async () => {
+  review('video', [], true);
+  const button = await screen.findByRole('button', { name: 'Generate AI draft' });
+  fireEvent.change(screen.getByLabelText('Review feedback'), { target: { value: 'Existing coach feedback' } });
+  fireEvent.click(button);
+  await screen.findByText('The uploaded evidence could not be loaded. Please try again.');
+  await waitFor(() => expect(button).toBeEnabled());
+  expect(screen.getByLabelText('Review feedback')).toHaveValue('Existing coach feedback');
+  expect(screen.queryByText(/AI-assisted draft generated/)).not.toBeInTheDocument();
+});
+
+it('sends an uploaded marking guide with the next draft request', async () => {
+  review('assignment');
+  fireEvent.click(await screen.findByText('AI marking instructions'));
+  const input = screen.getByLabelText(/Upload marking guidance/i);
+  const guide = new File(['Use the programme criteria and explain measurable improvement.'], 'criteria.txt', { type: 'text/plain' });
+  fireEvent.change(input, { target: { files: [guide] } });
+  fireEvent.click(screen.getByRole('button', { name: 'Generate AI draft' }));
+  await screen.findByText(/AI-assisted draft generated/);
+  const request = vi.mocked(coachFetch).mock.calls.find(([, init]) => init?.method === 'POST' && init?.body instanceof FormData);
+  expect(request).toBeTruthy();
+  expect((request?.[1]?.body as FormData).get('promptFile')).toBeTruthy();
+});
+
+it('preserves edited instructions and the attached guide across expansion and draft generation', async () => {
+  review('assignment');
+  fireEvent.click(await screen.findByRole('button', { name: 'AI marking instructions' }));
+  const instructions = await screen.findByDisplayValue('Original criteria');
+  fireEvent.change(instructions, { target: { value: 'Use these synthetic criteria.' } });
+  const guide = new File(['Synthetic guidance'], 'criteria.txt', { type: 'text/plain' });
+  fireEvent.change(screen.getByLabelText('Upload marking guidance'), { target: { files: [guide] } });
+  fireEvent.click(await screen.findByRole('button', { name: 'Expand AI marking instructions' }));
+
+  expect(screen.getByRole('dialog', { name: /AI marking instructions/ })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Collapse AI marking instructions' })).toHaveFocus();
+  expect(screen.getByRole('textbox', { name: 'AI marking instructions' })).toHaveValue('Use these synthetic criteria.');
+  expect(screen.getByText(/criteria.txt/)).toBeInTheDocument();
+  fireEvent.change(screen.getByRole('textbox', { name: 'AI marking instructions' }), { target: { value: 'Updated expanded criteria.' } });
+  expect(document.body.style.overflow).toBe('hidden');
+
+  fireEvent.keyDown(document, { key: 'Escape' });
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Expand AI marking instructions' })).toBeInTheDocument());
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.getByRole('textbox', { name: 'AI marking instructions' })).toHaveValue('Updated expanded criteria.');
+  expect(screen.getByRole('button', { name: 'Expand AI marking instructions' })).toHaveFocus();
+  expect(document.body.style.overflow).toBe('');
+  fireEvent.click(screen.getByRole('button', { name: 'Generate AI draft' }));
+  await screen.findByText(/AI-assisted draft generated/);
+  const request = vi.mocked(coachFetch).mock.calls.find(([, init]) => init?.method === 'POST');
+  const body = request?.[1]?.body as FormData;
+  expect(body.get('prompt')).toBe('Updated expanded criteria.');
+  expect((body.get('promptFile') as File).name).toBe('criteria.txt');
+  expect(vi.mocked(coachFetch).mock.calls.some(([, init]) => init?.method === 'PATCH')).toBe(false);
+});

@@ -16,6 +16,7 @@ Use a Node version supported by the lockfile's React Native engine range (`^20.1
 npm ci
 npm run check:native-media
 npm run typecheck
+npm test
 npm run export:web
 npm run export:native
 ```
@@ -67,6 +68,7 @@ From `mobile/`, these checks work on Windows as well as macOS:
 npm ci
 npm run check:native-media
 npm run typecheck
+npm test
 npm run export:ios
 npx expo config --type introspect --json
 ```

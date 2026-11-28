@@ -207,7 +207,8 @@ def save_weekday_calendar(payload, graph_settings, series=None):
     if people_only:
         # A people-only save never touches a date, so every day must already be
         # exactly where the LMS holds it -- checked for all of them before
-        # anything is written. Drift is reported, never repaired here: the
+        # invitations are published. Only privacy metadata may be repaired.
+        # Drift is reported, never repaired here: the
         # repair moves or re-creates sessions, which is a schedule update.
         for day, day_payload, *_rest in prepared:
             previous = next((item for item in manifest if item.get('day') == day), {})
@@ -219,7 +220,7 @@ def save_weekday_calendar(payload, graph_settings, series=None):
                 if not event_id:
                     raise CalendarMismatch(f'{day} has no Teams series saved for its sessions.')
                 verify_calendar(microsoft_graph_request, owner, event_id, targets, previous.get('joinUrl') or '',
-                                day_payload['repeat'] != 'none')
+                                day_payload['repeat'] != 'none', privacy_headers=v.GRAPH_SILENT_INVITE_HEADERS)
             except CalendarMismatch as mismatch:
                 if mismatch.code == 'teams_attendee_privacy_unconfirmed':
                     return v.json_error(
@@ -230,7 +231,7 @@ def save_weekday_calendar(payload, graph_settings, series=None):
                     )
                 return v.json_error(
                     'The Teams calendar dates no longer match the dates saved here, so the invitations were not '
-                    'saved. Nothing was changed in Teams. Update the Teams calendar dates first, then save the '
+                    'saved. Invitations and session dates were not changed in Teams. Update the Teams calendar dates first, then save the '
                     'invitations again.',
                     status=409, code='teams_schedule_drift', detail=str(mismatch), liveSessionId=live_id,
                 )

@@ -199,6 +199,7 @@ def _import_collection(asset, client):
 
 
 def process(import_id, file_obj=None, *, session_lease_id=None):
+    from . import recording_retry
     from .bunny_module_collections import KIND, process_collection
     from coach_api.recordings_bunny import KIND as COACH_KIND, COLLECTION_KIND
     coach_container = CurriculumVideoImport.objects.filter(pk=import_id, target_kind=COLLECTION_KIND).first()
@@ -211,24 +212,29 @@ def process(import_id, file_obj=None, *, session_lease_id=None):
         return process_collection(container)
     with transaction.atomic():
         asset = CurriculumVideoImport.objects.select_for_update().get(pk=import_id)
-        if asset.status in ('ready', 'superseded'):
-            if asset.target_kind == COACH_KIND and asset.status == 'ready':
-                from coach_api.recordings_bunny import publish
-                publish(asset)
-            if asset.target_kind == 'live_session' and asset.status == 'ready':
-                from .session_bunny import publish_outcome
-                publish_outcome(asset)
+        recording = asset.target_kind in recording_retry.KINDS
+        already_ready = asset.status == 'ready'
+        if asset.status == 'superseded' or (already_ready and not recording):
             return asset
-        if asset.lease_until and asset.lease_until > timezone.now():
+        now = recording_retry.clock() if recording else timezone.now()
+        if asset.lease_until and asset.lease_until > now:
             return asset
-        if not asset.source_url and file_obj is None and not asset.video_id:
+        if recording and not already_ready and not recording_retry.due(asset, now):
+            return asset
+        if not already_ready and not asset.source_url and file_obj is None and not asset.video_id:
             asset.status, asset.error = 'failed', 'Choose the MP4 again to retry this upload.'
-            asset.save(update_fields=['status', 'error', 'updated_at'])
+            fields = ['status', 'error', 'updated_at']
+            if recording:
+                recording_retry.schedule(asset)
+                fields.append('scope')
+            asset.save(update_fields=fields)
             return asset
-        asset.lease_until = timezone.now() + timedelta(minutes=60)
-        asset.status, asset.error = 'uploading', ''
+        asset.lease_until = now + timedelta(minutes=60)
+        asset.status, asset.error = ('ready' if already_ready else 'uploading'), ''
         asset.save(update_fields=['lease_until', 'status', 'error', 'updated_at'])
     try:
+        if already_ready:
+            return asset
         if asset.target_kind == COACH_KIND:
             from coach_api.recordings_bunny import transfer
             transfer(asset)
@@ -292,14 +298,24 @@ def process(import_id, file_obj=None, *, session_lease_id=None):
         logger.error('Curriculum video import %s failed unexpectedly.', asset.id)
         asset.status, asset.error = 'failed', 'The import could not finish. The original video is unchanged.'
     finally:
+        # Keep the lease while publishing: another worker must not publish or
+        # transfer this same asset between saving its outcome and linking it.
+        asset.save(update_fields=['status', 'error', 'updated_at'])
+        if recording:
+            try:
+                if asset.target_kind == 'live_session':
+                    from .session_bunny import publish_outcome
+                    publish_outcome(asset)
+                else:
+                    from coach_api.recordings_bunny import publish
+                    publish(asset)
+            except Exception as failure:
+                logger.warning('Recording import %s publication needs retry (%s).', asset.pk, type(failure).__name__)
+                asset.status, asset.error = 'failed', 'The recording could not be linked to its session yet. It will be retried automatically.'
+            recording_retry.schedule(asset)
         asset.lease_until = None
-        asset.save(update_fields=['status', 'error', 'lease_until', 'updated_at'])
-        if asset.target_kind == 'live_session':
-            from .session_bunny import publish_outcome
-            publish_outcome(asset)
-        elif asset.target_kind == COACH_KIND:
-            from coach_api.recordings_bunny import publish
-            publish(asset)
+        fields = ['status', 'error', 'lease_until', 'updated_at'] + (['scope'] if recording else [])
+        asset.save(update_fields=fields)
     return asset
 
 

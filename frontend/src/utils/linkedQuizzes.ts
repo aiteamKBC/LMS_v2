@@ -25,7 +25,7 @@ export function splitLinkedQuizWeek(value: string | null): { label: string | nul
 
 /** Derive the learner's linked quizzes (from plan components) + their attempts.
  * Shared by the Quizzes tab of My Learning and the legacy RealQuizzesView. */
-export function buildLinkedQuizzes(real: LearnerDetail | null): LinkedQuiz[] {
+export function buildLinkedQuizzes(real: Pick<LearnerDetail, 'components' | 'quizAttempts'> | null): LinkedQuiz[] {
   if (!real) return [];
   const byQuiz = new Map<number, LinkedQuiz>();
   for (const c of real.components) {

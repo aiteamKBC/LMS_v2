@@ -45,7 +45,7 @@ from .course_pricing import API_FIELDS as COURSE_PRICING_FIELDS, pricing_payload
 from .teams_weekly_calendar import calendar_groups, save_weekday_calendar, stored_calendar_series, graph_event_utc
 from .teams_options_retry import microsoft_update_summary
 from .session_overrides import apply_session_overrides, override_clock, session_overrides
-from .session_artifact_placement import recording_matches_occurrence
+from .session_artifact_placement import recording_matches_occurrence, overlapping_artifact_occurrence
 from .study_week_teams import prune_study_week_fillers
 from .attendance_identity import keep_directory_lookup, resolve_directory_accounts
 from .teams_calendar_checks import (CalendarMismatch, attendee_differences, attendees_already_match, calendar_targets, event_organizer_address,
@@ -2985,7 +2985,7 @@ def apply_teams_occurrence_shifts(
 
 def verify_teams_calendar_with_standalones(
     request, owner_key, event_id, targets, expected_join_url='', recurring=True,
-    occurrence_details=None, expected_attendees=None,
+    occurrence_details=None, expected_attendees=None, *, privacy_headers=None,
 ):
     """Verify the master series and any deleted occurrences restored separately.
 
@@ -3009,6 +3009,7 @@ def verify_teams_calendar_with_standalones(
         raise CalendarMismatch('The recurring Teams calendar has no verified series occurrences.')
     event = verify_calendar(
         request, owner_key, event_id, master_targets, expected_join_url, recurring,
+        privacy_headers=privacy_headers,
     )
     for target in targets:
         detail = details_by_number.get(int(target['session_number']))
@@ -3021,6 +3022,7 @@ def verify_teams_calendar_with_standalones(
             [target],
             clean_str(detail.get('join_url')),
             False,
+            privacy_headers=privacy_headers,
         )
         if expected_attendees is None:
             continue
@@ -4472,6 +4474,7 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
             current = verify_teams_calendar_with_standalones(
                 microsoft_graph_request, owner_key, event_id, without_missing(targets, known_missing), current_join,
                 repeat != 'none', current_occurrences,
+                privacy_headers=GRAPH_SILENT_INVITE_HEADERS if people_only else None,
             )
             dates_already_verified = True
         except CalendarMismatch as mismatch:
@@ -4486,11 +4489,11 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
                     )
                 # Except on a people-only save, which must never touch a date.
                 # Repairing the drift here would move, or re-create, sessions
-                # as a side effect of saving who is invited. Nothing has been
-                # written yet; the author updates the schedule on its own.
+                # as a side effect of saving who is invited. Invitations and
+                # dates are untouched; the author updates the schedule on its own.
                 return json_error(
                     'The Teams calendar dates no longer match the dates saved here, so the invitations were not '
-                    'saved. Nothing was changed in Teams. Update the Teams calendar dates first, then save the '
+                    'saved. Invitations and session dates were not changed in Teams. Update the Teams calendar dates first, then save the '
                     'invitations again.',
                     status=409, code='teams_schedule_drift', detail=str(mismatch), liveSessionId=live_session_id,
                 )
@@ -4930,7 +4933,7 @@ def upsert_live_session_artifact(occurrence, artifact_type, artifact):
             # of one type are written one at a time; the lock ends with the transaction.
             cursor.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',
                            [f"live-session-artifact|{occurrence['id']}|{artifact_type}"])
-        cursor.execute(f'SELECT metadata FROM {authoring_table_name(LIVE_SESSION_ARTIFACTS_TABLE)} '
+        cursor.execute(f'SELECT metadata, id FROM {authoring_table_name(LIVE_SESSION_ARTIFACTS_TABLE)} '
                        'WHERE occurrence_id=%s AND artifact_type=%s AND graph_artifact_id=%s' + lock,
                        [occurrence['id'], artifact_type, graph_id])
         existing = cursor.fetchone()
@@ -4958,6 +4961,9 @@ def upsert_live_session_artifact(occurrence, artifact_type, artifact):
             )
             return True
         if existing:
+            # A reviewed occurrence repair retains the artifact's original ID,
+            # archive and learner links on every later discovery/retry.
+            payload['id'] = existing[1]
             saved_metadata = parse_json_value(existing[0], {})
             metadata['lmsHiddenFromLearners'] = saved_metadata.get('lmsHiddenFromLearners') is True
             if 'lmsTranscriptTimeline' in saved_metadata:
@@ -5404,9 +5410,15 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
                         same_ids = {row['occurrence_id'] for row in same}
                         stored = next((row for row in group if row['id'] in same_ids), None)
                     occurrence, launch = (stored, None) if stored else launch_linked_live_occurrence(group, timestamp, launches)
-                    if (artifact_type == 'recording' and occurrence and not stored
+                    if (occurrence and not stored
                             and not recording_matches_occurrence(artifact, occurrence, linked_by_launch=bool(launch))):
-                        continue
+                        # Recurring weeks share a Teams URL. Opening a future
+                        # week's Join button must not discard today's recording
+                        # or file its transcript under that future week.
+                        occurrence = overlapping_artifact_occurrence(artifact, group)
+                        launch = None
+                        if not occurrence:
+                            continue
                     # Recordings are matched by their start; judge delivery by their actual end.
                     if occurrence and not stored and launch is None and run_not_delivery(
                             occurrence, parse_graph_datetime(artifact.get('createdDateTime')) or timestamp,
@@ -20555,7 +20567,8 @@ def teams_calendar_sync_verdict(
     )
 
 
-def teams_calendar_sync_verdicts(module_catalogue_ids, occurrences_by_module, occurrences_readable=True):
+def teams_calendar_sync_verdicts(module_catalogue_ids, occurrences_by_module, occurrences_readable=True,
+                                 *, notice_timezones=None, notice_occurrences_by_module=None):
     """A sync verdict per module, in bulk reads rather than reads per module.
 
     Four reads for the whole page whatever its length: the module rows, their
@@ -20646,6 +20659,23 @@ def teams_calendar_sync_verdicts(module_catalogue_ids, occurrences_by_module, oc
         except Exception:
             logger.exception('Unable to compare the Teams calendar for %s.', module_id)
             verdicts[module_id] = teams_calendar_sync_verdict(None, [], occurrences_readable=False)
+        # Staff guidance only: reuse the authoritative whole-week planner
+        # and the already scoped rows. Never change the sync verdict,
+        # bookings, holiday exceptions, invitation delivery or hours here.
+        if (notice_timezones is not None and module_row and occurrences_readable
+                and (holidays_readable or not cohort_id)):
+            try:
+                from .holiday_invitation_notice import module_holiday_invitation_notice
+                notice = module_holiday_invitation_notice(module_row,
+                    groups_by_id.get(clean_str(module_row.get('group_id'))),
+                    holidays_by_cohort.get(cohort_id) or [],
+                    (notice_occurrences_by_module if notice_occurrences_by_module is not None else occurrences_by_module).get(module_id) or [],
+                    notice_timezones.get(module_id))
+                if notice:
+                    verdicts[module_id]['holidayInvitationNotice'] = notice
+            except Exception as failure:
+                logger.warning('Holiday invitation guidance unavailable (%s).', type(failure).__name__)
+                verdicts[module_id]['holidayInvitationNoticeUnavailable'] = True
     return verdicts
 
 
@@ -20733,6 +20763,7 @@ def curriculum_teams_meeting_summary(request):
     results = []
     seen_modules = set()
     occurrences_by_module = {}
+    notice_occurrences_by_module = {}
     for row in sessions:
         module_id = clean_str(row.get('module_catalogue_id'))
         # Ordered newest-first above, so the first row for a module is the live one.
@@ -20754,6 +20785,9 @@ def curriculum_teams_meeting_summary(request):
             if clean_str(item.get('status')).lower() not in TEAMS_OFF_CALENDAR_OCCURRENCE_STATUSES
         ]
         occurrences_by_module[module_id] = occurrences
+        # Keep saved, non-cancelled invitations that were removed from the
+        # teaching plan available to the notice, without changing the verdict.
+        notice_occurrences_by_module[module_id] = occurrences_by_session.get(session_id, [])
         # Sorted by date in its own right, now that the read above is in
         # session order: the next meeting is the soonest one, not the
         # lowest-numbered one.
@@ -20806,12 +20840,17 @@ def curriculum_teams_meeting_summary(request):
         results.append(entry)
 
     if want_occurrence_dates and results:
+        from .holiday_invitation_notice import staff_notice_allowed
+        show_holiday_notice = staff_notice_allowed(request)
         # One grouped comparison for every module in the page rather than one
         # per row: see `teams_calendar_sync_verdicts` for the reads it groups.
         verdicts = teams_calendar_sync_verdicts(
             (entry['moduleCatalogueId'] for entry in results),
             occurrences_by_module,
             occurrences_readable=occurrences_readable,
+            notice_timezones=({entry['moduleCatalogueId']: entry['timeZone'] for entry in results}
+                              if show_holiday_notice else None),
+            notice_occurrences_by_module=notice_occurrences_by_module if show_holiday_notice else None,
         )
         for entry in results:
             verdict = verdicts.get(entry['moduleCatalogueId']) or teams_calendar_sync_verdict(
@@ -20823,6 +20862,10 @@ def curriculum_teams_meeting_summary(request):
             entry['differingOccurrenceCount'] = verdict['differingOccurrences']
             entry['missingFromTeams'] = verdict['missingFromTeams']
             entry['extraInTeams'] = verdict['extraInTeams']
+            if show_holiday_notice and verdict.get('holidayInvitationNotice'):
+                entry['holidayInvitationNotice'] = verdict['holidayInvitationNotice']
+            if show_holiday_notice and verdict.get('holidayInvitationNoticeUnavailable'):
+                entry['holidayInvitationNoticeUnavailable'] = True
             if any(item.get('verified') is False for item in entry.get('calendarSeries') or []):
                 entry['syncState'] = 'unverified'
                 entry['syncReasons'] = [*entry['syncReasons'], 'weekday_series_unverified']
@@ -20830,7 +20873,13 @@ def curriculum_teams_meeting_summary(request):
                 entry['syncState'] = 'unverified'
                 entry['syncReasons'] = [*entry['syncReasons'], 'calendar_verification_pending']
 
-    return curriculum_results_response(results, request=request)
+    response = curriculum_results_response(results, request=request)
+    # This optional staff guidance varies by the authenticated session. Keep
+    # it out of shared/browser caches when another account uses the device.
+    from django.utils.cache import patch_vary_headers
+    response['Cache-Control'] = 'private, no-store'
+    patch_vary_headers(response, ('Cookie',))
+    return response
 
 
 @require_GET

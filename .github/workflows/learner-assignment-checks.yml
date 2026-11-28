@@ -51,6 +51,12 @@ jobs:
       - run: npm run type-check
       - run: npm run lint
       - run: npm run test:assignment-timer
+      - name: London and module navigation regressions
+        run: >-
+          npm test -- src/pages/learner/video-watch/__tests__/ActivitySidebar.test.tsx
+          src/pages/learner/video-watch/__tests__/weekPreview.test.ts
+          src/pages/learner/my-learning/subjectLearning.test.tsx
+          src/pages/learner/my-learning/compactModules.test.tsx --maxWorkers=2
       - run: npm run build
 
   backend:

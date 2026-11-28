@@ -1,0 +1,211 @@
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { clearAllCachedResources } from '@/api/cachedRequest';
+import { invalidateLearnerReads } from '@/api/learnerRead';
+import type { OverviewWeek } from '@/api/learnerOverview';
+import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
+import type { LearnerDetail } from '@/api/learnerDetail';
+import type { StudentActivityResponse } from '@/api/studentActivity';
+import type { Subject } from '@/pages/learner/my-learning/SubjectWorkspace';
+import { DashboardTrainingPlan } from '../DashboardTrainingPlan';
+import { useDashboardPlan } from '../useDashboardPlan';
+
+const week = (): OverviewWeek => ({
+  weekStart: '2026-09-07', weekEnd: '2026-09-13', timezone: 'Europe/London', undatedActivities: 0,
+  expectedHours: 5, missingExpectedHours: 0, deadlines: [],
+  otjh: { actual: 2, historical: 0, new: 2, undatedHistoricalRows: 0 },
+  modules: [{ id: 'current:M1', title: 'Marketing', weekLabels: ['Week 1'], completed: 1, total: 2, percent: 50, ksbCodes: ['K1'], ksbMappingMissing: false }],
+  metrics: { migrated: false, programme: { completed: 1, total: 2, percent: 50, status: 'ready' },
+    ksb: { completed: 1, total: 1, percent: 100, status: 'ready' },
+    otjh: { historical: 0, new: 2, actual: 2, planned: 5 } },
+  planSubjects: [{ id: 'current:M1', title: 'Marketing', source: 'current', completed: 1, total: 2,
+    dates: ['2026-09-07'], moduleIds: ['M1'], sessionTitles: [], activityCounts: { reading: 2 }, ksbCodes: ['K1'], ksbMappingMissing: false }],
+});
+const schedule = (): TrainingPlanDashboard => ({
+  months: {}, actual: [], actualAvailable: true, modules: [], moduleLinks: {}, sessions: [],
+  reviews: [{ id: 'coach', eventKey: 'mcr:1', title: 'Monthly Coaching', sequence: 1, source: 'mcr', date: '2026-09-25',
+    targetDate: '2026-09-25', scheduledDate: null, scheduledTime: null, durationMinutes: 60, status: 'not-scheduled', coachName: 'Assigned Coach', invited: false }],
+  coach: { name: 'Assigned Coach', bookingUrl: null }, contractStatus: 'ready', generatedAt: '',
+});
+function setup(calendar = schedule(), failed = '', overview = week(), recorded?: StudentActivityResponse, learningSubjects?: Subject[], monthlyOnly = false,
+  assignmentStatuses: Array<{ activityType: string; activityId: string; status: string }> = []) {
+  const fetch = vi.fn(async (input: Parameters<typeof globalThis.fetch>[0]) => {
+    const url = String(input);
+    if (url.includes('/weekly/plan/')) return new Response(JSON.stringify({ modules: [], weeks: [], selectedWeek: null }));
+    if (failed && url.includes(failed)) return new Response(JSON.stringify({ error: 'Offline' }), { status: 503 });
+    if (url.includes('/reflection/submissions/')) return new Response(JSON.stringify({ statuses: assignmentStatuses }));
+    if (url.includes('/attendance/') && url.includes('/lectures/')) return new Response(JSON.stringify({ lectures: [] }));
+    if (url.includes('rewards-summary')) return new Response(JSON.stringify({ points: { learnerId: '125', earned: 350, committed: 100, balance: 250 }, rewards: [] }));
+    if (url.includes('/monthly-logs/125/')) return new Response(JSON.stringify({
+      learner: { id: 125, aptem_id: null, name: 'Learner', programme: 'Programme', coach_name: '' }, months: [],
+    }));
+    return new Response(JSON.stringify(url.includes('overview-week') ? overview
+      : url.includes('section=contract') ? { months: calendar.months, contractStatus: calendar.contractStatus } : calendar));
+  });
+  vi.stubGlobal('fetch', fetch);
+  function Subject() {
+    const plan = useDashboardPlan('commercial', '125');
+    return <DashboardTrainingPlan kind="commercial" learnerId="125" plan={plan}
+      learningActivity={recorded} learnerDetail={{ studentActivityAvailable: true } as LearnerDetail}
+      learningSubjects={learningSubjects} monthlyOnly={monthlyOnly} />;
+  }
+  render(<MemoryRouter><Subject /></MemoryRouter>);
+  return fetch;
+}
+beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-09-12T10:00:00Z')); clearAllCachedResources(); });
+afterEach(() => { cleanup(); clearAllCachedResources(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+describe('dashboard learning layout', () => {
+  it('uses the learner My Learning recorded-activity source in the coach profile', async () => {
+    setup(schedule(), '', week(), {
+      progress_basis: 'recorded_activities',
+      subjects: [{ id: 50, name: 'Marketing', module_id: 'M1', catalogue_count: 5, accepted_hours: 2 }],
+      activities: [{ activity_id: 'record:50:1', source_activity_id: 1, group_id: 50, group_name: 'Marketing',
+        activity: 'Recorded lesson', category: 'reading', completed: true, position: 1 }],
+    } as unknown as StudentActivityResponse);
+
+    expect(await screen.findByRole('button', { name: 'Marketing (Previous learning): 100% overall progress' })).toBeVisible();
+  });
+
+  it('shows every module from the learner My Learning source in programme progress', async () => {
+    setup(schedule(), '', week(), undefined, [
+      { id: 'current:M1', title: 'Marketing', source: 'current', activities: [] },
+      { id: 'current:M2', title: 'Marketing Executive L4', source: 'current', activities: [] },
+    ]);
+
+    expect(await screen.findByRole('button', { name: 'Marketing (Current plan): N/A overall progress' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Marketing Executive L4 (Current plan): N/A overall progress' })).toBeVisible();
+  });
+
+  it('keeps the learning skeleton visible instead of rendering overview fallback subjects', async () => {
+    function Subject() {
+      const plan = useDashboardPlan('commercial', '125');
+      return <DashboardTrainingPlan kind="commercial" learnerId="125" plan={plan} learningSubjectsLoading />;
+    }
+    const fetch = vi.fn(async (input: Parameters<typeof globalThis.fetch>[0]) => {
+      const url = String(input);
+    if (url.includes('/weekly/plan/')) return new Response(JSON.stringify({ modules: [], weeks: [], selectedWeek: null }));
+      if (url.includes('rewards-summary')) return new Response(JSON.stringify({ points: { learnerId: '125', earned: 0, committed: 0, balance: 0 }, rewards: [] }));
+      if (url.includes('/monthly-logs/125/')) return new Response(JSON.stringify({ learner: { id: 125 }, months: [] }));
+      return new Response(JSON.stringify(url.includes('overview-week') ? week() : schedule()));
+    });
+    vi.stubGlobal('fetch', fetch);
+    render(<MemoryRouter><Subject /></MemoryRouter>);
+
+    expect(await screen.findByRole('status', { name: 'Loading monthly learning and coaching' })).toBeVisible();
+    expect(screen.queryByRole('region', { name: 'Programme module progress' })).not.toBeInTheDocument();
+  });
+
+  it('fills the monthly summary from authored hours and current learner progress without Aptem history', async () => {
+    const overview = { ...week(), monthlyOtjh: {
+      '2026-09': { planned: 5, actual: 2, missingPlannedActivities: 0 },
+    } };
+    const calendar = { ...schedule(), actualAvailable: false };
+    setup(calendar, '', overview);
+    const panel = await screen.findByRole('region', { name: 'Monthly study plan' });
+    for (const [label, value] of [['Required hours', '5'], ['Achieved hours', '2'], ['Difference', '-3']]) {
+      expect(within(panel).getByText(label).nextElementSibling).toHaveTextContent(`${value} hrs`);
+    }
+  });
+
+  it('keeps authored monthly assignments and continues a saved draft when My Learning supplies the module list', async () => {
+    const overview = week();
+    overview.planSubjects![0].monthlyActivities = [
+      { id: 'native:september', componentId: 'SEPTEMBER', title: 'September assignment', type: 'assignment',
+        date: '2026-09-18', weekTitle: 'Week 2', expectedHours: 4, completed: false, ksbCodes: [] },
+      { id: 'native:accepted', componentId: 'ACCEPTED', title: 'Accepted assignment', type: 'assignment',
+        date: '2026-09-20', weekTitle: 'Week 3', expectedHours: 2, completed: false, ksbCodes: [] },
+      { id: 'native:october', componentId: 'OCTOBER', title: 'October assignment', type: 'assignment',
+        date: '2026-10-02', weekTitle: 'Week 4', expectedHours: 6, completed: false, ksbCodes: [] },
+    ];
+    setup(schedule(), '', overview, undefined, [
+      { id: 'current:M1', title: 'Marketing', source: 'current', activities: [] },
+    ], true, [
+      { activityType: 'assignment', activityId: 'SEPTEMBER', status: 'draft' },
+      { activityType: 'assignment', activityId: 'ACCEPTED', status: 'accepted' },
+    ]);
+
+    const assignments = within(await screen.findByRole('region', { name: 'Assignments this month' }));
+    expect(assignments.getByText('September assignment')).toBeVisible();
+    expect(assignments.queryByText('October assignment')).not.toBeInTheDocument();
+    expect(await assignments.findByRole('link', { name: 'Continue' })).toHaveAttribute(
+      'href',
+      '/learner/monthly-submission/commercial/125?month=2026-09&assignment=SEPTEMBER',
+    );
+    const accepted = assignments.getByText('Accepted assignment').closest('article')!;
+    expect(within(accepted).getByText('Achieved hours').nextElementSibling).toHaveTextContent('2 hrs');
+    expect(within(accepted).getByLabelText('100% complete')).toBeVisible();
+    expect(within(accepted).getByRole('link', { name: 'View' })).toHaveAttribute(
+      'href',
+      '/learner/monthly-submission/commercial/125?month=2026-09&assignment=ACCEPTED',
+    );
+  });
+
+  it('opens a submitted monthly assignment for viewing while it awaits review', async () => {
+    const overview = week();
+    overview.planSubjects![0].monthlyActivities = [
+      { id: 'native:submitted', componentId: 'SUBMITTED', title: 'Submitted assignment', type: 'assignment',
+        date: '2026-09-12', weekTitle: 'Week 2', expectedHours: 2, completed: false, ksbCodes: [] },
+    ];
+    setup(schedule(), '', overview, undefined, [
+      { id: 'current:M1', title: 'Marketing', source: 'current', activities: [] },
+    ], true, [{ activityType: 'assignment', activityId: 'SUBMITTED', status: 'submitted_for_tutor_review' }]);
+
+    const submitted = within((await screen.findByText('Submitted assignment')).closest('article')!);
+    expect(await submitted.findByRole('link', { name: 'View' })).toHaveAttribute(
+      'href',
+      '/learner/monthly-submission/commercial/125?month=2026-09&assignment=SUBMITTED',
+    );
+    expect(submitted.getByText('Achieved hours').nextElementSibling).toHaveTextContent('0 hrs');
+    expect(submitted.getByLabelText('0% complete')).toBeVisible();
+  });
+
+  it('places monthly focus next to weekly learning and keeps the timeline beside its overview', async () => {
+    setup();
+    const monthly = await screen.findByRole('region', { name: 'Monthly study plan' });
+    const weekly = screen.getByRole('region', { name: 'Weekly learning plan' });
+    expect(weekly.parentElement).toBe(monthly.parentElement);
+    expect(screen.queryByRole('region', { name: 'Upcoming' })).not.toBeInTheDocument();
+    const timeline = screen.getByRole('region', { name: 'Module timeline' });
+    expect(timeline.parentElement?.parentElement).toBe(screen.getByRole('region', { name: 'Module overview' }).parentElement);
+    expect(screen.getByRole('region', { name: 'Module progress' })).toBeVisible();
+    expect(screen.getByRole('region', { name: 'Programme module progress' })).toBeVisible();
+    const rewards = screen.getByRole('region', { name: 'Rewards and points' });
+    expect(timeline.compareDocumentPosition(rewards) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(monthly.compareDocumentPosition(timeline) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('shows a retry without fabricating a weekly plan when the schedule cannot load', async () => {
+    setup(schedule(), 'training-plan-dashboard');
+    expect(await screen.findByRole('alert')).toHaveTextContent('Your monthly learning could not refresh. Offline');
+    expect(await screen.findByRole('button', { name: 'Retry monthly learning' })).toBeVisible();
+    expect(screen.queryByRole('region', { name: 'Weekly learning plan' })).not.toBeInTheDocument();
+  });
+
+  it('refreshes monthly reviews while preserving the selected module and month filters', async () => {
+    const calendar = schedule();
+    const fetch = setup(calendar);
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Focus module' }), { target: { value: 'current:M1' } });
+    const panel = within(screen.getByRole('region', { name: 'Reviews this month' }));
+    expect(panel.getByRole('button', { name: 'Schedule' })).toBeVisible();
+    Object.assign(calendar.reviews[0], { status: 'scheduled', scheduledDate: '2026-09-28', scheduledTime: '14:00' });
+    await act(async () => { invalidateLearnerReads(); });
+    expect(panel.getByText('Booking pending')).toBeVisible();
+    expect(panel.getByText('28 Sept')).toBeVisible();
+    expect(panel.getByText(/14:00.*UK time/)).toBeVisible();
+    Object.assign(calendar.reviews[0], { scheduledDate: '2026-09-20', scheduledTime: '10:30', invited: true });
+    await act(async () => { invalidateLearnerReads(); });
+    expect(panel.getByText('Booked')).toBeVisible();
+    expect(panel.getByText('20 Sept')).toBeVisible();
+    expect(panel.getByText(/10:30.*UK time/)).toBeVisible();
+    expect(panel.getAllByRole('article')).toHaveLength(1);
+    expect(screen.getByRole('combobox', { name: 'Focus module' })).toHaveValue('current:M1');
+    expect(screen.getByLabelText('Focus month')).toHaveValue('2026-09');
+    Object.assign(calendar.reviews[0], { status: 'cancelled' });
+    await act(async () => { invalidateLearnerReads(); });
+    expect(panel.queryByRole('article')).not.toBeInTheDocument();
+    expect(panel.getByText('No reviews planned for this month.')).toBeVisible();
+    expect(fetch.mock.calls.filter(([url]) => String(url).includes('section=overview')).length).toBeGreaterThanOrEqual(4);
+  });
+});

@@ -114,6 +114,7 @@ export function ModuleSessionSchedulePreview({
   overrideDuration = 0,
   showAlternateTimeZones = true,
   preserveExistingDates = false,
+  holidayInvitationsRetained = false,
 }: {
   row: TeamsSchedulePreviewRow;
   title?: string;
@@ -138,6 +139,8 @@ export function ModuleSessionSchedulePreview({
   showAlternateTimeZones?: boolean;
   /** Imported calendars retain their original instances, including historical dates outside this plan. */
   preserveExistingDates?: boolean;
+  /** Explain retained invitations without treating them as a teaching decision. */
+  holidayInvitationsRetained?: boolean;
 }) {
   const plan = buildHolidayShiftPlan(row.sessions, holidayLabelFor);
   const hasCalendar = Boolean(row.summary);
@@ -259,11 +262,12 @@ export function ModuleSessionSchedulePreview({
         lengths={occurrences.map(item => item.durationMinutes)}
         overrideDuration={overrideDuration}
       />}
-      <HolidayWarningNote plan={plan} />
+      {!holidayInvitationsRetained && <HolidayWarningNote plan={plan} />}
       {occurrences.length ? (
         <>
           <CompactSchedulePreview
             occurrences={occurrences}
+            holidayInvitationsRetained={holidayInvitationsRetained}
             showDuration={!uniformDuration}
             showSessionNumbers={false}
             formatLabel={(plannedUtc, date) => calendarLabel(plannedUtc || date, row.timeZone)}

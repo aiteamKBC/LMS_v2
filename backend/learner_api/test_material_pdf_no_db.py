@@ -1,0 +1,148 @@
+"""Private PDF delivery on the LMS origin; no database or live transport."""
+import ast
+import io
+from email.message import Message
+from pathlib import Path
+import sys
+from types import SimpleNamespace
+import unittest
+from unittest.mock import Mock, patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from django.conf import settings
+if not settings.configured:
+    settings.configure()
+from learner_api import material_storage
+
+
+class MaterialPdfTests(unittest.TestCase):
+    def test_legacy_archive_uses_only_the_configured_account_and_safe_path(self):
+        config = SimpleNamespace(AZURE_STORAGE_ACCOUNT='curriculumfiles', AZURE_CURRICULUM_CONTAINER='private')
+        row = {'material_blob_account': 'curriculumfiles', 'material_blob_container': 'private',
+               'material_blob_name': '_legacy_files/9/lesson one.mp4'}
+        self.assertEqual(material_storage.curriculum_archive_url(row, config),
+                         '/curriculum_api/curriculum/uploads/_legacy_files/9/lesson%20one.mp4')
+        for changes in ({'material_blob_account': 'different'}, {'material_blob_container': 'different'},
+                        {'material_blob_name': '_legacy_files/9/../other.mp4'},
+                        {'material_blob_name': '_legacy_files/9/..'},
+                        {'material_blob_name': '_legacy_files/9/dir\\file.mp4'},
+                        {'material_blob_name': 'source-materials/9/hash'}):
+            with self.subTest(changes=changes):
+                self.assertEqual(material_storage.curriculum_archive_url({**row, **changes}, config), '')
+
+    def test_archive_delivery_keeps_ownership_and_preview_route(self):
+        tree = ast.parse(Path(__file__).with_name('student_activity.py').read_text(encoding='utf-8'))
+        node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'source_material_file')
+        node.decorator_list = []
+        owned = Mock(return_value=(8, {'_source': {'_material_blob_ready': True}}))
+        scope = {'__package__': 'learner_api', '_owned_material': owned,
+                 '_error': lambda message, status: status, 'DatabaseError': RuntimeError,
+                 'HttpResponseRedirect': lambda url: {'Location': url}}
+        exec(compile(ast.Module(body=[node], type_ignores=[]), 'source-file', 'exec'), scope)
+        with patch.object(material_storage, 'curriculum_archive_url', return_value='/curriculum_api/curriculum/uploads/_legacy_files/9/lesson.pptx'), \
+                patch.object(material_storage, 'read_url') as signed:
+            response = scope['source_material_file'](SimpleNamespace(GET={'preview': '1'}), 'commercial', 3, 5, 1)
+            owned.assert_called_once_with('commercial', 3, 5, 1)
+            self.assertTrue(response['Location'].endswith('lesson.pptx?preview=1'))
+            self.assertEqual(response['Cache-Control'], 'private, no-store')
+            signed.assert_not_called()
+            owned.side_effect = LookupError('Not owned')
+            self.assertEqual(scope['source_material_file'](SimpleNamespace(GET={}), 'commercial', 3, 5, 1), 404)
+
+    def upstream(self, data=b'%PDF-example', status=200, mime='application/pdf'):
+        response = io.BytesIO(data)
+        response.status = status
+        response.headers = Message()
+        response.headers['Content-Type'] = mime
+        response.headers['Content-Length'] = str(len(data))
+        response.headers['Accept-Ranges'] = 'bytes'
+        if status == 206:
+            response.headers['Content-Range'] = 'bytes 0-4/20'
+        return response
+
+    def test_pdf_is_streamed_without_redirect_and_closed_after_response(self):
+        upstream = self.upstream()
+        with patch.object(material_storage, 'read_url', return_value='https://storage.test/file?sig=private'), \
+                patch.object(material_storage.urllib.request, 'build_opener') as opener:
+            opener.return_value.open.return_value = upstream
+            response = material_storage.pdf_response({}, settings, SimpleNamespace(headers={}))
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response['Content-Type'], 'application/pdf')
+            self.assertNotIn('Location', response)
+            self.assertEqual(b''.join(response.streaming_content), b'%PDF-example')
+            self.assertEqual(response['X-Frame-Options'], 'SAMEORIGIN')
+            response.close()
+            self.assertTrue(upstream.closed)
+
+    def test_range_is_forwarded_and_partial_response_preserved(self):
+        with patch.object(material_storage, 'read_url', return_value='https://storage.test/file'), \
+                patch.object(material_storage.urllib.request, 'build_opener') as opener:
+            opener.return_value.open.return_value = self.upstream(b'%PDF-', 206)
+            response = material_storage.pdf_response({}, settings, SimpleNamespace(headers={'Range': 'bytes=0-4'}))
+            self.assertEqual(opener.return_value.open.call_args.args[0].get_header('Range'), 'bytes=0-4')
+            self.assertEqual(response.status_code, 206)
+            self.assertEqual(response['Content-Range'], 'bytes 0-4/20')
+            self.assertEqual(b''.join(response.streaming_content), b'%PDF-')
+            response.close()
+
+    def test_non_pdf_error_page_is_rejected_and_closed(self):
+        upstream = self.upstream(b'<html>login</html>', mime='text/html')
+        with patch.object(material_storage, 'read_url', return_value='https://storage.test/file'), \
+                patch.object(material_storage.urllib.request, 'build_opener') as opener:
+            opener.return_value.open.return_value = upstream
+            with self.assertRaises(ValueError):
+                material_storage.pdf_response({}, settings, SimpleNamespace(headers={}))
+            self.assertTrue(upstream.closed)
+
+    def test_source_file_checks_ownership_and_backup_before_streaming(self):
+        tree = ast.parse(Path(__file__).with_name('student_activity.py').read_text(encoding='utf-8'))
+        node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'source_material_file')
+        self.assertIn('learner_self_or_staff', ast.unparse(node.decorator_list))
+        node.decorator_list = []
+        owned = Mock(return_value=(8, {'_source': {'_material_blob_ready': True,
+            'material_blob_content_type': 'application/pdf'}}))
+        scope = {'__package__': 'learner_api', '_owned_material': owned,
+            '_error': lambda message, status: status, 'DatabaseError': RuntimeError}
+        exec(compile(ast.Module(body=[node], type_ignores=[]), 'source-file', 'exec'), scope)
+        with patch.object(material_storage, 'pdf_response', return_value={}) as stream:
+            result = scope['source_material_file'](None, 'learner', 3, 5, 1)
+            owned.assert_called_once_with('learner', 3, 5, 1)
+            self.assertEqual(result['Cache-Control'], 'private, no-store')
+            self.assertEqual(result['Referrer-Policy'], 'no-referrer')
+            stream.reset_mock()
+            owned.return_value[1]['_source']['_material_blob_ready'] = False
+            self.assertEqual(scope['source_material_file'](None, 'learner', 3, 5, 1), 404)
+            stream.assert_not_called()
+            owned.side_effect = LookupError('Not owned')
+            self.assertEqual(scope['source_material_file'](None, 'learner', 3, 5, 1), 404)
+            stream.assert_not_called()
+
+    def test_other_files_are_streamed_same_origin_not_redirected_to_azure(self):
+        # A redirect left the inline Word/Excel preview fetching from Azure,
+        # which sends no CORS headers for this site: "Failed to fetch".
+        docx = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        upstream = self.upstream(b'PK-docx', mime='application/octet-stream')
+        row = {'material_blob_name': 'source-materials/9/brief.docx', 'material_blob_content_type': docx}
+        with patch.object(material_storage, 'read_url', return_value='https://storage.test/file?sig=private'), \
+                patch.object(material_storage.urllib.request, 'build_opener') as opener:
+            opener.return_value.open.return_value = upstream
+            response = material_storage.file_response(row, settings, SimpleNamespace(headers={}))
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response['Content-Type'], docx)
+            self.assertNotIn('Location', response)
+            self.assertEqual(b''.join(response.streaming_content), b'PK-docx')
+            response.close()
+            self.assertTrue(upstream.closed)
+
+    def test_office_preview_page_hands_microsoft_the_sas_url(self):
+        row = {'material_blob_name': 'source-materials/9/slides.ppt'}
+        with patch.object(material_storage, 'read_url', return_value='https://acct.blob.core.windows.net/c/slides.ppt?sig=x'):
+            response = material_storage.office_preview_response(row, settings)
+        page = response.content.decode()
+        self.assertIn('view.officeapps.live.com/op/embed.aspx?src=https%3A%2F%2Facct.blob.core.windows.net', page)
+        self.assertEqual(response['X-Frame-Options'], 'SAMEORIGIN')
+        self.assertIn("frame-src https://view.officeapps.live.com", response['Content-Security-Policy'])
+
+
+if __name__ == '__main__':
+    unittest.main()

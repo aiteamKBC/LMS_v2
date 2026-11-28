@@ -207,8 +207,13 @@ def read_calendar_instances(request, path):
     raise CalendarMismatch('Microsoft returned too many calendar pages to verify safely.')
 
 
-def verify_calendar(request, owner, event_id, targets, expected_join_url='', recurring=True):
-    """Read Microsoft before publishing invitations or confirming local dates."""
+def verify_calendar(request, owner, event_id, targets, expected_join_url='', recurring=True, *, privacy_headers=None):
+    """Read Microsoft before publishing invitations or confirming local dates.
+
+    People saves may supply privacy_headers to repair hideAttendees, after the
+    entire schedule and identity pass. A fresh strict read must confirm the
+    repair before the caller can publish anyone. Other callers remain read-only.
+    """
     path = f'users/{owner}/events/{quote(event_id, safe="")}'
     event = request('GET', path)
     join_url = (event.get('onlineMeeting') or {}).get('joinUrl') or ''
@@ -216,7 +221,8 @@ def verify_calendar(request, owner, event_id, targets, expected_join_url='', rec
         raise CalendarMismatch('The Teams meeting is cancelled or its join link could not be verified.')
     if expected_join_url and expected_join_url != join_url:
         raise CalendarMismatch('Microsoft returned a different join link. Invitations were not updated.')
-    if event.get('hideAttendees') is not True:
+    privacy_events = [] if event.get('hideAttendees') is True else [event_id]
+    if privacy_events and privacy_headers is None:
         raise CalendarPrivacyMismatch('Microsoft has not confirmed attendee privacy. Invitations were not updated.')
     if recurring:
         query = urlencode({'startDateTime': (targets[0]['start'] - timedelta(days=7)).isoformat(),
@@ -235,8 +241,26 @@ def verify_calendar(request, owner, event_id, targets, expected_join_url='', rec
         if match.get('isCancelled') or (match.get('onlineMeeting') or {}).get('joinUrl') != join_url:
             raise CalendarMismatch(f"Session {target['session_number']} does not have the reviewed Teams join link.")
         if match.get('hideAttendees') is False:
-            raise CalendarPrivacyMismatch(f"Session {target['session_number']} exposes its attendee list.")
+            if privacy_headers is None:
+                raise CalendarPrivacyMismatch(f"Session {target['session_number']} exposes its attendee list.")
+            privacy_events.append(match['id'])
         available.remove(match)
+    if privacy_events:
+        if event.get('isOrganizer') is False:
+            raise CalendarPrivacyMismatch('Attendee privacy must be confirmed on the original organizer calendar.')
+        try:
+            for private_id in dict.fromkeys(privacy_events):
+                private_path = f'users/{owner}/events/{quote(private_id, safe="")}'
+                # A master update can propagate to its ordinary occurrences.
+                # Read again so only remaining exceptions need their own PATCH.
+                current = request('GET', private_path)
+                if current.get('hideAttendees') is not True:
+                    request('PATCH', private_path, payload={'hideAttendees': True}, extra_headers=privacy_headers)
+        except RuntimeError as exc:
+            raise CalendarPrivacyMismatch('Microsoft could not confirm attendee privacy. Invitations were not updated.') from exc
+        # Ignore PATCH responses; only a fresh calendar read can prove that
+        # privacy, the saved dates and the join link still agree with Microsoft.
+        return verify_calendar(request, owner, event_id, targets, expected_join_url, recurring)
     # A slot Microsoft holds that the plan does not -- weekly filler in a gap, a
     # week handed to its own additional meeting, a session dropped from the
     # plan -- is not a failure and is never removed here: removing it is a
