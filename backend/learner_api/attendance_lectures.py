@@ -1004,8 +1004,8 @@ def build_lectures(register, legacy_meta, legacy_activities, components, kind, l
 
 def lecture_totals(lectures):
     from .attendance_rules import canonical_status
-    attended = sum(canonical_status(row['status']) == 'present' and row.get('counted') is not False for row in lectures)
-    absent = sum(row['status'] == 'absent' and row.get('counted') is not False for row in lectures)
+    attended = sum(canonical_status(row.get('liveAttendanceStatus', row['status'])) == 'present' and row.get('counted') is not False for row in lectures)
+    absent = sum(row.get('liveAttendanceStatus', row['status']) == 'absent' and row.get('counted') is not False for row in lectures)
     return {'total': len(lectures), 'attended': attended, 'absent': absent,
             'covered': sum(row['catchupStatus'] == 'completed' for row in lectures),
             'upcoming': sum(row['status'] == 'upcoming' for row in lectures),
@@ -1138,6 +1138,7 @@ def _mark_missed_catchups(lectures, reported):
 
 def read_workspace(source, kind, *, monthly=None, monthly_occurrences=None):
     from .attendance_mode import read_mode
+    from .live_attendance_reporting import delivery_timeline, project_live_attendance
     register = lecture_register(source)
     if monthly is not None:
         register = [row for row in register if row.get('source') == 'microsoft-teams' and row['session_date'].isoformat().startswith(monthly)]
@@ -1170,6 +1171,12 @@ def read_workspace(source, kind, *, monthly=None, monthly_occurrences=None):
         _attach_recovery(lectures, reported)
         _mark_missed_catchups(lectures, reported)
         return {'lectures': lectures}
+    attendance_now = timezone.now()
+    reporting_register = project_live_attendance(register, delivery_timeline(source.id), now=attendance_now)
+    live_outcomes = {f"{session_key(row)}-{row['session_date'].isoformat()}": attendance_outcome(row, attendance_now)
+                     for row in reporting_register}
+    for lecture in lectures:
+        lecture['liveAttendanceStatus'], lecture['counted'] = live_outcomes[lecture['id']]
     # Include every current assignment, even when it has no attendance row yet.
     # Historical/source-only modules remain available through the lecture list.
     assigned_modules = read_assigned_modules(source)
@@ -1239,7 +1246,8 @@ def read_workspace(source, kind, *, monthly=None, monthly_occurrences=None):
         for row in assigned_modules if row.get('id') and row.get('title')
     )
     return {'lectures': lectures, 'totals': lecture_totals(lectures),
-            'summary': _summarize_attendance(register), 'mode': mode, 'timeZone': settings.TIME_ZONE,
+            'summary': _summarize_attendance(reporting_register, now=attendance_now),
+            'mode': mode, 'timeZone': settings.TIME_ZONE,
             'modules': [{'id': key, 'title': title} for key, title in sorted(module_options, key=lambda v: v[1].casefold())],
             'recentActivity': sorted(recent, key=lambda r: r['at'], reverse=True)[:30]}
 

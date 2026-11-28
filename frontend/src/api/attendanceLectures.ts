@@ -23,6 +23,8 @@ export interface AttendanceLecture {
   rawStatus?: string;
   effectiveStatus?: string;
   counted?: boolean;
+  /** Live attendance outcome, kept separate from recording completion. */
+  liveAttendanceStatus?: string;
   rawAttendanceStatus?: string;
   effectiveAttendanceStatus?: string;
   effectiveAttendance?: 0 | 1 | null;

@@ -13,6 +13,7 @@ from .models import CoachAbsenceReport, CoachAttendanceSourceAdjustment
 REGISTER_SQL = """
     SELECT r.learner_profile_id,r.occurrence_id,r.live_session_id,
            r.module_catalogue_id,r.attendance_status,r.updated_at,
+           r.attendance_basis,r.teams_attendance_status,
            r.attended_seconds,r.attendance_report_id,
            o.scheduled_start,o.scheduled_end,o.session_number,m.title AS module_title
     FROM curriculum.live_session_learner_attendance r

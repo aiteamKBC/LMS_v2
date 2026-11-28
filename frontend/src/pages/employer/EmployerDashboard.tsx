@@ -254,11 +254,8 @@ export function EmployerDashboard({ data, metrics, attendance: attendanceByLearn
         const attendance = attendanceResource?.data;
         const attendancePercent = attendance && attendance.sessions > 0 && Number.isFinite(attendance.attendanceRate)
           ? attendance.attendanceRate : null;
-        const attendanceMode = attendance?.mode === 'mixed' ? 'Live + Recorded'
-          : attendance?.mode === 'recorded' ? 'Recorded' : 'Live Session';
-        const attendanceHelp = attendance?.mode === 'recorded' ? 'Completed recordings / planned Live Sessions in the current Training Plan'
-          : attendance?.mode === 'mixed' ? 'Live attendance plus completed recordings / planned Live Sessions in the current Training Plan; each session counts once'
-          : 'Live attendance / planned Live Sessions in the current Training Plan; includes late attendance and completed catch-up';
+        const attendanceMode = 'Live sessions';
+        const attendanceHelp = 'Live attendance only. Sessions due while on Live count towards the target. During Recorded, only live sessions attended are added. Watching recordings does not count as attendance; future, in-progress, unmarked and cancelled sessions are excluded.';
         const risk = riskOf(metrics.data, learner);
         return <tr key={learnerKey(learner)}>
           <td><div className={styles.identity}><Avatar learner={learner} /><div><Link to={learnerHref(employerId, learner)} state={location.state} className={styles.learnerName}>{learner.name}</Link><small>{learner.email}</small></div></div></td>
@@ -294,7 +291,7 @@ export function EmployerDashboard({ data, metrics, attendance: attendanceByLearn
               : <span className={styles.unavailable}>Not available</span>}
             {otjh && <small title="Completed OTJ hours / total planned hours">{otjh.actual == null ? '—' : progressNumber.format(otjh.actual)} / {otjh.planned == null ? '—' : progressNumber.format(otjh.planned)} OTJ hours</small>}
           </div></td>
-          <td>{selectedModule ? moduleAttendancePercent != null ? <div className={styles.progressCell} title="Recorded sessions attended / total recorded sessions for the selected module">
+          <td>{selectedModule ? moduleAttendancePercent != null ? <div className={styles.progressCell} title={attendanceHelp}>
             <small className={styles.learnerModuleScope}>{selectedModule.title}</small>
             <strong>{percentLabel(moduleAttendancePercent)}</strong>
             <ProgressBar value={moduleAttendancePercent} label={`${learner.name} · ${selectedModule.title} attendance`} />
@@ -306,7 +303,6 @@ export function EmployerDashboard({ data, metrics, attendance: attendanceByLearn
               <span className={styles.attendanceMode}>{attendanceMode}</span></div>
             <ProgressBar value={attendancePercent} label={`${learner.name} attendance`} />
             <small>{progressNumber.format(attendance!.present)} / {progressNumber.format(attendance!.sessions)} sessions</small>
-            {attendance?.mode === 'mixed' && <small>{progressNumber.format(attendance.livePresent ?? 0)} Live + {progressNumber.format(attendance.recordedPresent ?? 0)} Recorded</small>}
           </div> : <span className={styles.unavailable}>{!attendanceResource || attendanceResource.status === 'loading' ? <LoadingSkeleton label="Loading…" variant="text" /> : attendanceResource.status === 'ready' && attendance === null ? 'No attendance records yet' : 'Not available'}</span>}</td>
           <td><div className={styles.reviewCell}>{resource?.status === 'ready' ? event ? <><Link to={learnerHref(employerId, learner, 'reviews')} state={location.state}><CalendarDays size={14} />{formatReviewDate(date)}</Link><small>{relativeReviewDate(date, today)}</small></> : <span className={styles.unavailable}>No upcoming review</span> : <span className={styles.unavailable}>{resource?.status === 'error' ? 'Not available' : <LoadingSkeleton label="Loading…" variant="text" />}</span>}</div></td>
           <td><span className={styles.statusBadge} data-status={risk}><span />{risk !== 'unavailable' ? riskLabels[risk] : learner.programmeStatus || 'Not set'}</span>{risk === 'unavailable' && <small className={styles.statusHelp}>OTJ status unavailable</small>}</td>

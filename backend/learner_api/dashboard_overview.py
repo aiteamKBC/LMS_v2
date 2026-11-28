@@ -11,6 +11,7 @@ from . import canonical_learning as canonical, training_plan_dashboard as schedu
 from .dashboard_monthly import day, review_day, display_subjects, display_date, MONTH
 from .dashboard_training import display_modules, module_rows, percentage
 from .monthly_log_attendance import read_rows as saved_attendance_hours
+from .live_attendance_reporting import delivery_timeline, project_live_attendance
 
 
 def saved_attendance_rows(source, profile, *, now):
@@ -30,7 +31,9 @@ def saved_attendance_rows(source, profile, *, now):
 
     historical = counted(kbc_attendance_rows(source), 'kbc')
     live = register_rows([SimpleNamespace(id=profile.pk, _caseload_source=source)])
-    return historical, counted(live[str(profile.pk)], 'live')
+    timeline = delivery_timeline(source.pk)
+    return (project_live_attendance(historical, timeline, now=now),
+            project_live_attendance(counted(live[str(profile.pk)], 'live'), timeline, now=now))
 
 
 def attendance_to_date(source, profile, *, now=None, register=None):

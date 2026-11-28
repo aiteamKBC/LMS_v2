@@ -29,7 +29,7 @@ export function employerPerformance(learners: EmployerLearnerCard[], records: Em
     const key = learnerKey(learner);
     const payload = records[key]?.data;
     const register = attendance[key]?.data;
-    return { learner, attendance: register ? ratio(register.present, register.sessions) : null,
+    return { learner, attendance: register && register.sessions > 0 && finite(register.attendanceRate) ? register.attendanceRate : null,
       assignments: assignmentRate(payload?.modules || []), submittedAssignments: submittedAssignments(payload?.modules || []),
       hours: finite(learner.otjhProgress?.actual) ? learner.otjhProgress.actual : null,
       otj: ratio(learner.otjhProgress?.actual, learner.otjhProgress?.planned),

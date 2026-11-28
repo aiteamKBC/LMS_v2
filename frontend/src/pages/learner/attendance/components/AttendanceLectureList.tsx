@@ -9,6 +9,7 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import type { StatusTone } from '@/lib/statusTone';
 import styles from '../attendance.module.css';
 import { isLectureJoinable, lectureJoinUrl, useLectureClock } from '../liveLecture';
+import { isAbsentLecture, isAttendedLecture, lectureCounts } from '../lectureCounts';
 
 export type AttendanceFilter = 'all' | 'attended' | 'absent' | 'covered' | 'upcoming';
 const STATUS: Record<AttendanceLecture['status'], { label: string; tone: StatusTone }> = {
@@ -81,7 +82,8 @@ export default function AttendanceLectureList({ lectures, moduleId, onModuleChan
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
     return displayLectures.filter(row => {
-      const matches = filter === 'all' || (filter === 'attended' ? ['completed', 'late'].includes(row.status) :
+      const matches = filter === 'all' || (filter === 'attended' ? isAttendedLecture(row) :
+        filter === 'absent' ? isAbsentLecture(row) :
         filter === 'covered' ? row.catchupStatus === 'completed' : row.status === filter);
       return matches && (selectedMonth === 'all' || monthKey(row.date) === selectedMonth) &&
         `${row.title} ${row.module} ${row.contentSummary} ${row.ksbs.join(' ')}`.toLowerCase().includes(query);
@@ -170,9 +172,7 @@ function MonthGroup({ now, month, rows, expanded, onToggle, onOpen, onReport, on
 }) {
   const contentId = useId();
   const label = monthLabel(month);
-  const attended = rows.filter(row => row.status === 'completed' || row.status === 'late').length;
-  const absent = rows.filter(row => row.status === 'absent').length;
-  const upcoming = rows.filter(row => row.status === 'upcoming').length;
+  const { attended, absent, upcoming } = lectureCounts(rows);
   return <div className={styles.monthPanel}>
     <h3 className={styles.monthHeading}><button type="button" className={styles.monthToggle} aria-label={label}
       aria-expanded={expanded} aria-controls={contentId} onClick={onToggle}>
